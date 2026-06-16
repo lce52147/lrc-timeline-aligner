@@ -1,0 +1,61 @@
+# Local environments
+.venv/
+.venv-asr/
+.venv-*/
+venv/
+env/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.cache/
+
+# Local models and third-party binaries
+models/
+tools/
+*.gguf
+*.ggml
+*.bin
+*.pt
+*.pth
+*.safetensors
+*.onnx
+
+# Audio and copyrighted media
+*.flac
+*.wav
+*.mp3
+*.m4a
+*.aac
+*.ogg
+*.opus
+*.aiff
+*.alac
+*.txt
+!requirements-asr.txt
+
+# Generated LRC outputs and alignment reports
+*.lrc
+*.align-report.json
+
+# Probe / benchmark scratch artifacts
+dragdrop-sandbox/
+tmp/
+temp/
+outputs/
+bench_outputs/
+*.log
+scripts/*_audio_*.json
+scripts/*_audio_*.lrc
+scripts/*_auto_*.json
+scripts/*_auto_*.lrc
+scripts/*_whisper*.json
+scripts/*_whisper*.lrc
+scripts/whispercpp_probe*.json
+scripts/whisperx_align_from_whispercpp*.json
+scripts/dragdrop-sandbox/
+
+# Keep source fixtures explicit if ever needed
+!scripts/*.py
+!docs/*.md
+!README.md

@@ -1,0 +1,7 @@
+# Core ASR/alignment dependencies for the optional WhisperX backend.
+# Install PyTorch with the CUDA wheel matching your GPU first when needed:
+# https://pytorch.org/get-started/locally/
+whisperx
+torch
+torchaudio
+numpy
