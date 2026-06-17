@@ -5,3 +5,4 @@ whisperx
 torch
 torchaudio
 numpy
+pykakasi

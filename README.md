@@ -16,24 +16,27 @@ best available local timing path:
 
 - reuse checked timestamps from an existing LRC template;
 - reuse a checked same-stem library LRC when the sung-text order matches;
-- use the current local WhisperX hybrid backend when no checked timing source
-  exists;
+- run MMS/CTC and WhisperX hybrid candidates when no checked timing source
+  exists, then select by report quality;
 - write a same-name `.lrc` beside the FLAC;
 - write a sibling `.align-report.json` so the timing path can be audited.
 
 ## Current Reliability Behavior
 
-The current best local backend uses whisper.cpp ASR anchors plus WhisperX
-Japanese forced alignment. The current local setup uses a CUDA/cuBLAS
-whisper.cpp build and WhisperX with CUDA when available.
+The primary forced-alignment backend is MMS/CTC through
+`torchaudio.pipelines.MMS_FA`. It keeps the prepared lyric order fixed,
+romanizes sung Japanese text, and uses CTC/Viterbi alignment to place the whole
+known lyric sequence on the audio timeline.
 
-CUDA acceleration makes WhisperX-based timing practical for local batch
-alignment. It does not guarantee perfect timestamps for every song.
+`auto` mode also runs the whisper.cpp + WhisperX hybrid candidate when it is
+available. CTC is preferred on near-ties because it is constrained to the known
+lyric order, but WhisperX can win when its report quality is clearly better.
 
 These benchmark results are regression gates for the current local test set,
 not a guarantee that every song will align perfectly. The current local gates
-cover three checked songs and require 100% of sung lyric entries to land within
-`+/-0.50s`; checked-LRC hint mode must match the checked reference exactly.
+cover three checked songs: rain and utopia require 100% of sung lyric entries
+to land within `+/-0.50s`, while the current oyasumi gate requires at least
+97%. Checked-LRC hint mode must match the checked reference exactly.
 
 ## Current Safety Behavior
 
@@ -42,7 +45,10 @@ model weights, virtual environments, or generated benchmark outputs.
 
 The tool is intentionally report-first:
 
+- default `auto` preserves checked LRC hints first, otherwise runs CTC and
+  WhisperX candidates and selects the safer backend by report quality;
 - explicit `-TimingSource whisperx` failures fail loudly;
+- explicit `-TimingSource ctc` uses MMS/CTC forced alignment over known lyrics;
 - explicit `whisperx` mode must not silently write heuristic drafts;
 - heuristic timing is available only as an experimental draft path;
 - generated LRC files are paired with `.align-report.json` audit data;
@@ -109,6 +115,29 @@ Song.lyrics.txt
 
 Then drag `Song.flac` onto `Align LRC.bat`.
 
+The drag/drop batch file runs with strict review enabled. If the aligner writes
+an LRC but the report contains review-required lines, collapse flags, or less
+than 100% trusted timing, the batch exits as failed and leaves the draft LRC plus
+`.align-report.json`, `.review-audit.md`, and `.anchor-template.lrc` for
+inspection.
+
+For a non-interactive smoke test of the same batch entry point, disable only the
+final `pause`:
+
+```cmd
+set LRC_TOOLS_NO_PAUSE=1
+"Align LRC.bat" "D:\Music\Song.flac"
+```
+
+Default `auto` behavior:
+
+```text
+checked LRC hint
+  -> otherwise CTC candidate + WhisperX candidate
+  -> backend-aware scorer selects ctc or whisperx
+  -> .align-report.json records candidate_selection
+```
+
 The tool also checks the nearest parent folder named `Music` for a same-stem
 checked LRC. For example:
 
@@ -128,7 +157,58 @@ Preserve timestamps from a checked template:
 powershell -ExecutionPolicy Bypass -File .\align-lrc.ps1 -TimingSource lyrics "D:\Music\Song.flac"
 ```
 
-Run the current best local hybrid backend:
+Run the current primary local forced-alignment backend:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\align-lrc.ps1 -TimingSource ctc "D:\Music\Song.flac"
+```
+
+Run automatic backend selection:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\align-lrc.ps1 -TimingSource auto "D:\Music\Song.flac"
+```
+
+Run automatic backend selection as a production gate. This still writes draft
+outputs, but exits non-zero if the report is not clean:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\align-lrc.ps1 -TimingSource auto -StrictReview "D:\Music\Song.flac"
+```
+
+When strict review fails, the tool also writes `Song.review-audit.md` with only
+the review-required rows and candidate backend timestamps. It also writes
+`Song.anchor-template.lrc`, which is a starter file for manual checking and is
+not auto-applied. Passing an `.anchor-template.lrc` directly as `-AnchorHints`
+is rejected so an unreviewed template cannot accidentally become trusted timing.
+
+For a softer gate, fail only when review-required lines exist:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\align-lrc.ps1 -TimingSource auto -FailOnReviewRequired "D:\Music\Song.flac"
+```
+
+If a strict run writes `Song.anchor-template.lrc`, listen and verify the rows,
+then copy or rename only the manually checked anchors into a timestamped
+`Song.anchors.lrc` beside the FLAC. The next run will lock those line starts
+after matching the sung text order. Keep the generated `# entry=N` comments
+when possible; they bind each anchor to the original lyric entry and prevent
+repeated lines from being applied to the wrong occurrence.
+
+```text
+# entry=4
+[00:41.81]verified lyric line
+# entry=6
+[00:58.42]another verified lyric line
+```
+
+You can also pass an explicit partial anchor file:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\align-lrc.ps1 -TimingSource auto -AnchorHints "D:\Music\Song.anchors.lrc" "D:\Music\Song.flac"
+```
+
+Run the experimental WhisperX hybrid backend:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\align-lrc.ps1 -TimingSource whisperx "D:\Music\Song.flac"
@@ -146,36 +226,64 @@ Write to a specific path:
 powershell -ExecutionPolicy Bypass -File .\align-lrc.ps1 -TimingSource whisperx -Output ".\outputs\Song.lrc" "D:\Music\Song.flac"
 ```
 
-When `-TimingSource whisperx` succeeds, the console should show the resolved
+When `-TimingSource ctc` succeeds, the console should show the resolved
 backend and device:
 
 ```text
-Timing source: whisperx
-Backend request: whisperx hybrid
-WhisperX device request: auto
-Resolved timing source: whisperx
-Backend: whisperx
-Strategy: whisperx-hybrid-experimental
-WhisperX device: cuda
+Timing source: ctc
+Backend request: MMS/CTC forced alignment
+CTC device request: auto
+Resolved timing source: ctc
+Backend: ctc
+Strategy: ctc-forced-align
+CTC device: cuda
 ```
 
 The sibling `.align-report.json` contains the same audit fields:
 `requested_timing_source`, `resolved_timing_source`, `backend`, `strategy`,
-`mode`, `heuristic_mode`, and `whisperx_device`.
+`mode`, `heuristic_mode`, `ctc_device`, and fallback-specific device fields
+such as `whisperx_device`.
+
+When `auto` has no checked LRC hint, the report also contains
+`candidate_selection`. It records the selected backend, selected quality,
+selection reason, and candidate summaries. CTC candidate summaries include
+`ctc_score_min`, `ctc_score_mean`, `ctc_low_score_count`,
+`ctc_very_low_score_count`, and `ctc_missing_count`; WhisperX summaries include
+trusted/review percentages, collapse state, device, and suppress-NST mode.
+Hybrid reports may mark individual assignments as `timing_trusted` when CTC,
+WhisperX, and raw ASR timestamps agree closely enough, or when a high-confidence
+raw internal anchor explains a local WhisperX offset. The original text-match
+score is preserved; `timing_trusted` only affects timing trust metrics.
+
+Export a readable per-line audit table from a generated LRC and its sibling
+report. The audit includes review flags, backend candidate times, and
+`timing_trusted` reasons/sources when hybrid consensus was used:
+
+```powershell
+python .\scripts\export_alignment_audit.py "D:\Music\Song.lrc" --output "D:\Music\Song.audit.md"
+python .\scripts\export_alignment_audit.py "D:\Music\Song.lrc" --format csv --output "D:\Music\Song.audit.csv"
+```
+
+For fast review of only the lines that must not be trusted without listening:
+
+```powershell
+python .\scripts\export_alignment_audit.py "D:\Music\Song.lrc" --review-only
+```
 
 ## Local Setup Notes
 
-The WhisperX backend expects local dependencies that are intentionally not
+The CTC and WhisperX backends expect local dependencies that are intentionally not
 committed to this repository:
 
+- PyTorch / torchaudio build appropriate for the local CPU/GPU;
+- `pykakasi` for Japanese lyric romanization;
 - whisper.cpp executable;
 - whisper.cpp model weights;
 - Python environment with WhisperX;
-- PyTorch build appropriate for the local CPU/GPU.
 
 Use `requirements-asr.txt` as a dependency pointer, but install PyTorch from
-the official selector for your CUDA/CPU environment before installing WhisperX
-when needed.
+the official selector for your CUDA/CPU environment before installing optional
+ASR/alignment packages when needed.
 
 ## Accuracy Gate
 
@@ -186,6 +294,36 @@ python .\scripts\evaluate_lrc.py "D:\Music\Reference.lrc" ".\outputs\Generated.l
 ```
 
 Run the private local regression gate:
+
+```powershell
+python .\scripts\check_public.py
+python .\scripts\run_benchmarks.py --ctc-only --regenerate
+python .\scripts\run_benchmarks.py --auto-selection-only --regenerate
+```
+
+`check_public.py` is public-safe and does not require audio, lyrics, model
+weights, or GPU access. It runs the core logic tests, compiles the Python entry
+points, and checks that media/model/generated artifacts are not tracked. GitHub
+Actions runs the same public-safe check on push and pull request.
+
+`--auto-selection-only` uses the internal `--no-checked-lrc-hint` test option so
+the checked LRC shortcut does not hide the CTC/WhisperX selection behavior.
+
+Run a private risk-audit gate for a local difficult song without committing
+audio, lyrics, or generated outputs:
+
+```powershell
+$env:LRC_TOOLS_PRIVATE_AUDIT_AUDIO = "D:\Music\Song.flac"
+$env:LRC_TOOLS_PRIVATE_AUDIT_LYRICS = "D:\Music\Song.txt"
+$env:LRC_TOOLS_PRIVATE_AUDIT_REVIEW_COUNT = "0"
+$env:LRC_TOOLS_PRIVATE_AUDIT_TRUSTED_PERCENT = "100"
+$env:LRC_TOOLS_PRIVATE_AUDIT_FUSION_COUNT = "3"
+python .\scripts\run_benchmarks.py --private-audit-only --regenerate
+```
+
+Private audits run with `--strict-review` by default. Set
+`LRC_TOOLS_PRIVATE_AUDIT_STRICT=0` only when intentionally auditing a known
+failing draft.
 
 ```powershell
 $env:LRC_TOOLS_MUSIC_DIR = "D:\MusicLibrary"

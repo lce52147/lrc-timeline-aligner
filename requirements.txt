@@ -1,0 +1,5 @@
+# Lightweight runtime dependencies for the CLI.
+numpy
+
+# Optional text/phonetic helper used for Japanese diagnostics.
+pykakasi

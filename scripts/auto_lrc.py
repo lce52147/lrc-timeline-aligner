@@ -20,14 +20,21 @@ import sys
 import tempfile
 import unicodedata
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
+
+from export_alignment_audit import build_rows as build_audit_rows
+from export_alignment_audit import write_anchor_template
+from export_alignment_audit import write_markdown as write_audit_markdown
 
 
 SAMPLE_RATE = 16_000
 HOP_SECONDS = 0.02
 FRAME_SECONDS = 0.06
+TRUSTED_ALIGNMENT_SCORE = 0.62
+COLLAPSE_SEGMENT_SCORE = 0.30
 
 
 def configure_stdio() -> None:
@@ -66,6 +73,12 @@ class LyricDocument:
 
 
 @dataclass
+class AnchorHint:
+    entry_number: int | None
+    entry: LyricEntry
+
+
+@dataclass
 class AsrSegment:
     start: float
     end: float
@@ -76,6 +89,15 @@ class AsrSegment:
 
 class LrcError(RuntimeError):
     pass
+
+
+@lru_cache(maxsize=1)
+def optional_kakasi_converter() -> object | None:
+    try:
+        import pykakasi  # type: ignore[import-not-found]
+    except Exception:
+        return None
+    return pykakasi.kakasi()
 
 
 def run_command(args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -265,7 +287,7 @@ def split_group_text(text: str, preserve_single: bool = False) -> list[str]:
     return [part for part in parts if part]
 
 
-def load_lyrics(path: Path) -> LyricDocument:
+def load_lyrics(path: Path, skip_comments: bool = False) -> LyricDocument:
     text = path.read_text(encoding="utf-8-sig")
     entries: list[LyricEntry] = []
     metadata_lines: list[str] = []
@@ -275,6 +297,8 @@ def load_lyrics(path: Path) -> LyricDocument:
     for raw in text.splitlines():
         stripped = raw.strip()
         if not stripped:
+            continue
+        if skip_comments and stripped.startswith("#"):
             continue
         if re.fullmatch(r"\[[a-zA-Z]+:.*\]", stripped):
             metadata_lines.append(stripped)
@@ -326,6 +350,82 @@ def find_lyrics(audio_path: Path) -> Path:
     raise LrcError(f"No lyric text found for {audio_path.name}. Expected one of: {pretty}")
 
 
+def anchor_hint_candidates(audio_path: Path) -> list[Path]:
+    return [
+        audio_path.with_suffix(".anchors.lrc"),
+        audio_path.with_suffix(".anchors.txt"),
+        audio_path.with_suffix(".anchor.lrc"),
+        audio_path.with_suffix(".anchor.txt"),
+    ]
+
+
+def find_anchor_hints(audio_path: Path, args: argparse.Namespace) -> Path | None:
+    explicit = getattr(args, "anchor_hints", None)
+    if explicit:
+        path = Path(explicit).expanduser().resolve()
+        if not path.exists():
+            raise LrcError(f"Anchor hints not found: {path}")
+        if ".anchor-template." in path.name.lower():
+            raise LrcError(
+                f"Refusing to use unreviewed anchor template as confirmed anchor hints: {path}. "
+                "Review it manually, then copy checked rows to a .anchors.lrc file."
+            )
+        return path
+    if getattr(args, "no_anchor_hints", False):
+        return None
+    for candidate in anchor_hint_candidates(audio_path):
+        if candidate.exists():
+            return candidate
+    return None
+
+
+ANCHOR_ENTRY_COMMENT_RE = re.compile(r"^#\s*entry\s*=\s*(\d+)\s*$", re.IGNORECASE)
+
+
+def load_anchor_hints(path: Path) -> tuple[list[AnchorHint], list[dict[str, object]]]:
+    text = path.read_text(encoding="utf-8-sig")
+    hints: list[AnchorHint] = []
+    skipped_markers: list[dict[str, object]] = []
+    pending_entry_number: int | None = None
+    previous_time_key: int | None = None
+
+    for raw in text.splitlines():
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        entry_comment = ANCHOR_ENTRY_COMMENT_RE.match(stripped)
+        if entry_comment:
+            pending_entry_number = int(entry_comment.group(1))
+            continue
+        if stripped.startswith("#"):
+            continue
+        if re.fullmatch(r"\[[a-zA-Z]+:.*\]", stripped):
+            continue
+        lrc_match = LRC_LINE_RE.match(raw)
+        if not lrc_match:
+            raise LrcError(f"Anchor hint line must be timestamped LRC syntax: {raw!r}")
+        time_key = lrc_time_key(lrc_match.group(1))
+        display_lines = split_group_text(lrc_match.group(2), preserve_single=True)
+        if not display_lines:
+            continue
+        entry = LyricEntry(display_lines, time_key)
+        if is_instrumental_marker(entry):
+            skipped_markers.append({"entry": len(hints) + 1, "text": entry_sung_text(entry)})
+            pending_entry_number = None
+            previous_time_key = time_key
+            continue
+        if hints and time_key == previous_time_key:
+            hints[-1].entry.lines.extend(display_lines)
+        else:
+            hints.append(AnchorHint(pending_entry_number, entry))
+        pending_entry_number = None
+        previous_time_key = time_key
+
+    if not hints:
+        raise LrcError(f"No timestamped anchor hints found in {path}")
+    return hints, skipped_markers
+
+
 def checked_lrc_candidates(audio_path: Path) -> list[Path]:
     candidates: list[Path] = []
     for parent in audio_path.parents:
@@ -366,8 +466,17 @@ def checked_lrc_timing_hint(
             "checked_lrc": str(candidate),
             "lyric_source": str(lyrics_path),
             "timing_entries": len(target_entries),
+            "assigned_entries": len(target_entries),
+            "assigned_percent": 100.0,
+            "trusted_entries": len(target_entries),
+            "trusted_percent": 100.0,
             "matched_entries": len(target_entries),
             "matched_percent": 100.0,
+            "low_confidence_count": 0,
+            "low_confidence_percent": 0.0,
+            "review_required_count": 0,
+            "review_required_percent": 0.0,
+            "review_required": False,
             "skipped_marker_entries": skipped_markers,
             "skipped_checked_marker_entries": checked_skipped,
             "note": "Used a same-stem checked LRC from the Music library after verifying sung-text order.",
@@ -494,6 +603,99 @@ def normalize_match_text(text: str) -> str:
     return re.sub(r"[^0-9A-Za-z\u3040-\u30ff\u3400-\u9fff]+", "", text)
 
 
+def ratio_percent(part: int, total: int) -> float:
+    return round(part * 100 / max(1, total), 2)
+
+
+def compact_latin(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", unicodedata.normalize("NFKC", text).lower())
+
+
+def japanese_romaji(text: str) -> str | None:
+    converter = optional_kakasi_converter()
+    if converter is None:
+        return None
+    try:
+        converted = converter.convert(text)  # type: ignore[attr-defined]
+    except Exception:
+        return None
+    romaji = "".join(str(item.get("hepburn", "")) for item in converted if isinstance(item, dict))
+    romaji = compact_latin(romaji)
+    return romaji or None
+
+
+def romaji_morae(romaji: str) -> list[str]:
+    morae: list[str] = []
+    cursor = 0
+    while cursor < len(romaji):
+        if romaji[cursor] == "n" and (cursor + 1 == len(romaji) or romaji[cursor + 1] not in "aeiouy"):
+            morae.append("n")
+            cursor += 1
+            continue
+        match = re.match(r"(?:[bcdfghjklmnpqrstvwxyz]*)(?:a|i|u|e|o)", romaji[cursor:])
+        if match:
+            morae.append(match.group(0))
+            cursor += len(match.group(0))
+        else:
+            morae.append(romaji[cursor])
+            cursor += 1
+    return morae
+
+
+def lyric_anchor_profile(entry: LyricEntry) -> dict[str, object]:
+    text = entry_sung_text(entry)
+    normalized = normalize_match_text(text)
+    romaji = japanese_romaji(text)
+    profile: dict[str, object] = {
+        "entry_text": text,
+        "normalized_prefix": normalized[:8],
+        "normalized_suffix": normalized[-8:] if normalized else "",
+    }
+    if romaji:
+        morae = romaji_morae(romaji)
+        profile.update(
+            {
+                "phonetic_system": "ja-hepburn-pykakasi",
+                "romaji": romaji,
+                "romaji_prefix": romaji[:12],
+                "romaji_suffix": romaji[-12:],
+                "first_mora": morae[0] if morae else "",
+                "last_mora": morae[-1] if morae else "",
+            }
+        )
+    else:
+        latin = compact_latin(text)
+        if latin:
+            profile.update(
+                {
+                    "phonetic_system": "latin-fallback",
+                    "romaji": latin,
+                    "romaji_prefix": latin[:12],
+                    "romaji_suffix": latin[-12:],
+                }
+            )
+        else:
+            profile["phonetic_system"] = "unavailable"
+    return profile
+
+
+def infer_spoken_language(entries: list[LyricEntry]) -> str:
+    sample = "".join(entry_sung_text(entry) for entry in entries[:12])
+    if not sample:
+        return "ja"
+    latin_count = sum(1 for ch in sample if ("A" <= ch <= "Z") or ("a" <= ch <= "z"))
+    kana_count = sum(1 for ch in sample if "\u3040" <= ch <= "\u30ff")
+    cjk_count = sum(1 for ch in sample if "\u3400" <= ch <= "\u9fff")
+    total_text = max(1, latin_count + kana_count + cjk_count)
+    if latin_count / total_text >= 0.55:
+        return "en"
+    if kana_count > 0:
+        return "ja"
+    if cjk_count > 0:
+        return "zh"
+    return "ja"
+
+
 def sequence_ratio(left: str, right: str) -> float:
     if not left or not right:
         return 0.0
@@ -550,6 +752,41 @@ def segment_char_time(entry_text: str, segment: AsrSegment) -> float | None:
     return suffix_char_time(entry_text, segment)
 
 
+def estimated_segment_text_time(entry_text: str, raw_entry_text: str, segment: AsrSegment) -> float | None:
+    if not entry_text:
+        return None
+    segment_text = normalize_match_text(segment.text)
+    if not segment_text:
+        return None
+
+    match_index = segment_text.find(entry_text)
+    match_basis_length = len(segment_text)
+    if match_index < 0:
+        raw_entry_romaji = japanese_romaji(raw_entry_text) or compact_latin(raw_entry_text)
+        segment_romaji = japanese_romaji(segment.text) or compact_latin(segment.text)
+        if not raw_entry_romaji or not segment_romaji:
+            return None
+        for prefix_length in range(min(len(raw_entry_romaji), 18), 4, -1):
+            prefix = raw_entry_romaji[:prefix_length]
+            match_index = segment_romaji.find(prefix)
+            if match_index >= 0:
+                match_basis_length = len(segment_romaji)
+                break
+        else:
+            return None
+
+    if match_index <= 0:
+        return segment.start
+    segment_duration = max(0.0, segment.end - segment.start)
+    if segment_duration <= 0.05 or match_basis_length <= 0:
+        return None
+    fraction = min(0.95, max(0.0, match_index / match_basis_length))
+    estimated = segment.start + segment_duration * fraction
+    if segment.start - 0.10 <= estimated <= segment.end + 0.10:
+        return estimated
+    return None
+
+
 def is_instrumental_marker(entry: LyricEntry) -> bool:
     text = (entry.lines[0] if entry.lines else entry.alignment_text).strip()
     normalized = normalize_match_text(text)
@@ -586,8 +823,16 @@ def default_whisperx_python() -> Path:
     return Path(__file__).resolve().parents[1] / ".venv-asr" / "Scripts" / "python.exe"
 
 
+def default_ctc_python() -> Path:
+    return default_whisperx_python()
+
+
 def default_whisperx_ready() -> bool:
     return default_whisper_cli().exists() and default_whisper_model().exists() and default_whisperx_python().exists()
+
+
+def default_ctc_ready() -> bool:
+    return default_ctc_python().exists() and (Path(__file__).resolve().parent / "ctc_align.py").exists()
 
 
 def decode_temp_wav(audio_path: Path) -> Path:
@@ -712,6 +957,151 @@ def run_whisperx_alignment(
     return json.loads(output_path.read_text(encoding="utf-8"))
 
 
+def run_ctc_alignment(
+    audio_path: Path,
+    entries: list[LyricEntry],
+    duration: float,
+    args: argparse.Namespace,
+) -> tuple[list[float], dict[str, object]]:
+    python_exe = default_ctc_python()
+    helper = Path(__file__).resolve().parent / "ctc_align.py"
+    if not python_exe.exists():
+        raise LrcError(f"CTC Python environment not found: {python_exe}")
+    if not helper.exists():
+        raise LrcError(f"CTC helper not found: {helper}")
+
+    with tempfile.TemporaryDirectory(prefix="lrc-ctc-") as temp_name:
+        temp_dir = Path(temp_name)
+        transcript_path = temp_dir / "transcript.json"
+        output_path = temp_dir / "ctc-aligned.json"
+        transcript_path.write_text(
+            json.dumps([entry_sung_text(entry) for entry in entries], ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        proc = run_command(
+            [
+                str(python_exe),
+                str(helper),
+                "--audio",
+                str(audio_path),
+                "--transcript",
+                str(transcript_path),
+                "--output",
+                str(output_path),
+                "--device",
+                args.whisperx_device,
+            ]
+        )
+        if proc.returncode != 0:
+            raise LrcError(f"CTC forced alignment failed: {proc.stderr.strip() or proc.stdout.strip()}")
+        if not output_path.exists():
+            raise LrcError(f"CTC helper did not write output: {output_path}")
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+
+    rows = payload.get("entries")
+    if not isinstance(rows, list) or len(rows) != len(entries):
+        raise LrcError("CTC helper returned an invalid entry list")
+    timestamps: list[float] = []
+    assignments: list[dict[str, object]] = []
+    missing: list[int] = []
+    ctc_scores: list[float] = []
+    low_score_entries: list[dict[str, object]] = []
+    very_low_score_entries: list[dict[str, object]] = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            missing.append(index + 1)
+            timestamps.append(timestamps[-1] + 0.10 if timestamps else 0.0)
+            continue
+        start = row.get("start")
+        if start is None:
+            missing.append(index + 1)
+            timestamp = timestamps[-1] + 0.10 if timestamps else 0.0
+        else:
+            timestamp = float(start)
+        timestamps.append(max(0.0, min(duration, timestamp)))
+        raw_ctc_score = row.get("ctc_score")
+        try:
+            ctc_score = float(raw_ctc_score)
+        except (TypeError, ValueError):
+            ctc_score = 0.0
+        if start is not None:
+            ctc_scores.append(ctc_score)
+            if ctc_score < 0.03:
+                low_score_entries.append(
+                    {
+                        "entry": index + 1,
+                        "text": entry_sung_text(entries[index]),
+                        "ctc_score": round(ctc_score, 6),
+                    }
+                )
+            if ctc_score < 0.01:
+                very_low_score_entries.append(
+                    {
+                        "entry": index + 1,
+                        "text": entry_sung_text(entries[index]),
+                        "ctc_score": round(ctc_score, 6),
+                    }
+                )
+        assignments.append(
+            {
+                "entry": index + 1,
+                "segment": None,
+                "score": 0.90 if start is not None else 0.0,
+                "ctc_score": round(ctc_score, 6),
+                "romaji": row.get("romaji"),
+                "timestamp": round(timestamps[-1], 3),
+                "timing_repair": "ctc-forced-align",
+                "timing_repair_source": "torchaudio-mms-fa",
+            }
+        )
+
+    for index in range(1, len(timestamps)):
+        timestamps[index] = max(timestamps[index], timestamps[index - 1] + 0.10)
+        assignments[index]["timestamp"] = round(timestamps[index], 3)
+
+    report: dict[str, object] = {
+        "backend": "ctc",
+        "strategy": "ctc-forced-align",
+        "ctc_backend": payload.get("backend", "mms_ctc"),
+        "ctc_device": payload.get("device"),
+        "ctc_sample_rate": payload.get("sample_rate"),
+        "ctc_emission_frames": payload.get("emission_frames"),
+        "timing_entries": len(entries),
+        "assignments": assignments,
+        "ctc_missing_entries": missing,
+        "ctc_missing_count": len(missing),
+        "ctc_score_min": round(min(ctc_scores), 6) if ctc_scores else None,
+        "ctc_score_mean": round(sum(ctc_scores) / len(ctc_scores), 6) if ctc_scores else None,
+        "ctc_low_score_threshold": 0.03,
+        "ctc_very_low_score_threshold": 0.01,
+        "ctc_low_score_count": len(low_score_entries),
+        "ctc_very_low_score_count": len(very_low_score_entries),
+        "ctc_low_score_entries": low_score_entries,
+        "ctc_very_low_score_entries": very_low_score_entries,
+        "suspicious_alignment_count": len(missing),
+        "review_required_count": len(missing),
+        "suspicious_alignment_severity_counts": {
+            "high": len(missing),
+            "medium": 0,
+            "low": 0,
+        },
+        "suspicious_alignments": [
+            {
+                "entry": entry_number,
+                "text": entry_sung_text(entries[entry_number - 1]),
+                "flags": ["ctc_missing_alignment"],
+                "severity": "high",
+                "review_required": True,
+            }
+            for entry_number in missing
+        ],
+        "review_required": bool(missing),
+        "note": "MMS/CTC forced alignment over the known lyric order.",
+    }
+    update_report_confidence_metrics(report)
+    return timestamps, report
+
+
 def whisperx_segments(payload: dict[str, object]) -> list[AsrSegment]:
     segments: list[AsrSegment] = []
     for item in payload.get("segments", []):
@@ -755,39 +1145,910 @@ def run_whisperx_candidate(
 ) -> tuple[list[float], dict[str, object]]:
     raw_segments = run_whispercpp(audio_path, args, suppress_nst=suppress_nst)
     aligned_payload = run_whisperx_alignment(audio_path, asr_transcript(raw_segments), args)
-    segments = whisperx_segments(aligned_payload)
-    timestamps, report = match_whisper_segments(entries, segments, duration)
+    aligned_segments = whisperx_segments(aligned_payload)
+    timestamps, report = match_whisper_segments(entries, aligned_segments, duration)
+    report["backend"] = "whisperx"
+    report["asr_segment_timing_source"] = "whisperx_aligned"
+    report["whisperx_aligned_asr_segments"] = len(aligned_segments)
+    report["whisper_suppress_nst"] = suppress_nst
+    report["whisperx_device"] = aligned_payload.get("device")
+    report["vocal_regions"] = []
+    report["vocal_regions_available"] = False
+    report["no_vocal_constraint"] = {
+        "status": "placeholder",
+        "enforced": False,
+        "reason": "No reliable vocal-region detector is wired yet.",
+    }
+    report["local_window_realign"] = {
+        "status": "placeholder",
+        "enabled": False,
+        "reason": "Disabled until a reliable vocal-region/onset constraint is available.",
+    }
+    if is_alignment_unusable(report):
+        raise LrcError(
+            "WhisperX ASR-to-lyric matching is unusable; refusing to write a fake LRC. "
+            f"{unusable_alignment_reason(report)}"
+        )
+    timestamps, intro_changes = repair_intro_hallucination(audio_path, entries, timestamps, report, duration)
+    if intro_changes:
+        sync_report_assignment_timestamps(report, timestamps)
+    timestamps, long_segment_changes = repair_long_segment_hallucinations(
+        audio_path,
+        entries,
+        timestamps,
+        report,
+        aligned_segments,
+        duration,
+    )
+    if long_segment_changes:
+        sync_report_assignment_timestamps(report, timestamps)
+    timestamps, tail_changes = repair_tail_hallucination(
+        audio_path,
+        entries,
+        timestamps,
+        report,
+        aligned_segments,
+        duration,
+    )
+    if tail_changes:
+        sync_report_assignment_timestamps(report, timestamps)
     forced_payload = run_whisperx_alignment(audio_path, lyric_alignment_windows(entries, timestamps, duration), args)
     forced_segments = whisperx_segments(forced_payload)
     timestamps, refinement_changes = apply_whisperx_lyric_refinement(
         entries,
         timestamps,
         report,
-        segments,
+        aligned_segments,
         forced_segments,
         duration,
     )
+    sync_report_assignment_timestamps(report, timestamps)
     report["backend"] = "whisperx"
+    report["strategy"] = "whisperx-hybrid-experimental"
     report["whisper_suppress_nst"] = suppress_nst
     report["whisperx_device"] = forced_payload.get("device") or aligned_payload.get("device")
+    report["whisper_language"] = args.whisper_language
     report["whisperx_forced_first_times"] = [round(first_forced_char_time(segment), 3) for segment in forced_segments]
     report["whisperx_refinement_count"] = len(refinement_changes)
     report["whisperx_refinements"] = refinement_changes
+    timestamps, tail_blend_changes = blend_tail_repair_with_forced(
+        entries,
+        timestamps,
+        report,
+        forced_segments,
+        duration,
+    )
+    if tail_blend_changes:
+        sync_report_assignment_timestamps(report, timestamps)
+    add_alignment_diagnostics(entries, timestamps, report, forced_segments, duration)
+    if is_alignment_untrusted(report):
+        raise LrcError(
+            "WhisperX alignment is untrusted after diagnostics; refusing to write a fake LRC. "
+            f"{untrusted_alignment_reason(report)}"
+        )
     return timestamps, report
 
 
 def report_quality(report: dict[str, object]) -> float:
-    matched_percent = float(report.get("matched_percent", 0.0) or 0.0)
+    matched_percent = float(report.get("trusted_percent", report.get("matched_percent", 0.0)) or 0.0)
     low_confidence_count = int(report.get("low_confidence_count", 0) or 0)
-    return matched_percent - low_confidence_count * 2.5
+    review_required_count = int(report.get("review_required_count", 0) or 0)
+    collapse_penalty = 80.0 if report.get("collapse_detected") else 0.0
+    return matched_percent - low_confidence_count * 2.5 - review_required_count * 3.0 - collapse_penalty
+
+
+def candidate_selection_quality(report: dict[str, object]) -> float:
+    if report.get("error"):
+        return -100.0
+    backend = str(report.get("backend", "") or "")
+    if backend == "ctc":
+        timing_entries = int(report.get("timing_entries", 0) or 0)
+        missing_count = int(report.get("ctc_missing_count", 0) or 0)
+        low_score_count = int(report.get("ctc_low_score_count", 0) or 0)
+        very_low_score_count = int(report.get("ctc_very_low_score_count", 0) or 0)
+        review_required_count = int(report.get("review_required_count", 0) or 0)
+        quality = 100.0
+        quality -= missing_count * 30.0
+        quality -= low_score_count * 6.0
+        quality -= very_low_score_count * 8.0
+        quality -= review_required_count * 2.0
+        if timing_entries and missing_count >= math.ceil(timing_entries * 0.20):
+            quality -= 50.0
+        if report.get("collapse_detected"):
+            quality -= 100.0
+        return max(-100.0, min(100.0, quality))
+    if backend in {"whisperx", "hybrid"}:
+        timing_entries = int(report.get("timing_entries", 0) or 0)
+        trusted_percent = float(report.get("trusted_percent", report.get("matched_percent", 0.0)) or 0.0)
+        low_confidence_percent = float(report.get("low_confidence_percent", 0.0) or 0.0)
+        review_required_percent = float(report.get("review_required_percent", 0.0) or 0.0)
+        severity_counts = report.get("suspicious_alignment_severity_counts")
+        high_risk_count = 0
+        if isinstance(severity_counts, dict):
+            try:
+                high_risk_count = int(severity_counts.get("high", 0) or 0)
+            except (TypeError, ValueError):
+                high_risk_count = 0
+        quality = trusted_percent
+        quality -= low_confidence_percent * 0.40
+        quality -= review_required_percent * 0.15
+        quality -= high_risk_count * 1.0
+        if backend == "hybrid":
+            quality -= high_risk_count * 1.5
+        if timing_entries >= 8 and trusted_percent < 85.0:
+            quality -= 10.0
+        if report.get("collapse_detected"):
+            quality -= 100.0
+        return max(-100.0, min(100.0, quality))
+    return report_quality(report)
+
+
+def candidate_summary(report: dict[str, object], error: str | None = None) -> dict[str, object]:
+    quality = candidate_selection_quality(report)
+    summary: dict[str, object] = {
+        "backend": report.get("backend"),
+        "strategy": report.get("strategy"),
+        "quality": round(quality, 3),
+        "assigned_percent": report.get("assigned_percent"),
+        "trusted_percent": report.get("trusted_percent", report.get("matched_percent")),
+        "low_confidence_percent": report.get("low_confidence_percent"),
+        "review_required_percent": report.get("review_required_percent"),
+        "collapse_detected": bool(report.get("collapse_detected")),
+        "error": error or report.get("error"),
+    }
+    if report.get("backend") == "ctc":
+        summary.update(
+            {
+                "ctc_device": report.get("ctc_device"),
+                "ctc_score_min": report.get("ctc_score_min"),
+                "ctc_score_mean": report.get("ctc_score_mean"),
+                "ctc_low_score_count": report.get("ctc_low_score_count"),
+                "ctc_very_low_score_count": report.get("ctc_very_low_score_count"),
+                "ctc_missing_count": report.get("ctc_missing_count"),
+            }
+        )
+    if report.get("backend") == "whisperx":
+        summary.update(
+            {
+                "whisper_suppress_nst": report.get("whisper_suppress_nst"),
+                "whisperx_device": report.get("whisperx_device"),
+                "legacy_quality": round(report_quality(report), 3),
+            }
+        )
+    return summary
 
 
 def needs_suppressed_retry(report: dict[str, object]) -> bool:
-    matched_percent = float(report.get("matched_percent", 0.0) or 0.0)
+    matched_percent = float(report.get("trusted_percent", report.get("matched_percent", 0.0)) or 0.0)
     timing_entries = int(report.get("timing_entries", 0) or 0)
     low_confidence_count = int(report.get("low_confidence_count", 0) or 0)
     low_limit = max(6, math.ceil(timing_entries * 0.20))
     return matched_percent < 90.0 or low_confidence_count > low_limit
+
+
+def is_alignment_unusable(report: dict[str, object]) -> bool:
+    timing_entries = int(report.get("timing_entries", 0) or 0)
+    matched_entries = int(report.get("trusted_entries", report.get("matched_entries", 0)) or 0)
+    matched_percent = float(report.get("trusted_percent", report.get("matched_percent", 0.0)) or 0.0)
+    low_confidence_count = int(report.get("low_confidence_count", 0) or 0)
+    if timing_entries <= 0:
+        return True
+    if matched_entries == 0:
+        return True
+    if matched_percent < 35.0:
+        return True
+    if timing_entries >= 6 and low_confidence_count >= math.ceil(timing_entries * 0.80):
+        return True
+    return False
+
+
+def is_alignment_untrusted(report: dict[str, object]) -> bool:
+    if is_alignment_unusable(report):
+        return True
+    if report.get("collapse_detected"):
+        return True
+    timing_entries = int(report.get("timing_entries", 0) or 0)
+    trusted_percent = float(report.get("trusted_percent", report.get("matched_percent", 0.0)) or 0.0)
+    low_confidence_percent = float(report.get("low_confidence_percent", 0.0) or 0.0)
+    high_risk_count = 0
+    max_post_long_uncertain_run = 0
+    suspicious = report.get("suspicious_alignments")
+    if isinstance(suspicious, list):
+        high_risk_count = sum(
+            1 for item in suspicious if isinstance(item, dict) and item.get("severity") == "high"
+        )
+        flagged_entries: set[int] = set()
+        for item in suspicious:
+            if not isinstance(item, dict):
+                continue
+            flags = item.get("flags")
+            if not isinstance(flags, list) or "post_long_segment_region_uncertain" not in flags:
+                continue
+            try:
+                flagged_entries.add(int(item.get("entry", 0)))
+            except (TypeError, ValueError):
+                continue
+        current_run = 0
+        for entry_index in range(1, timing_entries + 1):
+            if entry_index in flagged_entries:
+                current_run += 1
+                max_post_long_uncertain_run = max(max_post_long_uncertain_run, current_run)
+            else:
+                current_run = 0
+        report["max_post_long_uncertain_run"] = max_post_long_uncertain_run
+    if timing_entries >= 8 and trusted_percent < 85.0:
+        return True
+    if timing_entries >= 8 and low_confidence_percent >= 50.0:
+        return True
+    if timing_entries >= 8 and max_post_long_uncertain_run >= 4:
+        return True
+    if timing_entries >= 8 and high_risk_count >= math.ceil(timing_entries * 0.25):
+        return True
+    return False
+
+
+def unusable_alignment_reason(report: dict[str, object]) -> str:
+    return (
+        f"trusted_entries={report.get('trusted_entries', report.get('matched_entries'))}, "
+        f"timing_entries={report.get('timing_entries')}, "
+        f"trusted_percent={report.get('trusted_percent', report.get('matched_percent'))}, "
+        f"assigned_percent={report.get('assigned_percent')}, "
+        f"low_confidence_count={report.get('low_confidence_count')}"
+    )
+
+
+def untrusted_alignment_reason(report: dict[str, object]) -> str:
+    segment_runs = report.get("segment_collapse_runs")
+    zero_runs = report.get("alignment_collapse_runs")
+    return (
+        f"trusted_entries={report.get('trusted_entries', report.get('matched_entries'))}, "
+        f"timing_entries={report.get('timing_entries')}, "
+        f"trusted_percent={report.get('trusted_percent', report.get('matched_percent'))}, "
+        f"assigned_percent={report.get('assigned_percent')}, "
+        f"low_confidence_percent={report.get('low_confidence_percent')}, "
+        f"review_required_percent={report.get('review_required_percent')}, "
+        f"collapse_detected={report.get('collapse_detected')}, "
+        f"max_post_long_uncertain_run={report.get('max_post_long_uncertain_run')}, "
+        f"segment_collapse_runs={segment_runs}, "
+        f"alignment_collapse_runs={zero_runs}"
+    )
+
+
+def try_whisperx_candidate(
+    audio_path: Path,
+    entries: list[LyricEntry],
+    duration: float,
+    args: argparse.Namespace,
+    suppress_nst: bool,
+) -> tuple[list[float], dict[str, object], str | None]:
+    try:
+        timestamps, report = run_whisperx_candidate(audio_path, entries, duration, args, suppress_nst)
+        return timestamps, report, None
+    except LrcError as exc:
+        return [], {"whisper_suppress_nst": suppress_nst, "error": str(exc)}, str(exc)
+
+
+def try_ctc_candidate(
+    audio_path: Path,
+    entries: list[LyricEntry],
+    duration: float,
+    args: argparse.Namespace,
+) -> tuple[list[float], dict[str, object], str | None]:
+    try:
+        timestamps, report = run_ctc_alignment(audio_path, entries, duration, args)
+        return timestamps, report, None
+    except LrcError as exc:
+        return [], {"backend": "ctc", "error": str(exc)}, str(exc)
+
+
+def try_whispercpp_diagnostic_candidate(
+    audio_path: Path,
+    entries: list[LyricEntry],
+    duration: float,
+    args: argparse.Namespace,
+) -> tuple[list[float], dict[str, object], str | None]:
+    try:
+        raw_segments = run_whispercpp(audio_path, args, suppress_nst=False)
+        timestamps, report = match_whisper_segments(entries, raw_segments, duration)
+        report["backend"] = "whispercpp_raw"
+        report["strategy"] = "whispercpp-raw-diagnostic"
+        report["asr_repeated_tail_after_0s"] = has_repeated_asr_tail(raw_segments, 0.0)
+        report["raw_asr_segments"] = [
+            {"start": round(segment.start, 3), "end": round(segment.end, 3), "text": segment.text}
+            for segment in raw_segments
+        ]
+        report["diagnostic_only"] = True
+        return timestamps, report, None
+    except LrcError as exc:
+        return [], {"backend": "whispercpp_raw", "diagnostic_only": True, "error": str(exc)}, str(exc)
+
+
+def run_whisperx_best_candidate(
+    audio_path: Path,
+    entries: list[LyricEntry],
+    duration: float,
+    args: argparse.Namespace,
+) -> tuple[list[float], dict[str, object]]:
+    if args.whisper_suppress_nst is not None:
+        return run_whisperx_candidate(
+            audio_path,
+            entries,
+            duration,
+            args,
+            suppress_nst=bool(args.whisper_suppress_nst),
+        )
+
+    timestamps, report, normal_error = try_whisperx_candidate(
+        audio_path, entries, duration, args, suppress_nst=False
+    )
+    candidates = [report]
+    candidate_errors = [normal_error] if normal_error else []
+    if normal_error:
+        sns_timestamps, sns_report, sns_error = try_whisperx_candidate(
+            audio_path, entries, duration, args, suppress_nst=True
+        )
+        candidates.append(sns_report)
+        if sns_error:
+            candidate_errors.append(sns_error)
+            raise LrcError(
+                "No usable WhisperX candidate; refusing to write a fake LRC. "
+                + " | ".join(candidate_errors)
+            )
+        timestamps, report = sns_timestamps, sns_report
+
+    normal_timestamps = list(timestamps)
+    normal_report = report
+    if needs_suppressed_retry(report):
+        sns_timestamps, sns_report, sns_error = try_whisperx_candidate(
+            audio_path, entries, duration, args, suppress_nst=True
+        )
+        candidates.append(sns_report)
+        if not sns_error:
+            collapse_start = low_confidence_run_start(normal_report)
+            quality_gap = report_quality(sns_report) - report_quality(normal_report)
+            if quality_gap >= 15.0:
+                timestamps, report = sns_timestamps, sns_report
+            elif collapse_start is not None and report_quality(sns_report) > report_quality(normal_report):
+                timestamps = normal_timestamps[:collapse_start] + sns_timestamps[collapse_start:]
+                adopted_sns_entries: list[int] = []
+                for change in sns_report.get("whisperx_refinements", []):
+                    if not isinstance(change, dict):
+                        continue
+                    entry_number = change.get("entry")
+                    if not isinstance(entry_number, int):
+                        continue
+                    entry_index = entry_number - 1
+                    if not (0 <= entry_index < collapse_start):
+                        continue
+                    if change.get("reason") != "bounded-forced-asr-blend":
+                        continue
+                    shift = normal_timestamps[entry_index] - sns_timestamps[entry_index]
+                    if not (0.40 <= shift <= 1.60):
+                        continue
+                    left_ok = entry_index == 0 or timestamps[entry_index - 1] + 0.10 < sns_timestamps[entry_index]
+                    right_ok = (
+                        entry_index + 1 >= len(timestamps)
+                        or sns_timestamps[entry_index] < timestamps[entry_index + 1] - 0.10
+                    )
+                    if left_ok and right_ok:
+                        timestamps[entry_index] = sns_timestamps[entry_index]
+                        adopted_sns_entries.append(entry_index)
+                report = fused_candidate_report(
+                    normal_report, sns_report, timestamps, collapse_start, adopted_sns_entries
+                )
+            elif report_quality(sns_report) > report_quality(report):
+                timestamps, report = sns_timestamps, sns_report
+
+    report["candidate_reports"] = [
+        candidate_summary(candidate, str(candidate.get("error")) if candidate.get("error") else None)
+        for candidate in candidates
+        if isinstance(candidate, dict)
+    ]
+    return timestamps, report
+
+
+def choose_alignment_candidate(
+    candidates: list[dict[str, object]],
+) -> dict[str, object]:
+    usable = [
+        candidate
+        for candidate in candidates
+        if not candidate.get("error")
+        and isinstance(candidate.get("timestamps"), list)
+        and isinstance(candidate.get("report"), dict)
+    ]
+    if not usable:
+        errors = [
+            str(candidate.get("error"))
+            for candidate in candidates
+            if candidate.get("error")
+        ]
+        raise LrcError("No usable alignment candidate. " + " | ".join(errors))
+
+    for candidate in usable:
+        report = candidate["report"]
+        assert isinstance(report, dict)
+        candidate["quality"] = candidate_selection_quality(report)
+
+    best = max(usable, key=lambda item: float(item.get("quality", -100.0) or -100.0))
+    ctc = next((item for item in usable if item.get("backend") == "ctc"), None)
+    if ctc is not None:
+        ctc_quality = float(ctc.get("quality", -100.0) or -100.0)
+        best_quality = float(best.get("quality", -100.0) or -100.0)
+        if ctc_quality >= 80.0 and ctc_quality >= best_quality - 5.0:
+            return ctc
+    return best
+
+
+def candidate_selection_reason(selected: dict[str, object], candidates: list[dict[str, object]]) -> str:
+    selected_backend = str(selected.get("backend", "unknown"))
+    selected_quality = float(selected.get("quality", -100.0) or -100.0)
+    parts = [f"selected {selected_backend} quality={selected_quality:.1f}"]
+    for candidate in candidates:
+        backend = candidate.get("backend", "unknown")
+        if candidate.get("error"):
+            parts.append(f"{backend} error={candidate.get('error')}")
+            continue
+        report = candidate.get("report")
+        if isinstance(report, dict):
+            quality = candidate_selection_quality(report)
+            if backend == "ctc":
+                parts.append(
+                    "ctc "
+                    f"quality={quality:.1f}, "
+                    f"low={report.get('ctc_low_score_count')}, "
+                    f"very_low={report.get('ctc_very_low_score_count')}, "
+                    f"missing={report.get('ctc_missing_count')}"
+                )
+            elif backend == "whisperx":
+                parts.append(
+                    "whisperx "
+                    f"quality={quality:.1f}, "
+                    f"trusted={report.get('trusted_percent', report.get('matched_percent'))}, "
+                    f"review={report.get('review_required_percent')}, "
+                    f"collapse={report.get('collapse_detected')}"
+                )
+    if selected_backend == "ctc":
+        parts.append("ctc is preferred on near-ties because it is forced to the known lyric order")
+    return "; ".join(parts)
+
+
+def apply_ctc_local_fusion_to_whisperx(
+    whisperx_timestamps: list[float],
+    whisperx_report: dict[str, object],
+    ctc_report: dict[str, object],
+    duration: float,
+    raw_report: dict[str, object] | None = None,
+) -> tuple[list[float], dict[str, object], list[dict[str, object]]]:
+    whisperx_assignments = whisperx_report.get("assignments")
+    ctc_assignments = ctc_report.get("assignments")
+    if not isinstance(whisperx_assignments, list) or not isinstance(ctc_assignments, list):
+        return whisperx_timestamps, whisperx_report, []
+    raw_assignments = raw_report.get("assignments") if isinstance(raw_report, dict) else None
+
+    fused = list(whisperx_timestamps)
+    changes: list[dict[str, object]] = []
+    max_items = min(len(fused), len(whisperx_assignments), len(ctc_assignments))
+    for index in range(max_items):
+        whisperx_item = whisperx_assignments[index]
+        ctc_item = ctc_assignments[index]
+        if not isinstance(whisperx_item, dict) or not isinstance(ctc_item, dict):
+            continue
+        try:
+            whisperx_time = float(whisperx_item.get("timestamp", fused[index]) or fused[index])
+            ctc_time = float(ctc_item.get("timestamp"))
+            ctc_score = float(ctc_item.get("ctc_score", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            continue
+        disagreement = ctc_time - whisperx_time
+        if abs(disagreement) < 1.10:
+            continue
+        previous_time = fused[index - 1] if index > 0 else 0.0
+        next_time = fused[index + 1] if index + 1 < len(fused) else duration
+
+        try:
+            whisperx_score = float(whisperx_item.get("score", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            whisperx_score = 0.0
+        previous_same_segment = False
+        raw_time: float | None = None
+        raw_score: float | None = None
+        raw_ctc_agree = False
+        if isinstance(raw_assignments, list) and index < len(raw_assignments):
+            raw_item = raw_assignments[index]
+            if isinstance(raw_item, dict):
+                try:
+                    raw_time = float(raw_item.get("timestamp"))
+                    raw_score = float(raw_item.get("score", 0.0) or 0.0)
+                    raw_ctc_agree = raw_score >= 0.72 and abs(raw_time - ctc_time) <= 0.75
+                except (TypeError, ValueError):
+                    raw_time = None
+                    raw_score = None
+                    raw_ctc_agree = False
+        raw_between_candidates = (
+            raw_time is not None
+            and raw_score is not None
+            and ctc_score >= 0.08
+            and raw_score >= 0.82
+            and abs(raw_time - whisperx_time) >= 0.25
+            and min(ctc_time, whisperx_time) < raw_time < max(ctc_time, whisperx_time)
+        )
+        raw_high_conflict_anchor = (
+            raw_time is not None
+            and raw_score is not None
+            and raw_score >= 0.95
+            and 1.50 <= abs(raw_time - whisperx_time) <= 3.50
+            and min(ctc_time, whisperx_time) < raw_time < max(ctc_time, whisperx_time)
+            and previous_time + 3.00 < raw_time < next_time - 1.00
+        )
+        target_time = ctc_time
+        target_source = "ctc"
+        if raw_high_conflict_anchor:
+            target_time = raw_time
+            target_source = "raw_asr_conflict_anchor"
+        elif raw_between_candidates and not raw_ctc_agree:
+            target_time = raw_time
+            target_source = "raw_asr_segment_internal"
+        elif ctc_score < 0.08:
+            continue
+        if not (previous_time + 0.10 < target_time < next_time - 0.10):
+            continue
+        if index > 0 and isinstance(whisperx_assignments[index - 1], dict):
+            previous_item = whisperx_assignments[index - 1]
+            previous_same_segment = (
+                previous_item.get("segment") is not None
+                and previous_item.get("segment") == whisperx_item.get("segment")
+                and float(previous_item.get("score", 0.0) or 0.0) < TRUSTED_ALIGNMENT_SCORE
+            )
+        reason = ""
+        if target_source == "raw_asr_conflict_anchor":
+            reason = "raw-high-confidence-anchor-over-whisperx"
+        elif target_source == "raw_asr_segment_internal":
+            reason = "raw-internal-anchor-between-ctc-and-whisperx"
+        elif raw_ctc_agree and abs(disagreement) >= 1.0:
+            reason = "ctc-raw-consensus-over-whisperx"
+        elif abs(disagreement) >= 2.0:
+            reason = "large-whisperx-ctc-disagreement"
+        elif previous_same_segment:
+            reason = "previous-low-confidence-same-asr-segment"
+        elif whisperx_score < 0.85:
+            reason = "low-confidence-whisperx-with-ctc-anchor"
+        if not reason:
+            continue
+
+        fused[index] = target_time
+        changes.append(
+            {
+                "entry": index + 1,
+                "from": round(whisperx_time, 3),
+                "to": round(target_time, 3),
+                "delta": round(disagreement, 3),
+                "reason": reason,
+                "target_source": target_source,
+                "whisperx_score": round(whisperx_score, 3),
+                "ctc_score": round(ctc_score, 6),
+                "ctc_timestamp": round(ctc_time, 3),
+                "raw_timestamp": round(raw_time, 3) if raw_time is not None else None,
+                "raw_score": round(raw_score, 3) if raw_score is not None else None,
+                "raw_ctc_agree": raw_ctc_agree,
+            }
+        )
+
+    if not changes:
+        return whisperx_timestamps, whisperx_report, []
+
+    for index in range(1, len(fused)):
+        fused[index] = max(fused[index], fused[index - 1] + 0.10)
+    for index in range(len(fused)):
+        fused[index] = max(0.0, min(duration, fused[index]))
+
+    report = copy.deepcopy(whisperx_report)
+    assignments = report.get("assignments")
+    if isinstance(assignments, list):
+        for index, timestamp in enumerate(fused):
+            if index < len(assignments) and isinstance(assignments[index], dict):
+                assignments[index]["timestamp"] = round(timestamp, 3)
+                for change in changes:
+                    if change["entry"] == index + 1:
+                        assignments[index]["ctc_local_fusion"] = True
+                        assignments[index]["ctc_local_fusion_reason"] = change["reason"]
+                        assignments[index]["ctc_score"] = change["ctc_score"]
+                        break
+    report["backend"] = "hybrid"
+    report["strategy"] = "auto-candidate-selection-ctc-local-fusion"
+    report["ctc_local_fusion_count"] = len(changes)
+    report["ctc_local_fusions"] = changes
+    report["ctc_local_fusion_source_backend"] = "whisperx+ctc"
+    if isinstance(raw_report, dict):
+        report["raw_asr_diagnostic_backend"] = raw_report.get("backend")
+        report["raw_asr_repeated_tail_after_0s"] = raw_report.get("asr_repeated_tail_after_0s")
+    changes_by_entry = {int(change["entry"]): change for change in changes if isinstance(change.get("entry"), int)}
+    suspicious = report.get("suspicious_alignments")
+    suspicious_items = list(suspicious) if isinstance(suspicious, list) else []
+    fused_entries = {int(change["entry"]) for change in changes if isinstance(change.get("entry"), int)}
+    timing_consensus: list[dict[str, object]] = []
+    if isinstance(assignments, list):
+        for index, assignment in enumerate(assignments):
+            if not isinstance(assignment, dict) or index >= max_items:
+                continue
+            whisperx_item = whisperx_assignments[index]
+            ctc_item = ctc_assignments[index]
+            raw_item = raw_assignments[index] if isinstance(raw_assignments, list) and index < len(raw_assignments) else None
+            if not isinstance(whisperx_item, dict) or not isinstance(ctc_item, dict):
+                continue
+            try:
+                selected_time = float(assignment.get("timestamp", fused[index]) or fused[index])
+                whisperx_time = float(whisperx_item.get("timestamp", selected_time) or selected_time)
+                whisperx_score = float(whisperx_item.get("score", 0.0) or 0.0)
+                ctc_time = float(ctc_item.get("timestamp"))
+                ctc_score = float(ctc_item.get("ctc_score", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                continue
+            raw_time = None
+            raw_score = None
+            if isinstance(raw_item, dict):
+                try:
+                    raw_time = float(raw_item.get("timestamp"))
+                    raw_score = float(raw_item.get("score", 0.0) or 0.0)
+                except (TypeError, ValueError):
+                    raw_time = None
+                    raw_score = None
+            votes: list[tuple[str, float]] = []
+            if whisperx_score >= 0.45 and abs(whisperx_time - selected_time) <= 0.75:
+                votes.append(("whisperx", whisperx_time))
+            if ctc_score >= 0.02 and abs(ctc_time - selected_time) <= 0.75:
+                votes.append(("ctc", ctc_time))
+            if raw_time is not None and raw_score is not None and raw_score >= 0.45 and abs(raw_time - selected_time) <= 0.75:
+                votes.append(("raw", raw_time))
+            vote_times = [time for _, time in votes]
+            consensus = len(votes) >= 2 and (max(vote_times) - min(vote_times) <= 0.75 if vote_times else False)
+            change = changes_by_entry.get(index + 1)
+            raw_high_confidence_anchor = (
+                change is not None
+                and change.get("reason") == "raw-high-confidence-anchor-over-whisperx"
+                and raw_score is not None
+                and raw_score >= 0.95
+                and raw_time is not None
+                and abs(raw_time - selected_time) <= 0.05
+            )
+            if not consensus and not raw_high_confidence_anchor:
+                continue
+            reason = "multi-backend-time-consensus" if consensus else "high-confidence-raw-internal-anchor"
+            assignment["timing_trusted"] = True
+            assignment["timing_trusted_reason"] = reason
+            assignment["timing_trusted_sources"] = [source for source, _ in votes] if consensus else ["raw"]
+            assignment["timing_trusted_candidate_times"] = {
+                "selected": round(selected_time, 3),
+                "whisperx": round(whisperx_time, 3),
+                "ctc": round(ctc_time, 3),
+                "raw": round(raw_time, 3) if raw_time is not None else None,
+            }
+            timing_consensus.append(
+                {
+                    "entry": index + 1,
+                    "reason": reason,
+                    "sources": assignment["timing_trusted_sources"],
+                    "candidate_times": assignment["timing_trusted_candidate_times"],
+                }
+            )
+            if change is not None:
+                change["fusion_trusted"] = True
+                change["fusion_trust_reason"] = reason
+    if timing_consensus:
+        report["timing_consensus_count"] = len(timing_consensus)
+        report["timing_consensus"] = timing_consensus
+    for change in changes:
+        delta = abs(float(change.get("delta", 0.0) or 0.0))
+        fusion_trusted = bool(change.get("fusion_trusted"))
+        severity = "resolved" if fusion_trusted else ("high" if delta >= 2.0 else "medium")
+        flags = ["ctc_local_fusion", str(change["reason"])]
+        if fusion_trusted:
+            flags.append("fusion_trusted")
+        suspicious_items.append(
+            {
+                "entry": change["entry"],
+                "flags": flags,
+                "severity": severity,
+                "review_required": not fusion_trusted,
+                "candidate_timestamps": {
+                    "output": change["to"],
+                    "whisperx": change["from"],
+                    "ctc": change.get("ctc_timestamp"),
+                    "raw": change.get("raw_timestamp"),
+                },
+                "candidate_scores": {
+                    "whisperx": change.get("whisperx_score"),
+                    "ctc": change.get("ctc_score"),
+                    "raw": change.get("raw_score"),
+                },
+                "delta": change["delta"],
+                "fusion_trusted": fusion_trusted,
+                "fusion_trust_reason": change.get("fusion_trust_reason"),
+            }
+        )
+
+    if isinstance(raw_assignments, list):
+        for index in range(min(len(whisperx_assignments), len(ctc_assignments), len(raw_assignments))):
+            entry_number = index + 1
+            if entry_number in fused_entries:
+                continue
+            whisperx_item = whisperx_assignments[index]
+            ctc_item = ctc_assignments[index]
+            raw_item = raw_assignments[index]
+            if not isinstance(whisperx_item, dict) or not isinstance(ctc_item, dict) or not isinstance(raw_item, dict):
+                continue
+            try:
+                whisperx_time = float(whisperx_item.get("timestamp"))
+                whisperx_score = float(whisperx_item.get("score", 0.0) or 0.0)
+                raw_time = float(raw_item.get("timestamp"))
+                raw_score = float(raw_item.get("score", 0.0) or 0.0)
+                ctc_time = float(ctc_item.get("timestamp"))
+                ctc_score = float(ctc_item.get("ctc_score", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                continue
+            raw_whisperx_delta = raw_time - whisperx_time
+            if abs(raw_whisperx_delta) < 1.50:
+                continue
+            if raw_score < 0.82 or whisperx_score < 0.82:
+                continue
+            if abs(ctc_time - whisperx_time) <= 0.75:
+                continue
+            ctc_unusable = ctc_score < 0.08 or abs(ctc_time - raw_time) > 1.25
+            if not ctc_unusable:
+                continue
+            suspicious_items.append(
+                {
+                    "entry": entry_number,
+                    "flags": ["unresolved_backend_disagreement", "raw_whisperx_disagreement"],
+                    "severity": "high",
+                    "review_required": True,
+                    "candidate_timestamps": {
+                        "whisperx": round(whisperx_time, 3),
+                        "raw": round(raw_time, 3),
+                        "ctc": round(ctc_time, 3),
+                    },
+                    "candidate_scores": {
+                        "whisperx": round(whisperx_score, 3),
+                        "raw": round(raw_score, 3),
+                        "ctc": round(ctc_score, 6),
+                    },
+                    "delta": round(raw_whisperx_delta, 3),
+                }
+            )
+    suspicious_items = dedupe_suspicious_alignments(suspicious_items)
+    severity_counts = {"high": 0, "medium": 0, "low": 0}
+    review_required_count = 0
+    for item in suspicious_items:
+        severity = str(item.get("severity", "low"))
+        severity_counts[severity if severity in severity_counts else "low"] += 1
+        if item.get("review_required"):
+            review_required_count += 1
+    report["suspicious_alignment_count"] = len(suspicious_items)
+    report["suspicious_alignment_severity_counts"] = severity_counts
+    report["suspicious_alignments"] = suspicious_items
+    report["review_required_count"] = review_required_count
+    report["review_required"] = review_required_count > 0
+    update_report_confidence_metrics(report)
+    return fused, report, changes
+
+
+def run_auto_backend_competition(
+    audio_path: Path,
+    entries: list[LyricEntry],
+    duration: float,
+    args: argparse.Namespace,
+) -> tuple[list[float], dict[str, object], str]:
+    candidates: list[dict[str, object]] = []
+    diagnostic_candidates: list[dict[str, object]] = []
+
+    if default_ctc_ready():
+        ctc_timestamps, ctc_report, ctc_error = try_ctc_candidate(audio_path, entries, duration, args)
+        candidates.append(
+            {
+                "backend": "ctc",
+                "timestamps": ctc_timestamps,
+                "report": ctc_report,
+                "error": ctc_error,
+            }
+        )
+
+    if default_whisperx_ready():
+        raw_timestamps, raw_report, raw_error = try_whispercpp_diagnostic_candidate(audio_path, entries, duration, args)
+        diagnostic_candidates.append(
+            {
+                "backend": "whispercpp_raw",
+                "timestamps": raw_timestamps,
+                "report": raw_report,
+                "error": raw_error,
+            }
+        )
+
+    if default_whisperx_ready():
+        try:
+            whisperx_timestamps, whisperx_report = run_whisperx_best_candidate(audio_path, entries, duration, args)
+            whisperx_error = None
+        except LrcError as exc:
+            whisperx_timestamps = []
+            whisperx_report = {"backend": "whisperx", "error": str(exc)}
+            whisperx_error = str(exc)
+        candidates.append(
+            {
+                "backend": "whisperx",
+                "timestamps": whisperx_timestamps,
+                "report": whisperx_report,
+                "error": whisperx_error,
+            }
+        )
+
+    selected = choose_alignment_candidate(candidates)
+    selected_report = copy.deepcopy(selected["report"])
+    assert isinstance(selected_report, dict)
+    selected_timestamps = list(selected["timestamps"])
+    selected_backend = str(selected.get("backend", selected_report.get("backend", "auto")))
+    selected_quality = float(selected.get("quality", candidate_selection_quality(selected_report)) or -100.0)
+
+    if selected_backend == "whisperx":
+        ctc_candidate = next(
+            (
+                candidate
+                for candidate in candidates
+                if candidate.get("backend") == "ctc"
+                and not candidate.get("error")
+                and isinstance(candidate.get("report"), dict)
+            ),
+            None,
+        )
+        if ctc_candidate is not None:
+            raw_candidate = next(
+                (
+                    candidate
+                    for candidate in diagnostic_candidates
+                    if candidate.get("backend") == "whispercpp_raw"
+                    and not candidate.get("error")
+                    and isinstance(candidate.get("report"), dict)
+                ),
+                None,
+            )
+            fused_timestamps, fused_report, fusion_changes = apply_ctc_local_fusion_to_whisperx(
+                selected_timestamps,
+                selected_report,
+                ctc_candidate["report"],
+                duration,
+                raw_candidate["report"] if raw_candidate is not None else None,
+            )
+            if fusion_changes:
+                selected_timestamps = fused_timestamps
+                selected_report = fused_report
+                selected_backend = "hybrid"
+                selected_quality = candidate_selection_quality(selected_report)
+    selected_report["backend"] = selected_backend
+    selected_reason = candidate_selection_reason(selected, candidates)
+    if selected_backend == "hybrid":
+        selected_reason = (
+            f"selected hybrid quality={selected_quality:.1f} after local CTC/raw fusion; "
+            f"base selection: {selected_reason}"
+        )
+    selected_report["candidate_selection"] = {
+        "status": "selected",
+        "selected_backend": selected_backend,
+        "selected_quality": round(selected_quality, 3),
+        "selected_reason": selected_reason,
+        "tie_policy": "prefer_ctc_when_quality_is_within_5_points_and_ctc_quality_is_at_least_80",
+        "post_fusion_selected_summary": candidate_summary(selected_report)
+        if selected_backend == "hybrid"
+        else None,
+        "candidates": [
+            candidate_summary(candidate["report"], str(candidate.get("error")) if candidate.get("error") else None)
+            for candidate in candidates
+            if isinstance(candidate.get("report"), dict)
+        ],
+        "diagnostic_candidates": [
+            candidate_summary(candidate["report"], str(candidate.get("error")) if candidate.get("error") else None)
+            for candidate in diagnostic_candidates
+            if isinstance(candidate.get("report"), dict)
+        ],
+    }
+    return selected_timestamps, selected_report, selected_backend
 
 
 def low_confidence_run_start(report: dict[str, object], run_length: int = 4) -> int | None:
@@ -896,6 +2157,24 @@ def match_whisper_segments(entries: list[LyricEntry], segments: list[AsrSegment]
             if previous_score >= scores[entry_index] - 0.05:
                 assignments[entry_index] = previous_index
                 scores[entry_index] = max(scores[entry_index], previous_score)
+                segment_index = previous_index
+                current_text = previous_text
+                break
+        if segment_index is None or segment_index <= 0:
+            continue
+        for previous_index in range(segment_index - 1, max(-1, segment_index - 4), -1):
+            previous_text = segment_texts[previous_index]
+            if not previous_text:
+                continue
+            if segments[segment_index].start - segments[previous_index].start > 5.0:
+                continue
+            if sequence_ratio(previous_text, current_text) < 0.86:
+                continue
+            if not entry_text.startswith(previous_text):
+                continue
+            assignments[entry_index] = previous_index
+            scores[entry_index] = max(scores[entry_index], 0.80)
+            break
 
     timestamps: list[float | None] = [None] * len(entries)
     for index, segment_index in enumerate(assignments):
@@ -904,6 +2183,11 @@ def match_whisper_segments(entries: list[LyricEntry], segments: list[AsrSegment]
             char_time = segment_char_time(entry_texts[index], segments[segment_index])
             if char_time is not None:
                 timestamp = char_time
+            elif not segments[segment_index].chars:
+                raw_entry_text = entries[index].lines[0] if entries[index].lines else entries[index].alignment_text
+                estimated_time = estimated_segment_text_time(entry_texts[index], raw_entry_text, segments[segment_index])
+                if estimated_time is not None:
+                    timestamp = estimated_time
             timestamps[index] = timestamp
 
     # Fill missing lines by interpolation. If a missing line immediately precedes
@@ -986,14 +2270,24 @@ def match_whisper_segments(entries: list[LyricEntry], segments: list[AsrSegment]
         gap_after_segment = next_time - current_segment.end
         gap_after_previous = final[index] - final[index - 1]
         current_duration = current_segment.end - current_segment.start
+        current_text = segment_texts[segment_index]
+        entry_text = normalize_match_text(entries[index].lines[0] if entries[index].lines else entries[index].alignment_text)
+        direct_segment_match = (
+            bool(entry_text)
+            and (
+                entry_text in current_text
+                or current_text in entry_text
+                or lyric_segment_score(entry_text, current_text) >= 0.82
+            )
+        )
         if (
             gap_after_segment < 6.0
             or next_time - final[index] < 8.0
             or gap_after_previous < 4.5
             or current_duration < 2.5
+            or direct_segment_match
         ):
             continue
-        entry_text = normalize_match_text(entries[index].lines[0] if entries[index].lines else entries[index].alignment_text)
         lead_time = min(2.8, max(1.4, 1.0 + len(entry_text) * 0.10))
         shifted = max(final[index - 1] + 0.10, next_time - lead_time)
         if final[index] < shifted < next_time - 0.30:
@@ -1037,7 +2331,12 @@ def match_whisper_segments(entries: list[LyricEntry], segments: list[AsrSegment]
     for index in range(len(final)):
         final[index] = max(0.0, min(duration, final[index]))
 
-    matched = sum(1 for assignment in assignments if assignment is not None)
+    assigned = sum(1 for assignment in assignments if assignment is not None)
+    trusted = sum(
+        1
+        for assignment, score in zip(assignments, scores)
+        if assignment is not None and score >= TRUSTED_ALIGNMENT_SCORE
+    )
     low_confidence = [
         {
             "entry": index + 1,
@@ -1052,10 +2351,17 @@ def match_whisper_segments(entries: list[LyricEntry], segments: list[AsrSegment]
         "backend": "whispercpp",
         "asr_segments": len(segments),
         "timing_entries": len(entries),
-        "matched_entries": matched,
-        "matched_percent": round(matched * 100 / max(1, len(entries)), 2),
+        "assigned_entries": assigned,
+        "assigned_percent": ratio_percent(assigned, len(entries)),
+        "trusted_entries": trusted,
+        "trusted_percent": ratio_percent(trusted, len(entries)),
+        "matched_entries": trusted,
+        "matched_percent": ratio_percent(trusted, len(entries)),
         "low_confidence_entries": low_confidence,
         "low_confidence_count": len(low_confidence),
+        "low_confidence_percent": ratio_percent(len(low_confidence), len(entries)),
+        "review_required_count": 0,
+        "review_required_percent": 0.0,
         "assignments": [
             {
                 "entry": index + 1,
@@ -1091,6 +2397,965 @@ def first_forced_char_time(segment: AsrSegment) -> float:
     return segment.start
 
 
+def first_local_onset(features: AudioFeatures, start: float, end: float, threshold: float = 0.55) -> float | None:
+    if end <= start:
+        return None
+    effective_start = start + 0.20
+    indices = np.flatnonzero((features.frame_times >= effective_start) & (features.frame_times <= end))
+    for index in indices:
+        strength = float(features.onset_strength[index])
+        if strength < threshold:
+            continue
+        left = float(features.onset_strength[index - 1]) if index > 0 else 0.0
+        right = float(features.onset_strength[index + 1]) if index + 1 < len(features.onset_strength) else 0.0
+        if strength >= left and strength >= right:
+            plateau_end = index
+            while (
+                plateau_end + 1 < len(features.onset_strength)
+                and float(features.frame_times[plateau_end + 1]) <= end
+                and abs(float(features.onset_strength[plateau_end + 1]) - strength) <= 1e-6
+            ):
+                plateau_end += 1
+            if plateau_end > index:
+                return float((features.frame_times[index] + features.frame_times[plateau_end]) / 2.0)
+            return float(features.frame_times[index])
+    return None
+
+
+def repair_intro_hallucination(
+    audio_path: Path,
+    entries: list[LyricEntry],
+    timestamps: list[float],
+    report: dict[str, object],
+    duration: float,
+) -> tuple[list[float], list[dict[str, object]]]:
+    assignments = report.get("assignments")
+    if not isinstance(assignments, list) or len(timestamps) < 3:
+        return timestamps, []
+    first_assignment = assignments[0] if isinstance(assignments[0], dict) else {}
+    if assignment_score(first_assignment) >= COLLAPSE_SEGMENT_SCORE:
+        return timestamps, []
+    if not first_assignment.get("borrowed") and first_assignment.get("segment") is None:
+        return timestamps, []
+    if timestamps[0] >= 10.0:
+        return timestamps, []
+
+    anchor_index: int | None = None
+    for index in range(1, min(len(timestamps), len(assignments))):
+        assignment = assignments[index] if isinstance(assignments[index], dict) else {}
+        if assignment_score(assignment) >= TRUSTED_ALIGNMENT_SCORE and timestamps[index] >= 20.0:
+            anchor_index = index
+            break
+    if anchor_index is None or anchor_index < 2:
+        return timestamps, []
+
+    anchor_time = timestamps[anchor_index]
+    prefix_count = anchor_index
+    search_start = max(0.0, anchor_time - min(12.0, 4.0 + prefix_count * 4.0))
+    search_end = max(search_start + 0.2, anchor_time - 6.0)
+    features = analyze_audio(audio_path, duration)
+    repaired_start = first_local_onset(features, search_start, search_end)
+    if repaired_start is None:
+        return timestamps, []
+    if repaired_start <= timestamps[0] + 1.0:
+        return timestamps, []
+
+    repaired = list(timestamps)
+    changes: list[dict[str, object]] = []
+    interval = max(0.2, anchor_time - repaired_start)
+    for index in range(prefix_count):
+        fraction = index / max(1, prefix_count)
+        new_time = repaired_start + interval * fraction
+        if index > 0:
+            new_time = max(new_time, repaired[index - 1] + 0.10)
+        new_time = min(new_time, anchor_time - 0.10 * (prefix_count - index))
+        changes.append(
+            {
+                "entry": index + 1,
+                "from": round(repaired[index], 3),
+                "to": round(new_time, 3),
+                "reason": "intro-hallucination-prefix-redistribution",
+                "anchor_entry": anchor_index + 1,
+                "anchor_time": round(anchor_time, 3),
+                "search_window": [round(search_start, 3), round(search_end, 3)],
+                "lyric": entries[index].lines[0] if index < len(entries) and entries[index].lines else "",
+            }
+        )
+        repaired[index] = new_time
+
+    report["intro_hallucination_repair_count"] = len(changes)
+    report["intro_hallucination_repairs"] = changes
+    return repaired, changes
+
+
+def repair_long_segment_hallucinations(
+    audio_path: Path,
+    entries: list[LyricEntry],
+    timestamps: list[float],
+    report: dict[str, object],
+    raw_segments: list[AsrSegment],
+    duration: float,
+) -> tuple[list[float], list[dict[str, object]]]:
+    assignments = report.get("assignments")
+    if not isinstance(assignments, list) or len(timestamps) < 3:
+        return timestamps, []
+    features: AudioFeatures | None = None
+    repaired = list(timestamps)
+    changes: list[dict[str, object]] = []
+
+    for index in range(1, min(len(repaired) - 1, len(assignments))):
+        assignment = assignments[index] if isinstance(assignments[index], dict) else {}
+        segment_number = assignment.get("segment")
+        if not isinstance(segment_number, int):
+            continue
+        segment_index = segment_number - 1
+        if not (0 <= segment_index < len(raw_segments)):
+            continue
+        segment = raw_segments[segment_index]
+        segment_duration = segment.end - segment.start
+        next_time = repaired[index + 1]
+        score = assignment_score(assignment)
+        if not (
+            segment_duration >= 18.0
+            and score >= 0.80
+            and next_time - repaired[index] >= 12.0
+            and abs(next_time - segment.end) <= 0.30
+        ):
+            continue
+        text_length = len(normalize_match_text(entry_sung_text(entries[index])))
+        lead = min(2.2, max(1.4, text_length * 0.055))
+        new_time = max(repaired[index - 1] + 0.10, next_time - lead)
+        if not (repaired[index] + 5.0 < new_time < next_time - 0.20):
+            continue
+        changes.append(
+            {
+                "entry": index + 1,
+                "from": round(repaired[index], 3),
+                "to": round(new_time, 3),
+                "reason": "long-segment-pre-vocal-hallucination",
+                "segment": segment_number,
+                "segment_duration": round(segment_duration, 3),
+                "next_anchor_time": round(next_time, 3),
+                "lyric": entries[index].lines[0] if entries[index].lines else "",
+            }
+        )
+        repaired[index] = new_time
+
+        next_index = index + 1
+        if next_index + 1 >= len(repaired):
+            continue
+        next_assignment = assignments[next_index] if isinstance(assignments[next_index], dict) else {}
+        if assignment_score(next_assignment) < TRUSTED_ALIGNMENT_SCORE:
+            continue
+        if features is None:
+            features = analyze_audio(audio_path, duration)
+        search_start = repaired[next_index] + 1.20
+        search_end = min(repaired[next_index] + 2.60, repaired[next_index + 1] - 0.10)
+        onset = first_local_onset(features, search_start, search_end, threshold=0.55)
+        if onset is None or not (repaired[next_index] + 0.40 < onset < repaired[next_index + 1] - 0.10):
+            continue
+        changes.append(
+            {
+                "entry": next_index + 1,
+                "from": round(repaired[next_index], 3),
+                "to": round(onset, 3),
+                "reason": "post-long-segment-local-onset",
+                "previous_repaired_entry": index + 1,
+                "search_window": [round(search_start, 3), round(search_end, 3)],
+                "lyric": entries[next_index].lines[0] if entries[next_index].lines else "",
+            }
+        )
+        repaired[next_index] = onset
+
+    if changes:
+        report["long_segment_repair_count"] = len(changes)
+        report["long_segment_repairs"] = changes
+    return repaired, changes
+
+
+def sync_report_assignment_timestamps(report: dict[str, object], timestamps: list[float]) -> None:
+    assignments = report.get("assignments")
+    if not isinstance(assignments, list):
+        return
+    for index, timestamp in enumerate(timestamps):
+        if index < len(assignments) and isinstance(assignments[index], dict):
+            assignments[index]["timestamp"] = round(timestamp, 3)
+
+
+def low_confidence_tail_start(report: dict[str, object], min_remaining: int = 4) -> int | None:
+    assignments = report.get("assignments")
+    if not isinstance(assignments, list):
+        return None
+    for index in range(max(1, len(assignments) - 12), len(assignments) - min_remaining + 1):
+        remaining = assignments[index:]
+        low_count = sum(1 for item in remaining if assignment_score(item) < TRUSTED_ALIGNMENT_SCORE)
+        if low_count < max(3, math.ceil(len(remaining) * 0.55)):
+            continue
+        consecutive_low = 0
+        for item in remaining:
+            if assignment_score(item) < TRUSTED_ALIGNMENT_SCORE:
+                consecutive_low += 1
+            else:
+                break
+        if consecutive_low >= 2:
+            return index
+    return None
+
+
+def first_sustained_onset(
+    features: AudioFeatures,
+    start: float,
+    end: float,
+    onset_threshold: float = 0.70,
+    median_rms_floor: float = -18.0,
+    sustain_seconds: float = 3.0,
+) -> float | None:
+    if end <= start:
+        return None
+    frame_times = features.frame_times
+    mask = (frame_times >= start) & (frame_times <= end)
+    for index in np.flatnonzero(mask):
+        strength = float(features.onset_strength[index])
+        if strength < onset_threshold:
+            continue
+        time = float(frame_times[index])
+        sustain_mask = (frame_times >= time) & (frame_times <= min(time + sustain_seconds, features.duration))
+        if not np.any(sustain_mask):
+            continue
+        if float(np.median(features.rms_db[sustain_mask])) >= median_rms_floor:
+            return time
+    return None
+
+
+def has_repeated_asr_tail(segments: list[AsrSegment], after_time: float, min_run: int = 6) -> bool:
+    run_text = ""
+    run_count = 0
+    for segment in segments:
+        if segment.start < after_time:
+            continue
+        normalized = normalize_match_text(segment.text)
+        if len(normalized) < 8:
+            run_text = ""
+            run_count = 0
+            continue
+        if run_text and sequence_ratio(run_text, normalized) >= 0.86:
+            run_count += 1
+        else:
+            run_text = normalized
+            run_count = 1
+        if run_count >= min_run:
+            return True
+    return False
+
+
+def repair_tail_hallucination(
+    audio_path: Path,
+    entries: list[LyricEntry],
+    timestamps: list[float],
+    report: dict[str, object],
+    segments: list[AsrSegment],
+    duration: float,
+) -> tuple[list[float], list[dict[str, object]]]:
+    tail_start = low_confidence_tail_start(report)
+    if tail_start is None or tail_start <= 0:
+        return timestamps, []
+
+    assignments = report.get("assignments")
+    if not isinstance(assignments, list):
+        return timestamps, []
+    anchor_time = timestamps[tail_start - 1]
+    if anchor_time <= 0.0:
+        return timestamps, []
+    if not has_repeated_asr_tail(segments, anchor_time + 4.0):
+        report["tail_hallucination_repair"] = {
+            "status": "skipped",
+            "reason": "no-repeated-asr-tail",
+            "candidate_start_entry": tail_start + 1,
+            "anchor_entry": tail_start,
+            "anchor_time": round(anchor_time, 3),
+        }
+        return timestamps, []
+
+    features = analyze_audio(audio_path, duration)
+    search_start = min(duration, anchor_time + 8.0)
+    search_end = min(duration, anchor_time + 58.0)
+    tail_time = first_sustained_onset(features, search_start, search_end)
+    if tail_time is None:
+        tail_time = min(duration, anchor_time + 12.0)
+    if tail_time - anchor_time < 12.0:
+        report["tail_hallucination_repair"] = {
+            "status": "skipped",
+            "reason": "tail-onset-too-close-to-anchor",
+            "candidate_start_entry": tail_start + 1,
+            "anchor_entry": tail_start,
+            "anchor_time": round(anchor_time, 3),
+            "tail_start_time": round(tail_time, 3),
+        }
+        return timestamps, []
+
+    tail_end = duration
+    if features.segments:
+        tail_end = max(tail_time + 1.0, min(duration, features.segments[-1][1]))
+    if tail_end - tail_time < max(8.0, (len(entries) - tail_start) * 1.4):
+        return timestamps, []
+
+    tail_times = weighted_rough_times(entries[tail_start:], tail_time, tail_end)
+    tail_times = snap_to_onsets(tail_times, features, window_seconds=0.90, min_gap=0.35)
+    repaired = list(timestamps)
+    changes: list[dict[str, object]] = []
+    for offset, entry_index in enumerate(range(tail_start, len(entries))):
+        new_time = max(repaired[entry_index - 1] + 0.35 if entry_index > 0 else 0.0, tail_times[offset])
+        old_time = repaired[entry_index]
+        repaired[entry_index] = min(duration, new_time)
+        if entry_index < len(assignments) and isinstance(assignments[entry_index], dict):
+            assignment = assignments[entry_index]
+            assignment["timestamp"] = round(repaired[entry_index], 3)
+            assignment["timing_repair"] = "tail-hallucination-acoustic"
+            assignment["timing_repair_source"] = "sustained-onset-weighted-tail"
+            assignment["score"] = max(assignment_score(assignment), 0.70)
+        changes.append(
+            {
+                "entry": entry_index + 1,
+                "from": round(old_time, 3),
+                "to": round(repaired[entry_index], 3),
+                "reason": "tail-hallucination-acoustic",
+                "lyric": entries[entry_index].lines[0] if entries[entry_index].lines else "",
+            }
+        )
+
+    report["tail_hallucination_repair"] = {
+        "status": "applied",
+        "start_entry": tail_start + 1,
+        "anchor_entry": tail_start,
+        "anchor_time": round(anchor_time, 3),
+        "tail_start_time": round(tail_time, 3),
+        "tail_end_time": round(tail_end, 3),
+        "entries": len(changes),
+        "method": "sustained-onset-weighted-tail",
+    }
+    report["tail_hallucination_repairs"] = changes
+    update_report_confidence_metrics(report)
+    return repaired, changes
+
+
+def blend_tail_repair_with_forced(
+    entries: list[LyricEntry],
+    timestamps: list[float],
+    report: dict[str, object],
+    forced_segments: list[AsrSegment],
+    duration: float,
+) -> tuple[list[float], list[dict[str, object]]]:
+    assignments = report.get("assignments")
+    if not isinstance(assignments, list):
+        return timestamps, []
+    refined = list(timestamps)
+    changes: list[dict[str, object]] = []
+    for index, assignment in enumerate(assignments):
+        if not isinstance(assignment, dict):
+            continue
+        if assignment.get("timing_repair") != "tail-hallucination-acoustic":
+            continue
+        if index >= len(forced_segments):
+            continue
+        forced_time = first_forced_char_time(forced_segments[index])
+        current_time = refined[index]
+        previous_time = refined[index - 1] if index > 0 else 0.0
+        next_time = refined[index + 1] if index + 1 < len(refined) else duration
+        if not (previous_time + 0.35 < forced_time < next_time - 0.35):
+            continue
+        lead = current_time - forced_time
+        if abs(lead) <= 0.35:
+            candidate = forced_time
+        elif 0.35 < lead <= 6.0:
+            candidate = current_time - min(1.60, lead * 0.34)
+        else:
+            continue
+        if not (previous_time + 0.35 < candidate < next_time - 0.35):
+            continue
+        refined[index] = candidate
+        assignment["timestamp"] = round(candidate, 3)
+        assignment["timing_repair_source"] = "sustained-onset-weighted-tail+forced-blend"
+        changes.append(
+            {
+                "entry": index + 1,
+                "from": round(current_time, 3),
+                "to": round(candidate, 3),
+                "forced_first": round(forced_time, 3),
+                "reason": "tail-forced-blend",
+                "lyric": entries[index].lines[0] if entries[index].lines else "",
+            }
+        )
+
+    if changes:
+        existing = report.get("tail_hallucination_repair")
+        if isinstance(existing, dict):
+            existing["method"] = "sustained-onset-weighted-tail+forced-blend"
+            existing["forced_blend_count"] = len(changes)
+        report["tail_forced_blend_count"] = len(changes)
+        report["tail_forced_blends"] = changes
+        update_report_confidence_metrics(report)
+    return refined, changes
+
+
+def assignment_has_timing(item: object) -> bool:
+    if not isinstance(item, dict):
+        return False
+    return item.get("segment") is not None or item.get("timing_repair") is not None
+
+
+def assignment_score(item: object) -> float:
+    if not isinstance(item, dict):
+        return 0.0
+    try:
+        return float(item.get("score", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def assignment_is_trusted(item: object) -> bool:
+    if not assignment_has_timing(item):
+        return False
+    if not isinstance(item, dict):
+        return False
+    return assignment_score(item) >= TRUSTED_ALIGNMENT_SCORE or bool(item.get("timing_trusted"))
+
+
+def update_report_confidence_metrics(report: dict[str, object]) -> None:
+    assignments = report.get("assignments")
+    if not isinstance(assignments, list):
+        return
+    timing_entries = int(report.get("timing_entries", len(assignments)) or len(assignments))
+    assigned_entries = sum(
+        1 for item in assignments if assignment_has_timing(item)
+    )
+    trusted_entries = sum(
+        1
+        for item in assignments
+        if assignment_is_trusted(item)
+    )
+    low_confidence_count = sum(
+        1
+        for item in assignments
+        if not assignment_is_trusted(item)
+    )
+    low_confidence_entries = report.get("low_confidence_entries")
+    if isinstance(low_confidence_entries, list):
+        filtered_low_confidence: list[object] = []
+        for item in low_confidence_entries:
+            if not isinstance(item, dict):
+                continue
+            entry_number = item.get("entry")
+            if not isinstance(entry_number, int):
+                filtered_low_confidence.append(item)
+                continue
+            entry_index = entry_number - 1
+            if not (0 <= entry_index < len(assignments)):
+                filtered_low_confidence.append(item)
+                continue
+            assignment = assignments[entry_index]
+            if not assignment_is_trusted(assignment):
+                filtered_low_confidence.append(item)
+        report["low_confidence_entries"] = filtered_low_confidence
+        low_confidence_count = len(filtered_low_confidence)
+    review_required_count = int(report.get("review_required_count", 0) or 0)
+    report["assigned_entries"] = assigned_entries
+    report["assigned_percent"] = ratio_percent(assigned_entries, timing_entries)
+    report["trusted_entries"] = trusted_entries
+    report["trusted_percent"] = ratio_percent(trusted_entries, timing_entries)
+    report["low_confidence_count"] = low_confidence_count
+    report["low_confidence_percent"] = ratio_percent(low_confidence_count, timing_entries)
+    report["timing_trusted_entries"] = sum(
+        1 for item in assignments if isinstance(item, dict) and item.get("timing_trusted")
+    )
+    report["review_required_percent"] = ratio_percent(review_required_count, timing_entries)
+    report["matched_entries"] = trusted_entries
+    report["matched_percent"] = report["trusted_percent"]
+
+
+def match_anchor_entries(entries: list[LyricEntry], anchors: list[AnchorHint]) -> list[tuple[int, LyricEntry]]:
+    normalized_entries = [normalize_match_text(entry_sung_text(entry)) for entry in entries]
+    used: set[int] = set()
+    previous_index = -1
+    matches: list[tuple[int, LyricEntry]] = []
+    for hint in anchors:
+        anchor = hint.entry
+        normalized_anchor = normalize_match_text(entry_sung_text(anchor))
+        if not normalized_anchor:
+            continue
+        if hint.entry_number is not None:
+            chosen = hint.entry_number - 1
+            if not (0 <= chosen < len(entries)):
+                raise LrcError(
+                    f"Anchor hint entry={hint.entry_number} is outside lyric range 1..{len(entries)}"
+                )
+            if chosen in used:
+                raise LrcError(f"Duplicate anchor hint for entry={hint.entry_number}")
+            if normalized_entries[chosen] != normalized_anchor:
+                raise LrcError(
+                    "Anchor hint entry="
+                    f"{hint.entry_number} text mismatch: expected {entry_sung_text(entries[chosen])!r}, "
+                    f"got {entry_sung_text(anchor)!r}"
+                )
+            used.add(chosen)
+            previous_index = chosen
+            matches.append((chosen, anchor))
+            continue
+        candidate_indexes = [
+            index
+            for index, normalized_entry in enumerate(normalized_entries)
+            if index not in used and normalized_entry == normalized_anchor
+        ]
+        if not candidate_indexes:
+            raise LrcError(f"Anchor hint line does not match any lyric entry: {entry_sung_text(anchor)!r}")
+        forward_indexes = [index for index in candidate_indexes if index > previous_index]
+        chosen = forward_indexes[0] if forward_indexes else candidate_indexes[0]
+        used.add(chosen)
+        previous_index = chosen
+        matches.append((chosen, anchor))
+    return matches
+
+
+def apply_anchor_hints(
+    entries: list[LyricEntry],
+    timestamps: list[float],
+    report: dict[str, object],
+    anchor_path: Path | None,
+    duration: float,
+) -> tuple[list[float], list[dict[str, object]]]:
+    if anchor_path is None:
+        report["anchor_hints"] = {"enabled": False}
+        return timestamps, []
+    anchor_entries, skipped_markers = load_anchor_hints(anchor_path)
+    matches = match_anchor_entries(entries, anchor_entries)
+    refined = list(timestamps)
+    assignments = report.get("assignments")
+    suspicious_items = report.get("suspicious_alignments")
+    low_confidence_entries = report.get("low_confidence_entries")
+    changes: list[dict[str, object]] = []
+    anchored_entries: set[int] = set()
+
+    for index, anchor in matches:
+        if anchor.source_time_cs is None:
+            continue
+        anchor_time = max(0.0, min(duration, float(anchor.source_time_cs) / 100.0))
+        previous_time = refined[index - 1] if index > 0 else 0.0
+        next_time = refined[index + 1] if index + 1 < len(refined) else duration
+        if index > 0 and anchor_time <= previous_time + 0.05:
+            raise LrcError(
+                f"Anchor hint for entry {index + 1} is not after previous timestamp: {format_lrc_time(anchor_time)}"
+            )
+        if index + 1 < len(refined) and anchor_time >= next_time - 0.05:
+            raise LrcError(
+                f"Anchor hint for entry {index + 1} is not before next timestamp: {format_lrc_time(anchor_time)}"
+            )
+        original_time = refined[index]
+        refined[index] = anchor_time
+        anchored_entries.add(index + 1)
+        changes.append(
+            {
+                "entry": index + 1,
+                "text": entry_sung_text(entries[index]),
+                "from": round(original_time, 3),
+                "to": round(anchor_time, 3),
+                "delta": round(anchor_time - original_time, 3),
+                "anchor_path": str(anchor_path),
+            }
+        )
+        if isinstance(assignments, list) and index < len(assignments) and isinstance(assignments[index], dict):
+            assignment = assignments[index]
+            assignment["timestamp"] = round(anchor_time, 3)
+            assignment["manual_anchor_hint"] = True
+            assignment["manual_anchor_path"] = str(anchor_path)
+            assignment["manual_anchor_original_timestamp"] = round(original_time, 3)
+            assignment["score"] = max(assignment_score(assignment), 1.0)
+            assignment["timing_repair"] = "manual-anchor-hint"
+            assignment["timing_repair_source"] = str(anchor_path)
+
+    if isinstance(suspicious_items, list):
+        for item in suspicious_items:
+            if not isinstance(item, dict) or item.get("entry") not in anchored_entries:
+                continue
+            item["manual_anchor_resolved"] = True
+            item["review_required"] = False
+            item["original_severity"] = item.get("severity")
+            item["severity"] = "resolved"
+            flags = item.get("flags")
+            if isinstance(flags, list):
+                item["flags"] = list(dict.fromkeys([*flags, "manual_anchor_resolved"]))
+            candidates = item.get("candidate_timestamps")
+            if isinstance(candidates, dict):
+                entry_number = int(item["entry"])
+                candidates["manual_anchor"] = round(refined[entry_number - 1], 3)
+        report["suspicious_alignments"] = suspicious_items
+
+    if isinstance(low_confidence_entries, list):
+        report["low_confidence_entries"] = [
+            item
+            for item in low_confidence_entries
+            if not (isinstance(item, dict) and item.get("entry") in anchored_entries)
+        ]
+
+    report["anchor_hints"] = {
+        "enabled": True,
+        "path": str(anchor_path),
+        "applied_count": len(changes),
+        "skipped_marker_entries": skipped_markers,
+    }
+    report["anchor_hint_count"] = len(changes)
+    report["anchor_hint_changes"] = changes
+    if isinstance(suspicious_items, list):
+        severity_counts = {
+            "high": sum(1 for item in suspicious_items if isinstance(item, dict) and item.get("severity") == "high"),
+            "medium": sum(1 for item in suspicious_items if isinstance(item, dict) and item.get("severity") == "medium"),
+            "low": sum(1 for item in suspicious_items if isinstance(item, dict) and item.get("severity") == "low"),
+        }
+        report["suspicious_alignment_severity_counts"] = severity_counts
+        report["review_required_count"] = sum(
+            1 for item in suspicious_items if isinstance(item, dict) and item.get("review_required")
+        )
+        report["review_required"] = int(report["review_required_count"]) > 0
+    update_report_confidence_metrics(report)
+    selection = report.get("candidate_selection")
+    if isinstance(selection, dict):
+        post_anchor_summary = candidate_summary(report)
+        report["post_anchor_selected_summary"] = post_anchor_summary
+        selection["post_anchor_selected_summary"] = post_anchor_summary
+        selection["post_anchor_note"] = "Manual anchor hints were applied after backend selection."
+    return refined, changes
+
+
+def severity_rank(severity: str) -> int:
+    return {"low": 0, "medium": 1, "high": 2}.get(severity, 0)
+
+
+def dedupe_suspicious_alignments(items: list[dict[str, object]]) -> list[dict[str, object]]:
+    by_entry: dict[int, dict[str, object]] = {}
+    for item in items:
+        entry = item.get("entry")
+        if not isinstance(entry, int):
+            continue
+        existing = by_entry.get(entry)
+        if existing is None:
+            merged = copy.deepcopy(item)
+            merged["flags"] = list(dict.fromkeys(merged.get("flags", [])))
+            by_entry[entry] = merged
+            continue
+        existing_flags = list(existing.get("flags", []))
+        incoming_flags = list(item.get("flags", []))
+        existing["flags"] = list(dict.fromkeys(existing_flags + incoming_flags))
+        existing_severity = str(existing.get("severity", "low"))
+        incoming_severity = str(item.get("severity", "low"))
+        if severity_rank(incoming_severity) > severity_rank(existing_severity):
+            existing["severity"] = incoming_severity
+        existing["review_required"] = bool(existing.get("review_required")) or bool(item.get("review_required"))
+        for key in ("candidate_timestamps", "candidate_scores"):
+            incoming_value = item.get(key)
+            if isinstance(incoming_value, dict):
+                existing_value = existing.get(key)
+                merged_value = dict(existing_value) if isinstance(existing_value, dict) else {}
+                merged_value.update(incoming_value)
+                existing[key] = merged_value
+        for key in ("delta", "ctc_score", "raw_score", "whisperx_score"):
+            if key in item:
+                existing[key] = item[key]
+    return [by_entry[entry] for entry in sorted(by_entry)]
+
+
+def find_alignment_collapse_runs(assignments: list[object]) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    segment_runs: list[dict[str, object]] = []
+    zero_runs: list[dict[str, object]] = []
+
+    index = 0
+    while index < len(assignments):
+        item = assignments[index]
+        segment = item.get("segment") if isinstance(item, dict) else None
+        score = assignment_score(item)
+        if segment is None or score >= COLLAPSE_SEGMENT_SCORE:
+            index += 1
+            continue
+        start = index
+        while index < len(assignments):
+            current = assignments[index]
+            current_segment = current.get("segment") if isinstance(current, dict) else None
+            if current_segment != segment or assignment_score(current) >= COLLAPSE_SEGMENT_SCORE:
+                break
+            index += 1
+        if index - start >= 4:
+            segment_runs.append(
+                {
+                    "start_entry": start + 1,
+                    "end_entry": index,
+                    "segment": segment,
+                    "length": index - start,
+                    "flag": "segment_collapse",
+                }
+            )
+
+    index = 0
+    while index < len(assignments):
+        if assignment_score(assignments[index]) != 0.0:
+            index += 1
+            continue
+        start = index
+        while index < len(assignments) and assignment_score(assignments[index]) == 0.0:
+            index += 1
+        if index - start >= 6:
+            zero_runs.append(
+                {
+                    "start_entry": start + 1,
+                    "end_entry": index,
+                    "length": index - start,
+                    "flag": "alignment_collapse",
+                }
+            )
+    return segment_runs, zero_runs
+
+
+def add_alignment_diagnostics(
+    entries: list[LyricEntry],
+    timestamps: list[float],
+    report: dict[str, object],
+    forced_segments: list[AsrSegment],
+    duration: float,
+) -> None:
+    assignments = report.get("assignments")
+    if not isinstance(assignments, list):
+        return
+
+    forced_times = [first_forced_char_time(segment) for segment in forced_segments]
+    anchor_profiles = [lyric_anchor_profile(entry) for entry in entries]
+    suspicious: list[dict[str, object]] = []
+    suspicious_indexes: set[int] = set()
+    high_risk_indexes: set[int] = set()
+
+    for index, entry in enumerate(entries):
+        raw_text = entry_sung_text(entry)
+        entry_text = normalize_match_text(raw_text)
+        if not entry_text:
+            continue
+        timestamp = timestamps[index] if index < len(timestamps) else 0.0
+        previous_time = timestamps[index - 1] if index > 0 else 0.0
+        next_time = timestamps[index + 1] if index + 1 < len(timestamps) else duration
+        forced_time = forced_times[index] if index < len(forced_times) else None
+        assignment = assignments[index] if index < len(assignments) and isinstance(assignments[index], dict) else {}
+        score = float(assignment.get("score", 0.0) or 0.0) if isinstance(assignment, dict) else 0.0
+        gap_before = timestamp - previous_time if index > 0 else timestamp
+        gap_after = next_time - timestamp if index + 1 < len(timestamps) else duration - timestamp
+        is_long = len(entry_text) >= 18 or len(raw_text) >= 24
+        flags: list[str] = []
+        candidate_timestamps: dict[str, float] = {
+            "output": round(timestamp, 3),
+        }
+
+        if forced_time is not None:
+            candidate_timestamps["whisperx_forced_first"] = round(forced_time, 3)
+            disagreement = abs(timestamp - forced_time)
+            if disagreement >= (2.0 if is_long else 1.25):
+                flags.append("candidate_disagreement")
+            if is_long and timestamp - forced_time >= 3.0:
+                flags.append("possible_midline_anchor")
+            if not is_long and gap_before <= 3.5 and disagreement >= 0.70:
+                flags.append("close_neighbor_onset_uncertain")
+            if forced_time <= previous_time + 0.20:
+                flags.append("forced_time_overlaps_previous_line")
+        borrowed_assignment = bool(assignment.get("borrowed")) if isinstance(assignment, dict) else False
+        if index == 0 and borrowed_assignment:
+            next_gap = timestamps[1] - timestamp if len(timestamps) > 1 else 0.0
+            if timestamp < 10.0 and next_gap >= 10.0:
+                flags.append("possible_instrumental_intro_hallucination")
+
+        if is_long and gap_after <= 3.5:
+            flags.append("long_line_close_to_next_entry")
+        if is_long and gap_before >= 8.0 and gap_after >= 6.0:
+            flags.append("long_line_wide_window")
+        if is_long and score < 0.88:
+            flags.append("long_line_not_high_confidence")
+
+        if flags:
+            severity = "low"
+            if "possible_midline_anchor" in flags or "forced_time_overlaps_previous_line" in flags:
+                severity = "high"
+            if "possible_instrumental_intro_hallucination" in flags:
+                severity = "high"
+            elif "long_line_close_to_next_entry" in flags or "close_neighbor_onset_uncertain" in flags:
+                severity = "medium"
+            review_required = severity in ("high", "medium")
+            suspicious_indexes.add(index)
+            if severity == "high":
+                high_risk_indexes.add(index)
+            suspicious.append(
+                {
+                    "entry": index + 1,
+                    "text": raw_text,
+                    "flags": flags,
+                    "severity": severity,
+                    "score": round(score, 3),
+                    "anchor_profile": anchor_profiles[index],
+                    "candidate_timestamps": candidate_timestamps,
+                    "gap_before": round(gap_before, 3),
+                    "gap_after": round(gap_after, 3),
+                    "review_required": review_required,
+                }
+            )
+
+    for index, entry in enumerate(entries):
+        if index == 0 or index in suspicious_indexes or index - 1 not in suspicious_indexes:
+            continue
+        previous_time = timestamps[index - 1] if index > 0 else 0.0
+        timestamp = timestamps[index] if index < len(timestamps) else previous_time
+        if timestamp - previous_time > 3.5:
+            continue
+        raw_text = entry_sung_text(entry)
+        assignment = assignments[index] if index < len(assignments) and isinstance(assignments[index], dict) else {}
+        score = float(assignment.get("score", 0.0) or 0.0) if isinstance(assignment, dict) else 0.0
+        severity = "high" if index - 1 in high_risk_indexes else "medium"
+        suspicious_indexes.add(index)
+        suspicious.append(
+            {
+                "entry": index + 1,
+                "text": raw_text,
+                "flags": ["follows_suspicious_long_line", "possible_bad_split_boundary"],
+                "severity": severity,
+                "score": round(score, 3),
+                "anchor_profile": anchor_profiles[index],
+                "candidate_timestamps": {
+                    "output": round(timestamp, 3),
+                },
+                "gap_before": round(timestamp - previous_time, 3),
+                "gap_after": round((timestamps[index + 1] if index + 1 < len(timestamps) else duration) - timestamp, 3),
+                "review_required": True,
+            }
+        )
+
+    segment_collapse_runs, alignment_collapse_runs = find_alignment_collapse_runs(assignments)
+    collapse_indexes: set[int] = set()
+    for run in segment_collapse_runs:
+        for entry_number in range(int(run["start_entry"]), int(run["end_entry"]) + 1):
+            collapse_indexes.add(entry_number - 1)
+    for run in alignment_collapse_runs:
+        for entry_number in range(int(run["start_entry"]), int(run["end_entry"]) + 1):
+            collapse_indexes.add(entry_number - 1)
+    for index in sorted(collapse_indexes):
+        raw_text = entry_sung_text(entries[index]) if index < len(entries) else ""
+        assignment = assignments[index] if index < len(assignments) and isinstance(assignments[index], dict) else {}
+        score = assignment_score(assignment)
+        flags = []
+        if any(int(run["start_entry"]) <= index + 1 <= int(run["end_entry"]) for run in segment_collapse_runs):
+            flags.append("segment_collapse")
+        if any(int(run["start_entry"]) <= index + 1 <= int(run["end_entry"]) for run in alignment_collapse_runs):
+            flags.append("alignment_collapse")
+        suspicious.append(
+            {
+                "entry": index + 1,
+                "text": raw_text,
+                "flags": flags,
+                "severity": "high",
+                "score": round(score, 3),
+                "anchor_profile": anchor_profiles[index] if index < len(anchor_profiles) else {},
+                "candidate_timestamps": {
+                    "output": round(timestamps[index], 3) if index < len(timestamps) else 0.0,
+                },
+                "gap_before": round((timestamps[index] - timestamps[index - 1]) if 0 < index < len(timestamps) else (timestamps[index] if index < len(timestamps) else 0.0), 3),
+                "gap_after": round((timestamps[index + 1] if index + 1 < len(timestamps) else duration) - (timestamps[index] if index < len(timestamps) else 0.0), 3),
+                "review_required": True,
+            }
+        )
+
+    long_repairs = report.get("long_segment_repairs")
+    if isinstance(long_repairs, list) and long_repairs:
+        repaired_entries = [
+            int(item.get("entry"))
+            for item in long_repairs
+            if isinstance(item, dict) and isinstance(item.get("entry"), int)
+        ]
+        if repaired_entries:
+            start_entry = max(repaired_entries) + 1
+            end_entry = min(len(entries), start_entry + 8)
+            for entry_number in range(start_entry, end_entry + 1):
+                index = entry_number - 1
+                if not (0 <= index < len(entries)):
+                    continue
+                assignment = assignments[index] if index < len(assignments) and isinstance(assignments[index], dict) else {}
+                suspicious.append(
+                    {
+                        "entry": entry_number,
+                        "text": entry_sung_text(entries[index]),
+                        "flags": ["post_long_segment_region_uncertain"],
+                        "severity": "medium",
+                        "score": round(assignment_score(assignment), 3),
+                        "anchor_profile": anchor_profiles[index] if index < len(anchor_profiles) else {},
+                        "candidate_timestamps": {
+                            "output": round(timestamps[index], 3) if index < len(timestamps) else 0.0,
+                        },
+                        "gap_before": round((timestamps[index] - timestamps[index - 1]) if index > 0 else timestamps[index], 3),
+                        "gap_after": round((timestamps[index + 1] if index + 1 < len(timestamps) else duration) - timestamps[index], 3),
+                        "review_required": True,
+                    }
+                )
+
+    vocal_regions = report.get("vocal_regions")
+    vocal_regions_available = isinstance(vocal_regions, list) and len(vocal_regions) > 0
+    if vocal_regions_available:
+        def inside_vocal_region(timestamp: float) -> bool:
+            for region in vocal_regions:
+                if not isinstance(region, dict):
+                    continue
+                try:
+                    start = float(region.get("start", 0.0) or 0.0)
+                    end = float(region.get("end", 0.0) or 0.0)
+                except (TypeError, ValueError):
+                    continue
+                if start - 0.05 <= timestamp <= end + 0.05:
+                    return True
+            return False
+
+        for index, timestamp in enumerate(timestamps):
+            if inside_vocal_region(timestamp):
+                continue
+            suspicious.append(
+                {
+                    "entry": index + 1,
+                    "text": entry_sung_text(entries[index]) if index < len(entries) else "",
+                    "flags": ["no_vocal_assignment"],
+                    "severity": "high",
+                    "score": round(assignment_score(assignments[index] if index < len(assignments) else {}), 3),
+                    "anchor_profile": anchor_profiles[index] if index < len(anchor_profiles) else {},
+                    "candidate_timestamps": {"output": round(timestamp, 3)},
+                    "gap_before": round(timestamp - (timestamps[index - 1] if index > 0 else 0.0), 3),
+                    "gap_after": round((timestamps[index + 1] if index + 1 < len(timestamps) else duration) - timestamp, 3),
+                    "review_required": True,
+                }
+            )
+
+    suspicious = dedupe_suspicious_alignments(suspicious)
+    severity_counts = {
+        "high": sum(1 for item in suspicious if item.get("severity") == "high"),
+        "medium": sum(1 for item in suspicious if item.get("severity") == "medium"),
+        "low": sum(1 for item in suspicious if item.get("severity") == "low"),
+    }
+    review_required_count = sum(1 for item in suspicious if item.get("review_required"))
+    report["suspicious_alignment_count"] = len(suspicious)
+    report["review_required_count"] = review_required_count
+    report["suspicious_alignment_severity_counts"] = severity_counts
+    report["suspicious_alignments"] = suspicious
+    report["lyric_anchor_profiles"] = anchor_profiles
+    report["segment_collapse_runs"] = segment_collapse_runs
+    report["alignment_collapse_runs"] = alignment_collapse_runs
+    report["collapse_detected"] = bool(segment_collapse_runs or alignment_collapse_runs)
+    report.setdefault("vocal_regions", [])
+    report.setdefault("vocal_regions_available", vocal_regions_available)
+    report.setdefault(
+        "no_vocal_constraint",
+        {
+            "status": "placeholder",
+            "enforced": False,
+            "reason": "No reliable vocal-region detector is wired yet.",
+        },
+    )
+    report["review_required"] = review_required_count > 0
+    update_report_confidence_metrics(report)
+
+
 def apply_whisperx_lyric_refinement(
     entries: list[LyricEntry],
     base_timestamps: list[float],
@@ -1105,7 +3370,14 @@ def apply_whisperx_lyric_refinement(
 
     refined = list(base_timestamps)
     changes: list[dict[str, object]] = []
+    protected_entries = {
+        int(item.get("entry"))
+        for item in report.get("long_segment_repairs", [])
+        if isinstance(item, dict) and isinstance(item.get("entry"), int)
+    }
     for index in range(1, min(len(refined), len(forced_segments), len(assignments))):
+        if index + 1 in protected_entries:
+            continue
         current_assignment = assignments[index]
         previous_assignment = assignments[index - 1]
         if not isinstance(current_assignment, dict) or not isinstance(previous_assignment, dict):
@@ -1262,6 +3534,63 @@ def apply_whisperx_lyric_refinement(
                     }
                 )
 
+    # First-pass bounded local re-alignment: when a candidate disagrees with the
+    # forced first character by more than 1.5s, only trust the forced time if the
+    # neighboring lyric anchors are already trusted and bound the search window.
+    local_window_changes: list[dict[str, object]] = []
+    local_window_enabled = bool(report.get("enable_local_window_realign", False))
+    for index in range(1, min(len(refined) - 1, len(forced_segments), len(assignments) - 1)):
+        if not local_window_enabled:
+            break
+        if index + 1 in protected_entries:
+            continue
+        current_assignment = assignments[index]
+        previous_assignment = assignments[index - 1]
+        next_assignment = assignments[index + 1]
+        if (
+            not isinstance(current_assignment, dict)
+            or not isinstance(previous_assignment, dict)
+            or not isinstance(next_assignment, dict)
+        ):
+            continue
+        if assignment_score(previous_assignment) < TRUSTED_ALIGNMENT_SCORE:
+            continue
+        if assignment_score(next_assignment) < TRUSTED_ALIGNMENT_SCORE:
+            continue
+        forced_time = first_forced_char_time(forced_segments[index])
+        current_time = refined[index]
+        current_score = assignment_score(current_assignment)
+        if current_score >= TRUSTED_ALIGNMENT_SCORE:
+            continue
+        if (
+            report.get("asr_segment_timing_source") == "whispercpp_raw"
+            and current_score >= 0.80
+            and forced_time < current_time
+            and not (current_time - forced_time >= 5.0 and forced_time - refined[index - 1] >= 4.0)
+        ):
+            continue
+        if abs(current_time - forced_time) <= 1.5:
+            continue
+        if current_score >= 0.90 and abs(current_time - forced_time) > 3.0:
+            continue
+        left_bound = refined[index - 1] + 0.10
+        right_bound = refined[index + 1] - 0.10
+        if not (left_bound < forced_time < right_bound):
+            continue
+        refined[index] = forced_time
+        local_window_changes.append(
+            {
+                "entry": index + 1,
+                "from": round(current_time, 3),
+                "to": round(forced_time, 3),
+                "reason": "bounded-local-window-forced",
+                "left_anchor_entry": index,
+                "right_anchor_entry": index + 2,
+                "lyric": entries[index].lines[0] if entries[index].lines else "",
+            }
+        )
+    changes.extend(local_window_changes)
+
     for index in range(1, len(refined)):
         refined[index] = max(refined[index], refined[index - 1] + 0.10)
     for index in range(len(refined)):
@@ -1406,6 +3735,35 @@ def write_alignment_report(output_path: Path, report: dict[str, object]) -> None
     )
 
 
+def write_review_audit(output_path: Path, report: dict[str, object], review_only: bool = True) -> Path:
+    audit_path = output_path.with_name(f"{output_path.stem}.review-audit.md")
+    rows = build_audit_rows(output_path, report, review_only=review_only)
+    write_audit_markdown(rows, report, audit_path)
+    return audit_path
+
+
+def write_review_anchor_template(output_path: Path, report: dict[str, object], review_only: bool = True) -> Path:
+    template_path = output_path.with_name(f"{output_path.stem}.anchor-template.lrc")
+    rows = build_audit_rows(output_path, report, review_only=review_only)
+    write_anchor_template(rows, template_path)
+    return template_path
+
+
+def strict_review_failure_reason(report: dict[str, object], args: argparse.Namespace) -> str | None:
+    review_count = int(report.get("review_required_count", 0) or 0)
+    trusted_percent = float(report.get("trusted_percent", report.get("matched_percent", 0.0)) or 0.0)
+    min_trusted = args.min_trusted_percent
+    if args.strict_review and min_trusted is None:
+        min_trusted = 100.0
+    if (args.strict_review or args.fail_on_review_required) and review_count > 0:
+        return f"review_required_count={review_count}"
+    if min_trusted is not None and trusted_percent < float(min_trusted):
+        return f"trusted_percent={trusted_percent} < required {float(min_trusted)}"
+    if args.strict_review and report.get("collapse_detected"):
+        return "collapse_detected=true"
+    return None
+
+
 def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
     if not audio_path.exists():
         raise LrcError(f"Audio file not found: {audio_path}")
@@ -1415,6 +3773,11 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
     lyrics_path = Path(args.lyrics) if args.lyrics else find_lyrics(audio_path)
     lyrics = load_lyrics(lyrics_path)
     entries = lyrics.entries
+    requested_whisper_language = args.whisper_language
+    if args.whisper_language == "auto":
+        args = copy.copy(args)
+        args.whisper_language = infer_spoken_language(entries)
+    anchor_path = find_anchor_hints(audio_path, args)
     duration = probe_duration(audio_path)
     timing_source = args.timing_source
     if timing_source == "audio":
@@ -1427,11 +3790,15 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
     if timing_source == "auto":
         if lyrics.saw_timestamps:
             timing_source = "lyrics"
-        elif checked_hint := checked_lrc_timing_hint(audio_path, entries, lyrics_path):
+        elif not args.no_checked_lrc_hint and (
+            checked_hint := checked_lrc_timing_hint(audio_path, entries, lyrics_path)
+        ):
             entries, timestamps, report = checked_hint
             timing_source = "checked_lrc"
-        elif default_whisperx_ready():
-            timing_source = "whisperx"
+        elif default_ctc_ready() and default_whisperx_ready():
+            timing_source = "backend_competition"
+        elif default_ctc_ready() or default_whisperx_ready():
+            timing_source = "backend_competition"
         else:
             raise LrcError(
                 "No local audio alignment backend is configured yet. "
@@ -1450,7 +3817,22 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
         timestamps = source_timestamps(entries)
         features = None
         strategy = "lyrics-source"
-        report = None
+        report = {
+            "backend": "lyrics",
+            "timing_entries": len(entries),
+            "assigned_entries": len(entries),
+            "assigned_percent": 100.0,
+            "trusted_entries": len(entries),
+            "trusted_percent": 100.0,
+            "matched_entries": len(entries),
+            "matched_percent": 100.0,
+            "low_confidence_count": 0,
+            "low_confidence_percent": 0.0,
+            "review_required_count": 0,
+            "review_required_percent": 0.0,
+            "review_required": False,
+            "note": "Used timestamped lyric input as the timing source.",
+        }
     elif timing_source == "checked_lrc":
         features = None
         strategy = "checked-lrc-hint"
@@ -1459,63 +3841,19 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
         timestamps, report = match_whisper_segments(entries, segments, duration)
         features = None
         strategy = "whispercpp-experimental"
+    elif timing_source == "ctc":
+        timestamps, report = run_ctc_alignment(audio_path, entries, duration, args)
+        features = None
+        strategy = "ctc-forced-align"
     elif timing_source == "whisperx":
-        if args.whisper_suppress_nst is None:
-            timestamps, report = run_whisperx_candidate(audio_path, entries, duration, args, suppress_nst=False)
-            candidates = [report]
-            normal_timestamps = list(timestamps)
-            normal_report = report
-            if needs_suppressed_retry(report):
-                sns_timestamps, sns_report = run_whisperx_candidate(audio_path, entries, duration, args, suppress_nst=True)
-                candidates.append(sns_report)
-                collapse_start = low_confidence_run_start(normal_report)
-                quality_gap = report_quality(sns_report) - report_quality(normal_report)
-                if quality_gap >= 15.0:
-                    timestamps, report = sns_timestamps, sns_report
-                elif collapse_start is not None and report_quality(sns_report) > report_quality(normal_report):
-                    timestamps = normal_timestamps[:collapse_start] + sns_timestamps[collapse_start:]
-                    adopted_sns_entries: list[int] = []
-                    for change in sns_report.get("whisperx_refinements", []):
-                        if not isinstance(change, dict):
-                            continue
-                        entry_number = change.get("entry")
-                        if not isinstance(entry_number, int):
-                            continue
-                        entry_index = entry_number - 1
-                        if not (0 <= entry_index < collapse_start):
-                            continue
-                        if change.get("reason") != "bounded-forced-asr-blend":
-                            continue
-                        shift = normal_timestamps[entry_index] - sns_timestamps[entry_index]
-                        if not (0.40 <= shift <= 1.60):
-                            continue
-                        left_ok = entry_index == 0 or timestamps[entry_index - 1] + 0.10 < sns_timestamps[entry_index]
-                        right_ok = entry_index + 1 >= len(timestamps) or sns_timestamps[entry_index] < timestamps[entry_index + 1] - 0.10
-                        if left_ok and right_ok:
-                            timestamps[entry_index] = sns_timestamps[entry_index]
-                            adopted_sns_entries.append(entry_index)
-                    report = fused_candidate_report(normal_report, sns_report, timestamps, collapse_start, adopted_sns_entries)
-                elif report_quality(sns_report) > report_quality(report):
-                    timestamps, report = sns_timestamps, sns_report
-            report["candidate_reports"] = [
-                {
-                    "whisper_suppress_nst": candidate.get("whisper_suppress_nst"),
-                    "matched_percent": candidate.get("matched_percent"),
-                    "low_confidence_count": candidate.get("low_confidence_count"),
-                    "quality": round(report_quality(candidate), 3),
-                }
-                for candidate in candidates
-            ]
-        else:
-            timestamps, report = run_whisperx_candidate(
-                audio_path,
-                entries,
-                duration,
-                args,
-                suppress_nst=bool(args.whisper_suppress_nst),
-            )
+        timestamps, report = run_whisperx_best_candidate(audio_path, entries, duration, args)
         features = None
         strategy = "whisperx-hybrid-experimental"
+    elif timing_source == "backend_competition":
+        timestamps, report, selected_backend = run_auto_backend_competition(audio_path, entries, duration, args)
+        features = None
+        timing_source = selected_backend
+        strategy = str(report.get("strategy") or "auto-candidate-selection")
     else:
         features = analyze_audio(audio_path, duration)
         timestamps, strategy = plan_timestamps(entries, features, args.mode)
@@ -1529,6 +3867,14 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
             for index, timestamp in enumerate(timestamps):
                 if index < len(assignment_items) and isinstance(assignment_items[index], dict):
                     assignment_items[index]["timestamp"] = round(timestamp, 3)
+    if report is None:
+        report = {}
+    timestamps, anchor_changes = apply_anchor_hints(entries, timestamps, report, anchor_path, duration)
+    if anchor_changes:
+        print(
+            f"INFO: applied {len(anchor_changes)} anchor hint(s) from {anchor_path}.",
+            file=sys.stderr,
+        )
     output_path = Path(args.output).expanduser().resolve() if args.output else audio_path.with_suffix(".lrc")
     metadata_lines = lyrics.metadata_lines if timing_source == "lyrics" else None
     write_lrc(
@@ -1542,8 +3888,6 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
         metadata_lines,
         f"LRC tools {strategy}",
     )
-    if report is None:
-        report = {}
     report.setdefault("backend", timing_source)
     report["requested_timing_source"] = args.timing_source
     report["resolved_timing_source"] = timing_source
@@ -1556,6 +3900,8 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
     report["duration_seconds"] = round(duration, 3)
     report["timing_entries"] = len(entries)
     report["display_lines"] = sum(len(entry.lines) for entry in entries)
+    report["requested_whisper_language"] = requested_whisper_language
+    report["resolved_whisper_language"] = args.whisper_language
     if skipped_markers:
         report["skipped_marker_entries"] = skipped_markers
         report["skipped_marker_count"] = len(skipped_markers)
@@ -1584,6 +3930,27 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
             "WARN: whisperx timing is experimental but is the current highest-accuracy "
             "local backend. Inspect the .align-report.json and verify difficult songs.",
             file=sys.stderr,
+        )
+    if report.get("review_required"):
+        print(
+            f"WARN: alignment report has {report.get('suspicious_alignment_count', 0)} suspicious line(s), "
+            f"{report.get('review_required_count', 0)} review-required. "
+            "Inspect suspicious_alignments before trusting output.",
+            file=sys.stderr,
+        )
+    if strict_reason := strict_review_failure_reason(report, args):
+        report_path = output_path.with_suffix(".align-report.json")
+        review_only = not strict_reason.startswith("trusted_percent=")
+        audit_path = write_review_audit(output_path, report, review_only=review_only)
+        template_path = write_review_anchor_template(output_path, report, review_only=review_only)
+        report["strict_failure_reason"] = strict_reason
+        report["review_audit_path"] = str(audit_path)
+        report["anchor_template_path"] = str(template_path)
+        write_alignment_report(output_path, report)
+        raise LrcError(
+            f"strict review failed for {output_path}: {strict_reason}. "
+            f"Draft LRC, report, review audit, and anchor template were written; inspect {audit_path}, "
+            f"{template_path}, or {report_path}."
         )
     print(
         f"OK: {output_path} ({len(entries)} timing entries, "
@@ -1616,12 +3983,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--timing-source",
-        choices=["auto", "lyrics", "whisperx", "whispercpp", "heuristic", "audio"],
+        choices=["auto", "lyrics", "ctc", "whisperx", "whispercpp", "heuristic", "audio"],
         default="auto",
         help=(
-            "auto: preserve checked lyric timestamps when present, otherwise fail until a "
-            "production audio backend is configured; lyrics: preserve timestamps from "
-            "timestamped lyric input; whispercpp: experimental ASR matching; "
+            "auto: preserve checked lyric timestamps when present, otherwise run CTC and "
+            "WhisperX candidates and select by report quality; lyrics: preserve timestamps "
+            "from timestamped lyric input; ctc: MMS/CTC forced alignment over known lyrics; "
+            "whispercpp: experimental ASR matching; "
             "whisperx: experimental whisper.cpp + WhisperX hybrid alignment; "
             "heuristic/audio: rough experimental timing only."
         ),
@@ -1646,8 +4014,44 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--whisper-language",
-        default="ja",
-        help="Spoken language passed to whisper.cpp, default: ja.",
+        default="auto",
+        help="Spoken language passed to whisper.cpp, default: auto from lyric text.",
+    )
+    parser.add_argument(
+        "--no-checked-lrc-hint",
+        action="store_true",
+        help="Testing/benchmark option: in auto mode, skip checked same-stem LRC hints and force backend selection.",
+    )
+    parser.add_argument(
+        "--anchor-hints",
+        help=(
+            "Optional timestamped LRC subset with manually checked line anchors. "
+            "Omit to auto-detect <song>.anchors.lrc/.txt."
+        ),
+    )
+    parser.add_argument(
+        "--no-anchor-hints",
+        action="store_true",
+        help="Do not auto-detect same-folder manual anchor hint files.",
+    )
+    parser.add_argument(
+        "--fail-on-review-required",
+        action="store_true",
+        help="Exit non-zero after writing outputs if the report contains any review-required line.",
+    )
+    parser.add_argument(
+        "--min-trusted-percent",
+        type=float,
+        default=None,
+        help="Exit non-zero after writing outputs unless trusted_percent is at least this value.",
+    )
+    parser.add_argument(
+        "--strict-review",
+        action="store_true",
+        help=(
+            "Production gate: fail on review-required lines, collapse, or trusted_percent below 100. "
+            "Draft outputs are still written for inspection."
+        ),
     )
     return parser
 
