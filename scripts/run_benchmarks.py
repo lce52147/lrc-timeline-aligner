@@ -38,9 +38,11 @@ class BenchmarkCase:
     no_checked_lrc_hint: bool = False
     no_anchor_hints: bool = False
     ignore_markers: bool = False
+    require_within_25cs: float | None = None
     require_within_50cs: float = 100.0
     require_text_mismatches: int = 0
     require_max_abs_delta_cs: int | None = None
+    require_max_abs_delta_cs_at_most: int | None = None
     require_backend: str | None = None
     require_selected_backend: str | None = None
     require_report_device: str | None = None
@@ -49,6 +51,7 @@ class BenchmarkCase:
     require_review_required_entries: tuple[int, ...] | None = None
     require_ctc_local_fusion_count: int | None = None
     strict_review: bool = False
+    ignore_lyric_timestamps: bool = False
 
 
 def report_path(lrc_path: Path) -> Path:
@@ -56,10 +59,21 @@ def report_path(lrc_path: Path) -> Path:
 
 
 def load_report(lrc_path: Path) -> dict[str, object]:
-    path = report_path(lrc_path)
-    if not path.exists():
-        return {}
-    return json.loads(path.read_text(encoding="utf-8"))
+    legacy_path = report_path(lrc_path)
+    if legacy_path.exists():
+        return json.loads(legacy_path.read_text(encoding="utf-8"))
+    # Reports are deliberately routed away from a user's music folders. Match
+    # the output path stored in each report instead of guessing from its name.
+    target = lrc_path.resolve()
+    for path in (PROJECT / "outputs" / "reports").glob("*.align-report.json"):
+        try:
+            report = json.loads(path.read_text(encoding="utf-8"))
+            output = report.get("output_path")
+            if isinstance(output, str) and Path(output).resolve() == target:
+                return report
+        except (OSError, json.JSONDecodeError):
+            continue
+    return {}
 
 
 def parse_required_entries(value: str) -> tuple[int, ...]:
@@ -125,6 +139,7 @@ def benchmark_cases() -> list[BenchmarkCase]:
             lyrics=scripts / "utopia_untimed.lyrics.txt",
             timing_source="ctc",
             ignore_markers=True,
+            require_within_25cs=100.0,
             require_backend="ctc",
             require_report_device="cuda",
         ),
@@ -136,7 +151,7 @@ def benchmark_cases() -> list[BenchmarkCase]:
             lyrics=scripts / "oyasumi_monochrome_untimed.lyrics.txt",
             timing_source="ctc",
             ignore_markers=True,
-            require_within_50cs=97.0,
+            require_within_25cs=100.0,
             require_backend="ctc",
             require_report_device="cuda",
         ),
@@ -148,8 +163,9 @@ def benchmark_cases() -> list[BenchmarkCase]:
             lyrics=scripts / "rain_untimed.lyrics.txt",
             timing_source="auto",
             no_checked_lrc_hint=True,
-            require_backend="whisperx",
-            require_selected_backend="whisperx",
+            require_within_25cs=100.0,
+            require_backend="hybrid",
+            require_selected_backend="hybrid",
             require_report_device="cuda",
         ),
         BenchmarkCase(
@@ -161,6 +177,7 @@ def benchmark_cases() -> list[BenchmarkCase]:
             timing_source="auto",
             no_checked_lrc_hint=True,
             ignore_markers=True,
+            require_within_25cs=100.0,
             require_backend="ctc",
             require_selected_backend="ctc",
             require_report_device="cuda",
@@ -174,7 +191,7 @@ def benchmark_cases() -> list[BenchmarkCase]:
             timing_source="auto",
             no_checked_lrc_hint=True,
             ignore_markers=True,
-            require_within_50cs=97.0,
+            require_within_25cs=100.0,
             require_backend="ctc",
             require_selected_backend="ctc",
             require_report_device="cuda",
@@ -240,6 +257,112 @@ def benchmark_cases() -> list[BenchmarkCase]:
     ]
 
 
+def local_regression_cases() -> list[BenchmarkCase]:
+    """Private checked songs that are expected to exist only on the local box.
+
+    Checked references must live outside the source-audio folder. In
+    particular, an adjacent ``Song.lrc`` is the drag/drop output path and must
+    never become its own benchmark oracle.
+    """
+    magic = MUSIC / "Music" / "Islet" / "magic"
+    scripts = PROJECT / "scripts"
+    checked_root = Path(
+        os.environ.get(
+            "LRC_TOOLS_CHECKED_REFERENCE_DIR",
+            str(MUSIC / "LRC tools checked references"),
+        )
+    )
+    cases = [
+        BenchmarkCase(
+            name="hakobune auto local regression",
+            reference=magic / "10.方舟.lrc",
+            generated=scripts / "hakobune_auto_local_regression.lrc",
+            audio=magic / "10.方舟.flac",
+            lyrics=magic / "10.方舟.txt",
+            timing_source="auto",
+            no_checked_lrc_hint=True,
+            no_anchor_hints=True,
+            require_within_25cs=90.0,
+            require_within_50cs=95.0,
+            require_max_abs_delta_cs_at_most=60,
+            require_backend="ctc",
+            require_selected_backend="ctc",
+            require_report_device="cuda",
+            require_trusted_percent=100.0,
+            require_review_required_count=0,
+            strict_review=True,
+        ),
+    ]
+    rainfall_checked = checked_root / "09. ツユ - レインフォール.checked.lrc"
+    rainfall_dir = MUSIC / "Music" / "TUYU" / "ツユ – アンダーメンタリティ (2023.06.21)[Hi-Res FLAC]"
+    if rainfall_checked.exists():
+        cases.append(
+            BenchmarkCase(
+                name="rainfall human-checked local regression",
+                reference=rainfall_checked,
+                generated=scripts / "rainfall_auto_local_regression.lrc",
+                audio=rainfall_dir / "09. ツユ - レインフォール.flac",
+                lyrics=rainfall_checked,
+                timing_source="auto",
+                no_checked_lrc_hint=True,
+                no_anchor_hints=True,
+                ignore_lyric_timestamps=True,
+                require_within_25cs=100.0,
+                require_max_abs_delta_cs=0,
+                require_backend="ctc",
+                require_selected_backend="ctc",
+                require_report_device="cuda",
+            )
+        )
+    else:
+        print(
+            "SKIP rainfall human-checked local regression: expected independent checked reference "
+            f"{rainfall_checked}"
+        )
+    kashiyo_checked = checked_root / "04.可惜夜.checked.lrc"
+    if kashiyo_checked.exists():
+        cases.insert(
+            0,
+            BenchmarkCase(
+                name="kashiyo auto local regression",
+                reference=kashiyo_checked,
+                generated=scripts / "kashiyo_auto_local_regression.lrc",
+                audio=magic / "04.可惜夜.flac",
+                lyrics=magic / "04.可惜夜.txt",
+                timing_source="auto",
+                no_checked_lrc_hint=True,
+                no_anchor_hints=True,
+                require_within_25cs=100.0,
+                require_max_abs_delta_cs=0,
+                require_backend="hybrid",
+                require_selected_backend="hybrid",
+                require_report_device="cuda",
+                require_trusted_percent=100.0,
+                require_review_required_count=0,
+                require_ctc_local_fusion_count=3,
+                strict_review=True,
+            ),
+        )
+    else:
+        print(
+            "SKIP kashiyo auto local regression: expected independent checked reference "
+            f"{kashiyo_checked}"
+        )
+    return cases
+
+
+def existing_local_regression_cases() -> list[BenchmarkCase]:
+    cases: list[BenchmarkCase] = []
+    for case in local_regression_cases():
+        required_paths = [case.reference, case.audio, case.lyrics]
+        missing = [path for path in required_paths if path is not None and not path.exists()]
+        if missing:
+            print(f"SKIP {case.name}: missing local file(s): {', '.join(str(path) for path in missing)}")
+            continue
+        cases.append(case)
+    return cases
+
+
 def private_audit_cases() -> list[BenchmarkCase]:
     scripts = PROJECT / "scripts"
     name = os.environ.get("LRC_TOOLS_PRIVATE_AUDIT_NAME", "private risk audit")
@@ -284,6 +407,8 @@ def regenerate_case(case: BenchmarkCase) -> None:
         command.append("--no-checked-lrc-hint")
     if case.no_anchor_hints:
         command.append("--no-anchor-hints")
+    if case.ignore_lyric_timestamps:
+        command.append("--ignore-lyric-timestamps")
     if case.strict_review:
         command.append("--strict-review")
     print(f"GENERATE {case.name}: {case.generated.name}")
@@ -308,12 +433,24 @@ def evaluate_case(case: BenchmarkCase) -> tuple[bool, dict[str, object], list[st
     failures: list[str] = []
     if case.reference is not None and result["text_mismatches"] != case.require_text_mismatches:
         failures.append(f"text mismatches={result['text_mismatches']}")
+    if (
+        case.reference is not None
+        and case.require_within_25cs is not None
+        and result["within_25cs_percent"] < case.require_within_25cs
+    ):
+        failures.append(f"within +/-0.25s={result['within_25cs_percent']}%")
     if case.reference is not None and result["within_50cs_percent"] < case.require_within_50cs:
         failures.append(f"within +/-0.50s={result['within_50cs_percent']}%")
     if (
         case.reference is not None
         and case.require_max_abs_delta_cs is not None
         and result["max_abs_delta_cs"] != case.require_max_abs_delta_cs
+    ):
+        failures.append(f"max delta={result['max_abs_delta_cs']} cs")
+    if (
+        case.reference is not None
+        and case.require_max_abs_delta_cs_at_most is not None
+        and result["max_abs_delta_cs"] > case.require_max_abs_delta_cs_at_most
     ):
         failures.append(f"max delta={result['max_abs_delta_cs']} cs")
     report = load_report(case.generated)
@@ -389,13 +526,25 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Only run local private audit cases that do not have public reference LRCs.",
     )
+    parser.add_argument(
+        "--local-regression-only",
+        action="store_true",
+        help="Only run local private checked-song regression cases when their files exist.",
+    )
     return parser
 
 
 def main() -> int:
     args = build_parser().parse_args()
     failed = False
-    cases = private_audit_cases() if args.private_audit_only else benchmark_cases()
+    if args.private_audit_only and args.local_regression_only:
+        raise RuntimeError("--private-audit-only and --local-regression-only cannot be combined")
+    if args.private_audit_only:
+        cases = private_audit_cases()
+    elif args.local_regression_only:
+        cases = existing_local_regression_cases()
+    else:
+        cases = benchmark_cases()
     if args.audio_only:
         cases = [case for case in cases if "audio-only" in case.name]
     if args.checked_hint_only:
@@ -424,6 +573,7 @@ def main() -> int:
                 f"{status} {case.name}: "
                 f"entries {result['generated_entries']}/{result['reference_entries']}, "
                 f"text mismatches {result['text_mismatches']}, "
+                f"within +/-0.25s {result['within_25cs_percent']}%, "
                 f"within +/-0.50s {result['within_50cs_percent']}%, "
                 f"max {result['max_abs_delta_cs']} cs"
             )

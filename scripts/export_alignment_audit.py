@@ -27,7 +27,22 @@ def load_report(path: Path) -> dict[str, Any]:
 
 
 def default_report_path(lrc_path: Path) -> Path:
-    return lrc_path.with_suffix(".align-report.json")
+    sibling = lrc_path.with_suffix(".align-report.json")
+    if sibling.exists():
+        return sibling
+
+    report_dir = Path(__file__).resolve().parents[1] / "outputs" / "reports"
+    target_lrc = lrc_path.expanduser().resolve()
+    if report_dir.exists():
+        for candidate in sorted(report_dir.glob("*.align-report.json"), key=lambda path: path.stat().st_mtime, reverse=True):
+            try:
+                report = load_report(candidate)
+            except (OSError, json.JSONDecodeError):
+                continue
+            output_path = report.get("output_path")
+            if isinstance(output_path, str) and Path(output_path).expanduser().resolve() == target_lrc:
+                return candidate
+    return sibling
 
 
 def format_time(seconds: float | int | None) -> str:
@@ -96,6 +111,52 @@ def candidate_value(candidate_timestamps: object, key: str) -> str:
     return format_time(float(value))
 
 
+def format_ctc_token_spans(value: object, limit: int = 6) -> str:
+    if not isinstance(value, list):
+        return ""
+    parts: list[str] = []
+    for item in value[:limit]:
+        if not isinstance(item, dict):
+            continue
+        char = str(item.get("char", ""))
+        start = item.get("start")
+        score = item.get("score")
+        if not char or not isinstance(start, (int, float)):
+            continue
+        score_text = f"/{float(score):.3f}" if isinstance(score, (int, float)) else ""
+        parts.append(f"{char}@{format_time(float(start))}{score_text}")
+    return ";".join(parts)
+
+
+def format_ctc_token_candidates(value: object, limit: int = 4) -> str:
+    if not isinstance(value, list):
+        return ""
+    parts: list[str] = []
+    for item in value[:limit]:
+        if not isinstance(item, dict):
+            continue
+        time_value = item.get("time")
+        score = item.get("score")
+        if not isinstance(time_value, (int, float)):
+            continue
+        score_text = f"/{float(score):.3f}" if isinstance(score, (int, float)) else ""
+        parts.append(f"{format_time(float(time_value))}{score_text}")
+    return ";".join(parts)
+
+
+def format_penalties(value: object) -> str:
+    if not isinstance(value, list):
+        return ""
+    parts: list[str] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind", "penalty"))
+        amount = item.get("value")
+        parts.append(f"{kind}:{float(amount):.2f}" if isinstance(amount, (int, float)) else kind)
+    return ";".join(parts)
+
+
 def row_for_entry(
     index: int,
     entry: Entry,
@@ -106,12 +167,19 @@ def row_for_entry(
     assignment = assignments.get(entry_number, {})
     risk = suspicious.get(entry_number)
     candidates = risk.get("candidate_timestamps") if risk else assignment.get("timing_trusted_candidate_times")
+    ctc_token_spans = assignment.get("ctc_token_spans") or (risk.get("ctc_token_spans") if risk else None)
+    ctc_first_token_candidates = assignment.get("ctc_first_token_candidates") or (
+        risk.get("ctc_first_token_candidates") if risk else None
+    )
     spread = max_candidate_spread(candidates)
     score = assignment.get("score")
     ctc_score = assignment.get("ctc_score")
     timing_trusted = bool(assignment.get("timing_trusted"))
     trust_reason = str(assignment.get("timing_trusted_reason", "")) if timing_trusted else ""
     trust_sources = joined_list(assignment.get("timing_trusted_sources")) if timing_trusted else ""
+    chosen_time = assignment.get("chosen_time")
+    confidence = assignment.get("confidence")
+    split_suggestion = assignment.get("split_suggestion")
     flags = joined_flags(risk)
     if timing_trusted:
         flags = ";".join(part for part in [flags, "timing_trusted"] if part)
@@ -128,9 +196,16 @@ def row_for_entry(
         "ctc": candidate_value(candidates, "ctc"),
         "raw": candidate_value(candidates, "raw"),
         "forced_first": candidate_value(candidates, "whisperx_forced_first"),
+        "chosen_time": format_time(chosen_time) if isinstance(chosen_time, (int, float)) else entry_time(entry),
+        "confidence": f"{float(confidence):.3f}" if isinstance(confidence, (int, float)) else "",
+        "decision_reasons": joined_list(assignment.get("reasons")),
+        "decision_penalties": format_penalties(assignment.get("penalties")),
+        "split_suggestion": str(split_suggestion.get("suggested_after_text", "")) if isinstance(split_suggestion, dict) else "",
         "timing_trusted": "yes" if timing_trusted else "no",
         "timing_trust_reason": trust_reason,
         "timing_trust_sources": trust_sources,
+        "ctc_tokens": format_ctc_token_spans(ctc_token_spans),
+        "ctc_first_token_candidates": format_ctc_token_candidates(ctc_first_token_candidates),
         "flags": flags,
         "text": flatten_lines(entry),
     }
@@ -160,9 +235,16 @@ def write_csv(rows: list[dict[str, str]], output: Path | None) -> None:
         "ctc",
         "raw",
         "forced_first",
+        "chosen_time",
+        "confidence",
+        "decision_reasons",
+        "decision_penalties",
+        "split_suggestion",
         "timing_trusted",
         "timing_trust_reason",
         "timing_trust_sources",
+        "ctc_tokens",
+        "ctc_first_token_candidates",
         "flags",
         "text",
     ]
@@ -193,8 +275,8 @@ def write_markdown(rows: list[dict[str, str]], report: dict[str, Any], output: P
         f"- timing-trusted entries: `{report.get('timing_trusted_entries', '')}`",
         f"- review required: `{report.get('review_required_count', '')}`",
         "",
-        "| # | time | review | trust | severity | spread | score | candidates | text |",
-        "|---:|---:|:---:|---|:---:|---:|---:|---|---|",
+        "| # | time | chosen | confidence | review | trust | severity | spread | score | candidates | text |",
+        "|---:|---:|---:|---:|:---:|---|:---:|---:|---:|---|---|",
     ]
     for row in rows:
         candidates = ", ".join(
@@ -205,6 +287,8 @@ def write_markdown(rows: list[dict[str, str]], report: dict[str, Any], output: P
                 f"ctc {row['ctc']}" if row["ctc"] else "",
                 f"raw {row['raw']}" if row["raw"] else "",
                 f"ff {row['forced_first']}" if row["forced_first"] else "",
+                f"ctc-tok {row['ctc_tokens']}" if row["ctc_tokens"] else "",
+                f"ctc-first {row['ctc_first_token_candidates']}" if row["ctc_first_token_candidates"] else "",
             ]
             if part
         )
@@ -217,7 +301,7 @@ def write_markdown(rows: list[dict[str, str]], report: dict[str, Any], output: P
         trust = "<br>".join(part for part in trust_parts if part)
         flags = f"<br>{row['flags']}" if row["flags"] else ""
         lines.append(
-            f"| {row['entry']} | {row['time']} | {row['review']} | {trust} | {row['severity']} | "
+            f"| {row['entry']} | {row['time']} | {row['chosen_time']} | {row['confidence']} | {row['review']} | {trust} | {row['severity']} | "
             f"{row['spread']} | {row['score']} | {candidates}{flags} | {text} |"
         )
     content = "\n".join(lines) + "\n"
@@ -248,7 +332,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--report",
         default=None,
-        help="Alignment report path. Defaults to the sibling .align-report.json.",
+        help="Alignment report path. Defaults to a matching report in project outputs/reports, then legacy sibling path.",
     )
     parser.add_argument("--format", choices=("md", "csv"), default="md")
     parser.add_argument("--output", default=None, help="Output path. Defaults to stdout.")

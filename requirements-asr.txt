@@ -6,3 +6,6 @@ torch
 torchaudio
 numpy
 pykakasi
+fugashi
+unidic-lite
+transformers

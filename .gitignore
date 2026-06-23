@@ -1,6 +1,8 @@
 # Local environments
 .venv/
 .venv-asr/
+.venv-mfa/
+conda-mfa/
 .venv-*/
 venv/
 env/
@@ -45,6 +47,7 @@ tmp/
 temp/
 outputs/
 bench_outputs/
+local-artifacts/
 *.log
 scripts/*_audio_*.json
 scripts/*_audio_*.lrc

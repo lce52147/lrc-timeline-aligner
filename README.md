@@ -1,8 +1,8 @@
 # LRC Timeline Aligner
 
 Local Windows tooling for aligning prepared lyric/LRC text to a FLAC audio
-timeline and writing same-folder `.lrc` files with an auditable
-`.align-report.json`.
+timeline and writing same-folder `.lrc` files. Diagnostic reports are written
+under the project `outputs/reports` directory, not into the music library.
 
 This is not an AI LRC generator. It does not invent lyrics from music, and it
 is not a general LRC editor. The project is a timeline aligner / retimer for
@@ -19,7 +19,8 @@ best available local timing path:
 - run MMS/CTC and WhisperX hybrid candidates when no checked timing source
   exists, then select by report quality;
 - write a same-name `.lrc` beside the FLAC;
-- write a sibling `.align-report.json` so the timing path can be audited.
+- write reports and strict-review audit files under `outputs/reports` so the
+  music folder stays clean.
 
 ## Current Reliability Behavior
 
@@ -28,15 +29,31 @@ The primary forced-alignment backend is MMS/CTC through
 romanizes sung Japanese text, and uses CTC/Viterbi alignment to place the whole
 known lyric sequence on the audio timeline.
 
+CTC output also applies a conservative acoustic backtrack for low-confidence
+Japanese `r`-initial lines when the CTC start lands late but a strong local
+onset exists just before it. The report records these changes as
+`ctc_acoustic_backtracks`. This is a narrow refinement, not the final
+multi-language consonant/sibilant onset model.
+
 `auto` mode also runs the whisper.cpp + WhisperX hybrid candidate when it is
 available. CTC is preferred on near-ties because it is constrained to the known
 lyric order, but WhisperX can win when its report quality is clearly better.
+An experimental `-VocalOnsetRefine` switch enables a conservative Demucs
+vocal-onset tiebreak. It runs only when CTC and hybrid disagree substantially,
+and changes a timestamp only when the isolated-vocal onset clearly supports the
+CTC candidate. It is not enabled by default until it demonstrates a net gain on
+the checked regression set.
+
+`jactc` is an explicit experimental Japanese Wav2Vec2 CTC backend. It aligns
+native Japanese tokens without romanization, but is deliberately excluded from
+`auto` until it passes the checked-song regression set without collapse.
 
 These benchmark results are regression gates for the current local test set,
 not a guarantee that every song will align perfectly. The current local gates
 cover three checked songs: rain and utopia require 100% of sung lyric entries
-to land within `+/-0.50s`, while the current oyasumi gate requires at least
-97%. Checked-LRC hint mode must match the checked reference exactly.
+to land within `+/-0.50s`, and rain, utopia, and oyasumi all require 100%
+within `+/-0.25s`.
+Checked-LRC hint mode must match the checked reference exactly.
 
 ## Current Safety Behavior
 
@@ -51,7 +68,7 @@ The tool is intentionally report-first:
 - explicit `-TimingSource ctc` uses MMS/CTC forced alignment over known lyrics;
 - explicit `whisperx` mode must not silently write heuristic drafts;
 - heuristic timing is available only as an experimental draft path;
-- generated LRC files are paired with `.align-report.json` audit data;
+- generated LRC files have corresponding audit data under `outputs/reports`;
 - non-lyric markers such as `(Intro)`, `(Interlude)`, `(Outro)`, and musical
   note markers are skipped during untimed audio alignment.
 
@@ -115,11 +132,10 @@ Song.lyrics.txt
 
 Then drag `Song.flac` onto `Align LRC.bat`.
 
-The drag/drop batch file runs with strict review enabled. If the aligner writes
-an LRC but the report contains review-required lines, collapse flags, or less
-than 100% trusted timing, the batch exits as failed and leaves the draft LRC plus
-`.align-report.json`, `.review-audit.md`, and `.anchor-template.lrc` for
-inspection.
+The drag/drop batch file writes its LRC even when the report has lines that need
+manual review; the terminal prints that warning and the report remains under
+`outputs/reports`. To make a review-required line or less than 100% trusted
+timing fail the command, set `LRC_TOOLS_STRICT_REVIEW=1` before dragging.
 
 For a non-interactive smoke test of the same batch entry point, disable only the
 final `pause`:
@@ -239,7 +255,7 @@ Strategy: ctc-forced-align
 CTC device: cuda
 ```
 
-The sibling `.align-report.json` contains the same audit fields:
+The report in `outputs/reports` contains the same audit fields:
 `requested_timing_source`, `resolved_timing_source`, `backend`, `strategy`,
 `mode`, `heuristic_mode`, `ctc_device`, and fallback-specific device fields
 such as `whisperx_device`.
@@ -250,14 +266,44 @@ selection reason, and candidate summaries. CTC candidate summaries include
 `ctc_score_min`, `ctc_score_mean`, `ctc_low_score_count`,
 `ctc_very_low_score_count`, and `ctc_missing_count`; WhisperX summaries include
 trusted/review percentages, collapse state, device, and suppress-NST mode.
+CTC assignments include `ctc_token_spans`, the romanized character-level CTC
+spans used to audit why a line start was placed where it was.
 Hybrid reports may mark individual assignments as `timing_trusted` when CTC,
 WhisperX, and raw ASR timestamps agree closely enough, or when a high-confidence
 raw internal anchor explains a local WhisperX offset. The original text-match
 score is preserved; `timing_trusted` only affects timing trust metrics.
 
-Export a readable per-line audit table from a generated LRC and its sibling
-report. The audit includes review flags, backend candidate times, and
-`timing_trusted` reasons/sources when hybrid consensus was used:
+## Report-First Line Decisions
+
+Audio alignment is not treated as one backend producing one unquestioned
+timestamp. For each lyric entry, the report records a decision object on the
+assignment:
+
+- `chosen_time` and `confidence`;
+- `candidates` and `rejected_candidates` from the selected path, raw ASR,
+  WhisperX forced-first timing, and available CTC leading-token peaks;
+- `reasons`, `penalties`, `flags`, and `review_required`;
+- `phonetic_anchor`, using the optional Japanese romaji/mora profile when it
+  is available; and
+- `split_suggestion` for long lines whose candidate evidence suggests more
+  than one sung phrase.
+
+The decision layer penalizes candidate spread, prior-line tail attachment,
+long-line disagreement, and short-line onset uncertainty. A replacement time
+is only adopted when it is inside neighboring lyric bounds and its candidate
+evidence remains strong after those penalties. Otherwise the selected backend
+time remains a draft and the line is marked for review. This is deliberately
+more conservative than silently writing a clean-looking but disputed LRC.
+
+The optional Japanese phonetic adapter uses `pykakasi` plus the CTC first-token
+peaks as onset evidence. It improves auditability rather than claiming that
+romanization alone proves an acoustic onset.
+
+Export a readable per-line audit table from a generated LRC. The audit tool
+finds its matching project report automatically. The audit includes review flags, backend candidate times, and
+`timing_trusted` reasons/sources when hybrid consensus was used. When CTC
+evidence is available, the audit also includes compact leading token spans such
+as `s@00:40.86/0.066`.
 
 ```powershell
 python .\scripts\export_alignment_audit.py "D:\Music\Song.lrc" --output "D:\Music\Song.audit.md"
@@ -269,6 +315,16 @@ For fast review of only the lines that must not be trusted without listening:
 ```powershell
 python .\scripts\export_alignment_audit.py "D:\Music\Song.lrc" --review-only
 ```
+
+For algorithm probes, preserve a manually checked same-name LRC by writing the
+candidate under the project instead of beside the audio:
+
+```powershell
+python .\scripts\auto_lrc.py "D:\Music\Song.flac" --probe --timing-source auto --overwrite
+```
+
+`--probe` writes a hashed disposable LRC to `outputs/probes` and keeps reports
+under `outputs/reports`. It cannot be combined with `--output`.
 
 ## Local Setup Notes
 
@@ -308,6 +364,20 @@ Actions runs the same public-safe check on push and pull request.
 
 `--auto-selection-only` uses the internal `--no-checked-lrc-hint` test option so
 the checked LRC shortcut does not hide the CTC/WhisperX selection behavior.
+
+Run private checked-song regressions for local files that are not committed to
+the repository. These cases compare regenerated output against an independently
+stored checked LRC. Never use `Song.lrc` beside the FLAC as the reference: that
+is the drag/drop output path. Put human-reviewed references in a separate local
+directory with the explicit `.checked.lrc` suffix. The current local set uses
+`10.方舟` as a difficult CTC weak-onset regression; `04.可惜夜` is included only
+when `04.可惜夜.checked.lrc` exists in the reference directory:
+
+```powershell
+$env:LRC_TOOLS_MUSIC_DIR = "D:\Users\Administrator\Music"
+$env:LRC_TOOLS_CHECKED_REFERENCE_DIR = "D:\Users\Administrator\Music\LRC tools checked references"
+python .\scripts\run_benchmarks.py --local-regression-only --regenerate
+```
 
 Run a private risk-audit gate for a local difficult song without committing
 audio, lyrics, or generated outputs:

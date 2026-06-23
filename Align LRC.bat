@@ -3,7 +3,9 @@ setlocal
 
 chcp 65001 >nul
 set "SCRIPT_DIR=%~dp0"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%align-lrc.ps1" -StrictReview %*
+set "STRICT_ARGS="
+if "%LRC_TOOLS_STRICT_REVIEW%"=="1" set "STRICT_ARGS=-StrictReview"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%align-lrc.ps1" %STRICT_ARGS% %*
 set "EXIT_CODE=%ERRORLEVEL%"
 
 echo.

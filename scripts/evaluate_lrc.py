@@ -72,9 +72,16 @@ def is_marker_entry(entry: Entry) -> bool:
     return text == "♪" or text == "" or (text.startswith("(") and any(word in marker_text for word in marker_words))
 
 
+def is_generated_title_card(entry: Entry) -> bool:
+    """Recognize the tool's fixed zero-time title card, not a real lyric."""
+    return entry.time_cs == 0 and len(entry.lines) == 1 and " - " in entry.lines[0]
+
+
 def summarize(reference: Path, generated: Path, ignore_markers: bool = False) -> dict[str, object]:
     ref_meta, ref_entries = parse_lrc(reference)
     gen_meta, gen_entries = parse_lrc(generated)
+    ref_entries = [entry for entry in ref_entries if not is_generated_title_card(entry)]
+    gen_entries = [entry for entry in gen_entries if not is_generated_title_card(entry)]
     if ignore_markers:
         ref_entries = [entry for entry in ref_entries if not is_marker_entry(entry)]
         gen_entries = [entry for entry in gen_entries if not is_marker_entry(entry)]
