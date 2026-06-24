@@ -39,6 +39,7 @@ COLLAPSE_SEGMENT_SCORE = 0.30
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REPORT_DIR = PROJECT_ROOT / "outputs" / "reports"
 DEFAULT_PROBE_DIR = PROJECT_ROOT / "outputs" / "probes"
+DEFAULT_VOCAL_CACHE_DIR = PROJECT_ROOT / "outputs" / "cache" / "vocals"
 
 
 def configure_stdio() -> None:
@@ -1099,6 +1100,7 @@ def run_ctc_alignment(
     duration: float,
     args: argparse.Namespace,
 ) -> tuple[list[float], dict[str, object]]:
+    alignment_audio, audio_source, audio_note = prepare_vocal_ctc_audio(audio_path, args)
     python_exe = default_ctc_python()
     helper = Path(__file__).resolve().parent / "ctc_align.py"
     if not python_exe.exists():
@@ -1119,7 +1121,7 @@ def run_ctc_alignment(
                 str(python_exe),
                 str(helper),
                 "--audio",
-                str(audio_path),
+                str(alignment_audio),
                 "--transcript",
                 str(transcript_path),
                 "--output",
@@ -1249,6 +1251,9 @@ def run_ctc_alignment(
         "ctc_device": payload.get("device"),
         "ctc_sample_rate": payload.get("sample_rate"),
         "ctc_emission_frames": payload.get("emission_frames"),
+        "ctc_audio_source": audio_source,
+        "ctc_audio_path": str(alignment_audio),
+        "ctc_audio_note": audio_note,
         "timing_entries": len(entries),
         "assignments": assignments,
         "ctc_missing_entries": missing,
@@ -1274,7 +1279,8 @@ def run_ctc_alignment(
         "review_required": bool(ctc_review_entries),
         "note": "MMS/CTC forced alignment over the known lyric order.",
     }
-    apply_ctc_acoustic_backtrack(audio_path, entries, timestamps, report, duration)
+    apply_ctc_acoustic_backtrack(alignment_audio, entries, timestamps, report, duration)
+    apply_ctc_zero_gap_boundary_realign(alignment_audio, entries, timestamps, report, duration, args)
     update_report_confidence_metrics(report)
     return timestamps, report
 
@@ -1946,6 +1952,110 @@ def candidate_selection_quality(report: dict[str, object]) -> float:
     return report_quality(report)
 
 
+def should_prefer_ctc_over_review_exploded_hybrid(
+    hybrid_report: dict[str, object], ctc_report: dict[str, object]
+) -> bool:
+    """Reject a locally patched hybrid when it becomes much less auditable than CTC."""
+    if ctc_report.get("collapse_detected"):
+        return False
+    try:
+        ctc_missing = int(ctc_report.get("ctc_missing_count", 0) or 0)
+        ctc_reviews = int(ctc_report.get("review_required_count", 0) or 0)
+        hybrid_reviews = int(hybrid_report.get("review_required_count", 0) or 0)
+    except (TypeError, ValueError):
+        return False
+    if ctc_missing:
+        return False
+    return hybrid_reviews >= max(8, ctc_reviews * 3 + 5)
+
+
+def choose_onset_consensus_time(
+    ctc_time: float,
+    ctc_first_score: float,
+    whisper_time: float,
+    whisper_score: float,
+    japanese_ctc_time: float,
+) -> tuple[float | None, str | None]:
+    """Choose a narrow onset rescue when CTC's first phoneme is unreliable."""
+    ctc_whisper_gap = abs(ctc_time - whisper_time)
+    whisper_japanese_gap = abs(whisper_time - japanese_ctc_time)
+    if (
+        ctc_first_score <= 0.01
+        and whisper_score >= 0.80
+        and 0.35 <= ctc_whisper_gap <= 0.80
+        and 0.60 <= whisper_japanese_gap <= 1.00
+    ):
+        return whisper_time, "high-confidence-whisperx-over-weak-ctc-initial"
+    if (
+        ctc_first_score <= 0.01
+        and whisper_score >= 0.50
+        and ctc_whisper_gap >= 0.20
+        and whisper_japanese_gap <= 0.15
+    ):
+        return (whisper_time + japanese_ctc_time) / 2.0, "whisperx-japanese-ctc-onset-consensus"
+    if (
+        0.05 <= ctc_first_score <= 0.10
+        and whisper_score >= 0.80
+        and whisper_japanese_gap <= 0.15
+        and ctc_whisper_gap >= 0.20
+    ):
+        return (whisper_time + japanese_ctc_time) / 2.0, "whisperx-japanese-ctc-over-ctc-onset-consensus"
+    return None, None
+
+
+def apply_japanese_onset_consensus_to_ctc(
+    timestamps: list[float],
+    ctc_report: dict[str, object],
+    whisper_timestamps: list[float],
+    whisper_report: dict[str, object],
+    japanese_timestamps: list[float],
+    duration: float,
+) -> tuple[list[float], dict[str, object], list[dict[str, object]]]:
+    assignments = ctc_report.get("assignments")
+    whisper_assignments = whisper_report.get("assignments")
+    if not isinstance(assignments, list) or not isinstance(whisper_assignments, list):
+        return timestamps, ctc_report, []
+    refined = list(timestamps)
+    changes: list[dict[str, object]] = []
+    for index, assignment in enumerate(assignments):
+        if index >= len(whisper_assignments) or index >= len(whisper_timestamps) or index >= len(japanese_timestamps):
+            continue
+        whisper_assignment = whisper_assignments[index]
+        if not isinstance(assignment, dict) or not isinstance(whisper_assignment, dict):
+            continue
+        spans = assignment.get("ctc_token_spans")
+        if not isinstance(spans, list) or not spans:
+            continue
+        try:
+            ctc_first_score = float(spans[0].get("score", 0.0) or 0.0)
+            whisper_score = float(whisper_assignment.get("score", 0.0) or 0.0)
+            ctc_time = float(refined[index])
+            whisper_time = float(whisper_timestamps[index])
+            japanese_time = float(japanese_timestamps[index])
+        except (AttributeError, TypeError, ValueError):
+            continue
+        candidate, reason = choose_onset_consensus_time(
+            ctc_time, ctc_first_score, whisper_time, whisper_score, japanese_time
+        )
+        if candidate is None or reason is None:
+            continue
+        previous_time = refined[index - 1] if index else 0.0
+        next_time = refined[index + 1] if index + 1 < len(refined) else duration
+        if not previous_time + 0.05 < candidate < next_time - 0.05:
+            continue
+        refined[index] = candidate
+        assignment["timestamp"] = round(candidate, 3)
+        assignment["ctc_onset_consensus"] = True
+        assignment["ctc_onset_consensus_reason"] = reason
+        assignment["ctc_onset_consensus_candidates"] = {
+            "ctc": round(ctc_time, 3), "whisperx": round(whisper_time, 3), "japanese_ctc": round(japanese_time, 3),
+        }
+        changes.append({"entry": index + 1, "from": round(ctc_time, 3), "to": round(candidate, 3), "reason": reason})
+    if changes:
+        ctc_report["ctc_onset_consensus"] = changes
+    return refined, ctc_report, changes
+
+
 def candidate_summary(report: dict[str, object], error: str | None = None) -> dict[str, object]:
     quality = candidate_selection_quality(report)
     summary: dict[str, object] = {
@@ -2102,6 +2212,15 @@ def try_ctc_candidate(
         return timestamps, report, None
     except LrcError as exc:
         return [], {"backend": "ctc", "error": str(exc)}, str(exc)
+
+
+def ctc_alignment_audio_path(report: dict[str, object], fallback: Path) -> Path:
+    candidate = report.get("ctc_audio_path")
+    if isinstance(candidate, str):
+        path = Path(candidate)
+        if path.exists():
+            return path
+    return fallback
 
 
 def try_whispercpp_diagnostic_candidate(
@@ -3120,6 +3239,48 @@ def vocal_onset_features(
         return analyze_vocal_onsets(stems[0], duration), None
 
 
+def prepare_vocal_ctc_audio(audio_path: Path, args: argparse.Namespace) -> tuple[Path, str, str | None]:
+    """Build or reuse the isolated vocal track used by primary CTC alignment."""
+    if not getattr(args, "vocal_ctc", True):
+        return audio_path, "mix", "disabled"
+    python_exe = default_ctc_python()
+    if not python_exe.exists():
+        return audio_path, "mix", "missing-asr-python"
+    try:
+        stat = audio_path.stat()
+    except OSError:
+        return audio_path, "mix", "audio-stat-failed"
+    key = hashlib.sha1(f"{audio_path.resolve()}|{stat.st_size}|{stat.st_mtime_ns}".encode("utf-8")).hexdigest()[:16]
+    cache_dir = DEFAULT_VOCAL_CACHE_DIR / key
+    cached = cache_dir / "vocals.mp3"
+    if cached.exists() and cached.stat().st_size > 0:
+        return cached, "vocal-stem", "cache-hit"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.run(
+        [
+            str(python_exe), "-m", "demucs", "--two-stems", "vocals", "--mp3", "-d", "cuda",
+            "-o", str(cache_dir), str(audio_path),
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if proc.returncode:
+        detail = (proc.stderr or proc.stdout).strip().replace("\n", " ")
+        return audio_path, "mix", f"demucs-failed: {detail[:180]}"
+    stems = list(cache_dir.rglob("vocals.mp3"))
+    if not stems:
+        return audio_path, "mix", "demucs-did-not-write-vocals"
+    stem = stems[0]
+    if stem != cached:
+        try:
+            stem.replace(cached)
+        except OSError:
+            cached = stem
+    return cached, "vocal-stem", "generated"
+
+
 def nearest_onset_evidence(features: AudioFeatures, timestamp: float) -> tuple[float, float] | None:
     mask = (features.frame_times >= timestamp - 0.35) & (features.frame_times <= timestamp + 0.35)
     indices = np.flatnonzero(mask)
@@ -3397,7 +3558,7 @@ def run_auto_backend_competition(
             and isinstance(ctc_candidate.get("timestamps"), list)
         ):
             window_timestamps, window_report, _ = apply_ctc_local_window_realign(
-                audio_path,
+                ctc_alignment_audio_path(ctc_candidate["report"], audio_path),
                 entries,
                 list(ctc_candidate["timestamps"]),
                 ctc_candidate["report"],
@@ -3486,7 +3647,7 @@ def run_auto_backend_competition(
                 None,
             )
             ctc_window_timestamps, ctc_window_report, _ = apply_ctc_hybrid_window_realign(
-                audio_path,
+                ctc_alignment_audio_path(ctc_candidate["report"], audio_path),
                 entries,
                 list(ctc_candidate["timestamps"]),
                 ctc_candidate["report"],
@@ -3561,6 +3722,20 @@ def run_auto_backend_competition(
             flag_unresolved_ctc_disagreements(selected_timestamps, selected_report, ctc_report)
     if selected_backend == "ctc" and raw_diagnostic_report is not None:
         flag_unresolved_raw_ctc_disagreements(selected_timestamps, selected_report, raw_diagnostic_report)
+    if ctc_candidate is not None and selected_backend == "hybrid":
+        ctc_report = ctc_candidate.get("report")
+        if isinstance(ctc_report, dict) and should_prefer_ctc_over_review_exploded_hybrid(selected_report, ctc_report):
+            hybrid_reviews = int(selected_report.get("review_required_count", 0) or 0)
+            ctc_reviews = int(ctc_report.get("review_required_count", 0) or 0)
+            selected_report = copy.deepcopy(ctc_report)
+            selected_timestamps = list(ctc_candidate["timestamps"])
+            selected_backend = "ctc"
+            selected_quality = candidate_selection_quality(selected_report)
+            selected_report["rejected_hybrid_refinement"] = {
+                "reason": "hybrid-review-explosion-prefers-ctc",
+                "hybrid_review_required_count": hybrid_reviews,
+                "ctc_review_required_count": ctc_reviews,
+            }
     strong_local_correction = bool(
         selected_report.get("ctc_local_fusions")
         and any(
@@ -4030,6 +4205,103 @@ def first_local_onset(features: AudioFeatures, start: float, end: float, thresho
     return None
 
 
+def should_accept_zero_gap_boundary_realign(
+    boundary_gap: float,
+    current_score: float,
+    current_time: float,
+    local_time: float,
+    local_score: float,
+) -> bool:
+    """Accept a bounded re-align only when it repairs a collapsed line boundary."""
+    return (
+        boundary_gap <= 0.04
+        and local_time - current_time >= 0.30
+        and local_score >= max(0.05, current_score * 1.05)
+    )
+
+
+def apply_ctc_zero_gap_boundary_realign(
+    audio_path: Path,
+    entries: list[LyricEntry],
+    timestamps: list[float],
+    report: dict[str, object],
+    duration: float,
+    args: argparse.Namespace,
+) -> list[dict[str, object]]:
+    """Re-align a collapsed CTC line boundary inside a compact lyric window."""
+    assignments = report.get("assignments")
+    if not isinstance(assignments, list) or len(assignments) != len(entries):
+        return []
+    python_exe = default_ctc_python()
+    helper = Path(__file__).resolve().parent / "ctc_align.py"
+    changes: list[dict[str, object]] = []
+    with tempfile.TemporaryDirectory(prefix="lrc-ctc-boundary-") as temp_name:
+        temp_dir = Path(temp_name)
+        for index in range(1, len(entries)):
+            previous = assignments[index - 1]
+            current = assignments[index]
+            if not isinstance(previous, dict) or not isinstance(current, dict):
+                continue
+            previous_spans = previous.get("ctc_token_spans")
+            current_spans = current.get("ctc_token_spans")
+            if not isinstance(previous_spans, list) or not previous_spans or not isinstance(current_spans, list) or not current_spans:
+                continue
+            try:
+                previous_end = max(float(span.get("end")) for span in previous_spans if isinstance(span, dict))
+                current_time = float(timestamps[index])
+                current_score = float(current.get("ctc_score", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                continue
+            boundary_gap = current_time - previous_end
+            if boundary_gap > 0.04:
+                continue
+            start_index = index - 1
+            end_index = min(len(entries), index + 2)
+            start_time = max(0.0, timestamps[start_index] - 0.50)
+            end_time = min(duration, (timestamps[index + 1] + 0.75) if index + 1 < len(timestamps) else current_time + 5.0)
+            if not 1.0 <= end_time - start_time <= 16.0:
+                continue
+            transcript_path = temp_dir / f"boundary-{index + 1}.json"
+            output_path = temp_dir / f"boundary-{index + 1}.result.json"
+            transcript_path.write_text(
+                json.dumps([entry_sung_text(entry) for entry in entries[start_index:end_index]], ensure_ascii=False),
+                encoding="utf-8",
+            )
+            command = [
+                str(python_exe), str(helper), "--audio", str(audio_path), "--transcript", str(transcript_path),
+                "--output", str(output_path), "--device", args.whisperx_device,
+                "--start", f"{start_time:.3f}", "--end", f"{end_time:.3f}",
+            ]
+            proc = subprocess.run(command, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if proc.returncode != 0 or not output_path.exists():
+                continue
+            rows = json.loads(output_path.read_text(encoding="utf-8")).get("entries")
+            if not isinstance(rows, list) or len(rows) < 2 or not isinstance(rows[1], dict):
+                continue
+            row = rows[1]
+            try:
+                local_time = float(row.get("start"))
+                local_score = float(row.get("ctc_score", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if not should_accept_zero_gap_boundary_realign(
+                boundary_gap, current_score, current_time, local_time, local_score
+            ):
+                continue
+            timestamps[index] = local_time
+            current["timestamp"] = round(local_time, 3)
+            current["ctc_score"] = row.get("ctc_score")
+            current["ctc_token_spans"] = row.get("token_spans")
+            current["ctc_first_token_candidates"] = row.get("first_token_candidates")
+            current["ctc_zero_gap_boundary_realign"] = True
+            current["timing_repair_source"] = "torchaudio-mms-fa+zero-gap-boundary-realign"
+            changes.append({"entry": index + 1, "from": round(current_time, 3), "to": round(local_time, 3)})
+    if changes:
+        annotate_ctc_boundary_evidence(assignments)
+        report["ctc_zero_gap_boundary_realign"] = changes
+    return changes
+
+
 def apply_ctc_acoustic_backtrack(
     audio_path: Path,
     entries: list[LyricEntry],
@@ -4195,6 +4467,25 @@ def apply_ctc_acoustic_backtrack(
             ((candidate - previous_time) / previous_units)
             - ((next_time - candidate) / current_units)
         )
+        # The mixed-track onset can fire on a preceding sustain or instrument.
+        # Do not backtrack a short CTC line when its initial consonant is already
+        # credible and the proposed move makes adjacent lyric pacing less
+        # coherent.  Local CTC can still revise genuinely weak starts later.
+        first_token_score = 0.0
+        token_spans = assignment.get("ctc_token_spans")
+        if isinstance(token_spans, list) and token_spans:
+            try:
+                first_token_score = float(token_spans[0].get("score", 0.0) or 0.0)
+            except (AttributeError, TypeError, ValueError):
+                first_token_score = 0.0
+        harms_pacing = (
+            before_tempo_error <= 0.025
+            or after_tempo_error > max(0.01, before_tempo_error * 1.30)
+        )
+        if mode == "ctc-short-acoustic-onset" and first_token_score >= 0.04 and harms_pacing:
+            continue
+        if mode == "ctc-short-acoustic-onset" and first_token_score >= 0.05:
+            continue
         timestamps[index] = candidate
         assignment["timestamp"] = round(candidate, 3)
         assignment["timing_repair_source"] = "torchaudio-mms-fa+acoustic-backtrack"
@@ -5313,11 +5604,17 @@ def score_line_timing_candidates(
         peaks = assignment.get("ctc_first_token_candidates")
         nearby_peaks: list[dict[str, object]] = []
         if isinstance(peaks, list):
+            # A posterior peak inside the preceding lyric's final CTC token is
+            # a tail echo, not evidence for this line's opening consonant.
+            # Keeping it here falsely turned an already-rejected candidate
+            # into a phonetic-anchor review flag.
+            peak_floor = (previous_ctc_token_end + 0.03) if previous_ctc_token_end is not None else None
             nearby_peaks = [
                 peak
                 for peak in peaks
                 if isinstance(peak, dict)
                 and isinstance(peak.get("time"), (int, float))
+                and (peak_floor is None or float(peak["time"]) > peak_floor)
                 and abs(float(peak["time"]) - current_time) <= 0.45
             ]
             if nearby_peaks:
@@ -5343,6 +5640,13 @@ def score_line_timing_candidates(
         repeated_onset_candidate: dict[str, object] | None = None
         if leading_term_count >= 2 and ctc_score <= 0.18 and isinstance(peaks, list):
             earlier_peaks: list[dict[str, float]] = []
+            repeated_peak_floor = previous_time + 0.20
+            if previous_ctc_token_end is not None:
+                # A repeated-word posterior that still falls inside the prior
+                # line's forced token tail is not the first occurrence of this
+                # line.  This is the same cross-line leakage seen with raw ASR
+                # and nearby phonetic peaks.
+                repeated_peak_floor = max(repeated_peak_floor, previous_ctc_token_end + 0.03)
             for peak in peaks:
                 if not isinstance(peak, dict):
                     continue
@@ -5351,7 +5655,7 @@ def score_line_timing_candidates(
                     peak_score = float(peak.get("score", 0.0) or 0.0)
                 except (TypeError, ValueError):
                     continue
-                if previous_time + 0.20 < peak_time <= current_time - 0.45 and peak_score >= 0.005:
+                if repeated_peak_floor < peak_time <= current_time - 0.45 and peak_score >= 0.005:
                     earlier_peaks.append({"time": peak_time, "score": peak_score})
             if earlier_peaks:
                 strongest_score = max(peak["score"] for peak in earlier_peaks)
@@ -6228,6 +6532,12 @@ def build_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=False,
         help="Use GPU Demucs vocal-stem onset evidence to resolve large CTC/WhisperX disagreements.",
+    )
+    parser.add_argument(
+        "--vocal-ctc",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Run primary CTC forced alignment on a cached Demucs vocal stem; use --no-vocal-ctc for full-mix fallback.",
     )
     parser.add_argument(
         "--no-checked-lrc-hint",

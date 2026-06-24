@@ -24,12 +24,15 @@ from auto_lrc import (
     annotate_ctc_boundary_evidence,
     build_parser,
     choose_alignment_candidate,
+    choose_onset_consensus_time,
     match_anchor_entries,
     load_lyrics,
     refresh_ctc_confidence_diagnostics,
     raw_asr_is_fallback_eligible,
     remove_generated_title_cards,
     score_line_timing_candidates,
+    should_accept_zero_gap_boundary_realign,
+    should_prefer_ctc_over_review_exploded_hybrid,
     split_group_text,
     update_report_confidence_metrics,
 )
@@ -38,6 +41,17 @@ from export_alignment_audit import build_rows, write_markdown
 
 
 class AnchorHintTests(unittest.TestCase):
+    def test_onset_consensus_prefers_two_model_agreement_over_weak_ctc_initial(self) -> None:
+        candidate, reason = choose_onset_consensus_time(23.29, 0.002, 23.03, 0.52, 23.14)
+        self.assertAlmostEqual(candidate or 0.0, 23.085, places=3)
+        self.assertEqual(reason, "whisperx-japanese-ctc-onset-consensus")
+        candidate, reason = choose_onset_consensus_time(202.27, 0.06, 202.525, 0.96, 202.539)
+        self.assertAlmostEqual(candidate or 0.0, 202.532, places=3)
+        self.assertEqual(reason, "whisperx-japanese-ctc-over-ctc-onset-consensus")
+        candidate, reason = choose_onset_consensus_time(123.876, 0.009, 123.222, 0.889, 124.112)
+        self.assertAlmostEqual(candidate or 0.0, 123.222, places=3)
+        self.assertEqual(reason, "high-confidence-whisperx-over-weak-ctc-initial")
+
     def test_untimed_adjacent_translation_lines_share_one_timing_entry(self) -> None:
         with TemporaryDirectory() as temp_name:
             lyrics = Path(temp_name) / "lyrics.txt"
@@ -132,6 +146,28 @@ class AnchorHintTests(unittest.TestCase):
 
 
 class TimingTrustTests(unittest.TestCase):
+    def test_review_exploded_hybrid_prefers_clean_ctc_sequence(self) -> None:
+        self.assertTrue(
+            should_prefer_ctc_over_review_exploded_hybrid(
+                {"review_required_count": 44},
+                {"ctc_missing_count": 0, "review_required_count": 3, "collapse_detected": False},
+            )
+        )
+
+    def test_review_guard_keeps_collapsed_or_missing_ctc_out_of_contention(self) -> None:
+        self.assertFalse(
+            should_prefer_ctc_over_review_exploded_hybrid(
+                {"review_required_count": 44},
+                {"ctc_missing_count": 1, "review_required_count": 0, "collapse_detected": False},
+            )
+        )
+        self.assertFalse(
+            should_prefer_ctc_over_review_exploded_hybrid(
+                {"review_required_count": 44},
+                {"ctc_missing_count": 0, "review_required_count": 0, "collapse_detected": True},
+            )
+        )
+
     def test_candidate_scoring_rejects_raw_time_inside_the_previous_ctc_tail(self) -> None:
         entries = [LyricEntry(["before"]), LyricEntry(["target"]), LyricEntry(["after"])]
         report: dict[str, object] = {
@@ -260,6 +296,33 @@ class TimingTrustTests(unittest.TestCase):
         self.assertEqual(assignment["chosen_time"], 172.770)
         self.assertIn("ctc_repeated_leading_term_onset", [item["source"] for item in assignment["candidates"]])  # type: ignore[index]
 
+    def test_repeated_leading_term_recovery_rejects_prior_ctc_tail_peak(self) -> None:
+        entries = [LyricEntry(["before"]), LyricEntry(["again again target"]), LyricEntry(["after"])]
+        report: dict[str, object] = {
+            "assignments": [
+                {
+                    "entry": 1,
+                    "timestamp": 10.0,
+                    "ctc_token_spans": [{"char": "e", "end": 14.9, "score": 0.8}],
+                },
+                {
+                    "entry": 2,
+                    "timestamp": 16.0,
+                    "ctc_score": 0.05,
+                    "ctc_token_spans": [{"char": "a", "start": 16.0, "score": 0.2}],
+                    "ctc_first_token_candidates": [{"time": 14.8, "score": 0.08}],
+                },
+                {"entry": 3, "timestamp": 20.0},
+            ],
+            "suspicious_alignments": [],
+        }
+
+        result = score_line_timing_candidates(entries, [10.0, 16.0, 20.0], report, 25.0)
+
+        self.assertEqual(result[1], 16.0)
+        assignment = report["assignments"][1]  # type: ignore[index]
+        self.assertNotIn("ctc_repeated_leading_term_onset", [item["source"] for item in assignment["candidates"]])  # type: ignore[index]
+
     def test_candidate_scoring_never_overwrites_manual_anchor(self) -> None:
         entries = [LyricEntry(["before"]), LyricEntry(["人生 人生 人生とか"]), LyricEntry(["after"])]
         report: dict[str, object] = {
@@ -284,6 +347,33 @@ class TimingTrustTests(unittest.TestCase):
         assignment = report["assignments"][1]  # type: ignore[index]
         self.assertEqual(assignment["reasons"], ["human-reviewed-anchor"])
         self.assertEqual(assignment["confidence"], 1.0)
+
+    def test_candidate_scoring_ignores_peak_inside_previous_ctc_tail(self) -> None:
+        entries = [LyricEntry(["before"]), LyricEntry(["kana"]), LyricEntry(["after"])]
+        report: dict[str, object] = {
+            "assignments": [
+                {
+                    "entry": 1,
+                    "timestamp": 10.0,
+                    "ctc_token_spans": [{"char": "e", "end": 15.00, "score": 0.8}],
+                },
+                {
+                    "entry": 2,
+                    "timestamp": 15.35,
+                    "ctc_score": 0.05,
+                    "ctc_token_spans": [{"char": "k", "start": 15.35, "score": 0.01}],
+                    "ctc_first_token_candidates": [{"time": 14.95, "score": 0.2}],
+                },
+                {"entry": 3, "timestamp": 20.0},
+            ],
+            "suspicious_alignments": [],
+        }
+
+        score_line_timing_candidates(entries, [10.0, 15.35, 20.0], report, 25.0)
+
+        assignment = report["assignments"][1]  # type: ignore[index]
+        self.assertNotIn("phonetic_anchor_disagreement", assignment["flags"])
+        self.assertNotIn("ctc_nearby_phonetic_peak", [item["source"] for item in assignment["candidates"]])  # type: ignore[index]
 
     def test_isolated_low_ctc_scores_remain_untrusted_without_forcing_review(self) -> None:
         entries = [LyricEntry(["one"]), LyricEntry(["two"]), LyricEntry(["three"])]
@@ -762,6 +852,12 @@ class CtcAcousticBacktrackTests(unittest.TestCase):
 
 
 class VocalOnsetTiebreakTests(unittest.TestCase):
+    def test_zero_gap_boundary_realign_requires_a_stronger_late_local_path(self) -> None:
+        self.assertTrue(should_accept_zero_gap_boundary_realign(0.0, 0.20, 10.0, 10.75, 0.24))
+        self.assertFalse(should_accept_zero_gap_boundary_realign(0.12, 0.20, 10.0, 10.75, 0.24))
+        self.assertFalse(should_accept_zero_gap_boundary_realign(0.0, 0.20, 10.0, 10.20, 0.24))
+        self.assertFalse(should_accept_zero_gap_boundary_realign(0.0, 0.20, 10.0, 10.75, 0.20))
+
     def test_prefers_ctc_only_when_vocal_onset_evidence_is_clear(self) -> None:
         frame_times = np.round(np.arange(0.0, 30.0, 0.02), 3).astype(np.float32)
         onset_strength = np.zeros_like(frame_times)
@@ -913,6 +1009,45 @@ class VocalOnsetTiebreakTests(unittest.TestCase):
             self.assertEqual(len(changes), 1)
             self.assertAlmostEqual(timestamps[1], 19.6, places=3)
             self.assertEqual(changes[0]["mode"], "ctc-short-acoustic-onset")
+        finally:
+            auto_lrc.analyze_audio = original_analyze_audio  # type: ignore[assignment]
+
+    def test_short_acoustic_snap_keeps_credible_ctc_start_when_backtrack_harms_pacing(self) -> None:
+        frame_times = np.round(np.arange(0.0, 40.0, 0.1), 3).astype(np.float32)
+        onset_strength = np.zeros_like(frame_times)
+        onset_strength[np.where(np.isclose(frame_times, 19.6))[0][0]] = 1.0
+        features = AudioFeatures(
+            duration=40.0,
+            frame_times=frame_times,
+            rms_db=np.full_like(frame_times, -20.0),
+            onset_strength=onset_strength,
+            segments=[],
+        )
+        original_analyze_audio = auto_lrc.analyze_audio
+        auto_lrc.analyze_audio = lambda audio_path, duration: features  # type: ignore[assignment]
+        try:
+            entries = [LyricEntry(["previous phrase"]), LyricEntry(["target phrase"]), LyricEntry(["next phrase"])]
+            timestamps = [15.0, 20.0, 25.0]
+            report: dict[str, object] = {
+                "assignments": [
+                    {"entry": 1, "timestamp": 15.0, "timing_repair": "ctc-forced-align", "ctc_score": 0.5},
+                    {
+                        "entry": 2,
+                        "timestamp": 20.0,
+                        "timing_repair": "ctc-forced-align",
+                        "timing_repair_source": "torchaudio-mms-fa",
+                        "ctc_score": 0.04,
+                        "romaji": "sen",
+                        "ctc_token_spans": [{"char": "s", "start": 20.0, "score": 0.08}],
+                    },
+                    {"entry": 3, "timestamp": 25.0, "timing_repair": "ctc-forced-align", "ctc_score": 0.5},
+                ],
+            }
+
+            changes = apply_ctc_acoustic_backtrack(Path("dummy.flac"), entries, timestamps, report, 40.0)
+
+            self.assertEqual(changes, [])
+            self.assertEqual(timestamps[1], 20.0)
         finally:
             auto_lrc.analyze_audio = original_analyze_audio  # type: ignore[assignment]
 
