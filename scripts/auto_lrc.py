@@ -1595,7 +1595,10 @@ def apply_ctc_local_window_realign(
                 "--output", str(output_path), "--device", args.whisperx_device,
                 "--start", f"{start_time:.3f}", "--end", f"{end_time:.3f}",
             ]
-            proc = subprocess.run(command, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            proc = subprocess.run(
+                command, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, encoding="utf-8", errors="replace",
+            )
             if proc.returncode != 0 or not output_path.exists():
                 errors.append((proc.stderr or proc.stdout).strip()[:240])
                 continue
@@ -1711,7 +1714,10 @@ def apply_ctc_hybrid_window_realign(
                 "--output", str(output_path), "--device", args.whisperx_device,
                 "--start", f"{start_time:.3f}", "--end", f"{end_time:.3f}",
             ]
-            proc = subprocess.run(command, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            proc = subprocess.run(
+                command, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, encoding="utf-8", errors="replace",
+            )
             if proc.returncode != 0 or not output_path.exists():
                 continue
             rows = json.loads(output_path.read_text(encoding="utf-8")).get("entries")
@@ -3265,6 +3271,8 @@ def prepare_vocal_ctc_audio(audio_path: Path, args: argparse.Namespace) -> tuple
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     if proc.returncode:
         detail = (proc.stderr or proc.stdout).strip().replace("\n", " ")
@@ -4272,7 +4280,10 @@ def apply_ctc_zero_gap_boundary_realign(
                 "--output", str(output_path), "--device", args.whisperx_device,
                 "--start", f"{start_time:.3f}", "--end", f"{end_time:.3f}",
             ]
-            proc = subprocess.run(command, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            proc = subprocess.run(
+                command, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, encoding="utf-8", errors="replace",
+            )
             if proc.returncode != 0 or not output_path.exists():
                 continue
             rows = json.loads(output_path.read_text(encoding="utf-8")).get("entries")
