@@ -25,6 +25,8 @@ from auto_lrc import (
     build_parser,
     choose_alignment_candidate,
     choose_onset_consensus_time,
+    flag_unresolved_raw_ctc_disagreements,
+    has_ambiguous_lyric_prefix,
     match_anchor_entries,
     load_lyrics,
     refresh_ctc_confidence_diagnostics,
@@ -117,6 +119,21 @@ class AnchorHintTests(unittest.TestCase):
         finally:
             auto_lrc.audio_track_labels = original_labels  # type: ignore[assignment]
 
+    def test_untimed_source_title_header_is_not_reused_as_alignment_lyric(self) -> None:
+        original_labels = auto_lrc.audio_track_labels
+        auto_lrc.audio_track_labels = lambda _path: ("", "Song Title")  # type: ignore[assignment]
+        try:
+            entries = [
+                LyricEntry(["Song Title", "Song translation"]),
+                LyricEntry(["actual lyric"], None),
+            ]
+
+            kept = remove_generated_title_cards(entries, Path("dummy.flac"))
+
+            self.assertEqual([entry.lines[0] for entry in kept], ["actual lyric"])
+        finally:
+            auto_lrc.audio_track_labels = original_labels  # type: ignore[assignment]
+
     def test_probe_option_parses_without_output_path(self) -> None:
         args = build_parser().parse_args(["song.flac", "--probe"])
 
@@ -146,6 +163,88 @@ class AnchorHintTests(unittest.TestCase):
 
 
 class TimingTrustTests(unittest.TestCase):
+    def test_shared_long_prefix_disables_raw_asr_as_unique_evidence(self) -> None:
+        entries = [
+            LyricEntry(["消えてしまいたい生涯なんてもんに愛を望んだって"]),
+            LyricEntry(["消えてしまいたい生涯なんてもんに温もり望んだって"]),
+        ]
+
+        self.assertTrue(has_ambiguous_lyric_prefix(entries, 0))
+        self.assertTrue(has_ambiguous_lyric_prefix(entries, 1))
+
+    def test_raw_systematic_drift_is_one_section_review_not_many_line_failures(self) -> None:
+        timestamps = [10.0, 20.0, 30.0, 40.0, 50.0]
+        report: dict[str, object] = {
+            "timing_entries": len(timestamps),
+            "assignments": [{"timestamp": timestamp, "score": 0.9} for timestamp in timestamps],
+            "suspicious_alignments": [],
+        }
+        raw_report: dict[str, object] = {
+            "assignments": [
+                {"timestamp": 9.05, "score": 0.92},
+                {"timestamp": 19.10, "score": 0.91},
+                {"timestamp": 29.00, "score": 0.95},
+                {"timestamp": 39.08, "score": 0.89},
+                {"timestamp": 49.02, "score": 0.94},
+            ]
+        }
+
+        flag_unresolved_raw_ctc_disagreements(timestamps, report, raw_report)
+
+        self.assertEqual(report["review_required_count"], 1)
+        self.assertEqual(len(report["raw_asr_systematic_drift_runs"]), 1)  # type: ignore[arg-type]
+        risk = report["suspicious_alignments"][0]  # type: ignore[index]
+        self.assertIn("raw_asr_systematic_drift", risk["flags"])  # type: ignore[index]
+        self.assertEqual(risk["raw_asr_systematic_drift"]["entries"], [1, 2, 3, 4, 5])  # type: ignore[index]
+
+    def test_zero_score_raw_assignment_is_not_alignment_evidence(self) -> None:
+        timestamps = [10.0, 20.0]
+        report: dict[str, object] = {
+            "timing_entries": len(timestamps),
+            "assignments": [{"timestamp": timestamp, "score": 0.9} for timestamp in timestamps],
+            "suspicious_alignments": [],
+        }
+        raw_report: dict[str, object] = {
+            "assignments": [
+                {"timestamp": 2.0, "score": 0.0},
+                {"timestamp": 18.9, "score": 0.0},
+            ]
+        }
+
+        flag_unresolved_raw_ctc_disagreements(timestamps, report, raw_report)
+
+        self.assertEqual(report["review_required_count"], 0)
+        self.assertEqual(report["raw_asr_zero_score_rejections"], 2)
+
+    def test_raw_disagreement_compares_each_entry_to_its_own_ctc_time(self) -> None:
+        timestamps = [10.0, 20.0]
+        report: dict[str, object] = {
+            "timing_entries": len(timestamps),
+            "assignments": [{"timestamp": timestamp, "score": 0.9} for timestamp in timestamps],
+            "suspicious_alignments": [],
+        }
+        raw_report: dict[str, object] = {
+            "assignments": [
+                {"timestamp": 10.05, "score": 0.95},
+                {"timestamp": 20.70, "score": 0.95},
+            ]
+        }
+
+        flag_unresolved_raw_ctc_disagreements(timestamps, report, raw_report)
+
+        self.assertEqual(report["review_required_count"], 1)
+        risk = report["suspicious_alignments"][0]  # type: ignore[index]
+        self.assertEqual(risk["entry"], 2)  # type: ignore[index]
+        self.assertEqual(risk["candidate_timestamps"]["output"], 20.0)  # type: ignore[index]
+
+    def test_local_window_uses_first_line_raw_anchor_to_exclude_instrumental_intro(self) -> None:
+        # The exact CTC subprocess is covered in integration runs.  This
+        # regression protects the boundary choice used before that subprocess.
+        raw_anchor = 3.76
+        local_start = max(0.0, raw_anchor - 1.00)
+
+        self.assertAlmostEqual(local_start, 2.76, places=3)
+
     def test_review_exploded_hybrid_prefers_clean_ctc_sequence(self) -> None:
         self.assertTrue(
             should_prefer_ctc_over_review_exploded_hybrid(
@@ -279,6 +378,10 @@ class TimingTrustTests(unittest.TestCase):
                     "score": 0.7,
                     "timestamp": 174.266,
                     "ctc_score": 0.073687,
+                    "ctc_token_spans": [
+                        {"char": "x", "start": 174.266, "score": 0.02},
+                        {"char": "y", "start": 174.366, "score": 0.20},
+                    ],
                     "ctc_first_token_candidates": [
                         {"time": 172.770, "score": 0.034785},
                         {"time": 174.091, "score": 0.039345},
@@ -320,6 +423,30 @@ class TimingTrustTests(unittest.TestCase):
         result = score_line_timing_candidates(entries, [10.0, 16.0, 20.0], report, 25.0)
 
         self.assertEqual(result[1], 16.0)
+        assignment = report["assignments"][1]  # type: ignore[index]
+        self.assertNotIn("ctc_repeated_leading_term_onset", [item["source"] for item in assignment["candidates"]])  # type: ignore[index]
+
+    def test_repeated_leading_term_keeps_usable_forced_initial(self) -> None:
+        entries = [LyricEntry(["before"]), LyricEntry(["again again target"]), LyricEntry(["after"])]
+        report: dict[str, object] = {
+            "assignments": [
+                {"entry": 1, "timestamp": 10.0, "score": 0.9},
+                {
+                    "entry": 2,
+                    "timestamp": 16.0,
+                    "score": 0.7,
+                    "ctc_score": 0.07,
+                    "ctc_token_spans": [{"char": "a", "start": 16.0, "score": 0.12}],
+                    "ctc_first_token_candidates": [{"time": 14.4, "score": 0.03}],
+                },
+                {"entry": 3, "timestamp": 20.0, "score": 0.9},
+            ],
+            "suspicious_alignments": [],
+        }
+
+        result = score_line_timing_candidates(entries, [10.0, 16.0, 20.0], report, 25.0)
+
+        self.assertAlmostEqual(result[1], 16.0, places=3)
         assignment = report["assignments"][1]  # type: ignore[index]
         self.assertNotIn("ctc_repeated_leading_term_onset", [item["source"] for item in assignment["candidates"]])  # type: ignore[index]
 

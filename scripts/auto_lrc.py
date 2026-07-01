@@ -15,7 +15,9 @@ import copy
 import hashlib
 import json
 import math
+import os
 import re
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -175,11 +177,11 @@ def audio_track_labels(audio_path: Path) -> tuple[str, str]:
 
 
 def remove_generated_title_cards(entries: list[LyricEntry], audio_path: Path) -> list[LyricEntry]:
-    """Do not feed an LRC tools 00:00 title card back into forced alignment."""
+    """Remove generated LRC cards and an untimed source title header from alignment."""
     artist, title = audio_track_labels(audio_path)
     normalized_title = normalize_match_text(title)
     kept: list[LyricEntry] = []
-    for entry in entries:
+    for index, entry in enumerate(entries):
         text = entry_sung_text(entry).strip()
         is_title_card = (
             entry.source_time_cs == 0
@@ -188,7 +190,16 @@ def remove_generated_title_cards(entries: list[LyricEntry], audio_path: Path) ->
             and normalized_title
             and normalized_title in normalize_match_text(text)
         )
-        if not is_title_card:
+        # A plain text lyric source commonly starts with "title / translation".
+        # It is metadata, not a zero-second sung line.  The generated LRC title
+        # card already represents it, so never offer it to a forced aligner.
+        is_untimed_source_header = (
+            index == 0
+            and entry.source_time_cs is None
+            and normalized_title
+            and normalize_match_text(text) == normalized_title
+        )
+        if not is_title_card and not is_untimed_source_header:
             kept.append(entry)
     return kept
 
@@ -812,6 +823,33 @@ def repeated_leading_term(text: str) -> tuple[str, int]:
     return (first, repeated) if repeated >= 2 else ("", 0)
 
 
+def has_ambiguous_lyric_prefix(entries: list[LyricEntry], index: int) -> bool:
+    """Detect long shared prefixes that make raw-ASR line matching ambiguous."""
+    if not (0 <= index < len(entries)):
+        return False
+    target = normalize_match_text(entry_sung_text(entries[index]))
+    if len(target) < 12:
+        return False
+    for other_index, other_entry in enumerate(entries):
+        if other_index == index:
+            continue
+        other = normalize_match_text(entry_sung_text(other_entry))
+        if len(other) < 12:
+            continue
+        shared = 0
+        for left, right in zip(target, other):
+            if left != right:
+                break
+            shared += 1
+        # Twelve shared characters (or most of a shorter long phrase) makes a
+        # raw segment match non-unique. It may identify the right *phrase*
+        # while still selecting the wrong occurrence in the song.
+        required = min(12, max(8, min(len(target), len(other)) // 2))
+        if shared >= required:
+            return True
+    return False
+
+
 def infer_spoken_language(entries: list[LyricEntry]) -> str:
     sample = "".join(entry_sung_text(entry) for entry in entries[:12])
     if not sample:
@@ -1101,6 +1139,11 @@ def run_ctc_alignment(
     args: argparse.Namespace,
 ) -> tuple[list[float], dict[str, object]]:
     alignment_audio, audio_source, audio_note = prepare_vocal_ctc_audio(audio_path, args)
+    if getattr(args, "vocal_ctc", True) and audio_source != "vocal-stem":
+        raise LrcError(
+            "Vocal CTC was requested but Demucs did not produce an isolated vocal stem: "
+            f"{audio_note or 'unknown failure'}. Use --no-vocal-ctc only to explicitly allow full-mix CTC."
+        )
     python_exe = default_ctc_python()
     helper = Path(__file__).resolve().parent / "ctc_align.py"
     if not python_exe.exists():
@@ -1495,6 +1538,8 @@ def apply_ctc_local_window_realign(
     def raw_anchor(index: int) -> float | None:
         if not 0 <= index < len(raw_assignments):
             return None
+        if has_ambiguous_lyric_prefix(entries, index):
+            return None
         item = raw_assignments[index]
         if not isinstance(item, dict) or item.get("borrowed"):
             return None
@@ -1504,6 +1549,17 @@ def apply_ctc_local_window_realign(
         except (TypeError, ValueError):
             return None
         return timestamp if score >= TRUSTED_ALIGNMENT_SCORE else None
+
+    def local_anchor(index: int) -> float | None:
+        """Prefer unique raw anchors, then fall back to neighboring CTC bounds."""
+        raw_time = raw_anchor(index)
+        if raw_time is not None:
+            return raw_time
+        if 0 <= index < len(timestamps):
+            timestamp = float(timestamps[index])
+            if math.isfinite(timestamp):
+                return timestamp
+        return None
 
     refined = list(timestamps)
     changes: list[dict[str, object]] = []
@@ -1532,6 +1588,8 @@ def apply_ctc_local_window_realign(
         except (TypeError, ValueError):
             continue
         borrowed = bool(raw_item.get("borrowed"))
+        if has_ambiguous_lyric_prefix(entries, index):
+            continue
         threshold = 0.45 if raw_score >= TRUSTED_ALIGNMENT_SCORE and not borrowed else 0.75
         if abs(raw_time - current_time) >= threshold:
             if isinstance(assignments[index], dict) and assignments[index].get("ctc_clear_boundary"):
@@ -1552,9 +1610,17 @@ def apply_ctc_local_window_realign(
     window_runs = merged_runs
     python_exe = default_ctc_python()
     helper = Path(__file__).resolve().parent / "ctc_align.py"
+    split_windows: list[dict[str, object]] = []
     with tempfile.TemporaryDirectory(prefix="lrc-ctc-window-") as temp_name:
         temp_dir = Path(temp_name)
-        for window_number, raw_run in enumerate(window_runs, start=1):
+        # A disagreement can span a full verse.  Re-aligning that whole verse
+        # in one 45+ second pass is both costly and less constrained; split it
+        # into adjacent windows while retaining a preceding lyric as context.
+        pending_runs = [list(run) for run in window_runs]
+        window_number = 0
+        while pending_runs:
+            raw_run = pending_runs.pop(0)
+            window_number += 1
             if not isinstance(raw_run, list) or not raw_run:
                 continue
             try:
@@ -1562,24 +1628,60 @@ def apply_ctc_local_window_realign(
                 low_end = int(raw_run[-1]) - 1
             except (TypeError, ValueError):
                 continue
-            left_index = next((idx for idx in range(low_start - 1, max(-1, low_start - 4), -1) if raw_anchor(idx) is not None), None)
-            right_index = next((idx for idx in range(low_end + 1, min(len(entries), low_end + 4)) if raw_anchor(idx) is not None), None)
+            left_index = next((idx for idx in range(low_start - 1, max(-1, low_start - 4), -1) if local_anchor(idx) is not None), None)
+            right_index = next((idx for idx in range(low_end + 1, min(len(entries), low_end + 4)) if local_anchor(idx) is not None), None)
             start_index = 0 if left_index is None else left_index + 1
             end_index = len(entries) - 1 if right_index is None else right_index - 1
             # Include the preceding trusted line as CTC context. Starting the
             # audio just after its onset but omitting its text lets the target
             # line steal the preceding line's sustained vowel.
             alignment_start_index = 0 if left_index is None else left_index
-            start_time = 0.0 if left_index is None else max(0.0, float(raw_anchor(left_index) or 0.0) - 0.05)
+            own_anchor = local_anchor(low_start)
+            left_anchor = local_anchor(left_index) if left_index is not None else None
+            # A large raw-ASR gap marks a section or instrumental break.  The
+            # preceding lyric is not useful CTC context there; keeping it
+            # makes repeated lines compete across the break.
+            detached_section_start = (
+                own_anchor is not None
+                and left_anchor is not None
+                and own_anchor - left_anchor >= 10.0
+            )
+            if detached_section_start:
+                alignment_start_index = low_start
+                start_index = low_start
+                start_time = max(0.0, own_anchor - 1.00)
+            elif left_index is None:
+                # The first disputed lyric has no preceding ASR anchor.  Do
+                # not give its local CTC pass the whole instrumental intro:
+                # a reliable raw onset is a window boundary, not replacement
+                # timing evidence, and prevents fragmented token paths from
+                # borrowing noise before the vocal starts.
+                start_time = max(0.0, own_anchor - 1.00) if own_anchor is not None else 0.0
+            else:
+                start_time = max(0.0, float(left_anchor or 0.0) - 0.05)
             if right_index is None:
-                tail_anchor = raw_anchor(len(entries) - 1)
+                tail_anchor = local_anchor(len(entries) - 1)
                 end_time = min(duration, (tail_anchor + 3.0) if tail_anchor is not None else duration)
             else:
-                end_time = float(raw_anchor(right_index) or duration) - 0.04
+                end_time = float(local_anchor(right_index) or duration) - 0.04
             window_duration = end_time - start_time
             if end_index < alignment_start_index or window_duration < 1.0:
                 continue
             if window_duration > 45.0:
+                if len(raw_run) >= 2:
+                    midpoint = len(raw_run) // 2
+                    left_run = raw_run[:midpoint]
+                    right_run = raw_run[midpoint:]
+                    pending_runs.insert(0, right_run)
+                    pending_runs.insert(0, left_run)
+                    split_windows.append(
+                        {
+                            "entries": list(raw_run),
+                            "window_seconds": round(window_duration, 3),
+                            "split_into": [list(left_run), list(right_run)],
+                        }
+                    )
+                    continue
                 errors.append(
                     f"window-{window_number}: skipped over-wide local CTC window ({window_duration:.1f}s)"
                 )
@@ -1637,7 +1739,12 @@ def apply_ctc_local_window_realign(
                 )
     for index in range(1, len(refined)):
         refined[index] = max(refined[index], refined[index - 1] + 0.10)
-    ctc_report["ctc_local_window_realign"] = {"status": "applied" if changes else "skipped", "windows": changes, "errors": errors}
+    ctc_report["ctc_local_window_realign"] = {
+        "status": "applied" if changes else "skipped",
+        "windows": changes,
+        "split_windows": split_windows,
+        "errors": errors,
+    }
     if changes:
         refresh_ctc_confidence_diagnostics(entries, ctc_report)
     return refined, ctc_report, changes
@@ -3262,9 +3369,12 @@ def prepare_vocal_ctc_audio(audio_path: Path, args: argparse.Namespace) -> tuple
     if cached.exists() and cached.stat().st_size > 0:
         return cached, "vocal-stem", "cache-hit"
     cache_dir.mkdir(parents=True, exist_ok=True)
+    demucs_env = os.environ.copy()
+    demucs_env["PYTHONUTF8"] = "1"
+    demucs_env["PYTHONIOENCODING"] = "utf-8"
     proc = subprocess.run(
         [
-            str(python_exe), "-m", "demucs", "--two-stems", "vocals", "--mp3", "-d", "cuda",
+            str(python_exe), "-X", "utf8", "-m", "demucs", "--two-stems", "vocals", "--mp3", "-d", "cuda",
             "-o", str(cache_dir), str(audio_path),
         ],
         check=False,
@@ -3273,6 +3383,7 @@ def prepare_vocal_ctc_audio(audio_path: Path, args: argparse.Namespace) -> tuple
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=demucs_env,
     )
     if proc.returncode:
         detail = (proc.stderr or proc.stdout).strip().replace("\n", " ")
@@ -3442,7 +3553,15 @@ def flag_unresolved_ctc_disagreements(
 def flag_unresolved_raw_ctc_disagreements(
     timestamps: list[float], report: dict[str, object], raw_report: dict[str, object]
 ) -> None:
-    """Require review when known-lyric CTC and raw ASR disagree on a line onset."""
+    """Use raw ASR as a local diagnostic without letting a bad run poison CTC.
+
+    Raw ASR has no guarantee that its matched segments retain a one-to-one
+    relationship with the supplied lyric list.  In particular, it can drift by
+    almost a constant amount for an entire verse, or continue emitting
+    timestamps after matching has collapsed.  Those are useful *section*
+    diagnostics, but are not independent per-line evidence against a
+    known-lyric CTC path.
+    """
     assignments = report.get("assignments")
     raw_assignments = raw_report.get("assignments")
     if not isinstance(assignments, list) or not isinstance(raw_assignments, list):
@@ -3451,24 +3570,116 @@ def flag_unresolved_raw_ctc_disagreements(
     if not isinstance(suspicious, list):
         suspicious = []
         report["suspicious_alignments"] = suspicious
-    by_entry = {
-        item.get("entry"): item
-        for item in suspicious
-        if isinstance(item, dict) and isinstance(item.get("entry"), int)
-    }
+
+    observations: list[dict[str, object]] = []
     for index, current_time in enumerate(timestamps):
         if index >= len(assignments) or index >= len(raw_assignments):
             continue
-        assignment = assignments[index]
         raw_assignment = raw_assignments[index]
-        if not isinstance(assignment, dict) or not isinstance(raw_assignment, dict):
+        if not isinstance(raw_assignment, dict):
             continue
         try:
             raw_time = float(raw_assignment.get("timestamp"))
             raw_score = float(raw_assignment.get("score", 0.0) or 0.0)
         except (TypeError, ValueError):
             continue
-        borrowed = bool(raw_assignment.get("borrowed"))
+        observations.append(
+            {
+                "index": index,
+                "raw_time": raw_time,
+                "raw_score": raw_score,
+                "borrowed": bool(raw_assignment.get("borrowed")),
+                "delta": raw_time - current_time,
+            }
+        )
+
+    # A same-direction, near-constant offset across three or more neighboring
+    # entries is raw-ASR clock/segment drift.  Preserve it as one diagnostic
+    # rather than turning every lyric in the verse into a separate failure.
+    drift_runs: list[dict[str, object]] = []
+    current_run: list[dict[str, object]] = []
+    for observation in observations:
+        raw_score = float(observation["raw_score"])
+        delta = float(observation["delta"])
+        eligible = (
+            not bool(observation["borrowed"])
+            and raw_score >= 0.50
+            and abs(delta) >= 0.75
+        )
+        same_direction = (
+            not current_run
+            or (float(current_run[-1]["delta"]) * delta > 0)
+        )
+        close_offset = (
+            not current_run
+            or abs(float(current_run[-1]["delta"]) - delta) <= 0.65
+        )
+        consecutive = not current_run or int(observation["index"]) == int(current_run[-1]["index"]) + 1
+        if eligible and same_direction and close_offset and consecutive:
+            current_run.append(observation)
+            continue
+        if len(current_run) >= 3:
+            drift_runs.append(
+                {
+                    "entries": [int(item["index"]) + 1 for item in current_run],
+                    "direction": "raw_earlier" if float(current_run[0]["delta"]) < 0 else "raw_later",
+                    "median_delta_seconds": round(float(statistics.median(float(item["delta"]) for item in current_run)), 3),
+                    "delta_range_seconds": round(
+                        max(float(item["delta"]) for item in current_run)
+                        - min(float(item["delta"]) for item in current_run),
+                        3,
+                    ),
+                    "mean_raw_score": round(
+                        sum(float(item["raw_score"]) for item in current_run) / len(current_run), 3
+                    ),
+                }
+            )
+        current_run = [observation] if eligible else []
+    if len(current_run) >= 3:
+        drift_runs.append(
+            {
+                "entries": [int(item["index"]) + 1 for item in current_run],
+                "direction": "raw_earlier" if float(current_run[0]["delta"]) < 0 else "raw_later",
+                "median_delta_seconds": round(float(statistics.median(float(item["delta"]) for item in current_run)), 3),
+                "delta_range_seconds": round(
+                    max(float(item["delta"]) for item in current_run)
+                    - min(float(item["delta"]) for item in current_run),
+                    3,
+                ),
+                "mean_raw_score": round(
+                    sum(float(item["raw_score"]) for item in current_run) / len(current_run), 3
+                ),
+            }
+        )
+    systematic_drift_entries = {
+        entry for drift_run in drift_runs for entry in drift_run["entries"]
+    }
+    report["raw_asr_systematic_drift_runs"] = drift_runs
+    report["raw_asr_zero_score_rejections"] = sum(
+        1 for item in observations if float(item["raw_score"]) <= 0.0
+    )
+    by_entry = {
+        item.get("entry"): item
+        for item in suspicious
+        if isinstance(item, dict) and isinstance(item.get("entry"), int)
+    }
+    for observation in observations:
+        index = int(observation["index"])
+        if index >= len(assignments):
+            continue
+        assignment = assignments[index]
+        if not isinstance(assignment, dict):
+            continue
+        current_time = timestamps[index]
+        raw_time = float(observation["raw_time"])
+        raw_score = float(observation["raw_score"])
+        borrowed = bool(observation["borrowed"])
+        # score=0 was assigned only as a draft placeholder.  It is explicitly
+        # not a competing alignment candidate and must not trigger review.
+        if raw_score < 0.50:
+            continue
+        if index + 1 in systematic_drift_entries:
+            continue
         disagreement = abs(raw_time - current_time)
         threshold = 0.45 if raw_score >= 0.90 and not borrowed else 0.75
         if disagreement < threshold:
@@ -3504,6 +3715,32 @@ def flag_unresolved_raw_ctc_disagreements(
         existing["raw_asr_score"] = round(raw_score, 3)
         existing["raw_asr_borrowed"] = borrowed
         existing["candidate_disagreement_seconds"] = round(disagreement, 3)
+
+    for drift_run in drift_runs:
+        entries_in_run = drift_run["entries"]
+        if not isinstance(entries_in_run, list) or not entries_in_run:
+            continue
+        entry_number = int(entries_in_run[0])
+        existing = by_entry.get(entry_number)
+        if existing is None:
+            existing = {
+                "entry": entry_number,
+                "review_required": True,
+                "severity": "medium",
+                "flags": [],
+                "candidate_timestamps": {},
+            }
+            suspicious.append(existing)
+            by_entry[entry_number] = existing
+        existing["review_required"] = True
+        existing["severity"] = "medium"
+        flags = existing.get("flags")
+        if not isinstance(flags, list):
+            flags = []
+            existing["flags"] = flags
+        if "raw_asr_systematic_drift" not in flags:
+            flags.append("raw_asr_systematic_drift")
+        existing["raw_asr_systematic_drift"] = drift_run
     review_count = sum(
         1 for item in suspicious if isinstance(item, dict) and bool(item.get("review_required"))
     )
@@ -5560,6 +5797,7 @@ def score_line_timing_candidates(
             )
         detached_initial_ctc_token = False
         detached_initial_ctc_token_score = 1.0
+        first_ctc_token_score = 1.0
         token_spans = assignment.get("ctc_token_spans")
         if isinstance(token_spans, list) and len(token_spans) >= 2:
             try:
@@ -5567,6 +5805,7 @@ def score_line_timing_candidates(
                 second_start = float(token_spans[1].get("start"))
                 detached_initial_ctc_token = second_start - first_start >= 0.45
                 detached_initial_ctc_token_score = float(token_spans[0].get("score", 1.0) or 0.0)
+                first_ctc_token_score = detached_initial_ctc_token_score
             except (AttributeError, TypeError, ValueError):
                 detached_initial_ctc_token = False
         if previous_ctc_token_end is not None and isinstance(raw_time, (int, float)):
@@ -5581,6 +5820,36 @@ def score_line_timing_candidates(
             parsed_raw_score = float(raw_score) if raw_score is not None else 0.0
         except (TypeError, ValueError):
             parsed_raw_score = 0.0
+
+        raw_candidate = next((candidate for candidate in candidates if candidate.get("source") == "raw_asr"), None)
+        repeated_lyric = any(
+            normalize_match_text(entry_sung_text(previous_entry)) == normalized
+            for previous_entry in entries[max(0, index - 12) : index]
+        )
+        ambiguous_lyric_prefix = has_ambiguous_lyric_prefix(entries, index)
+        local_ctc_confirmed = bool(assignment.get("ctc_local_window_realign")) and first_ctc_token_score >= 0.50
+        weak_local_raw_rescue = (
+            isinstance(raw_candidate, dict)
+            and bool(assignment.get("ctc_local_window_realign"))
+            and first_ctc_token_score <= 0.12
+            and parsed_raw_score >= 0.80
+            and not repeated_lyric
+            and not ambiguous_lyric_prefix
+            and previous_time + 0.05 < float(raw_candidate["time"]) < next_time - 0.05
+            and (
+                previous_ctc_token_end is None
+                or float(raw_candidate["time"]) > previous_ctc_token_end + 0.05
+            )
+        )
+        if local_ctc_confirmed and isinstance(raw_candidate, dict):
+            raw_candidate["score"] = 0.05
+            raw_candidate.setdefault("reasons", []).append("local-vocal-ctc-confirms-first-token")
+        elif weak_local_raw_rescue and isinstance(raw_candidate, dict):
+            # This is deliberately narrow: local vocal CTC has a weak opening
+            # posterior, raw ASR is strong and lies after the prior forced tail,
+            # and the lyric is not a repeated phrase that raw matching can swap.
+            raw_candidate["score"] = 0.98
+            raw_candidate.setdefault("reasons", []).append("raw-resolves-weak-local-vocal-ctc")
         if detached_initial_ctc_token and parsed_raw_score >= 0.90:
             for candidate in candidates:
                 if candidate.get("source") != "raw_asr":
@@ -5649,7 +5918,15 @@ def score_line_timing_candidates(
         except (TypeError, ValueError):
             ctc_score = 1.0
         repeated_onset_candidate: dict[str, object] | None = None
-        if leading_term_count >= 2 and ctc_score <= 0.18 and isinstance(peaks, list):
+        if (
+            leading_term_count >= 2
+            and ctc_score <= 0.18
+            # A repeated word alone is insufficient. If the forced path has a
+            # usable first-token posterior, an earlier same-syllable peak is
+            # commonly a preceding ad-lib rather than the lyric onset.
+            and first_ctc_token_score <= 0.05
+            and isinstance(peaks, list)
+        ):
             earlier_peaks: list[dict[str, float]] = []
             repeated_peak_floor = previous_time + 0.20
             if previous_ctc_token_end is not None:
@@ -5693,13 +5970,13 @@ def score_line_timing_candidates(
         flags: list[str] = []
         numeric_times = [float(candidate["time"]) for candidate in candidates]
         spread = max(numeric_times) - min(numeric_times) if len(numeric_times) > 1 else 0.0
-        if spread >= 0.75:
+        if spread >= 0.75 and not weak_local_raw_rescue:
             penalties.append({"kind": "candidate_disagreement", "value": 0.25, "seconds": round(spread, 3)})
             flags.append("candidate_disagreement")
         if current_time <= previous_time + 0.12 and index:
             penalties.append({"kind": "previous_line_tail_attachment", "value": 0.20})
             flags.append("previous_line_tail_attachment")
-        if is_long and spread >= 1.25:
+        if is_long and spread >= 1.25 and not weak_local_raw_rescue:
             penalties.append({"kind": "long_line_disagreement", "value": 0.18})
             flags.append("long_line_disagreement")
         if is_short and spread >= 0.45:
@@ -5746,6 +6023,11 @@ def score_line_timing_candidates(
             and detached_initial_ctc_token
             and parsed_raw_score >= 0.90
         )
+        raw_resolves_weak_local_ctc = (
+            safe_to_replace
+            and chosen.get("source") == "raw_asr"
+            and weak_local_raw_rescue
+        )
         review_required = bool(risk.get("review_required")) if isinstance(risk, dict) else False
         # A lone weak CTC path remains untrusted in the report, but score alone
         # does not establish a timing defect. Require a concrete conflict before
@@ -5753,7 +6035,7 @@ def score_line_timing_candidates(
         review_required = review_required or (
             confidence < 0.68 and not isolated_low_ctc_path
         ) or spread >= 1.25
-        if raw_resolves_detached_ctc:
+        if raw_resolves_detached_ctc or raw_resolves_weak_local_ctc or local_ctc_confirmed:
             review_required = False
         assignment["chosen_time"] = round(chosen_time, 3)
         assignment["confidence"] = round(confidence, 3)
@@ -5783,13 +6065,25 @@ def score_line_timing_candidates(
             risk["penalties"] = penalties
             risk["flags"] = list(dict.fromkeys([*(risk.get("flags") if isinstance(risk.get("flags"), list) else []), *flags]))
             risk["review_required"] = True
-        elif raw_resolves_detached_ctc and isinstance(risk, dict):
+        elif (raw_resolves_detached_ctc or raw_resolves_weak_local_ctc or local_ctc_confirmed) and isinstance(risk, dict):
             risk["review_required"] = False
             risk["severity"] = "resolved"
-            risk["resolution"] = "high-confidence-raw-resolves-detached-ctc-initial-token"
+            if local_ctc_confirmed:
+                risk["resolution"] = "local-vocal-ctc-confirms-first-token"
+            elif raw_resolves_weak_local_ctc:
+                risk["resolution"] = "high-confidence-raw-resolves-weak-local-vocal-ctc"
+            else:
+                risk["resolution"] = "high-confidence-raw-resolves-detached-ctc-initial-token"
             risk_flags = risk.get("flags")
             if isinstance(risk_flags, list):
-                risk["flags"] = list(dict.fromkeys([*risk_flags, "detached_ctc_initial_token_resolved"]))
+                resolution_flag = (
+                    "local_vocal_ctc_confirmed"
+                    if local_ctc_confirmed
+                    else "weak_local_vocal_ctc_resolved"
+                    if raw_resolves_weak_local_ctc
+                    else "detached_ctc_initial_token_resolved"
+                )
+                risk["flags"] = list(dict.fromkeys([*risk_flags, resolution_flag]))
     for index in range(1, len(revised)):
         revised[index] = max(revised[index], revised[index - 1] + 0.05)
     if not isinstance(risks, list):
@@ -6266,6 +6560,17 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
     lyrics_path = Path(args.lyrics) if args.lyrics else find_lyrics(audio_path)
     lyrics = load_lyrics(lyrics_path)
     entries = remove_generated_title_cards(lyrics.entries, audio_path)
+    if args.probe:
+        identity = str(audio_path.resolve()).casefold().encode("utf-8")
+        suffix = hashlib.sha256(identity).hexdigest()[:10]
+        output_path = DEFAULT_PROBE_DIR / f"{audio_path.stem}--{suffix}.probe.lrc"
+    else:
+        output_path = Path(args.output).expanduser().resolve() if args.output else audio_path.with_suffix(".lrc")
+    # Refuse an accidental overwrite before model inference.  Previously this
+    # check lived in write_lrc(), after CTC/ASR had already consumed minutes of
+    # GPU time for a probe whose destination could not be written.
+    if output_path.exists() and not args.overwrite:
+        raise LrcError(f"Output already exists: {output_path}. Use --overwrite to replace it.")
     requested_whisper_language = args.whisper_language
     if args.whisper_language == "auto":
         args = copy.copy(args)
@@ -6378,12 +6683,7 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
         timestamps = score_line_timing_candidates(entries, timestamps, report, duration)
         sync_report_assignment_timestamps(report, timestamps)
     if args.probe:
-        identity = str(audio_path.resolve()).casefold().encode("utf-8")
-        suffix = hashlib.sha256(identity).hexdigest()[:10]
         DEFAULT_PROBE_DIR.mkdir(parents=True, exist_ok=True)
-        output_path = DEFAULT_PROBE_DIR / f"{audio_path.stem}--{suffix}.probe.lrc"
-    else:
-        output_path = Path(args.output).expanduser().resolve() if args.output else audio_path.with_suffix(".lrc")
     report_dir = Path(args.report_dir).expanduser().resolve() if args.report_dir else DEFAULT_REPORT_DIR
     report_path, audit_path, template_path = report_artifact_paths(audio_path, output_path, report_dir)
     metadata_lines = None
