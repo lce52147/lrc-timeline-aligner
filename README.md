@@ -379,6 +379,30 @@ $env:LRC_TOOLS_CHECKED_REFERENCE_DIR = "D:\Users\Administrator\Music\LRC tools c
 python .\scripts\run_benchmarks.py --local-regression-only --regenerate
 ```
 
+Build a local quantitative summary from checked references and matching reports:
+
+```powershell
+python .\scripts\quantify_alignment.py --use-reference-as-final-output
+```
+
+This writes `outputs/quantitative/existing-summary.csv` and
+`outputs/quantitative/existing-summary.md`. The
+`--use-reference-as-final-output` mode is intended for result presentations: it
+uses manually reviewed checked LRC files as the final accepted outputs, while
+still reporting the aligner's recorded backend, trusted percentage, and
+review-required percentage from the matching `.align-report.json`.
+
+For a stricter fresh-run benchmark, regenerate candidates into the project
+scratch directory before evaluation:
+
+```powershell
+python .\scripts\quantify_alignment.py --regenerate
+```
+
+Fresh regenerated summaries are better evidence for current fully automatic
+performance. The reviewed-output summary is better for describing the current
+checked corpus and how much manual review the report layer identified.
+
 Run a private risk-audit gate for a local difficult song without committing
 audio, lyrics, or generated outputs:
 

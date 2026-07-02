@@ -32,6 +32,7 @@ PYTHON_SOURCES = [
     "scripts/ctc_align.py",
     "scripts/evaluate_lrc.py",
     "scripts/export_alignment_audit.py",
+    "scripts/quantify_alignment.py",
     "scripts/run_benchmarks.py",
     "scripts/test_core_logic.py",
     "scripts/whisperx_refine.py",
