@@ -392,6 +392,9 @@ uses manually reviewed checked LRC files as the final accepted outputs, while
 still reporting the aligner's recorded backend, trusted percentage, and
 review-required percentage from the matching `.align-report.json`.
 
+The current checked-result presentation snapshot is tracked as
+[`docs/existing-summary.md`](docs/existing-summary.md).
+
 For a stricter fresh-run benchmark, regenerate candidates into the project
 scratch directory before evaluation:
 
