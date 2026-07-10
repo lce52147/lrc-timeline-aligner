@@ -850,6 +850,26 @@ def has_ambiguous_lyric_prefix(entries: list[LyricEntry], index: int) -> bool:
     return False
 
 
+def has_short_duplicate_context(entries: list[LyricEntry], index: int, window: int = 8) -> bool:
+    """Return true when a short line can be confused with a nearby longer line."""
+    if not (0 <= index < len(entries)):
+        return False
+    target = normalize_match_text(entry_sung_text(entries[index]))
+    if len(target) < 4 or len(target) > 12:
+        return False
+    start = max(0, index - window)
+    end = min(len(entries), index + window + 1)
+    for other_index in range(start, end):
+        if other_index == index:
+            continue
+        other = normalize_match_text(entry_sung_text(entries[other_index]))
+        if len(other) <= len(target):
+            continue
+        if target in other:
+            return True
+    return False
+
+
 def infer_spoken_language(entries: list[LyricEntry]) -> str:
     sample = "".join(entry_sung_text(entry) for entry in entries[:12])
     if not sample:
@@ -3019,6 +3039,7 @@ def apply_ctc_micro_refinement_to_whisperx(
     whisperx_report: dict[str, object],
     ctc_report: dict[str, object],
     duration: float,
+    raw_report: dict[str, object] | None = None,
 ) -> tuple[list[float], dict[str, object], list[dict[str, object]]]:
     whisperx_assignments = whisperx_report.get("assignments")
     ctc_assignments = ctc_report.get("assignments")
@@ -3027,6 +3048,7 @@ def apply_ctc_micro_refinement_to_whisperx(
 
     refined = list(whisperx_timestamps)
     changes: list[dict[str, object]] = []
+    raw_assignments = raw_report.get("assignments") if isinstance(raw_report, dict) else None
     max_items = min(len(refined), len(whisperx_assignments), len(ctc_assignments))
     suspicious_entries = {
         int(item.get("entry"))
@@ -3035,8 +3057,6 @@ def apply_ctc_micro_refinement_to_whisperx(
     }
     for index in range(max_items):
         entry_number = index + 1
-        if entry_number not in suspicious_entries:
-            continue
         whisperx_item = whisperx_assignments[index]
         ctc_item = ctc_assignments[index]
         if not isinstance(whisperx_item, dict) or not isinstance(ctc_item, dict):
@@ -3059,6 +3079,45 @@ def apply_ctc_micro_refinement_to_whisperx(
             continue
         if delta > 0.30 and whisperx_score < 0.85 and ctc_score >= 0.22:
             continue
+        raw_time: float | None = None
+        raw_score: float | None = None
+        if isinstance(raw_assignments, list) and index < len(raw_assignments):
+            raw_item = raw_assignments[index]
+            if isinstance(raw_item, dict):
+                try:
+                    raw_time = float(raw_item.get("timestamp"))
+                    raw_score = float(raw_item.get("score", 0.0) or 0.0)
+                except (TypeError, ValueError):
+                    raw_time = None
+                    raw_score = None
+
+        suspicious_entry = entry_number in suspicious_entries
+        # WhisperX and raw ASR often share the same decoded segment.  When both
+        # land slightly late at the same timestamp but CTC has a strong earlier
+        # first-token path, treat that as an onset correction rather than a
+        # global backend preference change.
+        asr_same_late_segment = (
+            not suspicious_entry
+            and raw_time is not None
+            and raw_score is not None
+            and raw_score >= 0.65
+            and abs(raw_time - whisperx_time) <= 0.08
+            and -0.55 <= delta <= -0.18
+            and ctc_score >= 0.18
+            and whisperx_score >= 0.65
+        )
+        if not suspicious_entry and not asr_same_late_segment:
+            continue
+        if asr_same_late_segment:
+            spans = ctc_item.get("ctc_token_spans")
+            first_token_score = 0.0
+            if isinstance(spans, list) and spans:
+                try:
+                    first_token_score = float(spans[0].get("score", 0.0) or 0.0)
+                except (AttributeError, TypeError, ValueError):
+                    first_token_score = 0.0
+            if first_token_score < 0.18:
+                continue
 
         previous_time = refined[index - 1] if index > 0 else 0.0
         next_time = refined[index + 1] if index + 1 < len(refined) else duration
@@ -3072,10 +3131,12 @@ def apply_ctc_micro_refinement_to_whisperx(
                 "from": round(whisperx_time, 3),
                 "to": round(ctc_time, 3),
                 "delta": round(delta, 3),
-                "reason": "small-ctc-whisperx-refinement",
+                "reason": "asr-late-ctc-onset-refinement" if asr_same_late_segment else "small-ctc-whisperx-refinement",
                 "whisperx_score": round(whisperx_score, 3),
                 "ctc_score": round(ctc_score, 6),
                 "ctc_token_spans": ctc_item.get("ctc_token_spans"),
+                "raw_timestamp": round(raw_time, 3) if raw_time is not None else None,
+                "raw_score": round(raw_score, 3) if raw_score is not None else None,
             }
         )
 
@@ -3247,6 +3308,30 @@ def apply_whisperx_acoustic_boundary_refinement(
             score >= 0.95
             and "follows_suspicious_long_line" in flags
             and "possible_bad_split_boundary" in flags
+            and len(normalize_match_text(str(risk.get("text", "")) if isinstance(risk, dict) else "")) <= 12
+            and current_time - previous_time >= 3.50
+            and next_time - current_time <= 2.20
+        ):
+            candidate = first_local_onset(
+                features,
+                max(previous_time + 0.40, current_time - 6.80),
+                current_time - 0.45,
+                threshold=0.65,
+            )
+            if candidate is None:
+                candidate = first_local_onset(
+                    features,
+                    max(previous_time + 0.40, current_time - 6.80),
+                    current_time - 0.45,
+                    threshold=0.55,
+                )
+            if candidate is not None and not (1.20 <= current_time - candidate <= 6.50):
+                candidate = None
+            reason = "short-duplicate-bad-split-acoustic-backtrack"
+        elif (
+            score >= 0.95
+            and "follows_suspicious_long_line" in flags
+            and "possible_bad_split_boundary" in flags
             and next_time - current_time <= 2.20
         ):
             candidate = first_local_onset(
@@ -3316,6 +3401,128 @@ def apply_whisperx_acoustic_boundary_refinement(
     report["review_required_count"] = review_required_count
     report["review_required"] = review_required_count > 0
     update_report_confidence_metrics(report)
+    return refined, report, changes
+
+
+def apply_hybrid_ctc_opening_onset_backtrack(
+    audio_path: Path,
+    timestamps: list[float],
+    report: dict[str, object],
+    duration: float,
+) -> tuple[list[float], dict[str, object], list[dict[str, object]]]:
+    """Backtrack a CTC-fused line when its opening tokens are visibly late.
+
+    This is intentionally narrower than a general acoustic snap: it only runs
+    after CTC has already beaten WhisperX by a large margin, and only when the
+    first CTC tokens have weak posterior support while nearby later tokens are
+    strong.  That pattern means CTC found the right lyric region but latched
+    onto the first clear vowel/consonant cluster instead of the display onset.
+    """
+    assignments = report.get("assignments")
+    if not isinstance(assignments, list) or len(assignments) != len(timestamps):
+        return timestamps, report, []
+    try:
+        features = analyze_audio(audio_path, duration)
+    except LrcError:
+        return timestamps, report, []
+
+    refined = list(timestamps)
+    changes: list[dict[str, object]] = []
+    for index, assignment in enumerate(assignments):
+        if not isinstance(assignment, dict) or not assignment.get("ctc_local_fusion"):
+            continue
+        if assignment.get("ctc_clear_boundary"):
+            continue
+        try:
+            current_time = float(assignment.get("timestamp", refined[index]) or refined[index])
+            ctc_score = float(assignment.get("ctc_score", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if ctc_score < 0.12:
+            continue
+        spans = assignment.get("ctc_token_spans")
+        if not isinstance(spans, list) or len(spans) < 5:
+            continue
+        first_scores: list[float] = []
+        later_scores: list[float] = []
+        for span in spans[:4]:
+            if not isinstance(span, dict):
+                continue
+            try:
+                first_scores.append(float(span.get("score", 0.0) or 0.0))
+            except (TypeError, ValueError):
+                pass
+        for span in spans[4:10]:
+            if not isinstance(span, dict):
+                continue
+            try:
+                later_scores.append(float(span.get("score", 0.0) or 0.0))
+            except (TypeError, ValueError):
+                pass
+        if not first_scores or max(first_scores) > 0.08:
+            continue
+        if not later_scores or max(later_scores) < 0.30:
+            continue
+        previous_time = refined[index - 1] if index else 0.0
+        next_time = refined[index + 1] if index + 1 < len(refined) else duration
+        search_start = max(previous_time + 0.20, current_time - 0.90)
+        search_end = current_time - 0.08
+        if search_end - search_start < 0.20:
+            continue
+        candidate = first_local_onset(features, search_start, search_end, threshold=0.65)
+        if candidate is None:
+            candidate = first_local_onset(features, search_start, search_end, threshold=0.55)
+        if candidate is None:
+            continue
+        shift = current_time - candidate
+        if not (0.25 <= shift <= 0.80):
+            continue
+        if not (previous_time + 0.05 < candidate < next_time - 0.05):
+            continue
+
+        refined[index] = candidate
+        assignment["timestamp"] = round(candidate, 3)
+        assignment["ctc_opening_onset_backtrack"] = True
+        assignment["ctc_opening_onset_backtrack_from"] = round(current_time, 3)
+        assignment["timing_repair_source"] = "ctc-local-fusion+acoustic-opening-onset"
+        changes.append(
+            {
+                "entry": index + 1,
+                "from": round(current_time, 3),
+                "to": round(candidate, 3),
+                "shift": round(shift, 3),
+                "ctc_score": round(ctc_score, 6),
+                "search_start": round(search_start, 3),
+                "search_end": round(search_end, 3),
+                "reason": "weak-opening-ctc-local-fusion-acoustic-onset",
+            }
+        )
+    if not changes:
+        return timestamps, report, []
+
+    report["ctc_opening_onset_backtrack_count"] = len(changes)
+    report["ctc_opening_onset_backtracks"] = changes
+    changes_by_entry = {int(change["entry"]): change for change in changes if isinstance(change.get("entry"), int)}
+    suspicious = report.get("suspicious_alignments")
+    suspicious_items = list(suspicious) if isinstance(suspicious, list) else []
+    for item in suspicious_items:
+        if not isinstance(item, dict):
+            continue
+        entry = item.get("entry")
+        if not isinstance(entry, int) or entry not in changes_by_entry:
+            continue
+        change = changes_by_entry[entry]
+        candidates = item.get("candidate_timestamps")
+        if not isinstance(candidates, dict):
+            candidates = {}
+        candidates["output"] = change["to"]
+        candidates["acoustic_onset"] = change["to"]
+        item["candidate_timestamps"] = candidates
+        flags = item.get("flags")
+        if not isinstance(flags, list):
+            flags = []
+        item["flags"] = list(dict.fromkeys([*flags, "ctc_opening_onset_backtrack"]))
+        item["chosen_time"] = change["to"]
     return refined, report, changes
 
 
@@ -3931,10 +4138,22 @@ def run_auto_backend_competition(
                     selected_report,
                     ctc_candidate["report"],
                     duration,
+                    raw_candidate["report"] if raw_candidate is not None else None,
                 )
                 if micro_changes:
                     selected_timestamps = micro_timestamps
                     selected_report = micro_report
+                    selected_backend = "hybrid"
+                    selected_quality = candidate_selection_quality(selected_report)
+                opening_timestamps, opening_report, opening_changes = apply_hybrid_ctc_opening_onset_backtrack(
+                    audio_path,
+                    selected_timestamps,
+                    selected_report,
+                    duration,
+                )
+                if opening_changes:
+                    selected_timestamps = opening_timestamps
+                    selected_report = opening_report
                     selected_backend = "hybrid"
                     selected_quality = candidate_selection_quality(selected_report)
                 acoustic_timestamps, acoustic_report, acoustic_changes = apply_whisperx_acoustic_boundary_refinement(
@@ -5827,6 +6046,7 @@ def score_line_timing_candidates(
             for previous_entry in entries[max(0, index - 12) : index]
         )
         ambiguous_lyric_prefix = has_ambiguous_lyric_prefix(entries, index)
+        short_duplicate_context = has_short_duplicate_context(entries, index)
         local_ctc_confirmed = bool(assignment.get("ctc_local_window_realign")) and first_ctc_token_score >= 0.50
         weak_local_raw_rescue = (
             isinstance(raw_candidate, dict)
@@ -5982,6 +6202,12 @@ def score_line_timing_candidates(
         if is_short and spread >= 0.45:
             penalties.append({"kind": "short_line_onset_uncertain", "value": 0.16})
             flags.append("short_line_onset_uncertain")
+        timing_sources = assignment.get("timing_trusted_sources")
+        timing_sources_set = set(timing_sources) if isinstance(timing_sources, list) else set()
+        asr_only_trust = bool(timing_sources_set) and timing_sources_set.issubset({"whisperx", "raw"})
+        if short_duplicate_context and asr_only_trust:
+            penalties.append({"kind": "short_duplicate_asr_consensus", "value": 0.24})
+            flags.append("short_duplicate_asr_consensus_untrusted")
         first_mora = str(profile.get("first_mora", ""))
         if first_mora and isinstance(peaks, list) and peaks:
             peak_times = [float(item["time"]) for item in nearby_peaks if isinstance(item.get("time"), (int, float))]
@@ -6034,9 +6260,15 @@ def score_line_timing_candidates(
         # escalating it to manual review.
         review_required = review_required or (
             confidence < 0.68 and not isolated_low_ctc_path
-        ) or spread >= 1.25
+        ) or spread >= 1.25 or (short_duplicate_context and asr_only_trust)
         if raw_resolves_detached_ctc or raw_resolves_weak_local_ctc or local_ctc_confirmed:
             review_required = False
+        if review_required and assignment.get("timing_trusted"):
+            assignment.pop("timing_trusted", None)
+            assignment.pop("timing_trusted_reason", None)
+            assignment.pop("timing_trusted_sources", None)
+            assignment.pop("timing_trusted_candidate_times", None)
+            flags.append("timing_trust_removed_for_review")
         assignment["chosen_time"] = round(chosen_time, 3)
         assignment["confidence"] = round(confidence, 3)
         assignment["candidates"] = candidates
@@ -6127,6 +6359,143 @@ def score_line_timing_candidates(
     }
     update_report_confidence_metrics(report)
     return revised
+
+
+def apply_short_duplicate_acoustic_recovery(
+    audio_path: Path,
+    entries: list[LyricEntry],
+    timestamps: list[float],
+    report: dict[str, object],
+    duration: float,
+) -> tuple[list[float], dict[str, object], list[dict[str, object]]]:
+    """Recover a short duplicate phrase that was assigned to a later occurrence."""
+    assignments = report.get("assignments")
+    risks = report.get("suspicious_alignments")
+    if not isinstance(assignments, list) or len(assignments) != len(timestamps) or not isinstance(risks, list):
+        return timestamps, report, []
+    try:
+        features = analyze_audio(audio_path, duration)
+    except LrcError:
+        return timestamps, report, []
+
+    risk_by_entry = {
+        int(item.get("entry")): item
+        for item in risks
+        if isinstance(item, dict) and isinstance(item.get("entry"), int)
+    }
+    recovered = list(timestamps)
+    changes: list[dict[str, object]] = []
+    for index, entry in enumerate(entries):
+        assignment = assignments[index]
+        if not isinstance(assignment, dict) or not has_short_duplicate_context(entries, index):
+            continue
+        flags = assignment.get("flags")
+        flags = flags if isinstance(flags, list) else []
+        if "short_duplicate_asr_consensus_untrusted" not in flags:
+            continue
+        try:
+            current_time = float(assignment.get("timestamp", recovered[index]) or recovered[index])
+        except (TypeError, ValueError):
+            continue
+        previous_time = recovered[index - 1] if index else 0.0
+        next_time = recovered[index + 1] if index + 1 < len(recovered) else duration
+        if current_time - previous_time < 3.50:
+            continue
+        search_start = max(previous_time + 0.40, current_time - 7.00)
+        search_end = current_time - 0.45
+        if search_end - search_start < 0.50:
+            continue
+        supporting_entries: list[int] = []
+        support_times: list[float] = []
+        for prior_entry in range(max(1, index - 5), index + 1):
+            risk = risk_by_entry.get(prior_entry)
+            if not isinstance(risk, dict):
+                continue
+            candidate_times = risk.get("candidate_timestamps")
+            if not isinstance(candidate_times, dict):
+                continue
+            for key in ("raw", "raw_asr", "whisperx", "whisperx_forced_first"):
+                value = candidate_times.get(key)
+                if isinstance(value, (int, float)) and search_start <= float(value) <= search_end:
+                    supporting_entries.append(prior_entry)
+                    support_times.append(float(value))
+                    break
+        if not supporting_entries:
+            continue
+        focus_time = min(support_times)
+        focused_start = max(search_start, focus_time - 0.45)
+        focused_end = min(search_end, focus_time + 0.45)
+        candidate = first_local_onset(features, focused_start, focused_end, threshold=0.65)
+        if candidate is None:
+            candidate = first_local_onset(features, focused_start, focused_end, threshold=0.55)
+        if candidate is None:
+            continue
+        if min(abs(candidate - support_time) for support_time in support_times) > 1.20:
+            continue
+        shift = current_time - candidate
+        if not (1.20 <= shift <= 6.80):
+            continue
+        if not (previous_time + 0.05 < candidate < next_time - 0.05):
+            continue
+
+        recovered[index] = candidate
+        assignment["timestamp"] = round(candidate, 3)
+        assignment["chosen_time"] = round(candidate, 3)
+        assignment["confidence"] = max(float(assignment.get("confidence", 0.0) or 0.0), 0.74)
+        assignment["review_required"] = False
+        assignment["short_duplicate_acoustic_recovery"] = True
+        assignment["short_duplicate_acoustic_recovery_from"] = round(current_time, 3)
+        assignment["short_duplicate_acoustic_recovery_supporting_entries"] = supporting_entries
+        assignment["flags"] = list(dict.fromkeys([*flags, "short_duplicate_acoustic_recovery"]))
+        assignment["penalties"] = [
+            penalty for penalty in assignment.get("penalties", [])
+            if not (isinstance(penalty, dict) and penalty.get("kind") == "short_duplicate_asr_consensus")
+        ]
+        assignment["timing_trusted"] = True
+        assignment["timing_trusted_reason"] = "short-duplicate-acoustic-recovery"
+        assignment["timing_trusted_sources"] = ["acoustic", "neighbor_asr_context"]
+        assignment["timing_trusted_candidate_times"] = {
+            "selected": round(candidate, 3),
+            "previous_selected": round(current_time, 3),
+        }
+        risk = risk_by_entry.get(index + 1)
+        if isinstance(risk, dict):
+            risk["review_required"] = False
+            risk["severity"] = "resolved"
+            risk["chosen_time"] = round(candidate, 3)
+            risk["confidence"] = assignment["confidence"]
+            risk_flags = risk.get("flags")
+            if not isinstance(risk_flags, list):
+                risk_flags = []
+            risk["flags"] = list(dict.fromkeys([*risk_flags, "short_duplicate_acoustic_recovery"]))
+            candidate_times = risk.get("candidate_timestamps")
+            if not isinstance(candidate_times, dict):
+                candidate_times = {}
+            candidate_times["output"] = round(candidate, 3)
+            candidate_times["acoustic_onset"] = round(candidate, 3)
+            risk["candidate_timestamps"] = candidate_times
+            risk["resolution"] = "short-duplicate-acoustic-onset-with-neighbor-asr-context"
+        changes.append(
+            {
+                "entry": index + 1,
+                "from": round(current_time, 3),
+                "to": round(candidate, 3),
+                "shift": round(shift, 3),
+                "supporting_entries": supporting_entries,
+                "reason": "short-duplicate-acoustic-onset-with-neighbor-asr-context",
+            }
+        )
+    if not changes:
+        return timestamps, report, []
+
+    report["short_duplicate_acoustic_recovery_count"] = len(changes)
+    report["short_duplicate_acoustic_recoveries"] = changes
+    report["review_required_count"] = sum(
+        1 for item in risks if isinstance(item, dict) and item.get("review_required")
+    )
+    report["review_required"] = bool(report["review_required_count"])
+    update_report_confidence_metrics(report)
+    return recovered, report, changes
 
 
 def apply_whisperx_lyric_refinement(
@@ -6681,6 +7050,9 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
         )
     if timing_source not in {"lyrics", "checked_lrc", "heuristic"}:
         timestamps = score_line_timing_candidates(entries, timestamps, report, duration)
+        timestamps, report, _ = apply_short_duplicate_acoustic_recovery(
+            audio_path, entries, timestamps, report, duration
+        )
         sync_report_assignment_timestamps(report, timestamps)
     if args.probe:
         DEFAULT_PROBE_DIR.mkdir(parents=True, exist_ok=True)
