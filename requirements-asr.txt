@@ -9,3 +9,5 @@ pykakasi
 fugashi
 unidic-lite
 transformers
+huggingface-hub
+pyopenjtalk-plus==0.4.1.post3

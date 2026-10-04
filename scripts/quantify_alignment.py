@@ -23,7 +23,7 @@ from evaluate_lrc import summarize
 
 
 PROJECT = Path(__file__).resolve().parents[1]
-DEFAULT_REFERENCES_DIR = Path(r"D:\Users\Administrator\Music\LRC tools checked references")
+DEFAULT_REFERENCES_DIR = PROJECT / "checked-references"
 DEFAULT_REPORTS_DIR = PROJECT / "outputs" / "reports"
 DEFAULT_OUTPUT_DIR = PROJECT / "outputs" / "quantitative"
 
@@ -242,7 +242,7 @@ def evaluate_row(
     if error or generated is None or not generated.exists():
         return row
     try:
-        summary = summarize(case.reference, generated)
+        summary = summarize(case.reference, generated, ignore_markers=True)
     except Exception as exc:  # noqa: BLE001 - keep batch summaries resilient.
         row["status"] = "ERROR"
         row["error"] = str(exc)
@@ -252,6 +252,15 @@ def evaluate_row(
             "reference_entries": summary["reference_entries"],
             "generated_entries": summary["generated_entries"],
             "text_mismatches": summary["text_mismatches"],
+            "timing_compared_entries": summary["timing_compared_entries"],
+            "unmatched_reference_count": summary["unmatched_reference_count"],
+            "unmatched_generated_count": summary["unmatched_generated_count"],
+            "correct_le_30ms_percent": summary["correct_le_30ms_percent"],
+            "acceptable_30_to_50ms_percent": summary["acceptable_30_to_50ms_percent"],
+            "wrong_gt_50ms_percent": summary["wrong_gt_50ms_percent"],
+            "max_abs_delta_ms": summary["max_abs_delta_ms"],
+            "median_abs_delta_ms": summary["median_abs_delta_ms"],
+            "mae_ms": summary["mae_ms"],
             "max_abs_delta_cs": summary["max_abs_delta_cs"],
             "mean_abs_delta_cs": summary["mean_abs_delta_cs"],
             "within_10cs_percent": summary["within_10cs_percent"],
@@ -276,6 +285,15 @@ def write_csv(rows: list[dict[str, object]], path: Path) -> None:
         "reference_entries",
         "generated_entries",
         "text_mismatches",
+        "timing_compared_entries",
+        "unmatched_reference_count",
+        "unmatched_generated_count",
+        "correct_le_30ms_percent",
+        "acceptable_30_to_50ms_percent",
+        "wrong_gt_50ms_percent",
+        "max_abs_delta_ms",
+        "median_abs_delta_ms",
+        "mae_ms",
         "max_abs_delta_cs",
         "mean_abs_delta_cs",
         "within_10cs_percent",
@@ -299,12 +317,19 @@ def write_csv(rows: list[dict[str, object]], path: Path) -> None:
         writer.writerows(rows)
 
 
-def weighted_percent(rows: list[dict[str, object]], key: str) -> float | None:
+def weighted_percent(
+    rows: list[dict[str, object]], key: str, weight_key: str = "reference_entries"
+) -> float | None:
     numerator = 0.0
     denominator = 0
     for row in rows:
         try:
-            entries = int(row.get("reference_entries") or row.get("generated_entries") or 0)
+            entries = int(
+                row.get(weight_key)
+                or row.get("reference_entries")
+                or row.get("generated_entries")
+                or 0
+            )
             value = float(row[key])
         except (TypeError, ValueError, KeyError):
             continue
@@ -325,12 +350,12 @@ def write_markdown(rows: list[dict[str, object]], path: Path) -> None:
         "",
         "Generated from local checked references and alignment reports. Audio, lyrics, generated LRCs, and reports are not committed.",
         "",
-        "| Category | Songs | Entries | <=0.10s | <=0.25s | <=0.50s | Trusted | Review required | Max error |",
+        "| Category | Songs | Compared | <=30 ms | 30-50 ms | >50 ms | Trusted | Review required | Max error |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for category, category_rows in sorted(by_category.items()):
-        entries = sum(int(row.get("reference_entries") or 0) for row in category_rows)
-        max_error = max((int(row.get("max_abs_delta_cs") or 0) for row in category_rows), default=0)
+        entries = sum(int(row.get("timing_compared_entries") or 0) for row in category_rows)
+        max_error = max((int(row.get("max_abs_delta_ms") or 0) for row in category_rows), default=0)
         lines.append(
             "| "
             + " | ".join(
@@ -338,12 +363,12 @@ def write_markdown(rows: list[dict[str, object]], path: Path) -> None:
                     category,
                     str(len(category_rows)),
                     str(entries),
-                    f"{weighted_percent(category_rows, 'within_10cs_percent') or 0:.2f}%",
-                    f"{weighted_percent(category_rows, 'within_25cs_percent') or 0:.2f}%",
-                    f"{weighted_percent(category_rows, 'within_50cs_percent') or 0:.2f}%",
+                    f"{weighted_percent(category_rows, 'correct_le_30ms_percent', 'timing_compared_entries') or 0:.2f}%",
+                    f"{weighted_percent(category_rows, 'acceptable_30_to_50ms_percent', 'timing_compared_entries') or 0:.2f}%",
+                    f"{weighted_percent(category_rows, 'wrong_gt_50ms_percent', 'timing_compared_entries') or 0:.2f}%",
                     f"{weighted_percent(category_rows, 'trusted_percent') or 0:.2f}%",
                     f"{weighted_percent(category_rows, 'review_required_percent') or 0:.2f}%",
-                    f"{max_error / 100:.2f}s",
+                    f"{max_error} ms",
                 ]
             )
             + " |"
@@ -353,13 +378,15 @@ def write_markdown(rows: list[dict[str, object]], path: Path) -> None:
             "",
             "## Per-Song Results",
             "",
-            "| Song | Category | Backend | Entries | <=0.25s | Max error | Trusted | Review count |",
-            "|---|---|---|---:|---:|---:|---:|---:|",
+            "| Song | Category | Backend | Compared | <=30 ms | 30-50 ms | >50 ms | Median | MAE | Max error | Trusted | Review count |",
+            "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
         ]
     )
     for row in ok_rows:
-        max_error = row.get("max_abs_delta_cs")
-        max_error_text = "" if max_error in (None, "") else f"{int(max_error) / 100:.2f}s"
+        max_error = row.get("max_abs_delta_ms")
+        max_error_text = "" if max_error in (None, "") else f"{int(max_error)} ms"
+        median = row.get("median_abs_delta_ms")
+        mae = row.get("mae_ms")
         lines.append(
             "| "
             + " | ".join(
@@ -367,8 +394,12 @@ def write_markdown(rows: list[dict[str, object]], path: Path) -> None:
                     str(row["case"]).replace("|", "\\|"),
                     str(row["category"]),
                     str(row.get("selected_backend") or row.get("backend") or ""),
-                    str(row.get("reference_entries") or ""),
-                    f"{float(row.get('within_25cs_percent') or 0):.2f}%",
+                    str(row.get("timing_compared_entries") or ""),
+                    f"{float(row.get('correct_le_30ms_percent') or 0):.2f}%",
+                    f"{float(row.get('acceptable_30_to_50ms_percent') or 0):.2f}%",
+                    f"{float(row.get('wrong_gt_50ms_percent') or 0):.2f}%",
+                    "" if median in (None, "") else f"{float(median):.2f} ms",
+                    "" if mae in (None, "") else f"{float(mae):.2f} ms",
                     max_error_text,
                     f"{float(row.get('trusted_percent') or 0):.2f}%",
                     str(row.get("review_required_count") or 0),

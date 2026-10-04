@@ -1,473 +1,289 @@
-# LRC Timeline Aligner
+# LRC Timeline Aligner — v1.2
 
-Local Windows tooling for aligning prepared lyric/LRC text to a FLAC audio
-timeline and writing same-folder `.lrc` files. Diagnostic reports are written
-under the project `outputs/reports` directory, not into the music library.
+Local LRC timestamp generation for Windows. The tool keeps lyric order fixed, generates timing evidence from the audio, lets Central arbitration choose the final line starts, and writes a same-name `.lrc` plus an audit report.
 
-This is not an AI LRC generator. It does not invent lyrics from music, and it
-is not a general LRC editor. The project is a timeline aligner / retimer for
-prepared lyrics, checked LRC templates, and local audio alignment experiments.
+## Current architecture
 
-## What It Does
+The production path has four layers:
 
-LRC Timeline Aligner preserves the input lyric order and focuses on timestamp
-reconstruction. It accepts a FLAC file plus prepared lyrics, then chooses the
-best available local timing path:
+1. CTC and Whisper-family producers generate candidate timings and evidence from the supplied audio and lyric text.
+2. Central arbitration evaluates candidate identity, sequence, acoustic support, boundary ownership, and temporal coherence. Central is the only layer that selects the timestamp written to the LRC.
+3. The optional R1/R2 arbiter can preserve or validate an incoming Central current. `gross-rescue` is the registered R1 rule. `reviewer-validity` is the validated R2 rule and accepts independent HUBP, WhisperX, and XLSR reviewer evidence only for registered soft evidence gaps.
+4. The selected timestamps are serialized to LRC. Review/trust fields remain diagnostic metadata unless an explicit strict-review option asks for a non-zero exit.
 
-- reuse checked timestamps from an existing LRC template;
-- reuse a checked same-stem library LRC when the sung-text order matches;
-- run MMS/CTC and WhisperX hybrid candidates when no checked timing source
-  exists, then select by report quality;
-- write a same-name `.lrc` beside the FLAC;
-- write reports and strict-review audit files under `outputs/reports` so the
-  music folder stays clean.
+Checked reference timestamps are never part of normal automatic inference. Explicit `lyrics` / `checked` modes remain available when assisted timing is intentionally requested.
 
-## Current Reliability Behavior
+## Basic use
 
-The primary forced-alignment backend is MMS/CTC through
-`torchaudio.pipelines.MMS_FA`. It keeps the prepared lyric order fixed,
-romanizes sung Japanese text, and uses CTC/Viterbi alignment to place the whole
-known lyric sequence on the audio timeline.
-
-CTC output also applies a conservative acoustic backtrack for low-confidence
-Japanese `r`-initial lines when the CTC start lands late but a strong local
-onset exists just before it. The report records these changes as
-`ctc_acoustic_backtracks`. This is a narrow refinement, not the final
-multi-language consonant/sibilant onset model.
-
-`auto` mode also runs the whisper.cpp + WhisperX hybrid candidate when it is
-available. CTC is preferred on near-ties because it is constrained to the known
-lyric order, but WhisperX can win when its report quality is clearly better.
-An experimental `-VocalOnsetRefine` switch enables a conservative Demucs
-vocal-onset tiebreak. It runs only when CTC and hybrid disagree substantially,
-and changes a timestamp only when the isolated-vocal onset clearly supports the
-CTC candidate. It is not enabled by default until it demonstrates a net gain on
-the checked regression set.
-
-`jactc` is an explicit experimental Japanese Wav2Vec2 CTC backend. It aligns
-native Japanese tokens without romanization, but is deliberately excluded from
-`auto` until it passes the checked-song regression set without collapse.
-
-These benchmark results are regression gates for the current local test set,
-not a guarantee that every song will align perfectly. The current local gates
-cover three checked songs: rain and utopia require 100% of sung lyric entries
-to land within `+/-0.50s`, and rain, utopia, and oyasumi all require 100%
-within `+/-0.25s`.
-Checked-LRC hint mode must match the checked reference exactly.
-
-## Current Safety Behavior
-
-This repository does not include copyrighted audio files, full song lyrics,
-model weights, virtual environments, or generated benchmark outputs.
-
-The tool is intentionally report-first:
-
-- default `auto` preserves checked LRC hints first, otherwise runs CTC and
-  WhisperX candidates and selects the safer backend by report quality;
-- explicit `-TimingSource whisperx` failures fail loudly;
-- explicit `-TimingSource ctc` uses MMS/CTC forced alignment over known lyrics;
-- explicit `whisperx` mode must not silently write heuristic drafts;
-- heuristic timing is available only as an experimental draft path;
-- generated LRC files have corresponding audit data under `outputs/reports`;
-- non-lyric markers such as `(Intro)`, `(Interlude)`, `(Outro)`, and musical
-  note markers are skipped during untimed audio alignment.
-
-## Limitations
-
-- Works best when prepared lyrics match the sung text order.
-- Dense vocals, overlapping vocals, strong reverb, ad-libs, and mismatched
-  lyrics still require report review.
-- WhisperX and CUDA improve practicality, not absolute certainty.
-- The current benchmarks are private regression checks, not public song
-  fixtures.
-- The heuristic path is a rough draft mode and should not be treated as
-  production-quality timing.
-
-## Lyric Input Contract
-
-The lyric file is the source of truth for text order. The aligner must not
-reorder, split, or rewrite the lyric content.
-
-For simple lyrics, each non-empty line is one timing entry:
-
-```text
-first line to time
-second line to time
-third line to time
-```
-
-For bilingual or multi-display lines that should appear at the same timestamp,
-put them in one timing entry with ` / `:
-
-```text
-Japanese sung line / English or translated line
-next Japanese line / next translated line
-```
-
-The output becomes:
-
-```text
-[00:10.00]Japanese sung line
-[00:10.00]English or translated line
-[00:12.00]next Japanese line
-[00:12.00]next translated line
-```
-
-If you already have an LRC-like lyric template, name it `Song.lyrics.lrc`.
-Consecutive lines with the same timestamp are treated as one timing entry.
-
-Do not use `Song.lrc` as the lyric source for a new run when it sits beside the
-FLAC, because `Song.lrc` is the generated output path. A checked top-level
-library LRC, such as `D:\MusicLibrary\Song.lrc`, is safe when the FLAC itself
-lives deeper under `D:\MusicLibrary\Music\...`.
-
-## Drag/Drop Usage
-
-Put prepared lyrics next to the audio:
-
-```text
-Song.flac
-Song.lyrics.txt
-```
-
-Then drag `Song.flac` onto `Align LRC.bat`.
-
-The drag/drop batch file writes its LRC even when the report has lines that need
-manual review; the terminal prints that warning and the report remains under
-`outputs/reports`. To make a review-required line or less than 100% trusted
-timing fail the command, set `LRC_TOOLS_STRICT_REVIEW=1` before dragging.
-
-For a non-interactive smoke test of the same batch entry point, disable only the
-final `pause`:
-
-```cmd
-set LRC_TOOLS_NO_PAUSE=1
-"Align LRC.bat" "D:\Music\Song.flac"
-```
-
-Default `auto` behavior:
-
-```text
-checked LRC hint
-  -> otherwise CTC candidate + WhisperX candidate
-  -> backend-aware scorer selects ctc or whisperx
-  -> .align-report.json records candidate_selection
-```
-
-The tool also checks the nearest parent folder named `Music` for a same-stem
-checked LRC. For example:
-
-```text
-D:\MusicLibrary\Music\Album\Song.flac
-D:\MusicLibrary\Song.lrc
-```
-
-If the checked LRC text order matches the prepared lyrics, the checked
-timestamps are reused.
-
-## PowerShell Usage
-
-Preserve timestamps from a checked template:
+With `Song.flac` and `Song.lyrics.txt` or `Song.lyrics.lrc` in the same folder:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\align-lrc.ps1 -TimingSource lyrics "D:\Music\Song.flac"
+powershell -ExecutionPolicy Bypass -File .\align-lrc.ps1 "D:\Music\Song.flac"
 ```
 
-Run the current primary local forced-alignment backend:
+You can also drag a FLAC onto `Align LRC.bat`. A lyric file may be dragged by itself when the matching FLAC is beside it.
+
+The generated LRC is written beside the audio. Reports go to `outputs\reports` by default.
+
+Direct Python usage:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\align-lrc.ps1 -TimingSource ctc "D:\Music\Song.flac"
+python .\scripts\auto_lrc.py "D:\Music\Song.flac" --lyrics "D:\Music\Song.lyrics.txt" --timing-source auto
 ```
 
-Run automatic backend selection:
+The wrapper refuses to use the same path as both lyric input and generated output, including when `-Overwrite` is supplied.
+
+## Arbiter modes
+
+`--arbiter` accepts:
+
+- `off`: low-level Central-only mode. Central output is used without R1/R2 intervention.
+- `gross-rescue`: validated R1 rule. It preserves a valid current timing when Central moves away without the registered large-shift evidence.
+- `reviewer-validity`: validated R2 rule. Independent reviewer evidence may validate only the registered soft-current failures. Missing or unqualified reviewer evidence fails closed to Central.
+
+R2 was the final validated system in the 2026-10-02 evaluation. `align-lrc.ps1` and drag/drop now default to `reviewer-validity`, so normal user-facing runs acquire reviewer evidence automatically before the final pass. The low-level `auto_lrc.py` parser still defaults to `off`; direct Python users must explicitly pass `--arbiter reviewer-validity` together with a reviewer sidecar, or use `scripts/r2_pipeline.py`.
+
+Explicit R2 use is one command. When `-Arbiter reviewer-validity` is selected without `-ReviewerEvidence`, the wrapper first runs a Central-only baseline, acquires HUBP / WhisperX / XLSR reviewer observations one song at a time, builds the R2b evidence sidecar, and runs the final reviewer-validity pass:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\align-lrc.ps1 -TimingSource auto "D:\Music\Song.flac"
+powershell -ExecutionPolicy Bypass -File .\align-lrc.ps1 `
+  -Arbiter reviewer-validity `
+  "D:\Music\Song.flac"
 ```
 
-Run automatic backend selection as a production gate. This still writes draft
-outputs, but exits non-zero if the report is not clean:
+Low-level Python use may still provide an already-built sidecar directly:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\align-lrc.ps1 -TimingSource auto -StrictReview "D:\Music\Song.flac"
+python .\scripts\auto_lrc.py "D:\Music\Song.flac" `
+  --lyrics "D:\Music\Song.lyrics.txt" `
+  --arbiter reviewer-validity `
+  --reviewer-evidence ".\outputs\reviewers\Song.json"
 ```
 
-When strict review fails, the tool also writes `Song.review-audit.md` with only
-the review-required rows and candidate backend timestamps. It also writes
-`Song.anchor-template.lrc`, which is a starter file for manual checking and is
-not auto-applied. Passing an `.anchor-template.lrc` directly as `-AnchorHints`
-is rejected so an unreviewed template cannot accidentally become trusted timing.
+Reviewer trust labeling is separate from R2b timestamp selection. The optional
+`reviewer_layer` profiles use the shipped neural reviewer set HUBP, WhisperX
+(WX), XLSR, and HUB. `strict` targets 2% and remains fail-closed to
+`ALL_REVIEW`; `balanced` is the fixed four-reviewer `>=3` rule; `loose` is the
+fixed four-reviewer `>=2` rule. The default remains `none`, which does not mark
+any row reviewer-trusted. This does not change R2b timing logic or `--arbiter`
+behavior.
 
-For a softer gate, fail only when review-required lines exist:
+The wrapper exposes these labels as `-ReviewerProfile none|strict|balanced|loose`.
+HUB acquisition remains explicit with `-IncludeHubReviewer`; if HUB or any other
+required reviewer is missing or unqualified, `balanced` and `loose` fail closed
+to review. Non-Japanese rows also always fail closed to review. The selected
+profile is written as auxiliary metadata to
+`outputs/reviewer-work/<song>/reviewer-trust.json`; it does not alter the LRC
+timestamps. The equivalent direct pipeline option is
+`--reviewer-profile none|strict|balanced|loose`.
+
+Source for every numeric trust-profile result in this section: **來自內部評估流程，參考答案與逐行資料不公開**. The public repository contains the production rules and tests, but not the private checked-reference corpus needed to reproduce these aggregate CV results.
+
+The fixed-rule / point-estimate view on the 37-song pool is:
+
+| Target | Production profile / fixed rule | CV coverage (95% song-bootstrap CI) | CV trusted error (95% song-bootstrap CI) |
+|---:|---|---:|---:|
+| 2% | `strict = ALL_REVIEW`; closest four-reviewer boundary candidate `HUBP+WX+XLSR/all` was not promoted | 12.8713% [8.7530, 17.0889] | 3.2967% [0.8127, 6.7583] |
+| 5% | `balanced = HUBP+WX+XLSR+HUB/>=3` | 27.7935% [19.3035, 36.0784] | 4.3257% [2.4614, 6.5767] |
+| 10% | `loose = HUBP+WX+XLSR+HUB/>=2` | 41.7256% [29.6884, 52.8856] | 6.4407% [3.9032, 9.1198] |
+
+`balanced` therefore passes the 5% point-estimate selector, while the more
+conservative Selector B (training-fold Wilson 95% upper bound <= target) does
+not support it. Selector B on the second-round 28-rule family gives:
+
+| Target | Selector B CV coverage (95% CI) | Selector B trusted error (95% CI) | Fold selection |
+|---:|---:|---:|---|
+| 2% | 0.0000% [0.0000, 0.0000] | N/A | `ALL_REVIEW` in 37/37 folds |
+| 5% | 0.9901% [0.0000, 2.2580] | 42.8571% [33.3333, 50.0000] | `ALL_REVIEW` in 34/37 folds |
+| 10% | 41.7256% [28.9923, 53.8987] | 6.4407% [4.0439, 9.5432] | `loose` rule in 37/37 folds |
+
+The second-round family was designed after observing the first-round search.
+That design choice has a material effect under Selector B: at 10%, changing
+from the first-round 32-rule family to the second-round 28-rule family changes
+coverage by -10.4668 percentage points and trusted error by -8.1934 points.
+The 37-song pool therefore does not provide a truly independent validation set
+for trust-profile selection.
+
+For the fixed production rules, descriptive partition figures are:
+
+| Profile | dev coverage / trusted error | former-acceptance coverage / trusted error |
+|---|---:|---:|
+| `balanced` | 325/1011 = 32.1464% / 14/325 = 4.3077% | 68/403 = 16.8734% / 3/68 = 4.4118% |
+| `loose` | 489/1011 = 48.3680% / 34/489 = 6.9530% | 101/403 = 25.0620% / 4/101 = 3.9604% |
+
+All trusted rows produced by these fixed rules in the analysis pool are
+Japanese. HUB is unsupported for the tested English and mixed songs and mostly
+unsupported outside Japanese; when any required reviewer is unavailable, the
+trust layer fails closed to review. HubertFA was tested but is not shipped and
+did not establish a deployable CV-safe profile. VON and REC were also tested
+but are unused because their wrong-confirmation and shifted-time results did
+not establish the required independence/discrimination.
+
+These trust labels are auxiliary information, not a correctness guarantee.
+
+## Timing-source modes
+
+`--timing-source auto` is the normal independent path. It uses the available CTC / Whisper-family backends without taking timing authority from a checked LRC.
+
+Other explicit modes include `lyrics`, `checked`, `ctc`, `jactc`, `whisperx`, `whispercpp`, `heuristic`, and `audio`. `jactc`, `whispercpp`, `heuristic`, and `audio` remain experimental comparison or fallback paths.
+
+## Evaluation method
+
+The manually aligned references are private and are not published with the repository because they contain manually checked lyric text/timestamps that are intentionally kept outside the public release. The public evaluator first normalizes the sung text with NFKC and whitespace removal, aligns equal lyric rows in sequence order, excludes non-lyric marker rows such as `♪`, and only then compares timestamps. Added or missing lyric rows are reported explicitly instead of shifting all later timing pairs.
+
+Use the same public evaluator with your own checked reference:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\align-lrc.ps1 -TimingSource auto -FailOnReviewRequired "D:\Music\Song.flac"
+python .\scripts\evaluate_lrc.py "D:\Checked\Reference.lrc" ".\outputs\Generated.lrc" --json
 ```
 
-If a strict run writes `Song.anchor-template.lrc`, listen and verify the rows,
-then copy or rename only the manually checked anchors into a timestamped
-`Song.anchors.lrc` beside the FLAC. The next run will lock those line starts
-after matching the sung text order. Keep the generated `# entry=N` comments
-when possible; they bind each anchor to the original lyric entry and prevent
-repeated lines from being applied to the wrong occurrence.
+The primary JSON fields are `timing_compared_entries`, `unmatched_reference_count`, `unmatched_generated_count`, `correct_le_30ms[_percent]`, `acceptable_30_to_50ms[_percent]`, `wrong_gt_50ms[_percent]`, `median_abs_delta_ms`, `mae_ms`, and `max_abs_delta_ms`. `aligned_pairs` and the `unmatched_*_entries` arrays show which text rows were paired or left unmatched. Legacy `within_10cs` / `within_25cs` / `within_50cs` / `within_100cs` fields remain for historical regressions; their names are centiseconds, so `within_10cs` means <=100 ms rather than the current <=30 ms correctness band.
 
-```text
-# entry=4
-[00:41.81]verified lyric line
-# entry=6
-[00:58.42]another verified lyric line
-```
+The current reporting bands are:
 
-You can also pass an explicit partial anchor file:
+- `<= 30 ms`
+- `30-50 ms`
+- `> 50 ms`
+
+Source for every numeric corpus size, date, timing result, count, percentage, MAE, and comparison in the remainder of this evaluation section: **來自內部評估流程，參考答案與逐行資料不公開**. The command above reproduces the evaluation method on user-supplied references; the repository alone cannot reproduce the published aggregate values because the checked references are intentionally absent.
+
+The frozen development split contains 27 songs / 1011 lyric entries. A former
+acceptance split contains 10 songs / 403 lyric entries. Reference timestamps
+are withheld from inference. On 2026-10-03 those 10 songs were explicitly
+merged with dev for the reviewer-combination search, producing a 37-song pool
+evaluated with leave-one-song-out cross-validation (LOSO). The former acceptance
+subset is therefore only a historical/descriptive partition and is no longer
+an independent validation set for reviewer-trust selection.
+
+Release v1.2 measurements from a fresh clean-release replay on 2026-10-04:
+
+| Split | <=50 ms | >1 s | MAE | trusted but >50 ms | review / unverified |
+|---|---:|---:|---:|---:|---:|
+| dev | 792/1011 (78.34%) | 36 | 180.74 ms | 82 | 573/1011 (56.68%) |
+| former acceptance (historical partition) | 234/403 (58.06%) | 59 | 1596.50 ms | 46 | 230/403 (57.07%) |
+
+The former-acceptance accuracy was 20.28 percentage points below dev in the
+release-tree replay. These timing measurements come from the exact clean release
+tree after deterministic vocal separation was enabled;
+the same 10-song subset has since joined the 37-song reviewer-combination
+analysis pool and is no longer independent. R2 also marks more rows as
+review/unverified than the earlier S03 development result: 573/1011 (56.68%)
+versus 385/1011 (38.08%). The R2 reviewer-validity path is deliberately
+conservative about trust: missing or unqualified reviewer evidence fails closed,
+and reviewer agreement only relaxes registered soft evidence gaps. Timing
+accuracy and trusted/review status measure different things, so the higher
+review rate does not by itself imply worse timing. The current system still has difficult
+repeated passages, large timing misses, and songs where WhisperX is unavailable
+or rejected by its own trust gate. These measurements describe the tested
+corpus; they are not a guarantee for arbitrary music.
+
+[`docs/existing-summary.md`](docs/existing-summary.md) contains the same publishable aggregate snapshot and split song names. It intentionally contains no lyric lines or reference timestamps.
+
+## Environment rebuild
+
+The repository does not include audio, model weights, private references, generated reports, virtual environments, or third-party binaries.
+
+Recommended Windows setup:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\align-lrc.ps1 -TimingSource auto -AnchorHints "D:\Music\Song.anchors.lrc" "D:\Music\Song.flac"
+py -m venv .venv-asr
+.\.venv-asr\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+# Install the PyTorch / torchaudio build matching your CUDA or CPU environment first.
+python -m pip install -r .\requirements-asr.txt
+python -m pip install -r .\requirements.txt
 ```
 
-Run the experimental WhisperX hybrid backend:
+The 2026-10-02 validated Windows environment used Python 3.11.5, ffmpeg
+9.0.1 (Gyan essentials build), PyTorch 2.8.0+cu128, torchaudio
+2.8.0+cu128, WhisperX 3.8.6, Transformers 4.57.6, NumPy 2.4.4,
+pykakasi 2.3.0, huggingface-hub 0.36.2, and the CUDA 12.8 PyTorch
+runtime. The GPU validation host used an NVIDIA GeForce RTX 4070 Ti with
+driver 610.88. Exact GPU hardware is not a correctness requirement, but
+the CUDA/PyTorch pair must be compatible.
+
+Source for the version and hardware numbers in the preceding paragraph is the validated local environment inventory. Reproduce the corresponding values on another machine with:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\align-lrc.ps1 -TimingSource whisperx "D:\Music\Song.flac"
+python --version
+ffmpeg -version
+python -c "import importlib.metadata as m; print({p:m.version(p) for p in ['torch','torchaudio','whisperx','transformers','numpy','pykakasi','huggingface-hub']})"
+nvidia-smi
 ```
 
-Run the rough experimental heuristic:
+External components used by the automatic path:
+
+- Python 3 on Windows.
+- `ffmpeg` and `ffprobe` on `PATH`.
+- PyTorch / torchaudio matching the selected CUDA runtime or CPU.
+- whisper.cpp built for Windows, with `whisper-cli.exe` at `tools\whisper.cpp\Release\whisper-cli.exe` unless an explicit path is supplied.
+- whisper.cpp `ggml-large-v3.bin` at `models\whisper.cpp\ggml-large-v3.bin` unless an explicit model path is supplied.
+- WhisperX in `.venv-asr`.
+- The XLSR Japanese CTC model `jonatasgrosman/wav2vec2-large-xlsr-53-japanese` available in the Hugging Face cache when XLSR reviewer evidence is used.
+- The HUBP model `prj-beatrice/japanese-hubert-base-phoneme-ctc`, revision `1ec4eb3c45b2a1cafb7c477d447df34ca03070f2`, materialized at `models\hubert-phoneme-ctc` when R2 reviewer evidence is used.
+
+The validated XLSR cache resolved to revision
+`cf031e020336460d15a417eba710bbc5bb43be9a`. HUBP planning also requires
+`pyopenjtalk-plus==0.4.1.post3`; it must be installed in the environment
+that runs `build_hubp_plan.py`.
+
+Source for the model revision identifiers and the pinned `pyopenjtalk-plus` version in this section is the public acquisition command below plus `requirements-asr.txt`; rerunning those commands resolves the same requested revisions when they remain available upstream.
+
+The reviewer models can be acquired with huggingface-hub after the Python
+environment is installed:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\align-lrc.ps1 -TimingSource heuristic "D:\Music\Song.flac"
+python -c "from huggingface_hub import snapshot_download; snapshot_download('prj-beatrice/japanese-hubert-base-phoneme-ctc', revision='1ec4eb3c45b2a1cafb7c477d447df34ca03070f2', local_dir='models/hubert-phoneme-ctc')"
+python -c "from huggingface_hub import snapshot_download; snapshot_download('jonatasgrosman/wav2vec2-large-xlsr-53-japanese', revision='cf031e020336460d15a417eba710bbc5bb43be9a')"
 ```
 
-Write to a specific path:
+The local whisper.cpp executable used for validation does not expose a
+version string and its checkout metadata is unavailable, so no exact
+whisper.cpp revision is claimed here. Rebuild the current upstream
+`whisper-cli` with CUDA support when desired, place it at the path above,
+and obtain the `large-v3` GGML model using whisper.cpp's model download
+script or an equivalent official model source. Model and binary files stay
+outside Git.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\align-lrc.ps1 -TimingSource whisperx -Output ".\outputs\Song.lrc" "D:\Music\Song.flac"
-```
+`requirements.txt` and `requirements-asr.txt` are dependency pointers, not a lockfile. They do not install ffmpeg, whisper.cpp, model weights, or the correct CUDA-specific PyTorch build.
 
-When `-TimingSource ctc` succeeds, the console should show the resolved
-backend and device:
+CUDA is optional for the base code paths but is the tested configuration for the reviewer generators used by R2. Model acquisition must be completed before using those reviewers.
 
-```text
-Timing source: ctc
-Backend request: MMS/CTC forced alignment
-CTC device request: auto
-Resolved timing source: ctc
-Backend: ctc
-Strategy: ctc-forced-align
-CTC device: cuda
-```
+## Output and review
 
-The report in `outputs/reports` contains the same audit fields:
-`requested_timing_source`, `resolved_timing_source`, `backend`, `strategy`,
-`mode`, `heuristic_mode`, `ctc_device`, and fallback-specific device fields
-such as `whisperx_device`.
+A normal run writes:
 
-When `auto` has no checked LRC hint, the report also contains
-`candidate_selection`. It records the selected backend, selected quality,
-selection reason, and candidate summaries. CTC candidate summaries include
-`ctc_score_min`, `ctc_score_mean`, `ctc_low_score_count`,
-`ctc_very_low_score_count`, and `ctc_missing_count`; WhisperX summaries include
-trusted/review percentages, collapse state, device, and suppress-NST mode.
-CTC assignments include `ctc_token_spans`, the romanized character-level CTC
-spans used to audit why a line start was placed where it was.
-Hybrid reports may mark individual assignments as `timing_trusted` when CTC,
-WhisperX, and raw ASR timestamps agree closely enough, or when a high-confidence
-raw internal anchor explains a local WhisperX offset. The original text-match
-score is preserved; `timing_trusted` only affects timing trust metrics.
+- `Song.lrc`
+- `outputs\reports\<song>--<id>.align-report.json`
 
-## Report-First Line Decisions
+Useful strict options include `--fail-on-review-required`, `--min-trusted-percent`, and `--strict-review`. The PowerShell wrapper exposes the same review gates.
 
-Audio alignment is not treated as one backend producing one unquestioned
-timestamp. For each lyric entry, the report records a decision object on the
-assignment:
+Reports record the selected backend, Central timing state, trust/review counts, candidate provenance, and optional arbiter evidence. Review metadata does not silently prevent the LRC from being written.
 
-- `chosen_time` and `confidence`;
-- `candidates` and `rejected_candidates` from the selected path, raw ASR,
-  WhisperX forced-first timing, and available CTC leading-token peaks;
-- `reasons`, `penalties`, `flags`, and `review_required`;
-- `phonetic_anchor`, using the optional Japanese romaji/mora profile when it
-  is available; and
-- `split_suggestion` for long lines whose candidate evidence suggests more
-  than one sung phrase.
+## Public-safe validation
 
-The decision layer penalizes candidate spread, prior-line tail attachment,
-long-line disagreement, and short-line onset uncertainty. A replacement time
-is only adopted when it is inside neighboring lyric bounds and its candidate
-evidence remains strong after those penalties. Otherwise the selected backend
-time remains a draft and the line is marked for review. This is deliberately
-more conservative than silently writing a clean-looking but disputed LRC.
-
-The optional Japanese phonetic adapter uses `pykakasi` plus the CTC first-token
-peaks as onset evidence. It improves auditability rather than claiming that
-romanization alone proves an acoustic onset.
-
-Export a readable per-line audit table from a generated LRC. The audit tool
-finds its matching project report automatically. The audit includes review flags, backend candidate times, and
-`timing_trusted` reasons/sources when hybrid consensus was used. When CTC
-evidence is available, the audit also includes compact leading token spans such
-as `s@00:40.86/0.066`.
-
-```powershell
-python .\scripts\export_alignment_audit.py "D:\Music\Song.lrc" --output "D:\Music\Song.audit.md"
-python .\scripts\export_alignment_audit.py "D:\Music\Song.lrc" --format csv --output "D:\Music\Song.audit.csv"
-```
-
-For fast review of only the lines that must not be trusted without listening:
-
-```powershell
-python .\scripts\export_alignment_audit.py "D:\Music\Song.lrc" --review-only
-```
-
-For algorithm probes, preserve a manually checked same-name LRC by writing the
-candidate under the project instead of beside the audio:
-
-```powershell
-python .\scripts\auto_lrc.py "D:\Music\Song.flac" --probe --timing-source auto --overwrite
-```
-
-`--probe` writes a hashed disposable LRC to `outputs/probes` and keeps reports
-under `outputs/reports`. It cannot be combined with `--output`.
-
-## Local Setup Notes
-
-The CTC and WhisperX backends expect local dependencies that are intentionally not
-committed to this repository:
-
-- PyTorch / torchaudio build appropriate for the local CPU/GPU;
-- `pykakasi` for Japanese lyric romanization;
-- whisper.cpp executable;
-- whisper.cpp model weights;
-- Python environment with WhisperX;
-
-Use `requirements-asr.txt` as a dependency pointer, but install PyTorch from
-the official selector for your CUDA/CPU environment before installing optional
-ASR/alignment packages when needed.
-
-## Accuracy Gate
-
-Compare a generated LRC against a checked reference:
-
-```powershell
-python .\scripts\evaluate_lrc.py "D:\Music\Reference.lrc" ".\outputs\Generated.lrc" --require-within-50cs 95
-```
-
-Run the private local regression gate:
+Run the checks that do not need private media or model files:
 
 ```powershell
 python .\scripts\check_public.py
-python .\scripts\run_benchmarks.py --ctc-only --regenerate
-python .\scripts\run_benchmarks.py --auto-selection-only --regenerate
 ```
 
-`check_public.py` is public-safe and does not require audio, lyrics, model
-weights, or GPU access. It runs the core logic tests, compiles the Python entry
-points, and checks that media/model/generated artifacts are not tracked. GitHub
-Actions runs the same public-safe check on push and pull request.
-
-`--auto-selection-only` uses the internal `--no-checked-lrc-hint` test option so
-the checked LRC shortcut does not hide the CTC/WhisperX selection behavior.
-
-Run private checked-song regressions for local files that are not committed to
-the repository. These cases compare regenerated output against an independently
-stored checked LRC. Never use `Song.lrc` beside the FLAC as the reference: that
-is the drag/drop output path. Put human-reviewed references in a separate local
-directory with the explicit `.checked.lrc` suffix. The current local set uses
-`10.方舟` as a difficult CTC weak-onset regression; `04.可惜夜` is included only
-when `04.可惜夜.checked.lrc` exists in the reference directory:
+For local evaluation against a manually reviewed reference, the exact public command is:
 
 ```powershell
-$env:LRC_TOOLS_MUSIC_DIR = "D:\Users\Administrator\Music"
-$env:LRC_TOOLS_CHECKED_REFERENCE_DIR = "D:\Users\Administrator\Music\LRC tools checked references"
-python .\scripts\run_benchmarks.py --local-regression-only --regenerate
+python .\scripts\evaluate_lrc.py "D:\Checked\Reference.lrc" ".\outputs\Generated.lrc" --json
 ```
 
-Build a local quantitative summary from checked references and matching reports:
+The JSON output fields and pairing rules are documented in **Evaluation method** above. Legacy centisecond gates remain available for historical regressions. `50cs` means 500 ms; it is not the current 50 ms evaluation boundary.
 
-```powershell
-python .\scripts\quantify_alignment.py --use-reference-as-final-output
-```
+## Repository boundaries
 
-This writes `outputs/quantitative/existing-summary.csv` and
-`outputs/quantitative/existing-summary.md`. The
-`--use-reference-as-final-output` mode is intended for result presentations: it
-uses manually reviewed checked LRC files as the final accepted outputs, while
-still reporting the aligner's recorded backend, trusted percentage, and
-review-required percentage from the matching `.align-report.json`.
+The repository intentionally excludes:
 
-The current checked-result presentation snapshot is tracked as
-[`docs/existing-summary.md`](docs/existing-summary.md).
+- audio and generated LRC files;
+- model weights and third-party binaries;
+- private reference answers;
+- `_review`, `_local_archive`, virtual environments, `.c39rt1`, and generated validation/output trees;
+- local checkpoint, handoff, changelog, and session notes.
 
-For a stricter fresh-run benchmark, regenerate candidates into the project
-scratch directory before evaluation:
-
-```powershell
-python .\scripts\quantify_alignment.py --regenerate
-```
-
-Fresh regenerated summaries are better evidence for current fully automatic
-performance. The reviewed-output summary is better for describing the current
-checked corpus and how much manual review the report layer identified.
-
-Run a private risk-audit gate for a local difficult song without committing
-audio, lyrics, or generated outputs:
-
-```powershell
-$env:LRC_TOOLS_PRIVATE_AUDIT_AUDIO = "D:\Music\Song.flac"
-$env:LRC_TOOLS_PRIVATE_AUDIT_LYRICS = "D:\Music\Song.txt"
-$env:LRC_TOOLS_PRIVATE_AUDIT_REVIEW_COUNT = "0"
-$env:LRC_TOOLS_PRIVATE_AUDIT_TRUSTED_PERCENT = "100"
-$env:LRC_TOOLS_PRIVATE_AUDIT_FUSION_COUNT = "3"
-python .\scripts\run_benchmarks.py --private-audit-only --regenerate
-```
-
-Private audits run with `--strict-review` by default. Set
-`LRC_TOOLS_PRIVATE_AUDIT_STRICT=0` only when intentionally auditing a known
-failing draft.
-
-```powershell
-$env:LRC_TOOLS_MUSIC_DIR = "D:\MusicLibrary"
-python .\scripts\run_benchmarks.py
-```
-
-Regenerate private outputs with the current pipeline before evaluating:
-
-```powershell
-$env:LRC_TOOLS_MUSIC_DIR = "D:\MusicLibrary"
-python .\scripts\run_benchmarks.py --regenerate
-```
-
-Benchmark summaries in this repository describe private checked references.
-They are useful regression notes, not bundled public fixtures.
-
-## Roadmap
-
-v0.2 focuses on report-first alignment:
-
-- per-line confidence scoring;
-- suspicious-line detection;
-- suspicious reason fields in `.align-report.json`;
-- local window re-alignment for low-confidence entries;
-- optional anchor-line hints for manually fixed timestamps;
-- clearer report schema documentation.
-
-Example future report entry:
-
-```json
-{
-  "entry_index": 12,
-  "text": "...",
-  "start": 24.31,
-  "confidence": 0.72,
-  "flags": ["low_lexical_match", "long_gap", "energy_mismatch"],
-  "candidate_sources": ["whisperx", "energy_snap"],
-  "review_required": true
-}
-```
-
-v0.3 explores harder alignment problems:
-
-- dual-backend comparison between WhisperX and another text/audio aligner;
-- vocal-stem preprocessing for difficult songs;
-- batch folder processing;
-- HTML/CSV report summaries;
-- synthetic public benchmark fixtures;
-- tighter timing gates such as `+/-0.25s` line onset accuracy and
-  consonant/sibilant onset checks.
+Only publishable source, tests, setup files, and aggregate documentation belong on the release branch.

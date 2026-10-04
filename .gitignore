@@ -6,6 +6,7 @@ conda-mfa/
 .venv-*/
 venv/
 env/
+.c39rt1/
 __pycache__/
 **/__pycache__/
 *.py[cod]
@@ -48,7 +49,19 @@ temp/
 outputs/
 bench_outputs/
 local-artifacts/
+validation/
+candidate/
+control/
+patch/
+scriptsblk/
+_local_archive/
+_review/
+$rel/
+*.zip
+*.lnk
 *.log
+給GPT_LRC1.2_收斂處置_20260930.md
+給GPT_LRC1.2_準確度達標與push_20260930.md
 scripts/*_audio_*.json
 scripts/*_audio_*.lrc
 scripts/*_auto_*.json
@@ -60,6 +73,22 @@ scripts/whisperx_align_from_whispercpp*.json
 scripts/dragdrop-sandbox/
 
 # Keep source fixtures explicit if ever needed
-!scripts/*.py
-!docs/*.md
+scripts/*
+!scripts/auto_lrc.py
+!scripts/check_public.py
+!scripts/ctc_align.py
+!scripts/evaluate_lrc.py
+!scripts/export_alignment_audit.py
+!scripts/japanese_ctc_align.py
+!scripts/persistent_helper_worker.py
+!scripts/quantify_alignment.py
+!scripts/r2_pipeline.py
+!scripts/run_benchmarks.py
+!scripts/test_align_lrc_wrapper.py
+!scripts/test_core_logic.py
+!scripts/test_evaluate_lrc.py
+!scripts/test_r2_pipeline.py
+!scripts/whisperx_refine.py
+docs/*
+!docs/existing-summary.md
 !README.md

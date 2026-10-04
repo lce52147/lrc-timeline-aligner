@@ -40,6 +40,7 @@ class BenchmarkCase:
     ignore_markers: bool = False
     require_within_25cs: float | None = None
     require_within_50cs: float = 100.0
+    require_wrong_gt_50ms: int | None = None
     require_text_mismatches: int = 0
     require_max_abs_delta_cs: int | None = None
     require_max_abs_delta_cs_at_most: int | None = None
@@ -441,6 +442,12 @@ def evaluate_case(case: BenchmarkCase) -> tuple[bool, dict[str, object], list[st
         failures.append(f"within +/-0.25s={result['within_25cs_percent']}%")
     if case.reference is not None and result["within_50cs_percent"] < case.require_within_50cs:
         failures.append(f"within +/-0.50s={result['within_50cs_percent']}%")
+    if (
+        case.reference is not None
+        and case.require_wrong_gt_50ms is not None
+        and result["wrong_gt_50ms"] > case.require_wrong_gt_50ms
+    ):
+        failures.append(f"wrong >50 ms={result['wrong_gt_50ms']}")
     if (
         case.reference is not None
         and case.require_max_abs_delta_cs is not None

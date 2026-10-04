@@ -33,8 +33,17 @@ PYTHON_SOURCES = [
     "scripts/evaluate_lrc.py",
     "scripts/export_alignment_audit.py",
     "scripts/quantify_alignment.py",
+    "scripts/r2_pipeline.py",
+    "scripts/reviewer_layer.py",
+    "scripts/reviewers/build_hubp_plan.py",
+    "scripts/reviewers/common.py",
+    "scripts/reviewers/run_hubp.py",
+    "scripts/reviewers/run_whisperx.py",
+    "scripts/reviewers/run_xlsr.py",
     "scripts/run_benchmarks.py",
+    "scripts/test_align_lrc_wrapper.py",
     "scripts/test_core_logic.py",
+    "scripts/test_r2_pipeline.py",
     "scripts/whisperx_refine.py",
 ]
 
@@ -69,6 +78,9 @@ def assert_no_forbidden_tracked_files() -> None:
 
 def main() -> int:
     run([sys.executable, "scripts/test_core_logic.py"])
+    run([sys.executable, "scripts/test_r2_pipeline.py"])
+    run([sys.executable, "scripts/test_align_lrc_wrapper.py"])
+    run([sys.executable, "scripts/reviewers/test_common.py"])
     run([sys.executable, "-m", "py_compile", *PYTHON_SOURCES])
     assert_no_forbidden_tracked_files()
     print("Public-safe checks passed.", flush=True)

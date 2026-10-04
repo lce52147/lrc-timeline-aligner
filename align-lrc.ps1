@@ -9,6 +9,11 @@ param(
     [ValidateSet("auto", "lyrics", "ctc", "jactc", "whisperx", "whispercpp", "heuristic", "audio")]
     [string] $TimingSource = "auto",
 
+    [ValidateSet("off", "gross-rescue", "reviewer-validity")]
+    [string] $Arbiter = "reviewer-validity",
+
+    [string] $ReviewerEvidence,
+
     [string] $WhisperCli,
 
     [string] $WhisperModel,
@@ -39,6 +44,11 @@ param(
 
     [switch] $StrictReview,
 
+    [switch] $IncludeHubReviewer,
+
+    [ValidateSet("none", "strict", "balanced", "loose")]
+    [string] $ReviewerProfile = "none",
+
     [switch] $Overwrite
 )
 
@@ -49,6 +59,7 @@ $env:PYTHONIOENCODING = "utf-8"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $backend = Join-Path $scriptDir "scripts\auto_lrc.py"
+$r2Pipeline = Join-Path $scriptDir "scripts\r2_pipeline.py"
 $defaultReportDirectory = Join-Path $scriptDir "outputs\reports"
 if (-not $ReportDirectory) {
     $ReportDirectory = $defaultReportDirectory
@@ -64,7 +75,7 @@ if (-not $Paths -or $Paths.Count -eq 0) {
     Write-Host "  powershell -ExecutionPolicy Bypass -File .\align-lrc.ps1 <song.flac>" -ForegroundColor Yellow
     Write-Host ""
     Write-Host "Lyrics may be beside the FLAC as <song>.lyrics.lrc, <song>.lyrics.txt, or <song>.txt." -ForegroundColor Yellow
-    Write-Host "If the FLAC lives under a Music folder, <Music>\<song>.lrc is also accepted as a checked source." -ForegroundColor Yellow
+    Write-Host "Use an explicit lyric/template file when you need to preserve known text or timestamps." -ForegroundColor Yellow
     exit 2
 }
 
@@ -115,12 +126,34 @@ if ($droppedLyrics) {
     Write-Host "Resolved FLAC: $($Paths[0])" -ForegroundColor DarkCyan
 }
 
+if ($Lyrics -and $Paths.Count -eq 1) {
+    $lyricSourcePath = [System.IO.Path]::GetFullPath($Lyrics)
+    $effectiveOutputPath = if ($Output) {
+        [System.IO.Path]::GetFullPath($Output)
+    } else {
+        [System.IO.Path]::ChangeExtension($Paths[0], ".lrc")
+    }
+    if ([System.String]::Equals(
+        $lyricSourcePath,
+        $effectiveOutputPath,
+        [System.StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "Refusing to overwrite lyric source: $lyricSourcePath"
+    }
+}
+
 $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
 if (-not $pythonCommand) {
     throw "Python was not found on PATH."
 }
 
-$argsList = @($backend, "--mode", $Mode, "--timing-source", $TimingSource)
+$argsList = @($backend, "--mode", $Mode, "--timing-source", $TimingSource, "--arbiter", $Arbiter)
+if ($ReviewerEvidence) {
+    if ($Paths.Count -ne 1) {
+        throw "-ReviewerEvidence can only be used with exactly one FLAC path."
+    }
+    $argsList += @("--reviewer-evidence", $ReviewerEvidence)
+}
 if ($WhisperCli) {
     $argsList += @("--whisper-cli", $WhisperCli)
 }
@@ -173,16 +206,16 @@ if ($Output) {
     $argsList += @("--output", $Output)
 }
 $argsList += @("--report-dir", $ReportDirectory)
-$argsList += $Paths
 
 Write-Host "LRC tools: generating same-folder .lrc" -ForegroundColor Cyan
 Write-Host "Reports: $ReportDirectory" -ForegroundColor DarkGray
+Write-Host "Arbiter: $Arbiter" -ForegroundColor DarkCyan
 if ($VocalOnsetRefine) {
     Write-Host "Vocal onset refinement: experimental Demucs GPU candidate tiebreak enabled" -ForegroundColor DarkCyan
 }
 Write-Host "Timing source: $TimingSource" -ForegroundColor DarkCyan
 if ($TimingSource -eq "auto") {
-    Write-Host "Backend request: checked LRC hint, otherwise CTC + WhisperX candidate selection" -ForegroundColor DarkCyan
+    Write-Host "Backend request: automatic timing candidate selection" -ForegroundColor DarkCyan
     Write-Host "Device request: $WhisperXDevice" -ForegroundColor DarkCyan
 }
 elseif ($TimingSource -in @("heuristic", "audio")) {
@@ -207,8 +240,42 @@ elseif ($FailOnReviewRequired -or $MinTrustedPercent -ge 0) {
     Write-Host "Strict gate: fail-on-review=$FailOnReviewRequired min-trusted=$MinTrustedPercent" -ForegroundColor Yellow
 }
 
-& $pythonCommand.Source @argsList
-$exitCode = $LASTEXITCODE
+if ($Arbiter -eq "reviewer-validity" -and -not $ReviewerEvidence) {
+    if (-not (Test-Path -LiteralPath $r2Pipeline -PathType Leaf)) {
+        throw "R2 pipeline not found: $r2Pipeline"
+    }
+    Write-Host "R2 reviewer acquisition: enabled" -ForegroundColor DarkCyan
+    Write-Host "Reviewer trust profile: $ReviewerProfile" -ForegroundColor DarkCyan
+    $exitCode = 0
+    foreach ($rawPath in $Paths) {
+        $pipelineArgs = @(
+            $r2Pipeline,
+            "--reviewer-device", $WhisperXDevice,
+            "--reviewer-profile", $ReviewerProfile
+        )
+        if ($WhisperXPython) {
+            $pipelineArgs += @("--reviewer-python", $WhisperXPython)
+        }
+        if ($IncludeHubReviewer) {
+            $pipelineArgs += "--include-hub-reviewer"
+        }
+        $pipelineArgs += "--"
+        if ($argsList.Count -gt 1) {
+            $pipelineArgs += $argsList[1..($argsList.Count - 1)]
+        }
+        $pipelineArgs += $rawPath
+        & $pythonCommand.Source @pipelineArgs
+        $songExitCode = $LASTEXITCODE
+        if ($songExitCode -ne 0) {
+            $exitCode = $songExitCode
+        }
+    }
+}
+else {
+    $argsList += $Paths
+    & $pythonCommand.Source @argsList
+    $exitCode = $LASTEXITCODE
+}
 
 if ($exitCode -eq 0) {
     foreach ($rawPath in $Paths) {
@@ -246,8 +313,11 @@ if ($exitCode -eq 0) {
         Write-Host "Resolved timing source: $resolved" -ForegroundColor Green
         Write-Host "Backend: $backend" -ForegroundColor Green
         Write-Host "Strategy: $strategy" -ForegroundColor Green
-        if ($null -ne $report.trusted_percent) {
-            Write-Host "Trusted timing: $($report.trusted_percent)%" -ForegroundColor Green
+        if ($null -ne $report.timing_trusted_percent) {
+            Write-Host "Trusted timing: $($report.timing_trusted_percent)%" -ForegroundColor Green
+        }
+        if ($null -ne $report.overall_trusted_percent) {
+            Write-Host "Full authority trust: $($report.overall_trusted_percent)%" -ForegroundColor Green
         }
         if ($null -ne $report.review_required_count) {
             Write-Host "Review required: $($report.review_required_count)" -ForegroundColor Green
