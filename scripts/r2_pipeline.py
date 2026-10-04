@@ -7,6 +7,7 @@ import math
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -370,6 +371,133 @@ def _write_json(path: Path, payload: Mapping[str, object]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def stage_message(stage: int, message: str) -> str:
+    if stage not in (1, 2, 3, 4):
+        raise ValueError(f"invalid R2 stage: {stage}")
+    return f"[{stage}/4] {message}"
+
+
+def _format_elapsed_seconds(elapsed_seconds: float) -> str:
+    total_seconds = max(0, int(float(elapsed_seconds) + 0.5))
+    minutes, seconds = divmod(total_seconds, 60)
+    if minutes:
+        return f"{minutes}m{seconds:02d}s"
+    return f"{seconds}s"
+
+
+def stage_done_message(stage: int, elapsed_seconds: float) -> str:
+    return stage_message(stage, f"完成，用時 {_format_elapsed_seconds(elapsed_seconds)}")
+
+
+def build_lyric_review_messages(
+    report: Mapping[str, object], reviewer_payload: Mapping[str, object], *, limit: int = 5
+) -> list[str]:
+    review_required = report.get("review_required_count")
+    low_confidence = report.get("low_confidence_count")
+    review_count = int(review_required) if isinstance(review_required, int) else 0
+    low_count = int(low_confidence) if isinstance(low_confidence, int) else 0
+    messages = [
+        f"歌詞檢查：Review required {review_count} 行；Low confidence {low_count} 行。",
+        "人工檢查線索（WA 校準：ctc_score 最低 5 行；內部 confidence 不代表準確率）：",
+    ]
+
+    songs = reviewer_payload.get("songs")
+    song = songs[0] if isinstance(songs, list) and len(songs) == 1 else None
+    rows = song.get("rows") if isinstance(song, Mapping) else None
+    text_by_entry: dict[int, str] = {}
+    if isinstance(rows, list):
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            entry = row.get("entry")
+            if isinstance(entry, int):
+                text_by_entry[entry] = str(row.get("text", ""))
+
+    assignments = report.get("assignments")
+    scored: list[tuple[float, int, float | None]] = []
+    if isinstance(assignments, list):
+        for assignment in assignments:
+            if not isinstance(assignment, Mapping):
+                continue
+            entry = assignment.get("entry")
+            score = _finite(assignment.get("ctc_score"))
+            if not isinstance(entry, int) or score is None:
+                continue
+            scored.append((score, entry, _finite(assignment.get("ctc_first_token_score"))))
+    scored.sort(key=lambda item: (item[0], item[1]))
+
+    for score, entry, first_score in scored[: max(0, int(limit))]:
+        first = "" if first_score is None else f" ctc_first_token_score={first_score:.6f}"
+        text = text_by_entry.get(entry, "")[:30]
+        messages.append(f"#{entry} ctc_score={score:.6f}{first} {text}")
+    return messages
+
+
+def build_sparse_reviewer_notice(
+    reviewer_payload: Mapping[str, object], hubp_payload: Mapping[str, object]
+) -> str | None:
+    songs = reviewer_payload.get("songs")
+    if not isinstance(songs, list) or len(songs) != 1 or not isinstance(songs[0], Mapping):
+        return None
+    song = songs[0]
+    song_id = str(song.get("id", "song"))
+    rows = song.get("rows")
+    if not isinstance(rows, list) or not rows:
+        return None
+    raw_hubp_rows = hubp_payload.get("rows")
+    hubp_rows = raw_hubp_rows if isinstance(raw_hubp_rows, Mapping) else {}
+
+    reviewers_with_values: set[str] = set()
+    rows_with_values = 0
+    try:
+        sidecar = build_r2_sidecar(reviewer_payload, hubp_payload)
+    except ValueError:
+        sidecar = None
+
+    if isinstance(sidecar, Mapping):
+        raw_offsets = sidecar.get("offsets")
+        qualified = {
+            str(name)
+            for name in REVIEWERS
+            if isinstance(raw_offsets, Mapping) and _finite(raw_offsets.get(name)) is not None
+        }
+        reviewers_with_values.update(qualified)
+        sidecar_rows = sidecar.get("rows")
+        if isinstance(sidecar_rows, list):
+            for row in sidecar_rows:
+                if not isinstance(row, Mapping):
+                    continue
+                reviewer_times = row.get("reviewer_times")
+                if not isinstance(reviewer_times, Mapping):
+                    continue
+                if any(_finite(reviewer_times.get(name)) is not None for name in qualified):
+                    rows_with_values += 1
+    else:
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            entry = row.get("entry")
+            if not isinstance(entry, int):
+                continue
+            values = {
+                "HUBP": _hubp_time(hubp_rows, song_id, entry),
+                "WX": _source_time(row, "WX"),
+                "XLSR": _source_time(row, "XLSR"),
+            }
+            present = [name for name, value in values.items() if value is not None]
+            reviewers_with_values.update(present)
+            if present:
+                rows_with_values += 1
+
+    row_count = len(rows)
+    if len(reviewers_with_values) >= 2 or rows_with_values / row_count >= 0.5:
+        return None
+    return (
+        "此歌曲的 reviewer 證據不足（日文專用模型）：R2 背書與可信標記對此歌曲幾乎不起作用；"
+        "Trusted timing 等百分比是內部指標，不代表準確度"
+        f"（有值 reviewer {len(reviewers_with_values)}/3；有值行 {rows_with_values}/{row_count}）。"
+    )
+
 def _run_logged(command: Sequence[str], log_path: Path) -> int:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
@@ -640,7 +768,8 @@ def main(argv: list[str] | None = None) -> int:
     baseline_args = prepare_baseline_args(
         backend_args, output=baseline_output, report_dir=baseline_report_dir
     )
-    print("R2: generating Central baseline", flush=True)
+    stage_started = time.perf_counter()
+    print(stage_message(1, "R2: generating Central baseline"), flush=True)
     baseline_code = _run_backend(baseline_args)
     if baseline_code != 0:
         return baseline_code
@@ -650,8 +779,10 @@ def main(argv: list[str] | None = None) -> int:
     if not report_path.is_file():
         print(f"ERROR: baseline report missing: {report_path}", file=sys.stderr)
         return 1
+    print(stage_done_message(1, time.perf_counter() - stage_started), flush=True)
 
-    print("R2: acquiring independent reviewer evidence", flush=True)
+    stage_started = time.perf_counter()
+    print(stage_message(2, "R2: acquiring independent reviewer evidence"), flush=True)
     summary = acquire_reviewer_evidence(
         report_path,
         evidence_path,
@@ -661,12 +792,17 @@ def main(argv: list[str] | None = None) -> int:
         include_hub=args.include_hub_reviewer,
     )
     print(
-        "R2: reviewer acquisition "
-        + json.dumps(summary, ensure_ascii=False, sort_keys=True),
+        stage_message(
+            2,
+            "R2: reviewer acquisition "
+            + json.dumps(summary, ensure_ascii=False, sort_keys=True),
+        ),
         flush=True,
     )
+    print(stage_done_message(2, time.perf_counter() - stage_started), flush=True)
 
-    print("R2: generating final reviewer-validity output", flush=True)
+    stage_started = time.perf_counter()
+    print(stage_message(3, "R2: generating final reviewer-validity output"), flush=True)
     final_code = _run_backend(prepare_final_args(backend_args, evidence_path))
     if final_code != 0:
         return final_code
@@ -687,7 +823,10 @@ def main(argv: list[str] | None = None) -> int:
     if not final_report_path.is_file():
         print(f"ERROR: final report missing: {final_report_path}", file=sys.stderr)
         return 1
+    print(stage_done_message(3, time.perf_counter() - stage_started), flush=True)
 
+    stage_started = time.perf_counter()
+    print(stage_message(4, "R2: building reviewer trust summary"), flush=True)
     reviewer_data_path = run_dir / "reviewers" / "reviewer-data.json"
     hubp_path = run_dir / "reviewers" / "hubp-raw.json"
     reviewer_payload = json.loads(reviewer_data_path.read_text(encoding="utf-8-sig"))
@@ -696,6 +835,9 @@ def main(argv: list[str] | None = None) -> int:
         loaded_hubp = json.loads(hubp_path.read_text(encoding="utf-8-sig"))
         if isinstance(loaded_hubp, dict):
             hubp_payload = loaded_hubp
+    final_report = json.loads(final_report_path.read_text(encoding="utf-8-sig"))
+    if not isinstance(final_report, Mapping):
+        raise ValueError("final report must be a JSON object")
     trust_report = build_reviewer_trust_report(
         reviewer_payload,
         hubp_payload,
@@ -705,19 +847,28 @@ def main(argv: list[str] | None = None) -> int:
     trust_path = run_dir / "reviewer-trust.json"
     _write_json(trust_path, trust_report)
     print(
-        "R2: reviewer trust "
-        + json.dumps(
-            {
-                "profile": trust_report["profile"],
-                "trusted_count": trust_report["trusted_count"],
-                "review_count": trust_report["review_count"],
-                "path": str(trust_path),
-            },
-            ensure_ascii=False,
-            sort_keys=True,
+        stage_message(
+            4,
+            "R2: reviewer trust "
+            + json.dumps(
+                {
+                    "profile": trust_report["profile"],
+                    "trusted_count": trust_report["trusted_count"],
+                    "review_count": trust_report["review_count"],
+                    "path": str(trust_path),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
         ),
         flush=True,
     )
+    print(stage_done_message(4, time.perf_counter() - stage_started), flush=True)
+    for message in build_lyric_review_messages(final_report, reviewer_payload):
+        print(message, flush=True)
+    sparse_notice = build_sparse_reviewer_notice(reviewer_payload, hubp_payload)
+    if sparse_notice:
+        print(sparse_notice, flush=True)
     return 0
 
 

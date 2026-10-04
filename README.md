@@ -60,6 +60,15 @@ python .\scripts\auto_lrc.py "D:\Music\Song.flac" `
   --reviewer-evidence ".\outputs\reviewers\Song.json"
 ```
 
+### How to read the console report
+
+The user-facing R2 flow prints four stages: Central baseline, independent reviewer acquisition, final reviewer-validity output, and reviewer trust summary. Each stage shows `[1/4]` through `[4/4]` plus an elapsed-time line so a long model step is visibly still part of the same run.
+
+`Trusted timing`, `Review required`, and `Low confidence` are internal workflow indicators, not an accuracy estimate. `Trusted timing` means the current evidence satisfied the tool's trust rules; `Review required` and `Low confidence` identify rows that deserve attention under those same rules. They do not mean that the remaining rows are guaranteed correct.
+
+The lyric check is deliberately advisory. A controlled calibration used three songs with clean lyrics, one deleted line, and one adjacent-line swap (9 full R2 runs). Whole-song `provisional_unresolved` and `review_required` ratios did not reliably separate clean from damaged lyrics, so the wrapper does not emit an automatic "lyrics mismatch" verdict. It instead lists the five rows with the lowest `ctc_score` for manual inspection. Across the 6 damaged calibration variants, that lowest-five list covered the edited location within ±2 rows in 6/6 cases. This is a review clue, not an accuracy score or diagnosis.
+
+If fewer than 2 of HUBP / WhisperX / XLSR provide R2-usable reviewer evidence and fewer than 50% of lyric rows have any R2-usable reviewer value, the console also warns that reviewer evidence is sparse. This commonly matters for non-Japanese songs because the shipped reviewer set contains Japanese-specific models; in that case R2 endorsement and reviewer trust labels have little effect, and percentages such as `Trusted timing` must not be read as accuracy.
 Reviewer trust labeling is separate from R2b timestamp selection. The optional
 `reviewer_layer` profiles use the shipped neural reviewer set HUBP, WhisperX
 (WX), XLSR, and HUB. `strict` targets 2% and remains fail-closed to

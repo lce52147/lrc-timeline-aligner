@@ -175,6 +175,103 @@ class R2PipelineTests(unittest.TestCase):
                 self.assertEqual(balanced["review_count"], 8)
                 self.assertEqual(loose["review_count"], 8)
 
+    def test_stage_messages_keep_existing_text_and_add_progress_and_elapsed(self) -> None:
+        self.assertEqual(
+            r2_pipeline.stage_message(1, "R2: generating Central baseline"),
+            "[1/4] R2: generating Central baseline",
+        )
+        self.assertEqual(r2_pipeline.stage_done_message(1, 192.4), "[1/4] 完成，用時 3m12s")
+        self.assertEqual(r2_pipeline.stage_done_message(2, 9.6), "[2/4] 完成，用時 10s")
+
+    def test_lyric_review_messages_use_calibrated_lowest_five_without_auto_mismatch_warning(self) -> None:
+        report = {
+            "review_required_count": 4,
+            "low_confidence_count": 6,
+            "assignments": [
+                {
+                    "entry": entry,
+                    "ctc_score": score,
+                    "ctc_first_token_score": score + 0.01,
+                }
+                for entry, score in enumerate((0.8, 0.1, 0.6, 0.2, 0.4, 0.3), start=1)
+            ],
+        }
+        reviewer_payload = {
+            "songs": [
+                {
+                    "rows": [
+                        {"entry": entry, "text": f"line-{entry}-" + "x" * 40}
+                        for entry in range(1, 7)
+                    ]
+                }
+            ]
+        }
+
+        lines = r2_pipeline.build_lyric_review_messages(report, reviewer_payload)
+        combined = "\n".join(lines)
+
+        self.assertIn("Review required 4 行", combined)
+        self.assertIn("Low confidence 6 行", combined)
+        self.assertNotIn("歌詞可能與歌聲不一致", combined)
+        self.assertEqual([line.split()[0] for line in lines[2:]], ["#2", "#4", "#6", "#5", "#3"])
+        self.assertNotIn("x" * 31, combined)
+
+    def test_sparse_reviewer_notice_triggers_below_two_reviewers_and_below_half_rows(self) -> None:
+        rows = []
+        for entry in range(1, 11):
+            sources = {}
+            if entry <= 4:
+                sources["XLSR"] = {"time": float(entry)}
+            rows.append({"entry": entry, "sources": sources})
+        payload = {"songs": [{"id": "song", "rows": rows}]}
+
+        notice = r2_pipeline.build_sparse_reviewer_notice(payload, {})
+
+        self.assertIsNotNone(notice)
+        self.assertIn("reviewer 證據不足（日文專用模型）", notice)
+        self.assertIn("Trusted timing", notice)
+        self.assertIn("1/3", notice)
+        self.assertIn("4/10", notice)
+
+    def test_sparse_reviewer_notice_ignores_raw_values_that_cannot_qualify_for_r2(self) -> None:
+        rows = []
+        for entry in range(1, 22):
+            current = float(entry * 10)
+            rows.append(
+                {
+                    "entry": entry,
+                    "sources": {
+                        "CUR": {"time": current},
+                        "XLSR": {"time": current + 1.0},
+                    },
+                }
+            )
+        payload = {"songs": [{"id": "song", "rows": rows}]}
+
+        notice = r2_pipeline.build_sparse_reviewer_notice(payload, {})
+
+        self.assertIsNotNone(notice)
+        self.assertIn("0/3", notice)
+        self.assertIn("0/21", notice)
+
+    def test_sparse_reviewer_notice_does_not_trigger_at_two_reviewers_or_half_rows(self) -> None:
+        two_reviewer_rows = []
+        for entry in range(1, 11):
+            sources = {}
+            if entry <= 4:
+                sources["WX"] = {"time": float(entry)}
+            if entry == 1:
+                sources["XLSR"] = {"time": float(entry) + 0.1}
+            two_reviewer_rows.append({"entry": entry, "sources": sources})
+        two_reviewers = {"songs": [{"id": "song", "rows": two_reviewer_rows}]}
+        self.assertIsNone(r2_pipeline.build_sparse_reviewer_notice(two_reviewers, {}))
+
+        half_rows = []
+        for entry in range(1, 11):
+            sources = {"XLSR": {"time": float(entry)}} if entry <= 5 else {}
+            half_rows.append({"entry": entry, "sources": sources})
+        half_covered = {"songs": [{"id": "song", "rows": half_rows}]}
+        self.assertIsNone(r2_pipeline.build_sparse_reviewer_notice(half_covered, {}))
     def test_prepare_backend_args_for_baseline_removes_review_gate_and_overrides_paths(self) -> None:
         raw = [
             "--timing-source", "auto",
