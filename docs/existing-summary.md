@@ -1,20 +1,20 @@
 # Quantitative alignment summary — LRC 1.2
 
-Final release system: **R2 reviewer-validity**, replayed from the clean v1.2 release tree on 2026-10-04.
+Current published system: **R2 reviewer-validity with the Phase 4B selector**, measured on 2026-10-07.
 
 Source for every numeric measurement, split size, date, confidence interval, threshold, count, percentage, and comparison in this document: **來自內部評估流程，參考答案與逐行資料不公開**. The checked-reference corpus is intentionally excluded from the public repository. Users can reproduce the per-song timing method on their own references with `python .\scripts\evaluate_lrc.py <reference.lrc> <generated.lrc> --json`; the published aggregate values cannot be reproduced from the repository alone.
 
-| Split | Songs | Entries | <=50 ms | >1 s | MAE | trusted but >50 ms | review / unverified |
+| Scope | Songs | Entries | PCO@0.2 | Median absolute error | >500 ms | >1 s | <=50 ms |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| dev | 27 | 1011 | 792 (78.34%) | 36 | 180.74 ms | 82 | 573 (56.68%) |
-| former acceptance (historical partition) | 10 | 403 | 234 (58.06%) | 59 | 1596.50 ms | 46 | 230 (57.07%) |
+| full analysis pool | 37 | 1414 | 1229 (86.92%) | 20 ms | 115 (8.13%) | 87 (6.15%) | 1089 (77.02%) |
+| development partition | 27 | 1011 | 925 (91.49%) | 20 ms | 49 (4.85%) | 30 (2.97%) | 837 (82.79%) |
+| former acceptance partition | 10 | 403 | 304 (75.43%) | 30 ms | 66 (16.38%) | 57 (14.14%) | 252 (62.53%) |
+| Japanese subset | 30 | 1203 | 1093 (90.86%) | 20 ms | 65 (5.40%) | 45 (3.74%) | 993 (82.54%) |
+| English subset | 7 | 211 | 136 (64.46%) | 80 ms | 50 (23.70%) | 42 (19.91%) | 96 (45.50%) |
 
-Dev / former-acceptance <=50 ms gap: **20.28 percentage points**.
+The former acceptance subset was merged with development on 2026-10-03. The 37-song pool and both historical partitions are descriptive analysis sets, not independent validation. The published selector created no new rows over 500 ms or 1 s relative to its incoming baseline.
 
-The former acceptance subset was merged with dev on 2026-10-03 for reviewer
-selection. The resulting 37-song / 1414-row pool is evaluated with
-leave-one-song-out cross-validation (LOSO); there is no longer an independent
-validation set inside these 37 songs.
+Across songs, median PCO@0.2 is 92%; 22 songs reach at least 90%, and 2 songs are below 60% (`04 影色舞`, 38%; `03. Choir ‘S’ Choir`, 39%). R2 reviewer evidence is Japanese-specific and is sparse for English. Trust labeling defaults to `none`; all trusted rows measured in this pool are Japanese, and trust labels are auxiliary metadata rather than correctness guarantees.
 
 ## Reviewer trust profiles
 

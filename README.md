@@ -17,6 +17,16 @@ Checked reference timestamps are never part of normal automatic inference. Expli
 
 The `reviewer-validity` selector now compares reviewer support before a reviewer-endorsed current timestamp can yield to a distant independent-consensus candidate. Candidate seed ranking also uses acoustic score and producer semantics before provenance identity. The R2 reviewer payload now applies the same generated-title-card filtering as the timing backend. On the 27-song development split, PCO@0.2 improved from 87.24% to 91.49%, rows over 500 ms fell from 69 to 49, and rows over 1 s fell from 36 to 30, with no newly created rows over either threshold. A descriptive evaluation of the full 37-song pool improved PCO@0.2 from 82.89% to 86.92%, reduced rows over 500 ms from 141 to 115 and rows over 1 s from 95 to 87, and created no new rows over either threshold. These are dev27 validation plus a full-pool descriptive evaluation; the former acceptance set is part of that pool, so the results have not been independently validated.
 
+## Known limitations（已知限制）
+
+The measurements below describe one 37-song / 1414-row analysis pool; the former acceptance subset has been merged into that pool, so there is no independent validation set. On the published selector, the full pool reaches 86.92% PCO@0.2 with 6.15% of rows over 1 s. The Japanese subset (30 songs / 1203 rows) reaches 90.86% PCO@0.2 with 3.74% over 1 s, while the English subset (7 songs / 211 rows) reaches 64.46% PCO@0.2 with 19.91% over 1 s. Median per-song PCO@0.2 is 92%; 22 songs reach at least 90%, and 2 songs are below 60% (`04 影色舞`, 38%; `03. Choir ‘S’ Choir`, 39%). These corpus results are descriptive and do not predict accuracy on arbitrary songs.
+
+R2's shipped reviewer set is designed around Japanese models. English songs receive almost no usable reviewer evidence, so reviewer endorsement and trust labels provide little help there. Reviewer trust labeling defaults to `none`; the measured trusted rows are Japanese only, and the labels are auxiliary review information rather than a correctness guarantee.
+
+Lyrics that omit, add, reorder, or otherwise disagree with the sung words can materially reduce alignment quality. The wrapper therefore shows an advisory lowest-confidence-row list. In a controlled 9-run calibration, whole-song ratios could not distinguish clean lyrics from one-line deletion or adjacent-line-swap variants, while the five lowest `ctc_score` rows covered the edited location within ±2 rows in all 6 damaged variants. This remains a manual inspection clue, not an automatic mismatch diagnosis.
+
+Published forced-alignment results and this project can be compared only at the order-of-magnitude level: common literature evaluates English word onsets and may use noisy reference annotations, while this project evaluates manually checked lyric-line starts on a primarily Japanese corpus.
+
 ## Basic use
 
 With `Song.flac` and `Song.lyrics.txt` or `Song.lyrics.lrc` in the same folder:
