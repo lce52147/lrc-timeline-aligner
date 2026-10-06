@@ -76,13 +76,19 @@ def build_reviewer_payload(report: Mapping[str, object]) -> dict[str, object]:
 
     lyrics_path = Path(lyrics_value)
     vocal_path = Path(vocal_value)
+    audio_path = (
+        Path(audio_value)
+        if isinstance(audio_value, str)
+        else lyrics_path.with_suffix(".flac")
+    )
     if not lyrics_path.is_file():
         raise FileNotFoundError(f"lyric source unavailable: {lyrics_path}")
     if not vocal_path.is_file():
         raise FileNotFoundError(f"vocal source unavailable: {vocal_path}")
 
     document = auto_lrc.load_lyrics(lyrics_path)
-    entries, _skipped = auto_lrc.remove_instrumental_markers(document.entries)
+    entries = auto_lrc.remove_generated_title_cards(document.entries, audio_path)
+    entries, _skipped = auto_lrc.remove_instrumental_markers(entries)
     if len(entries) != len(assignments):
         raise ValueError(
             f"baseline lyric/report row mismatch: {len(entries)} != {len(assignments)}"
@@ -117,7 +123,6 @@ def build_reviewer_payload(report: Mapping[str, object]) -> dict[str, object]:
     language = {"ja": "japanese", "en": "english", "zh": "chinese"}.get(
         language_code, language_code
     )
-    audio_path = Path(audio_value) if isinstance(audio_value, str) else lyrics_path.with_suffix(".flac")
     song_id = _safe_name(audio_path.stem)
     song = {
         "id": song_id,

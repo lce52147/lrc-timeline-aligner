@@ -62,6 +62,27 @@ class R2PipelineTests(unittest.TestCase):
         self.assertEqual(song["rows"][0]["sources"]["FIN"]["time"], 1.02)
         self.assertEqual(song["rows"][0]["sources"]["MMS"]["time"], 0.99)
 
+    def test_build_reviewer_payload_removes_generated_title_card_like_backend(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lyrics = root / "song.lrc"
+            audio = root / "song.flac"
+            vocal = root / "vocals.wav"
+            lyric_rows = [f"[00:0{entry}.00]かな{entry}" for entry in range(1, 9)]
+            lyrics.write_text(
+                "[00:00.00]Artist - song\n" + "\n".join(lyric_rows) + "\n",
+                encoding="utf-8",
+            )
+            vocal.write_bytes(b"fake")
+            report = self._baseline_report(lyrics, vocal)
+            report["audio_path"] = str(audio)
+
+            payload = r2_pipeline.build_reviewer_payload(report)
+
+        song = payload["songs"][0]
+        self.assertEqual(song["row_count"], 8)
+        self.assertEqual(song["rows"][0]["text"], "かな1")
+
     def test_build_r2_sidecar_qualifies_offset_only_with_eight_nearby_samples(self) -> None:
         rows = []
         hubp_rows: dict[str, object] = {}
