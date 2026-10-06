@@ -15,7 +15,7 @@ Checked reference timestamps are never part of normal automatic inference. Expli
 
 ### Post-v1.2 selector changelog
 
-The `reviewer-validity` selector now compares reviewer support before a reviewer-endorsed current timestamp can yield to a distant independent-consensus candidate. Candidate seed ranking also uses acoustic score and producer semantics before provenance identity. On the 27-song development split, PCO@0.2 improved from 87.24% to 91.49%, rows over 500 ms fell from 69 to 49, and rows over 1 s fell from 36 to 30, with no newly created rows over either threshold. These results are development-set validation and have not been independently validated.
+The `reviewer-validity` selector now compares reviewer support before a reviewer-endorsed current timestamp can yield to a distant independent-consensus candidate. Candidate seed ranking also uses acoustic score and producer semantics before provenance identity. The R2 reviewer payload now applies the same generated-title-card filtering as the timing backend. On the 27-song development split, PCO@0.2 improved from 87.24% to 91.49%, rows over 500 ms fell from 69 to 49, and rows over 1 s fell from 36 to 30, with no newly created rows over either threshold. A descriptive evaluation of the full 37-song pool improved PCO@0.2 from 82.89% to 86.92%, reduced rows over 500 ms from 141 to 115 and rows over 1 s from 95 to 87, and created no new rows over either threshold. These are dev27 validation plus a full-pool descriptive evaluation; the former acceptance set is part of that pool, so the results have not been independently validated.
 
 ## Basic use
 
