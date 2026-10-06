@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 import reviewer_layer
 import run_reviewer_analysis
@@ -127,6 +130,82 @@ class ReviewerLayerTests(unittest.TestCase):
         self.assertNotIn("per_song", sanitized["analysis"]["per_song"]["HUBP"]["rules"]["all"]["common"])
         self.assertEqual(sanitized["analysis"]["per_song"]["HUBP"]["rules"]["all"]["full"]["coverage_percent"], 50.0)
         self.assertEqual(sanitized["acceptance_privacy"], "aggregate_only")
+
+    def test_build_rows_ignores_generated_row_excluded_from_reference_evaluation(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            reference = root / "reference.lrc"
+            generated = root / "generated.lrc"
+            split_path = root / "split.json"
+            producer_path = root / "producer.json"
+            hubp_path = root / "hubp.json"
+            manifest_path = root / "manifest.json"
+
+            reference.write_text(
+                "[00:00.00]Artist - Title\n[00:01.00]lyric\n",
+                encoding="utf-8",
+            )
+            generated.write_text(
+                "[00:00.10]Artist - Title\n[00:01.00]lyric\n",
+                encoding="utf-8",
+            )
+            split_path.write_text(
+                json.dumps({"acceptance": [{"id": "song", "reference": str(reference)}]}),
+                encoding="utf-8",
+            )
+            producer_path.write_text(
+                json.dumps(
+                    {
+                        "songs": [
+                            {
+                                "id": "song",
+                                "rows": [
+                                    {
+                                        "entry": 1,
+                                        "lines": ["Artist - Title"],
+                                        "sources": {"CUR": {"time": 0.1}},
+                                    },
+                                    {
+                                        "entry": 2,
+                                        "lines": ["lyric"],
+                                        "sources": {"CUR": {"time": 1.0}},
+                                    },
+                                ],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            hubp_path.write_text(
+                json.dumps(
+                    {
+                        "rows": {
+                            "song::1": {"status": "OK", "time": 0.1},
+                            "song::2": {"status": "OK", "time": 1.0},
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            manifest_path.write_text(
+                json.dumps({"cases": {"song": {"status": "OK", "output": str(generated)}}}),
+                encoding="utf-8",
+            )
+
+            rows, metadata = run_reviewer_analysis.build_rows(
+                producer_path=producer_path,
+                hubp_path=hubp_path,
+                split_path=split_path,
+                partition="acceptance",
+                final_source="CUR",
+                final_manifest=manifest_path,
+            )
+
+            self.assertEqual(metadata["row_count"], 1)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["entry"], 2)
+            self.assertEqual(rows[0]["final_time"], 1.0)
 
 
 if __name__ == "__main__":

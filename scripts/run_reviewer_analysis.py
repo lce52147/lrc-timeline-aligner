@@ -11,7 +11,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
-from evaluate_lrc import is_generated_title_card, is_marker_entry, parse_lrc
+from evaluate_lrc import Entry, align_entries_by_text, is_generated_title_card, is_marker_entry, parse_lrc
 import reviewer_layer
 
 
@@ -42,18 +42,20 @@ def split_members_for_partition(
     return {str(member["id"]): member for member in members}
 
 
-def final_times_from_manifest(manifest_path: Path, split_members: Mapping[str, dict[str, object]]) -> dict[str, list[float]]:
+def final_entries_from_manifest(
+    manifest_path: Path, split_members: Mapping[str, dict[str, object]]
+) -> dict[str, list[Entry]]:
     payload = load_json(manifest_path)
     if not isinstance(payload, dict) or not isinstance(payload.get("cases"), dict):
         raise ValueError(f"invalid manifest: {manifest_path}")
-    result: dict[str, list[float]] = {}
+    result: dict[str, list[Entry]] = {}
     for song_id, member in split_members.items():
         state = payload["cases"].get(song_id)
         if not isinstance(state, dict) or state.get("status") != "OK":
             raise ValueError(f"manifest missing OK case: {song_id}")
         output = Path(str(state["output"]))
         entries = filtered_entries(output)
-        result[song_id] = [float(entry.time_cs) / 100.0 for entry in entries]
+        result[song_id] = entries
         expected = int(member.get("row_count", len(entries))) if member.get("row_count") is not None else len(entries)
         if len(entries) != expected:
             # split.json does not currently carry row_count; producer validation below is authoritative.
@@ -85,8 +87,8 @@ def build_rows(
     if set(producer_songs) != set(split_members):
         raise ValueError(f"producer/split {partition} song IDs differ")
 
-    manifest_times = (
-        final_times_from_manifest(final_manifest, split_members) if final_manifest is not None else None
+    manifest_entries = (
+        final_entries_from_manifest(final_manifest, split_members) if final_manifest is not None else None
     )
     hubp_rows = hubp["rows"]
     rows: list[dict[str, object]] = []
@@ -97,21 +99,45 @@ def build_rows(
         if not isinstance(producer_rows, list):
             raise ValueError(f"producer rows missing: {song_id}")
         reference_entries = filtered_entries(Path(str(member["reference"])))
-        if len(reference_entries) != len(producer_rows):
-            raise ValueError(
-                f"reference/producer row count mismatch for {song_id}: {len(reference_entries)} != {len(producer_rows)}"
-            )
-        if manifest_times is not None and len(manifest_times[song_id]) != len(producer_rows):
-            raise ValueError(
-                f"manifest/producer row count mismatch for {song_id}: {len(manifest_times[song_id])} != {len(producer_rows)}"
-            )
+        producer_entries: list[Entry] = []
         for zero_index, row in enumerate(producer_rows):
             if not isinstance(row, dict) or not isinstance(row.get("sources"), dict):
                 raise ValueError(f"invalid producer row {song_id}::{zero_index + 1}")
-            entry = int(row.get("entry", zero_index + 1))
+            lines = row.get("lines")
+            if not isinstance(lines, list) or not all(isinstance(line, str) for line in lines):
+                raise ValueError(f"producer row text missing: {song_id}::{zero_index + 1}")
+            producer_entries.append(Entry(time_cs=0, lines=list(lines)))
+
+        producer_pairs, unmatched_reference, _unmatched_producer = align_entries_by_text(
+            reference_entries, producer_entries
+        )
+        if unmatched_reference:
+            raise ValueError(
+                f"reference rows missing from producer for {song_id}: {len(unmatched_reference)}"
+            )
+        producer_index_by_reference = {reference_index: producer_index for reference_index, producer_index in producer_pairs}
+
+        final_index_by_reference: dict[int, int] | None = None
+        if manifest_entries is not None:
+            final_pairs, unmatched_reference_final, _unmatched_final = align_entries_by_text(
+                reference_entries, manifest_entries[song_id]
+            )
+            if unmatched_reference_final:
+                raise ValueError(
+                    f"reference rows missing from manifest output for {song_id}: {len(unmatched_reference_final)}"
+                )
+            final_index_by_reference = {
+                reference_index: final_index for reference_index, final_index in final_pairs
+            }
+
+        for reference_index, reference_entry in enumerate(reference_entries):
+            producer_index = producer_index_by_reference[reference_index]
+            row = producer_rows[producer_index]
+            entry = int(row.get("entry", producer_index + 1))
             sources = row["sources"]
-            if manifest_times is not None:
-                final_time = manifest_times[song_id][zero_index]
+            if manifest_entries is not None and final_index_by_reference is not None:
+                final_entry = manifest_entries[song_id][final_index_by_reference[reference_index]]
+                final_time = float(final_entry.time_cs) / 100.0
             else:
                 source = sources.get(final_source)
                 if not isinstance(source, dict) or not isinstance(source.get("time"), (int, float)):
@@ -139,7 +165,7 @@ def build_rows(
                     "title": str(song.get("title", song_id)),
                     "entry": entry,
                     "final_time": final_time,
-                    "reference_time": float(reference_entries[zero_index].time_cs) / 100.0,
+                    "reference_time": float(reference_entry.time_cs) / 100.0,
                     "times": {
                         "CUR": source_time("CUR"),
                         "HUBP": hubp_time,
