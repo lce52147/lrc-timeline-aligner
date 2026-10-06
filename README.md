@@ -13,6 +13,10 @@ The production path has four layers:
 
 Checked reference timestamps are never part of normal automatic inference. Explicit `lyrics` / `checked` modes remain available when assisted timing is intentionally requested.
 
+### Post-v1.2 selector changelog
+
+The `reviewer-validity` selector now compares reviewer support before a reviewer-endorsed current timestamp can yield to a distant independent-consensus candidate. Candidate seed ranking also uses acoustic score and producer semantics before provenance identity. On the 27-song development split, PCO@0.2 improved from 87.24% to 91.49%, rows over 500 ms fell from 69 to 49, and rows over 1 s fell from 36 to 30, with no newly created rows over either threshold. These results are development-set validation and have not been independently validated.
+
 ## Basic use
 
 With `Song.flac` and `Song.lyrics.txt` or `Song.lyrics.lrc` in the same folder:

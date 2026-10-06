@@ -3243,6 +3243,151 @@ class CentralTimingStateTests(unittest.TestCase):
         self.assertEqual(endorsed.decisions[0].status, "selected_valid")
         self.assertTrue(endorsed.audits[0].timing_trusted)
 
+    def test_reviewer_validity_endorsed_soft_invalid_current_survives_ordinary_challenger(self) -> None:
+        current = self.candidate(
+            12.0,
+            tuple(self.span(12.0 + i * 0.06, 0.01) for i in range(4)),
+            current=True,
+            confidence=0.20,
+        )
+        challenger = self.candidate(
+            12.6,
+            self.coherent_spans(12.6),
+            source="ctc-local",
+            confidence=0.95,
+            acoustic="supported",
+        )
+        baseline = auto_lrc.build_final_timing_state(((current, challenger),))
+        self.assertEqual(baseline.decisions[0].selected_candidate_id, challenger.candidate_id)
+
+        endorsed = auto_lrc.build_final_timing_state(
+            ((current, challenger),),
+            arbiter_mode="reviewer-validity",
+            reviewer_evidence=(self.reviewer_validity_row(12.0),),
+        )
+        self.assertEqual(endorsed.decisions[0].selected_candidate_id, current.candidate_id)
+        self.assertEqual(endorsed.decisions[0].status, "selected_valid")
+        self.assertTrue(endorsed.audits[0].timing_trusted)
+
+    def test_reviewer_validity_endorsed_soft_invalid_current_yields_to_independent_consensus(self) -> None:
+        current = self.candidate(
+            12.69,
+            tuple(self.span(12.69 + i * 0.06, 0.01) for i in range(4)),
+            current=True,
+            confidence=0.20,
+        )
+        ctc_whisper_consensus = self.candidate(
+            12.22,
+            self.coherent_spans(12.22),
+            source="ctc-local-whisper-vocal-independent-consensus",
+            confidence=0.85,
+            acoustic="supported",
+        )
+        direct_whisper = self.candidate(
+            12.26,
+            self.coherent_spans(12.26),
+            source="local-whisper-vocal-independent-fusion",
+            confidence=0.88,
+            acoustic="supported",
+            direct=True,
+            direct_independent=True,
+        )
+
+        endorsed = auto_lrc.build_final_timing_state(
+            ((current, ctc_whisper_consensus, direct_whisper),),
+            arbiter_mode="reviewer-validity",
+            reviewer_evidence=({
+                "expected_current_seconds": 12.69,
+                "reviewer_times": {"HUBP": 12.26, "WX": 12.27, "XLSR": 12.69},
+                "offsets": {"HUBP": 0.0, "WX": 0.0, "XLSR": 0.0},
+                "reviewers": ["HUBP", "WX", "XLSR"],
+                "required_agreements": 1,
+            },),
+        )
+
+        self.assertEqual(
+            endorsed.decisions[0].selected_candidate_id,
+            direct_whisper.candidate_id,
+        )
+        self.assertEqual(endorsed.decisions[0].status, "selected_valid")
+        self.assertTrue(endorsed.audits[0].timing_trusted)
+
+    def test_reviewer_validity_endorsed_current_blocks_consensus_with_less_reviewer_support(self) -> None:
+        current = self.candidate(
+            12.69,
+            tuple(self.span(12.69 + i * 0.06, 0.01) for i in range(4)),
+            current=True,
+            confidence=0.20,
+        )
+        ctc_whisper_consensus = self.candidate(
+            12.22,
+            self.coherent_spans(12.22),
+            source="ctc-local-whisper-vocal-independent-consensus",
+            confidence=0.85,
+            acoustic="supported",
+        )
+        direct_whisper = self.candidate(
+            12.26,
+            self.coherent_spans(12.26),
+            source="local-whisper-vocal-independent-fusion",
+            confidence=0.88,
+            acoustic="supported",
+            direct=True,
+            direct_independent=True,
+        )
+
+        endorsed = auto_lrc.build_final_timing_state(
+            ((current, ctc_whisper_consensus, direct_whisper),),
+            arbiter_mode="reviewer-validity",
+            reviewer_evidence=({
+                "expected_current_seconds": 12.69,
+                "reviewer_times": {"HUBP": 12.69, "WX": 12.68, "XLSR": 12.26},
+                "offsets": {"HUBP": 0.0, "WX": 0.0, "XLSR": 0.0},
+                "reviewers": ["HUBP", "WX", "XLSR"],
+                "required_agreements": 1,
+            },),
+        )
+
+        self.assertEqual(endorsed.decisions[0].selected_candidate_id, current.candidate_id)
+
+    def test_reviewer_validity_endorsed_current_keeps_current_on_tied_reviewer_support(self) -> None:
+        current = self.candidate(
+            12.69,
+            tuple(self.span(12.69 + i * 0.06, 0.01) for i in range(4)),
+            current=True,
+            confidence=0.20,
+        )
+        ctc_whisper_consensus = self.candidate(
+            12.22,
+            self.coherent_spans(12.22),
+            source="ctc-local-whisper-vocal-independent-consensus",
+            confidence=0.85,
+            acoustic="supported",
+        )
+        direct_whisper = self.candidate(
+            12.26,
+            self.coherent_spans(12.26),
+            source="local-whisper-vocal-independent-fusion",
+            confidence=0.88,
+            acoustic="supported",
+            direct=True,
+            direct_independent=True,
+        )
+
+        endorsed = auto_lrc.build_final_timing_state(
+            ((current, ctc_whisper_consensus, direct_whisper),),
+            arbiter_mode="reviewer-validity",
+            reviewer_evidence=({
+                "expected_current_seconds": 12.69,
+                "reviewer_times": {"HUBP": 12.69, "WX": 12.26, "XLSR": None},
+                "offsets": {"HUBP": 0.0, "WX": 0.0},
+                "reviewers": ["HUBP", "WX", "XLSR"],
+                "required_agreements": 1,
+            },),
+        )
+
+        self.assertEqual(endorsed.decisions[0].selected_candidate_id, current.candidate_id)
+
     def test_reviewer_validity_does_not_relax_temporal_incoherence(self) -> None:
         current = self.candidate(12.0, (self.span(12.0), self.span(12.1), self.span(12.2), self.span(17.0), self.span(17.1)), source="ctc-prefix-probe", prefix_scope=True, current=True)
         state = auto_lrc.build_final_timing_state(((current,),), arbiter_mode="reviewer-validity", reviewer_evidence=(self.reviewer_validity_row(12.0),))
@@ -8635,6 +8780,33 @@ class V143EvidenceRecoveryRegressionTests(unittest.TestCase):
         self.assertFalse(any(
             item.source == "ctc-local-raw-independent-consensus" for item in augmented
         ))
+
+    def test_candidate_seed_ranking_ignores_provenance_id_for_capped_strength_ties(self) -> None:
+        def assignment(local_id: str, retry_id: str) -> dict[str, object]:
+            return {
+                "alignment_hypotheses": [
+                    {
+                        "source": "ctc-local-window",
+                        "spans": [{"start": 215.013, "score": 0.716128}],
+                        "hypothesis_id": local_id,
+                    },
+                    {
+                        "source": "ctc-opening-local-retry-identity",
+                        "spans": [{"start": 201.51, "score": 0.666215}],
+                        "hypothesis_id": retry_id,
+                        "window_truncated": False,
+                        "right_edge_pileup": False,
+                    },
+                ]
+            }
+
+        first = auto_lrc._candidate_seed_rows(assignment("z-local", "a-retry"))
+        second = auto_lrc._candidate_seed_rows(assignment("a-local", "z-retry"))
+
+        self.assertEqual(first[0]["time"], 215.013)
+        self.assertEqual(second[0]["time"], 215.013)
+        self.assertEqual(first[0]["kind"], "ctc-local-first-token")
+        self.assertEqual(second[0]["kind"], "ctc-local-first-token")
 
     def test_complete_retry_publishes_identity_only_occurrence_evidence(self) -> None:
         spans = tuple(

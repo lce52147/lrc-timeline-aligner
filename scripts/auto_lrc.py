@@ -3830,6 +3830,39 @@ def _reviewer_validity_endorsement(
     )
 
 
+def _reviewer_agreement_count(
+    candidate: TimingCandidate,
+    reviewer_evidence: dict[str, object] | None,
+) -> int | None:
+    if not isinstance(reviewer_evidence, dict):
+        return None
+    raw_times = reviewer_evidence.get("reviewer_times")
+    raw_offsets = reviewer_evidence.get("offsets")
+    raw_reviewers = reviewer_evidence.get("reviewers")
+    if (
+        not isinstance(raw_times, dict)
+        or not isinstance(raw_offsets, dict)
+        or not isinstance(raw_reviewers, list)
+    ):
+        return None
+    reviewer_times = {
+        str(key): (float(value) if isinstance(value, (int, float)) else None)
+        for key, value in raw_times.items()
+    }
+    offsets = {
+        str(key): float(value)
+        for key, value in raw_offsets.items()
+        if isinstance(value, (int, float))
+    }
+    agreeing, _present = timing_arbiter.reviewer_agreements_at(
+        candidate_seconds=float(candidate.written_time.centiseconds) / 100.0,
+        reviewer_times=reviewer_times,
+        offsets=offsets,
+        reviewers=tuple(str(value) for value in raw_reviewers),
+    )
+    return len(agreeing)
+
+
 def select_timing_decision(
     *,
     entry_index: int,
@@ -3862,6 +3895,8 @@ def select_timing_decision(
             None,
         )
     )
+    reviewer_endorsed_current = False
+    reviewer_current_support: int | None = None
     if (
         arbiter_mode == "reviewer-validity"
         and current_evaluation is not None
@@ -3882,6 +3917,8 @@ def select_timing_decision(
                 valid=True,
                 rejection_reasons=(),
             )
+            reviewer_endorsed_current = True
+            reviewer_current_support = len(reviewer_decision.agreeing_reviewers)
             evaluations = tuple(
                 current_evaluation
                 if evaluation.candidate.candidate_id == current_evaluation.candidate.candidate_id
@@ -3890,7 +3927,30 @@ def select_timing_decision(
             )
     valid = tuple(evaluation for evaluation in evaluations if evaluation.valid)
     winner: CandidateEvaluation | None = None
-    if current_evaluation is not None and current_evaluation.valid:
+    if reviewer_endorsed_current:
+        reviewer_challengers = tuple(
+            evaluation for evaluation in valid
+            if evaluation.candidate.candidate_id != current_evaluation.candidate.candidate_id
+        )
+        consensus_winner = _bounded_independent_consensus_winner(reviewer_challengers)
+        if (
+            consensus_winner is not None
+            and abs(
+                consensus_winner.candidate.written_time.seconds
+                - current_evaluation.candidate.written_time.seconds
+            ) > RAW_CTC_CONSENSUS_MAX_DELTA_SECONDS
+            and reviewer_current_support is not None
+            and (
+                challenger_reviewer_support := _reviewer_agreement_count(
+                    consensus_winner.candidate, reviewer_evidence
+                )
+            ) is not None
+            and challenger_reviewer_support > reviewer_current_support
+        ):
+            winner = consensus_winner
+        else:
+            winner = current_evaluation
+    elif current_evaluation is not None and current_evaluation.valid:
         challengers = tuple(
             evaluation for evaluation in valid
             if evaluation.candidate.candidate_id != current_evaluation.candidate.candidate_id
@@ -5881,6 +5941,20 @@ def _candidate_seed_rows(assignment: dict[str, object]) -> list[dict[str, object
     without independent acoustic evidence.
     """
     rows: list[dict[str, object]] = []
+
+    def semantic_rank(row: dict[str, object]) -> tuple[float, float, int, float]:
+        kind_priority = {
+            "ctc-local-first-token": 3,
+            "ctc-local-retry-first-token": 2,
+            "ctc-detached-second-token": 1,
+            "ctc-first-token-posterior": 0,
+        }
+        return (
+            float(row.get("strength", 0.0)),
+            float(row.get("first_token_score", 0.0)),
+            kind_priority.get(str(row.get("kind")), -1),
+            -float(row.get("time", 0.0)),
+        )
     hypotheses = assignment.get("alignment_hypotheses")
     if isinstance(hypotheses, list):
         for hypothesis in hypotheses:
@@ -5969,7 +6043,7 @@ def _candidate_seed_rows(assignment: dict[str, object]) -> list[dict[str, object
     if local_times:
         local_time = max(
             (row for row in rows if row.get("kind") in local_seed_kinds),
-            key=lambda row: float(row.get("strength", 0.0)),
+            key=semantic_rank,
         )["time"]
         filtered = [
             row for row in rows
@@ -5979,7 +6053,16 @@ def _candidate_seed_rows(assignment: dict[str, object]) -> list[dict[str, object
         ]
         if filtered:
             rows = filtered
-    return sorted(rows, key=lambda row: (-float(row.get("strength", 0.0)), str(row.get("evidence_id"))))
+    return sorted(
+        rows,
+        key=lambda row: (
+            -semantic_rank(row)[0],
+            -semantic_rank(row)[1],
+            -semantic_rank(row)[2],
+            -semantic_rank(row)[3],
+            str(row.get("evidence_id")),
+        ),
+    )
 
 
 def _best_mutual_recurrence_pair(

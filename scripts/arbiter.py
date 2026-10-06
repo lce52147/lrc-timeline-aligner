@@ -41,6 +41,30 @@ class ReviewerValidityDecision:
     present_reviewers: tuple[str, ...]
 
 
+def reviewer_agreements_at(
+    *,
+    candidate_seconds: float,
+    reviewer_times: Mapping[str, float | None],
+    offsets: Mapping[str, float],
+    reviewers: Sequence[str],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    present: list[str] = []
+    agreeing: list[str] = []
+    for reviewer in reviewers:
+        name = str(reviewer)
+        raw = reviewer_times.get(name)
+        if raw is None or name not in offsets:
+            continue
+        value = float(raw)
+        if not math.isfinite(value):
+            continue
+        present.append(name)
+        corrected = value - float(offsets[name])
+        if abs(corrected - float(candidate_seconds)) <= REVIEWER_VALIDITY_TOLERANCE_SECONDS + 1e-12:
+            agreeing.append(name)
+    return tuple(agreeing), tuple(present)
+
+
 def decide_reviewer_validity(
     *,
     current_seconds: float,
@@ -52,19 +76,12 @@ def decide_reviewer_validity(
 ) -> ReviewerValidityDecision:
     if expected_current_seconds is None or abs(float(current_seconds) - float(expected_current_seconds)) > REVIEWER_CURRENT_BINDING_TOLERANCE_SECONDS + 1e-12:
         return ReviewerValidityDecision(False, "current-binding-mismatch", (), ())
-    present: list[str] = []
-    agreeing: list[str] = []
-    for reviewer in reviewers:
-        raw = reviewer_times.get(str(reviewer))
-        if raw is None or str(reviewer) not in offsets:
-            continue
-        value = float(raw)
-        if not math.isfinite(value):
-            continue
-        present.append(str(reviewer))
-        corrected = value - float(offsets[str(reviewer)])
-        if abs(corrected - float(current_seconds)) <= REVIEWER_VALIDITY_TOLERANCE_SECONDS + 1e-12:
-            agreeing.append(str(reviewer))
+    agreeing, present = reviewer_agreements_at(
+        candidate_seconds=float(current_seconds),
+        reviewer_times=reviewer_times,
+        offsets=offsets,
+        reviewers=reviewers,
+    )
     endorsed = len(agreeing) >= int(required_agreements)
     return ReviewerValidityDecision(
         endorsed,

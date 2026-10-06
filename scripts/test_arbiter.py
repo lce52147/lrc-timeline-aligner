@@ -45,6 +45,16 @@ class GrossRescueArbiterTests(unittest.TestCase):
 
 
 class ReviewerValidityArbiterTests(unittest.TestCase):
+    def test_reviewer_agreements_can_score_non_current_candidate(self) -> None:
+        agreeing, present = arbiter.reviewer_agreements_at(
+            candidate_seconds=9.50,
+            reviewer_times={"HUBP": 9.52, "WX": 9.49, "XLSR": 10.01},
+            offsets={"HUBP": 0.02, "WX": 0.0, "XLSR": 0.01},
+            reviewers=("HUBP", "WX", "XLSR"),
+        )
+        self.assertEqual(agreeing, ("HUBP", "WX"))
+        self.assertEqual(present, ("HUBP", "WX", "XLSR"))
+
     def test_one_corrected_reviewer_can_endorse_r2b(self) -> None:
         decision = arbiter.decide_reviewer_validity(
             current_seconds=10.0,
