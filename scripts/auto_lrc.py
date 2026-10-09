@@ -24244,6 +24244,124 @@ def _actionable_suspicious_severity_counts(report: dict[str, object]) -> dict[st
     return counts
 
 
+FINAL_SELF_CHECK_WINDOW_SECONDS = 0.40
+FINAL_SELF_CHECK_BELOW_MEDIAN_DB = 20.0
+
+
+def compute_final_timing_self_check(
+    report: dict[str, object],
+    state: FinalTimingState,
+    entries: list[LyricEntry],
+) -> dict[str, object]:
+    """Fail-closed final confidence audit. Never changes or reranks timestamps.
+
+    F1 probes the isolated Demucs vocal stem, not the original mix.
+    F2 identifies repeated text whose chosen time depends only on content identity.
+    F3 flags runs of >=3 compressed or nonmonotonic consecutive lines.
+    F4 flags a >1s displacement from the original CTC first token.
+    """
+    times = [decision.written_time.seconds for decision in state.decisions]
+    assignments = report.get("assignments")
+    if not isinstance(assignments, list) or len(assignments) != len(times) or len(entries) != len(times):
+        raise LrcError("Final self-check must see aligned entries, assignments and decisions")
+    flagged: dict[int, list[str]] = collections.defaultdict(list)
+    diagnostics: dict[str, object] = {
+        "schema": 1, "timestamp_mutations": 0, "vocal_status": "skipped-no-stem",
+        "vocal_threshold_db": None,
+    }
+    vocal_file = report.get("ctc_audio_path")
+    if (
+        report.get("ctc_audio_source") == "vocal-stem"
+        and isinstance(vocal_file, str)
+        and Path(vocal_file).is_file()
+    ):
+        try:
+            stem = Path(vocal_file)
+            samples = decode_audio(stem)
+            window_samples = int(round(SAMPLE_RATE * FINAL_SELF_CHECK_WINDOW_SECONDS))
+            def window_db(seconds: float) -> float | None:
+                start = int(round(seconds * SAMPLE_RATE))
+                if start < 0 or start + window_samples > len(samples):
+                    return None
+                x = samples[start:start + window_samples].astype(np.float64)
+                return 10.0 * math.log10(max(float(np.mean(x * x)), 1e-20))
+            active = analyze_audio(stem, len(samples) / SAMPLE_RATE).segments
+            levels = [
+                value
+                for seg_start, seg_end in active
+                for t in np.arange(
+                    seg_start, seg_end - FINAL_SELF_CHECK_WINDOW_SECONDS + 1e-6, 0.2
+                )
+                for value in (window_db(float(t)),)
+                if value is not None
+            ]
+            if len(levels) >= 8:
+                threshold = float(statistics.median(levels)) - FINAL_SELF_CHECK_BELOW_MEDIAN_DB
+                diagnostics["vocal_status"] = "checked"
+                diagnostics["vocal_threshold_db"] = round(threshold, 3)
+                diagnostics["vocal_active_windows"] = len(levels)
+                for i, seconds in enumerate(times, 1):
+                    db = window_db(seconds)
+                    if db is not None and db < threshold:
+                        flagged[i].append("F1-vocal-absent")
+            else:
+                diagnostics["vocal_status"] = "skipped-insufficient-active-windows"
+        except (LrcError, OSError, ValueError, subprocess.SubprocessError) as exc:
+            diagnostics["vocal_status"] = "skipped-decoding-error"
+            diagnostics["vocal_error"] = str(exc)
+    counts = collections.Counter(
+        normalize_match_text(entry_sung_text(entry))
+        for entry in entries
+    )
+    for i, (entry, decision, assignment) in enumerate(zip(entries, state.decisions, assignments), 1):
+        key = normalize_match_text(entry_sung_text(entry))
+        if counts[key] >= 2 and (
+            "raw-vocal-independent-fusion" in decision.candidate.source
+            or "content-identity" in decision.candidate.source
+            or assignment.get("content_trust_source") in (
+                "selected-candidate-independent-identity",
+                "runtime-independent-content-identity",
+            ) and decision.candidate.source.startswith("raw-")
+        ):
+            flagged[i].append("F2-repeated-content-identity")
+        first = assignment.get("ctc_first_token_start")
+        if isinstance(first, (int, float)) and math.isfinite(float(first)) and abs(times[i - 1] - float(first)) > 1.0:
+            flagged[i].append("F4-ctc-final-disagreement")
+    gaps=[b-a for a,b in zip(times,times[1:])]
+    # Any backward timestamp is inherently invalid, even for only two lines.
+    for index, gap in enumerate(gaps, 1):
+        if gap < 0:
+            flagged[index].append("F3-nonmonotonic")
+            flagged[index + 1].append("F3-nonmonotonic")
+    positive=[d for d in gaps if d>0]
+    median_gap=float(statistics.median(positive)) if positive else 0.0
+    if median_gap:
+        compressed = [gap <= 0 or gap < median_gap * 0.45 for gap in gaps]
+        start = 0
+        while start < len(compressed):
+            if not compressed[start]:
+                start += 1
+                continue
+            end=start
+            while end+1<len(compressed) and compressed[end+1]:
+                end+=1
+            if end-start+2>=3:
+                for i in range(start+1,end+3):
+                    flagged[i].append("F3-compressed-or-nonmonotonic")
+            start=end+1
+    else:
+        for i,diff in enumerate(gaps,1):
+            if diff <= 0:
+                flagged[i].append("F3-compressed-or-nonmonotonic")
+                flagged[i+1].append("F3-compressed-or-nonmonotonic")
+    result={str(k):list(dict.fromkeys(v)) for k,v in sorted(flagged.items())}
+    diagnostics["flags_by_entry"]=result
+    diagnostics["flagged_entries"]=sorted(flagged)
+    diagnostics["flag_count_by_type"]=dict(collections.Counter(x for v in result.values() for x in v))
+    diagnostics["median_interline_gap_s"]=round(median_gap,3)
+    return diagnostics
+
+
 def commit_final_timing_state(
     state: FinalTimingState,
     report: dict[str, object],
@@ -24280,7 +24398,12 @@ def commit_final_timing_state(
     )
     # Only the final output audit may downgrade trust. Preview and private
     # recovery projections retain their original backend-selection semantics.
-    if final_output and material_conflict_entries:
+    raw_self_check = report.get("final_self_check") if final_output else None
+    self_check_flags = (
+        {int(index): flags for index, flags in raw_self_check.get("flags_by_entry", {}).items()}
+        if isinstance(raw_self_check, dict) else {}
+    )
+    if final_output and (material_conflict_entries or self_check_flags):
         effective_state = FinalTimingState(
             effective_state.decisions,
             effective_state.written_times,
@@ -24289,9 +24412,13 @@ def commit_final_timing_state(
                     entry_index=audit.entry_index,
                     timing_trusted=False,
                     status="provisional_unresolved",
-                    failures=tuple(dict.fromkeys((*audit.failures, "unresolved-material-alternative"))),
+                    failures=tuple(dict.fromkeys((
+                        *audit.failures,
+                        *(("unresolved-material-alternative",) if decision.entry_index + 1 in material_conflict_entries else ()),
+                        *self_check_flags.get(decision.entry_index + 1, ()),
+                    ))),
                 )
-                if decision.entry_index + 1 in material_conflict_entries
+                if decision.entry_index + 1 in (material_conflict_entries | self_check_flags.keys())
                 else audit
                 for decision, audit in zip(effective_state.decisions, effective_state.audits)
             ),
@@ -24545,6 +24672,8 @@ def commit_final_timing_state(
             report, decision.entry_index + 1, decision, audit
         )
         material_conflict_review = decision.entry_index + 1 in material_conflict_entries
+        row_self_check = list(self_check_flags.get(decision.entry_index + 1, []))
+        raw_assignment["self_check_flags"] = row_self_check
         review_reason_classes: list[str] = []
         if actionable_failure:
             review_reason_classes.append("actionable-timing-failure")
@@ -24552,6 +24681,8 @@ def commit_final_timing_state(
             review_reason_classes.append("actionable-suspicious-conflict")
         if material_conflict_review:
             review_reason_classes.append("unresolved-material-alternative")
+        if row_self_check:
+            review_reason_classes.append("final-self-check")
         review_required = bool(review_reason_classes)
         raw_assignment["review_reason_classes"] = review_reason_classes
         for reason_class in review_reason_classes:
@@ -35650,6 +35781,9 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
             report["postcentral_hubert_duplicate_occurrence_resolution"] = copy.deepcopy(
                 duplicate_resolution
             )
+        report["final_self_check"] = compute_final_timing_self_check(
+            report, final_timing_state, entries
+        )
         final_timing_state = commit_final_timing_state(
             final_timing_state,
             report,

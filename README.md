@@ -17,6 +17,17 @@ Checked reference timestamps are never part of normal automatic inference. Expli
 
 The `reviewer-validity` selector now compares reviewer support before a reviewer-endorsed current timestamp can yield to a distant independent-consensus candidate. Candidate seed ranking also uses acoustic score and producer semantics before provenance identity. The R2 reviewer payload now applies the same generated-title-card filtering as the timing backend. On the 27-song development split, PCO@0.2 improved from 87.24% to 91.49%, rows over 500 ms fell from 69 to 49, and rows over 1 s fell from 36 to 30, with no newly created rows over either threshold. A descriptive evaluation of the full 37-song pool improved PCO@0.2 from 82.89% to 86.92%, reduced rows over 500 ms from 141 to 115 and rows over 1 s from 95 to 87, and created no new rows over either threshold. These are dev27 validation plus a full-pool descriptive evaluation; the former acceptance set is part of that pool, so the results have not been independently validated.
 
+## Final timing self-check (F1–F4, post-Central)
+
+After Central selects immutable lyric times, the final report audits every line and can **only reduce trust**, not replace, shift, or sort timestamps. Flagged lines receive timing_trusted=false, overall_trusted=false, review_required=true, and explicit self_check_flags. The trust label does not guarantee manually correct onset.
+
+- F1: a 0.4-second RMS window in the isolated Demucs vocal stem is below the median active-vocal power minus 20 dB. No stem means F1 is skipped and a skip reason is recorded.
+- F2: lyric is repeated and selected source depends on content identity.
+- F3: three or more consecutively compressed lines (<0.45 × median interline interval), or any timestamp reversal.
+- F4: final timestamp differs from original CTC first-token by >1 second.
+
+On the **37-song / 1414-line manually checked BK research pool**, retrospective report replay flags 107 rows: 57/86 large (>1s) errors and 73/195 errors over 200ms; 34 flagged lines were actually within 200ms. This is **diagnostic recall, not timestamp accuracy improvement**. Historical-report replay is not an independent full new same-parent A/B. See _review/H2_BK37_OFFLINE_AUDIT_20261009.json.
+
 ## Known limitations（已知限制）
 
 Occurrence loss is a known v1.2 limitation: whole-song CTC may misidentify repeated sung passages and collapse or shift consecutive lyric rows. Verified examples: 04 影色舞, 03. Choir ‘S’ Choir, 01.ミレニアの水槽, and My Dearest. Manual listening is required; model confidence alone is insufficient.
