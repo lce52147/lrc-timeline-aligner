@@ -31,6 +31,12 @@ class S5GateTests(unittest.TestCase):
     def test_missing_reference_clock_blocks(self):
         rows=self.rows();del rows[2]["bk_s"]
         self.assertEqual(evaluate_s5_rows(rows,song_id="demo")["status"],"BLOCKED_INVALID_CLOCK")
+    def test_broken_original_main_does_not_block_scoring(self):
+        rows=self.rows();rows[1]['main_s']=8.
+        result=evaluate_s5_rows(rows,song_id='broken-main')
+        self.assertEqual(result['status'],'POSTHOC_GATE_COMPUTED')
+        self.assertEqual(result['counts']['main_wrong_gt1s'],1)
+
     def test_new_over_second_regression_fails(self):
         rows=self.rows();rows[2]["candidate_s"]=27.
         a=evaluate_s5_rows(rows,song_id="a")

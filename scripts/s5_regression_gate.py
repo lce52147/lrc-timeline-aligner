@@ -42,10 +42,11 @@ def evaluate_s5_rows(
             if type(value) not in (int,float) or not math.isfinite(value) or value<0:
                 return reject("BLOCKED_INVALID_CLOCK")
         text_values.append(_normalize(text))
-    # Monotonicity must be separately true of each source; an apparently
-    # favorable PCO can mask a late occurrence jumping back to an earlier one.
-    # Distinct lines can share a centisecond, so allow equality.
-    for name in ("bk_s","main_s","candidate_s"):
+    # A broken main baseline must remain scoreable: detecting its collapse is
+    # why the regression exists. Require the NEW candidate and human reference
+    # to be ordered; comparison to main must not silently reject bad main.
+    # Distinct lines may share a centisecond, so allow equality.
+    for name in ("bk_s","candidate_s"):
         vals=[float(row[name]) for row in rows]
         if any(a>b+1e-8 for a,b in zip(vals,vals[1:])):
             return reject("BLOCKED_NONMONOTONIC_"+name.upper())
