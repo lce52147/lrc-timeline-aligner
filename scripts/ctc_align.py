@@ -150,6 +150,39 @@ def token_peak_candidates(
     ]
 
 
+def configure_cuda_cpu_feature_extractor(model: torch.nn.Module) -> None:
+    """Keep the full-song convolution frontend on CPU and transformer on CUDA.
+
+    Wav2Vec2's early convolutions create very large intermediate tensors for
+    multi-minute waveforms. The encoder still processes all frames on CUDA,
+    without acoustic windowing or changed alignment/token semantics.
+    """
+    from types import MethodType
+
+    extractor = model.model.feature_extractor.cpu()
+    target_device = next(model.model.encoder.parameters()).device
+    # The persistent CTC worker reuses the same model across requests.
+    # Always wrap the original forward, never the wrapper from an earlier run.
+    if not hasattr(extractor, "_lrc_ctc_original_forward"):
+        extractor._lrc_ctc_original_forward = extractor.forward
+    original_forward = extractor._lrc_ctc_original_forward
+
+    def cpu_feature_forward(self, waveform, length):
+        # Preserve full-length group normalization and convolution context.
+        features, lengths = original_forward(
+            waveform.to("cpu"),
+            length.to("cpu") if length is not None else None,
+        )
+        return (
+            features.to(target_device),
+            lengths.to(target_device) if lengths is not None else None,
+        )
+
+    extractor.forward = MethodType(cpu_feature_forward, extractor)
+    print("CTC CUDA hybrid: full-song feature extractor=cpu, encoder=cuda",
+          file=sys.stderr, flush=True)
+
+
 def main() -> int:
     args = build_parser().parse_args()
     audio_path = Path(args.audio)
@@ -187,11 +220,32 @@ def main() -> int:
     waveform = decode_audio(audio_path, args.start, args.end)
     duration = waveform.shape[1] / SAMPLE_RATE
     model = bundle.get_model(with_star=False).to(device).eval()
+    if str(device).startswith("cuda"):
+        configure_cuda_cpu_feature_extractor(model)
     tokenizer = bundle.get_tokenizer()
     aligner = bundle.get_aligner()
-    with torch.inference_mode():
-        emissions, _ = model(waveform.to(device))
+    # FP32 memory-efficient SDPA keeps full-song context while avoiding the
+    # quadratic attention matrix allocation on CUDA. Never silently fall back
+    # to the high-memory math backend if this kernel is unavailable.
+    if str(device).startswith("cuda"):
+        from torch.nn.attention import SDPBackend, sdpa_kernel
+        attention_context = sdpa_kernel(SDPBackend.EFFICIENT_ATTENTION)
+        torch.cuda.reset_peak_memory_stats(device)
+    else:
+        from contextlib import nullcontext
+        attention_context = nullcontext()
+    with torch.inference_mode(), attention_context:
+        emissions, _ = model(waveform if str(device).startswith("cuda") else waveform.to(device))
     emission = emissions[0].cpu()
+    if str(device).startswith("cuda"):
+        torch.cuda.synchronize(device)
+        print(
+            "CTC CUDA peak allocated="
+            f"{torch.cuda.max_memory_allocated(device) / 2**20:.1f} MiB "
+            "reserved="
+            f"{torch.cuda.max_memory_reserved(device) / 2**20:.1f} MiB",
+            file=sys.stderr, flush=True,
+        )
     tokens = tokenizer(romanized)
     spans = aligner(emission, tokens)
     seconds_per_frame = duration / emission.shape[0]
