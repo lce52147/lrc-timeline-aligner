@@ -7725,7 +7725,9 @@ def has_short_duplicate_context(entries: list[LyricEntry], index: int, window: i
 
 
 def infer_spoken_language(entries: list[LyricEntry]) -> str:
-    sample = "".join(entry_sung_text(entry) for entry in entries[:12])
+    # A bilingual opening or an instrumental title card must not determine
+    # Whisper language for the rest of the song. Use the full sung transcript.
+    sample = "".join(entry_sung_text(entry) for entry in entries)
     if not sample:
         return "ja"
     latin_count = sum(1 for ch in sample if ("A" <= ch <= "Z") or ("a" <= ch <= "z"))
