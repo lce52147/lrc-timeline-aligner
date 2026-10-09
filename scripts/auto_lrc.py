@@ -4667,7 +4667,9 @@ def load_lyrics(path: Path, skip_comments: bool = False) -> LyricDocument:
             continue
         if skip_comments and stripped.startswith("#"):
             continue
-        if re.fullmatch(r"\[[a-zA-Z]+:.*\]", stripped):
+        # User-curated BK files can carry this bare provenance marker.
+        # Never send it as an untimed sung line to forced alignment.
+        if stripped.casefold() == "[oogg_rana]" or re.fullmatch(r"\[[a-zA-Z]+:.*\]", stripped):
             metadata_lines.append(stripped)
             continue
 
@@ -4841,6 +4843,10 @@ def checked_lrc_candidates(audio_path: Path) -> list[Path]:
     candidates: list[Path] = []
     for parent in audio_path.parents:
         if parent.name.lower() == "music":
+            # The user-maintained BK directory contains already manually
+            # corrected references. Only the explicitly selected checked
+            # timing path calls this candidate discovery; auto never does.
+            candidates.append(parent / "LRC tools checked references" / "LRC bk" / f"{audio_path.stem}.lrc")
             candidates.append(parent / f"{audio_path.stem}.lrc")
             # Human-reviewed references live outside album folders so normal
             # drag-and-drop runs do not accumulate generated LRC files beside
@@ -4873,6 +4879,7 @@ def checked_lrc_timing_hint(
         if not checked.saw_timestamps:
             continue
         checked_entries, checked_skipped = remove_instrumental_markers(checked.entries)
+        checked_entries = remove_generated_title_cards(checked_entries, audio_path)
         checked_signature = [normalize_match_text(entry_sung_text(entry)) for entry in checked_entries]
         if target_signature != checked_signature:
             continue
@@ -4880,6 +4887,12 @@ def checked_lrc_timing_hint(
             "backend": "checked-lrc-hint",
             "checked_lrc": str(candidate),
             "lyric_source": str(lyrics_path),
+            "timing_provenance": (
+                "human-reviewed-bk" if candidate.parent.name.casefold() == "lrc bk"
+                else "checked-lrc"
+            ),
+            "uses_reference_timestamps": True,
+            "independent_auto_benchmark_eligible": False,
             "timing_entries": len(target_entries),
             "assigned_entries": len(target_entries),
             "assigned_percent": 100.0,
@@ -35786,6 +35799,12 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
             timestamps = source_timestamps(entries)
             report = {
                 "backend": "checked-lrc",
+                "timing_provenance": (
+                    "human-reviewed-bk" if lyrics_path.parent.name.casefold() == "lrc bk"
+                    else "explicit-timestamped-lyrics"
+                ),
+                "uses_reference_timestamps": True,
+                "independent_auto_benchmark_eligible": False,
                 "timing_entries": len(entries),
                 "assigned_entries": len(entries),
                 "assigned_percent": 100.0,
