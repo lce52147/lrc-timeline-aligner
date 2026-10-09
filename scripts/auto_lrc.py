@@ -34493,28 +34493,19 @@ def apply_post_score_audio_validation(
         duplicate_indexes = groups.get(normalized, [])
         duplicate_consensus_supported = False
         duplicate_detail: dict[str, object] | None = None
-        if len(duplicate_indexes) == 2 and index in duplicate_indexes:
-            first, second = duplicate_indexes
-            pair_median = cluster_medians.get(second - first)
-            if pair_median is not None:
-                observed_delta = float(timestamps[second] - timestamps[first])
-                first_peak = peaks.get(first)
-                second_peak = peaks.get(second)
-                duplicate_consensus_supported = bool(
-                    abs(observed_delta - pair_median) <= 0.10
-                    and isinstance(first_peak, dict)
-                    and isinstance(second_peak, dict)
-                    and abs(float(first_peak.get("delta_seconds", 9.0))) <= 0.10
-                    and abs(float(second_peak.get("delta_seconds", 9.0))) <= 0.10
-                )
-                duplicate_detail = {
-                    "entries": [first + 1, second + 1],
-                    "entry_delta": second - first,
-                    "observed_delta_seconds": round(observed_delta, 3),
-                    "median_delta_seconds": round(pair_median, 3),
-                    "first_peak": first_peak,
-                    "second_peak": second_peak,
-                }
+        if len(duplicate_indexes) >= 2 and index in duplicate_indexes:
+            # S4: >2 repetitions are checked as consecutive section offsets.
+            # The helper requires a stable independent multi-lyric cluster and
+            # matching *real isolated-vocal* peaks for both occurrences.
+            # This remains generic acoustic corroboration, NOT trusted timing.
+            from duplicate_audio_consensus import consecutive_duplicate_vocal_support
+            duplicate_consensus_supported, duplicate_detail = consecutive_duplicate_vocal_support(
+                lyric_indexes=duplicate_indexes,
+                current_index=index,
+                timestamps=timestamps,
+                peaks=peaks,
+                stable_cluster_medians=cluster_medians,
+            )
 
         resolution = ""
         if advisory_only and onset_supported:
