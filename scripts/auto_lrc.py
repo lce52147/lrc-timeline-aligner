@@ -34363,9 +34363,19 @@ def apply_post_score_audio_validation(
         or not isinstance(risks, list)
     ):
         return []
+    # The original full mix has percussion and synthetic attacks which can
+    # impersonate a lyric onset. Only use a real isolated Demucs vocal stem.
+    stem_value = report.get("ctc_audio_path")
+    stem_source = report.get("ctc_audio_source")
+    stem = Path(stem_value) if isinstance(stem_value, str) else None
+    if stem_source != "vocal-stem" or stem is None or not stem.is_file():
+        report["post_score_audio_validation_status"] = "skipped-no-isolated-vocal-stem"
+        report["post_score_all_line_vocal_audit"] = []
+        return []
     try:
-        features = analyze_audio(audio_path, duration)
-    except LrcError:
+        features = analyze_audio(stem, duration)
+    except (LrcError, OSError):
+        report["post_score_audio_validation_status"] = "skipped-vocal-analysis-error"
         return []
 
     consensus = duplicate_lyric_offset_consensus(entries, timestamps)
@@ -34399,6 +34409,26 @@ def apply_post_score_audio_validation(
         for index in range(len(timestamps))
     }
 
+    # Analyze every lyric row, including previously trusted rows, so a
+    # false-negative reviewer does not hide obvious silence. This is an
+    # advisory observation; Central and final F1-F4 retain ownership.
+    all_line_audit = []
+    for index, timestamp in enumerate(timestamps):
+        peak = peaks.get(index)
+        observed = bool(
+            isinstance(peak, dict)
+            and abs(float(peak.get("delta_seconds",9.)))<=0.18
+            and float(peak.get("strength",0.))>=0.42
+        )
+        all_line_audit.append({
+            "entry":index+1,"acoustic_onset_nearby":observed,
+            "review_required_before_audit":bool(
+                isinstance(assignments[index],dict)
+                and assignments[index].get("review_required")
+            )
+        })
+    report["post_score_audio_validation_status"]="isolated-vocal-all-lines-checked"
+    report["post_score_all_line_vocal_audit"]=all_line_audit
     resolved: list[dict[str, object]] = []
     for index, assignment in enumerate(assignments):
         if not isinstance(assignment, dict) or not assignment.get("review_required"):
@@ -34475,7 +34505,7 @@ def apply_post_score_audio_validation(
             direct_onset_support="unavailable",
             acoustic_strength=peak_strength,
             acoustic_onset_time=peak_time,
-            acoustic_evidence_producer="full-mix-onset-validator",
+            acoustic_evidence_producer="isolated-vocal-onset-validator",
             acoustic_evidence_kind="generic-acoustic",
             direct_onset_time=None,
             parent_source=str(report.get("backend") or "unknown") + "-current",
