@@ -126,6 +126,7 @@ def assign_lyrics_to_vocal_passages(
     lyric_lengths: Sequence[int],
     ctc_priors: Sequence[float | None] | None = None,
     max_lines_per_passage: int = 12,
+    anchored_bundles: Sequence[tuple[int, int, int]] = (),
 ) -> PassageAlignment:
     """Monotonic many-lyrics-to-one-passage DP, never reads BK.
 
@@ -142,6 +143,20 @@ def assign_lyrics_to_vocal_passages(
     priors = tuple(ctc_priors if ctc_priors is not None else [None] * n)
     if len(priors) != n:
         raise ValueError("one CTC prior per lyric required")
+    # Repeat-section anchor proposals are never independent lyric proof by themselves.
+    locked: dict[int, tuple[int, int]] = {}
+    locked_rows: set[int] = set()
+    previous_end, previous_passage = 0, -1
+    for begin, end, passage_index in anchored_bundles:
+        if not (1 <= begin <= end <= n and 0 <= passage_index < m):
+            raise ValueError("invalid anchored bundle bounds")
+        if begin <= previous_end or passage_index <= previous_passage:
+            raise ValueError("anchored bundles must be sequential and nonoverlapping")
+        if end - begin + 1 > max_lines_per_passage:
+            raise ValueError("anchor exceeds passage capacity")
+        locked[passage_index] = (begin, end)
+        locked_rows.update(range(begin, end + 1))
+        previous_end, previous_passage = end, passage_index
     prefix = [0]
     for x in lens:
         prefix.append(prefix[-1] + x)
@@ -160,6 +175,12 @@ def assign_lyrics_to_vocal_passages(
                 continue
             # A silent/ad-lib/duplicate passage is legal, with a small penalty.
             for count in range(0, min(max_lines_per_passage,n-used)+1):
+                if j in locked:
+                    begin, end = locked[j]
+                    if used + 1 != begin or count != end - begin + 1:
+                        continue
+                elif count and any(row in locked_rows for row in range(used+1,used+count+1)):
+                    continue
                 if count == 0:
                     score, times = 0.65, ()
                 else:

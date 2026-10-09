@@ -76,5 +76,35 @@ class VocalPassageTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             assign_lyrics_to_vocal_passages([(0,5)],duration=8,
                 lyric_lengths=[5,5],ctc_priors=[1])
+    def test_locked_repeat_bundle_is_atomic_in_dp(self):
+        out=assign_lyrics_to_vocal_passages(
+            [(0,4),(6,10),(12,16)],duration=18,
+            lyric_lengths=[5,5,5,5,5,5],
+            anchored_bundles=[(3,4,1)],
+        )
+        self.assertEqual(out.status,"UNVERIFIED_OCCURRENCE")
+        middle=[b for b in out.bundles if b.passage_index==1]
+        self.assertEqual(len(middle),1)
+        self.assertEqual((middle[0].start_row,middle[0].end_row),(3,4))
+        self.assertEqual(out.entry_passages[2:4],(1,1))
+
+    def test_invalid_or_overlapping_locked_bundle_is_rejected(self):
+        with self.assertRaises(ValueError):
+            assign_lyrics_to_vocal_passages(
+                [(0,4),(6,10)],duration=12,lyric_lengths=[3]*4,
+                anchored_bundles=[(2,3,1),(3,4,0)],
+            )
+
+    def test_locked_bundle_keeps_unproved_status(self):
+        out=assign_lyrics_to_vocal_passages(
+            [(1,6),(9,14)],duration=16,lyric_lengths=[3,3,3,3],
+            anchored_bundles=[(3,4,1)],
+        )
+        self.assertEqual(out.status,"UNVERIFIED_OCCURRENCE")
+        self.assertEqual(
+            validate_passage_bundles(out.passages,out.bundles,4)[0],
+            "REJECTED_ATOMIC",
+        )
+
 if __name__=="__main__":
     unittest.main()
