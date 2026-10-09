@@ -22554,9 +22554,23 @@ def collect_central_timing_candidates(
             independent_tail_evidence,
             tail_evidence_context,
         )
+        # Fixed-point recollection may change upstream candidate IDs and
+        # generate hundreds of distinct optional Whisper context windows.
+        # Preserve all real cache hits and cover the song with at most 32 new
+        # incremental probes per recollection. The first collection remains
+        # fully faithful. Deferred probes confer NO timing or identity proof.
+        from local_whisper_incremental_budget import budget_incremental_whisper_requests
+        local_whisper_requests, deferred_new_probes = budget_incremental_whisper_requests(
+            local_whisper_requests,
+            retry_helper_cache,
+            lambda request: _local_whisper_cache_key(request, local_whisper_capability),
+            maximum_new=32,
+        )
+        local_whisper_stats["budget_deferred"] = deferred_new_probes
         progress_log(
             f"local Whisper evidence: requests={len(local_whisper_requests)} "
-            f"cache_entries={len(retry_helper_cache)}"
+            f"cache_entries={len(retry_helper_cache)} "
+            f"deferred_untrusted_new={deferred_new_probes}"
         )
         local_whisper_workers = DEFAULT_EVIDENCE_WORKERS
         if local_whisper_workers == 1 or len(local_whisper_requests) <= 1:
