@@ -16198,8 +16198,84 @@ def plan_local_whisper_requests(
                     "transcript_digests": list(transcript_digests),
                 }),
             ))
+    # A broken global CTC can collapse an entire verse 10-20 seconds earlier.
+    # Local Whisper requests centered on Central's provisional baseline will
+    # then listen to the wrong audio, even when S1 has a real bounded CTC path
+    # at the correct vocal segment. Add only a capped independent ASR probe
+    # around the *untrusted* S1 path. This is evidence acquisition, not timing
+    # selection, and does not make S1 direct-onset/identity evidence.
+    displaced_segment_rows: list[tuple[float, int, tuple[TimingCandidate, ...]]] = []
+    segment_by_row: dict[int, TimingCandidate] = {}
+    for index, items in enumerate(candidate_sets):
+        proposals = [item for item in items
+                     if item.source == "segment-constrained-ctc"
+                     and item.spans and not item.window_truncated
+                     and not item.right_edge_pileup]
+        if len(proposals) == 1:
+            segment_by_row[index] = proposals[0]
+            gap = abs(proposals[0].written_time.seconds - state.decisions[index].written_time.seconds)
+            if gap >= 3.0 and (
+                state.decisions[index].status == "provisional_unresolved"
+                or not assignment_content_is_trusted(assignments[index])
+                or _suspicious_entry_requires_review(report, index + 1)
+            ):
+                displaced_segment_rows.append((-gap, index, items))
+    for _gap, index, _items in sorted(displaced_segment_rows)[:12]:
+        if _entry_identity_is_unique(entries, index):
+            first, last = max(0, index - 1), min(len(entries) - 1, index + 1)
+        else:
+            context = _minimal_unique_sequence_context(entries, index, max_items=9)
+            if context is None:
+                continue
+            first, last = context
+        context_indexes = tuple(range(first, last + 1))
+        if (
+            len(context_indexes) > 9
+            or any(j not in segment_by_row for j in context_indexes)
+        ):
+            continue
+        context_candidates = tuple(segment_by_row[j] for j in context_indexes)
+        s1_times = tuple(item.written_time.seconds for item in context_candidates)
+        if any(a >= b for a, b in zip(s1_times, s1_times[1:])):
+            continue
+        window_start = max(0.0, s1_times[0] - LOCAL_WHISPER_CONTEXT_MARGIN_SECONDS)
+        window_end = min(duration, s1_times[-1] + max(4.0, LOCAL_WHISPER_CONTEXT_MARGIN_SECONDS))
+        if not 2.0 <= window_end - window_start <= LOCAL_WHISPER_MAX_WINDOW_SECONDS:
+            continue
+        transcript = tuple(entry_sung_text(entries[j]) for j in context_indexes)
+        transcripts_digest = tuple(_timing_content_digest(text) for text in transcript)
+        window_definition = {
+            "mode": "s1-untrusted-segment-search-not-proof",
+            "start": round(window_start, 6),
+            "end": round(window_end, 6),
+            "context_indexes": list(context_indexes),
+            "context_candidate_ids": [x.candidate_id for x in context_candidates],
+            "capability_revision": capability.capability_revision,
+        }
+        payload = {
+            "entry_index": index,
+            "capability_revision": capability.capability_revision,
+            "audio_revision": audio_revision,
+            "context_entry_indexes": context_indexes,
+            "context_candidate_ids": tuple(x.candidate_id for x in context_candidates),
+            "transcript_digests": transcripts_digest,
+            "transcript_digest": _timing_content_digest(transcript),
+            "window_start": round(window_start, 6),
+            "window_end": round(window_end, 6),
+            "window_definition_revision": _timing_content_digest(window_definition),
+        }
+        requests.append(LocalWhisperRequest(
+            **payload,
+            request_revision=_timing_content_digest({
+                **payload,
+                "context_entry_indexes": list(context_indexes),
+                "context_candidate_ids": list(payload["context_candidate_ids"]),
+                "transcript_digests": list(transcripts_digest),
+            }),
+        ))
+    unique = {item.request_revision: item for item in requests}
     return tuple(sorted(
-        requests,
+        unique.values(),
         key=lambda item: (item.entry_index, len(item.context_entry_indexes), item.request_revision),
     ))
 
@@ -20671,7 +20747,11 @@ def _augment_local_ctc_candidates_with_runtime_backend_consensus(
     consensus tolerance and keeps the CTC candidate's existing timestamp; no
     averaging or synthetic boundary is introduced.
     """
-    local_sources = {"ctc-local-window", "ctc-opening-local-retry"}
+    # Structural S1 is also local CTC. Independent Raw/WhisperX identities
+    # may corroborate the SAME bounded candidate only if they already
+    # satisfy the normal 0.18 s consensus and revision-bound occurrence.
+    # Bare S1 CTC / vocal presence is never upgraded on its own.
+    local_sources = {"ctc-local-window", "ctc-opening-local-retry", "segment-constrained-ctc"}
     augmented: list[tuple[TimingCandidate, ...]] = []
     for index, items in enumerate(candidate_sets):
         rows = list(items)

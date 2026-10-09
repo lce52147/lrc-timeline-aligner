@@ -8770,6 +8770,53 @@ class V143EvidenceRecoveryRegressionTests(unittest.TestCase):
         self.assertEqual(composite.direct_onset_evidence.kind, "cross-backend-onset")
         self.assertAlmostEqual(composite.direct_onset_evidence.onset_time, 10.10, places=6)
 
+    def test_s1_segment_ctc_binds_real_independent_raw_at_same_clock(self) -> None:
+        entries = [LyricEntry(["unique lyric instance"])]
+        report: dict[str, object] = {}
+        self._install_unique_raw_identity(report, entries, 32.10)
+        parent = self.candidate(
+            0, 32.0, source="segment-constrained-ctc", current=False,
+            spans=(self.span(32.0, .32, "a"), self.span(32.08, .54, "b"),
+                   self.span(32.16, .48, "c")),
+        )
+        items = auto_lrc._augment_local_ctc_candidates_with_runtime_backend_consensus(
+            ((parent,),), report, entries)[0]
+        found = [x for x in items if x.source == "ctc-local-raw-independent-consensus"]
+        self.assertEqual(len(found), 1)
+        attached = found[0]
+        self.assertEqual(attached.written_time, parent.written_time)
+        self.assertTrue(attached.independent_content_identity)
+        self.assertTrue(auto_lrc.candidate_occurrence_evidence_is_valid(attached, entries))
+        self.assertTrue(auto_lrc.candidate_has_bound_direct_onset_evidence(attached, entries))
+        self.assertEqual(attached.spans, parent.spans)
+
+    def test_s1_segment_ctc_cannot_bind_distant_asr_observation(self) -> None:
+        entries = [LyricEntry(["unique lyric instance"])]
+        report: dict[str, object] = {}
+        self._install_unique_raw_identity(report, entries, 37.4)
+        parent = self.candidate(
+            0, 32.0, source="segment-constrained-ctc", current=False,
+            spans=(self.span(32.0, .3, "a"), self.span(32.1, .3, "b"),
+                   self.span(32.2, .3, "c")),
+        )
+        added = auto_lrc._augment_local_ctc_candidates_with_runtime_backend_consensus(
+            ((parent,),), report, entries)[0]
+        self.assertEqual(len(added), 1)
+        self.assertEqual(added[0].candidate_id, parent.candidate_id)
+
+    def test_s1_segment_ctc_no_raw_identity_cannot_become_trusted(self) -> None:
+        entries = [LyricEntry(["unique lyric instance"])]
+        parent = self.candidate(
+            0, 32.0, source="segment-constrained-ctc", current=False,
+            spans=(self.span(32.0, .3, "a"), self.span(32.1, .3, "b"),
+                   self.span(32.2, .3, "c")),
+        )
+        added = auto_lrc._augment_local_ctc_candidates_with_runtime_backend_consensus(
+            ((parent,),), {}, entries)[0]
+        self.assertEqual(len(added), 1)
+        self.assertFalse(added[0].independent_content_identity)
+        self.assertFalse(auto_lrc.candidate_has_bound_direct_onset_evidence(added[0], entries))
+
     def test_local_ctc_candidate_does_not_bind_distant_raw_identity(self) -> None:
         entries = [LyricEntry(["globally unique lyric"])]
         report: dict[str, object] = {}
