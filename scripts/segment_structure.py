@@ -251,3 +251,44 @@ def validate_passage_bundles(
         errors.append("unassigned-lines")
     unique=tuple(dict.fromkeys(errors))
     return ("STRUCTURALLY_VALID" if not unique else "REJECTED_ATOMIC"),unique
+
+
+
+def choose_atomic_central_passage(
+    *,
+    passage: VocalPassage,
+    baseline_times: Sequence[float],
+    local_ctc_times: Sequence[float],
+    local_ctc_candidate_ids: Sequence[str],
+    central_selected_ids: Sequence[str],
+    independent_occurrence_witnesses: Sequence[bool],
+    previous_bound: float | None = None,
+    next_bound: float | None = None,
+) -> tuple[tuple[float, ...], str]:
+    """Atomic local-CTC transaction: either ALL rows survive Central, or none.
+
+    This is a post-selection integrity gate, NOT a replacement for Central.
+    Raw CTC confidence and mere vocal presence cannot authenticate occurrence.
+    A full bundle requires independent witness per line, valid sequence and
+    ownership boundaries, and Central selection of every proposed candidate.
+    """
+    original=tuple(float(x) for x in baseline_times)
+    n=len(original)
+    if not n or len(local_ctc_times)!=n or len(local_ctc_candidate_ids)!=n or len(central_selected_ids)!=n or len(independent_occurrence_witnesses)!=n:
+        return original,"REJECTED_INVALID_BUNDLE_SHAPE"
+    hypothesis=tuple(float(x) for x in local_ctc_times)
+    if not all(math.isfinite(x) and passage.start<=x<=passage.end for x in hypothesis):
+        return original,"REJECTED_OUTSIDE_VOCAL_PASSAGE"
+    if not all(b>a for a,b in zip(hypothesis,hypothesis[1:])):
+        return original,"REJECTED_NONMONOTONIC_PASSAGE"
+    if previous_bound is not None and not hypothesis[0]>previous_bound:
+        return original,"REJECTED_PREVIOUS_TAIL_OWNERSHIP"
+    if next_bound is not None and not hypothesis[-1]<next_bound:
+        return original,"REJECTED_NEXT_ANCHOR_BOUNDARY"
+    if not all(independent_occurrence_witnesses):
+        return original,"REJECTED_UNPROVED_OCCURRENCE"
+    if len(set(local_ctc_candidate_ids))!=n or not all(local_ctc_candidate_ids):
+        return original,"REJECTED_DUPLICATE_CANDIDATE_IDS"
+    if tuple(local_ctc_candidate_ids)!=tuple(central_selected_ids):
+        return original,"REJECTED_PARTIAL_CENTRAL_ACCEPTANCE"
+    return hypothesis,"ACCEPTED_ATOMIC_BY_CENTRAL"

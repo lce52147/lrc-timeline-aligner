@@ -3,7 +3,7 @@ import unittest
 
 from segment_structure import (
     VocalPassage, PassageBundle, merge_vocal_passages,
-    assign_lyrics_to_vocal_passages,validate_passage_bundles,
+    assign_lyrics_to_vocal_passages,validate_passage_bundles,choose_atomic_central_passage,
 )
 
 class VocalPassageTests(unittest.TestCase):
@@ -26,6 +26,29 @@ class VocalPassageTests(unittest.TestCase):
     def test_no_silent_candidate(self):
         d=assign_lyrics_to_vocal_passages([],duration=35,lyric_lengths=[1])
         self.assertEqual(d.status,"BLOCKED_NO_SINGING_OR_LYRICS")
+    def test_atomic_postcentral_refuses_partial_chorus(self):
+        kw=dict(passage=VocalPassage(60,76),baseline_times=[90.,91.,92.],
+            local_ctc_times=[61.0,62.5,66.3],
+            local_ctc_candidate_ids=["a","b","c"],
+            independent_occurrence_witnesses=[True,True,True],
+            previous_bound=58.,next_bound=88.)
+        selected,status=choose_atomic_central_passage(**kw,
+            central_selected_ids=["a","old","c"])
+        self.assertEqual(status,"REJECTED_PARTIAL_CENTRAL_ACCEPTANCE")
+        self.assertEqual(selected,(90.,91.,92.))
+        complete,status=choose_atomic_central_passage(**kw,
+            central_selected_ids=["a","b","c"])
+        self.assertEqual(status,"ACCEPTED_ATOMIC_BY_CENTRAL")
+        self.assertEqual(complete,(61.,62.5,66.3))
+
+    def test_at_least_one_unproved_row_blocks_whole_section(self):
+        result,status=choose_atomic_central_passage(
+            passage=VocalPassage(60,76),baseline_times=[90.,91.],
+            local_ctc_times=[61.,62.],
+            local_ctc_candidate_ids=["a","b"],central_selected_ids=["a","b"],
+            independent_occurrence_witnesses=[True,False])
+        self.assertEqual(status,"REJECTED_UNPROVED_OCCURRENCE")
+        self.assertEqual(result,(90.,91.))
     def test_no_unowned_commit(self):
         b=(PassageBundle(1,2,0,(1.2,2.2),()),)
         status,errors=validate_passage_bundles(
