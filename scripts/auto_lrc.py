@@ -25021,6 +25021,21 @@ def prepare_backend_timing_preview(
         audio_path, entries, preview_timestamps, preview_report, duration
     )
     final_alignment_audio = ctc_alignment_audio_path(preview_report, audio_path)
+    # S1: stage untrusted bounded vocal-passage CTC hypotheses. Only Central
+    # may validate them. DP/recurrence do not claim final LRC authority.
+    segment_structure_diagnostics: dict[str, object] | None = None
+    if preview_report.get("backend") == "ctc" and preview_report.get("ctc_audio_source") == "vocal-stem":
+        from segment_production import try_stage_structural_ctc
+        preview_report, segment_structure_diagnostics = try_stage_structural_ctc(
+            report=preview_report,
+            lyric_texts=[entry_sung_text(entry) for entry in entries],
+            vocal_stem=final_alignment_audio,
+            duration=duration,
+            audio_api=sys.modules[__name__],
+            python_exe=default_ctc_python(),
+            ctc_helper=Path(__file__).resolve().parent / "ctc_align.py",
+            device=str(getattr(args, "whisperx_device", "auto")),
+        )
     # Boundary acoustics must be measured on the isolated vocal artifact whenever
     # the CTC backend actually used one; full-mix percussion/transients are not
     # vocal-onset evidence. Producer independence is enforced separately by
@@ -25058,6 +25073,7 @@ def prepare_backend_timing_preview(
         "post_score_audio_validation_changes": validation_changes,
         "vocal_onset_confirmation_changes": onset_confirmation_changes,
         "vocal_activity_reentry_changes": vocal_reentry_changes,
+        "segment_structure": segment_structure_diagnostics,
     }
     evaluated = evaluate_backend_timing(
         str(preview_report.get("backend") or "unknown"),
@@ -25134,6 +25150,7 @@ def prepare_backend_timing_preview(
             "vocal_onset_confirmation_changes": onset_confirmation_changes,
             "vocal_activity_reentry_changes": vocal_reentry_changes,
             "alignment_fixed_point_rounds": copy.deepcopy(fixed_point_rounds),
+            "segment_structure": segment_structure_diagnostics,
         }
         evaluated = evaluate_backend_timing(
             str(preview_report.get("backend") or "unknown"),
