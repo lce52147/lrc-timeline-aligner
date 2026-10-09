@@ -115,6 +115,51 @@ class ProductionS1Tests(unittest.TestCase):
             out,diag=self.run_producer(max_bundles=1,helper_runner=forbid)
         self.assertIs(out,self.report)
         self.assertEqual(diag["status"],"BLOCKED_GPU_BUNDLE_BUDGET")
+    def test_in_process_heavy_ctc_reuse_rebinds_without_rerunning(self):
+        runner=self.fake_runner
+        calls=[]
+        def counted(cmd,**kwargs):
+            calls.append(cmd)
+            return runner(cmd,**kwargs)
+        with self.patches[0],self.patches[1],self.patches[2],self.patches[3]:
+            first,initial=self.run_producer(helper_runner=counted)
+            self.assertEqual(initial["status"],"STAGED_FOR_CENTRAL_NO_AUTHORITY")
+            self.assertFalse(initial["runtime_cache_hit"])
+            count_before=len(calls)
+            with patch.object(self.api,"decode_audio",side_effect=AssertionError("no repeat decode")):
+                second,reused=self.run_producer(helper_runner=counted)
+        self.assertEqual(len(calls),count_before)
+        self.assertTrue(reused["runtime_cache_hit"])
+        self.assertEqual(first,second)
+        self.assertEqual(initial["source_revision"],reused["source_revision"])
+
+    def test_cache_invalidated_by_changed_global_prior(self):
+        calls=[]
+        def counted(cmd,**kwargs):
+            calls.append(cmd)
+            return self.fake_runner(cmd,**kwargs)
+        with self.patches[0],self.patches[1],self.patches[2],self.patches[3]:
+            first,initial=self.run_producer(helper_runner=counted)
+            count_before=len(calls)
+            self.report["assignments"][0]["timestamp"]+=.7
+            after,changed=self.run_producer(helper_runner=counted)
+        self.assertGreater(len(calls),count_before)
+        self.assertFalse(changed["runtime_cache_hit"])
+        self.assertEqual(initial["status"],changed["status"])
+
+    def test_cache_invalidated_by_source_file_change(self):
+        calls=[]
+        def counted(cmd,**kwargs):
+            calls.append(cmd)
+            return self.fake_runner(cmd,**kwargs)
+        with self.patches[0],self.patches[1],self.patches[2],self.patches[3]:
+            first,initial=self.run_producer(helper_runner=counted)
+            count_before=len(calls)
+            self.stem.write_bytes(b"modified-stem-bytes")
+            after,changed=self.run_producer(helper_runner=counted)
+        self.assertGreater(len(calls),count_before)
+        self.assertFalse(changed["runtime_cache_hit"])
+
     def test_one_gpu_failure_rejects_full_song(self):
         def runner(cmd,**kw):
             if "passage_01" in cmd[cmd.index("--output")+1]:

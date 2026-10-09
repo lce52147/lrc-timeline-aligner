@@ -6,8 +6,10 @@ promotes an onset/occurrence claim on Central's behalf.
 """
 from __future__ import annotations
 
+import copy
 import json
 import math
+from collections import OrderedDict
 import subprocess
 import tempfile
 from pathlib import Path
@@ -21,6 +23,12 @@ from segment_anchor_inference import (
 from segment_central_bridge import stage_segment_constrained_ctc
 from segment_recurrence import vocal_cepstral_features
 from segment_structure import assign_lyrics_to_vocal_passages, merge_vocal_passages
+
+
+# Bounded process-local reuse for baseline/final Central previews. The key
+# includes source file metadata, lyrics, priors, and helper identity; no BK.
+# Cached spans remain just untrusted hypotheses and pass bridge checks again.
+_RUNTIME_S1_CACHE: OrderedDict[tuple[object, ...], tuple[list[dict[str, object]], dict[str, object]]] = OrderedDict()
 
 
 def _block(status: str, **context: object) -> dict[str, object]:
@@ -74,6 +82,28 @@ def try_stage_structural_ctc(
             source = row.get("timestamp")
         priors.append(float(source) if isinstance(source, (int,float)) and math.isfinite(float(source)) else None)
     try:
+        stem_stat = vocal_stem.stat()
+        helper_stat = ctc_helper.stat()
+        interpreter_stat = python_exe.stat()
+        cache_key: tuple[object, ...] = (
+            "segment-s1-vocal-local-ctc-v2",
+            str(vocal_stem.resolve()), stem_stat.st_size, stem_stat.st_mtime_ns,
+            str(ctc_helper.resolve()), helper_stat.st_size, helper_stat.st_mtime_ns,
+            str(python_exe.resolve()), interpreter_stat.st_size, interpreter_stat.st_mtime_ns,
+            float(duration), tuple(lyric_texts), tuple(priors), str(device),
+            max_bundles, id(audio_api), id(helper_runner),
+        )
+        cached = _RUNTIME_S1_CACHE.get(cache_key)
+        if cached is not None:
+            frozen_rows, frozen_diag = cached
+            staged, status = stage_segment_constrained_ctc(
+                report, copy.deepcopy(frozen_rows), entry_count=len(lyric_texts),
+                source_revision=str(frozen_diag["source_revision"]),
+            )
+            if status == "STAGED_FOR_CENTRAL_NO_AUTHORITY":
+                _RUNTIME_S1_CACHE.move_to_end(cache_key)
+                return staged, {**copy.deepcopy(frozen_diag), "runtime_cache_hit": True}
+            _RUNTIME_S1_CACHE.pop(cache_key, None)
         audio = audio_api.decode_audio(vocal_stem)
         frames = audio_api.frame_audio(audio)
         features = audio_api.analyze_audio(vocal_stem, duration)
@@ -169,7 +199,7 @@ def try_stage_structural_ctc(
         )
         if status != "STAGED_FOR_CENTRAL_NO_AUTHORITY":
             return report, _block(status)
-        return staged, {
+        diagnostics = {
             "status": status,
             "candidate_kind": "segment-constrained-ctc",
             "admitted_by_central": False,
@@ -181,7 +211,13 @@ def try_stage_structural_ctc(
             "source_revision": source_revision,
             "boundary_competition": boundary_diag,
             "runtime_only": True,
+            "runtime_cache_hit": False,
         }
+        _RUNTIME_S1_CACHE[cache_key] = (copy.deepcopy(input_rows), copy.deepcopy(diagnostics))
+        _RUNTIME_S1_CACHE.move_to_end(cache_key)
+        while len(_RUNTIME_S1_CACHE) > 2:
+            _RUNTIME_S1_CACHE.popitem(last=False)
+        return staged, diagnostics
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, KeyError, TypeError) as exc:
         return report, _block("BLOCKED_S1_PRODUCER_EXCEPTION",
                               exception_type=type(exc).__name__,
