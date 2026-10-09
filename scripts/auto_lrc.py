@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import atexit
 import collections
+import contextlib
 import concurrent.futures
 import copy
 import hashlib
@@ -51,6 +52,7 @@ PREFIX_ACOUSTIC_ASSOCIATION_SECONDS = 0.22
 TRUSTED_ALIGNMENT_SCORE = 0.62
 COLLAPSE_SEGMENT_SCORE = 0.30
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_LOADED_SOURCE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 DEFAULT_REPORT_DIR = PROJECT_ROOT / "outputs" / "reports"
 DEFAULT_PROBE_DIR = PROJECT_ROOT / "outputs" / "probes"
 DEFAULT_VOCAL_CACHE_DIR = PROJECT_ROOT / "outputs" / "cache" / "vocals"
@@ -4270,6 +4272,24 @@ class LrcError(RuntimeError):
     pass
 
 
+def validated_loaded_source_sha256() -> str:
+    """Bind evidence to the code loaded on process startup, fail on mid-run edit.
+
+    A source file digest computed only at report-writing time falsely claims
+    that changed Python source was the code the running process executed.
+    """
+    try:
+        on_disk = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    except OSError as exc:
+        raise LrcError(f"Cannot verify running algorithm source: {exc}") from exc
+    if on_disk != _LOADED_SOURCE_SHA256:
+        raise LrcError(
+            "Algorithm source changed since this process loaded; "
+            "abort mixed-version provenance and restart with frozen source"
+        )
+    return _LOADED_SOURCE_SHA256
+
+
 class AlignmentEvidenceRejected(LrcError):
     """A backend result is globally unusable but still contains line evidence."""
 
@@ -5245,6 +5265,8 @@ def _nearest_local_maximum(
 def _strong_vocal_onset_near(
     features: AudioFeatures | None,
     center: float,
+    *,
+    require_absolute_vocal: bool = False,
 ) -> tuple[float, float, float] | None:
     """Return the existing production-grade vocal onset observation near a time."""
     if features is None or not math.isfinite(center):
@@ -5253,6 +5275,32 @@ def _strong_vocal_onset_near(
     if peak is None:
         return None
     peak_time, strength, prominence = peak
+    if require_absolute_vocal:
+        # Vocal-only data: 0.4s power window at the detected onset, relative
+        # to the high-energy active-vocal distribution (not full-mix music).
+        # RMS values are absolute dBFS, unlike normalized onset strength.
+        raw_levels = np.asarray(features.rms_db, dtype=np.float64)
+        frame_times = np.asarray(features.frame_times, dtype=np.float64)
+        usable = raw_levels[np.isfinite(raw_levels)]
+        if usable.size < 8:
+            return None
+        active_floor = float(np.percentile(usable, 55))
+        vocal_active = usable[usable >= active_floor]
+        if vocal_active.size < 8:
+            return None
+        active_median = float(np.median(vocal_active))
+        mask = (frame_times >= peak_time) & (frame_times < peak_time + 0.4)
+        if not np.any(mask):
+            return None
+        local = np.asarray(raw_levels[mask], dtype=np.float64)
+        local = local[np.isfinite(local)]
+        if local.size < 3:
+            return None
+        local_power_db = 10.0 * math.log10(
+            max(float(np.mean(np.power(10.0, local / 10.0))), 1e-20)
+        )
+        if local_power_db < active_median - 20.0:
+            return None
     if (
         strength < VOCAL_ONSET_CONFIRM_MIN_STRENGTH
         or prominence < VOCAL_ONSET_CONFIRM_MIN_PROMINENCE
@@ -12235,6 +12283,53 @@ def _demucs_write_error(cache_dir: Path, detail: str) -> str:
         return "unavailable"
 
 
+@contextlib.contextmanager
+def demucs_cache_key_lock(cache_dir: Path, *, timeout_seconds: float = 300.0):
+    """Serialize Demucs cache writers across *processes*, including Windows.
+
+    The lock file persists, but OS byte-range locks are automatically released
+    on process termination, even after a hard crash. Never delete a live lock
+    file: replacing an inode could permit simultaneous publishers.
+    """
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    path = cache_dir / ".demucs_writer.lock"
+    with path.open("a+b", buffering=0) as handle:
+        if handle.tell() == 0:
+            handle.write(b"0")
+        handle.seek(0)
+        deadline = time.monotonic() + timeout_seconds
+        if os.name == "nt":
+            import msvcrt
+            while True:
+                try:
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as exc:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(f"Demucs cache lock busy: {path}") from exc
+                    time.sleep(0.1)
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            while True:
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError as exc:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(f"Demucs cache lock busy: {path}") from exc
+                    time.sleep(0.1)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 def prepare_vocal_ctc_audio(audio_path: Path, args: argparse.Namespace) -> tuple[Path, str, str | None]:
     """Build or reuse a validated content-addressed isolated vocal stem.
 
@@ -12256,37 +12351,40 @@ def prepare_vocal_ctc_audio(audio_path: Path, args: argparse.Namespace) -> tuple
     if cached.is_file() and _demucs_vocal_stem_valid(cached, audio_path):
         return cached, "vocal-stem", "cache-hit"
     cache_dir.mkdir(parents=True, exist_ok=True)
-    demucs_env = os.environ.copy()
-    demucs_env["PYTHONUTF8"] = "1"
-    demucs_env["PYTHONIOENCODING"] = "utf-8"
     try:
-        with tempfile.TemporaryDirectory(prefix="lrc-demucs-run-", dir=cache_dir) as temp_name:
-            run_dir = Path(temp_name)
-            staged_input = _stage_demucs_input(audio_path, run_dir, key)
-            current_output = run_dir / "out"
-            proc = subprocess.run(
-                [
-                    str(python_exe), "-X", "utf8", "-m", "demucs",
-                    "--two-stems", "vocals", "--mp3", "--shifts", "0",
-                    "-d", "cuda", "-o", str(current_output), str(staged_input),
-                ],
-                check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, encoding="utf-8", errors="replace", env=demucs_env,
-            )
-            if proc.returncode:
-                detail = (proc.stderr or proc.stdout or "").strip()
-                logfile = _demucs_write_error(cache_dir, detail)
-                tail = " ".join(detail[-1300:].splitlines())
-                return audio_path, "mix", f"demucs-failed: {tail} [full-log: {logfile}]"
-            new_stems = list(current_output.rglob("vocals.mp3"))
-            if len(new_stems) != 1:
-                return audio_path, "mix", f"demucs-invalid-output-count={len(new_stems)}"
-            if not _demucs_vocal_stem_valid(new_stems[0], audio_path):
-                return audio_path, "mix", "demucs-invalid-generated-vocal-stem"
-            # The output file and the cache are on the same volume, so replace
-            # makes a single atomic publication instead of a partial cache.
-            os.replace(new_stems[0], cached)
-            (cache_dir / "demucs_last_error.log").unlink(missing_ok=True)
+        with demucs_cache_key_lock(cache_dir):
+            if cached.is_file() and _demucs_vocal_stem_valid(cached, audio_path):
+                return cached, "vocal-stem", "cache-hit"
+            demucs_env = os.environ.copy()
+            demucs_env["PYTHONUTF8"] = "1"
+            demucs_env["PYTHONIOENCODING"] = "utf-8"
+            with tempfile.TemporaryDirectory(prefix="lrc-demucs-run-", dir=cache_dir) as temp_name:
+                run_dir = Path(temp_name)
+                staged_input = _stage_demucs_input(audio_path, run_dir, key)
+                current_output = run_dir / "out"
+                proc = subprocess.run(
+                    [
+                        str(python_exe), "-X", "utf8", "-m", "demucs",
+                        "--two-stems", "vocals", "--mp3", "--shifts", "0",
+                        "-d", "cuda", "-o", str(current_output), str(staged_input),
+                    ],
+                    check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    text=True, encoding="utf-8", errors="replace", env=demucs_env,
+                )
+                if proc.returncode:
+                    detail = (proc.stderr or proc.stdout or "").strip()
+                    logfile = _demucs_write_error(cache_dir, detail)
+                    tail = " ".join(detail[-1300:].splitlines())
+                    return audio_path, "mix", f"demucs-failed: {tail} [full-log: {logfile}]"
+                new_stems = list(current_output.rglob("vocals.mp3"))
+                if len(new_stems) != 1:
+                    return audio_path, "mix", f"demucs-invalid-output-count={len(new_stems)}"
+                if not _demucs_vocal_stem_valid(new_stems[0], audio_path):
+                    return audio_path, "mix", "demucs-invalid-generated-vocal-stem"
+                # The output file and the cache are on the same volume, so replace
+                # makes a single atomic publication instead of a partial cache.
+                os.replace(new_stems[0], cached)
+                (cache_dir / "demucs_last_error.log").unlink(missing_ok=True)
     except OSError as exc:
         return audio_path, "mix", f"demucs-input-or-cache-io-failed: {type(exc).__name__}: {exc}"
     return cached, "vocal-stem", "generated"
@@ -19828,7 +19926,8 @@ def _entry_occurrence_binding(
         segments = [item[1] for item in typed]
         scores = [item[2] for item in typed]
         if (
-            not any(left >= right for left, right in zip(timestamps, timestamps[1:]))
+            segments.count(current_segment) == 1
+            and not any(left >= right for left, right in zip(timestamps, timestamps[1:]))
             and not any(left > right for left, right in zip(segments, segments[1:]))
         ):
             relative_index = index - left_index
@@ -19881,6 +19980,8 @@ def _entry_occurrence_binding(
     anchor_scores = [item[2] for item in typed_sparse]
     target_position = anchor_indexes.index(index)
     current_time, current_segment, current_score = typed_sparse[target_position]
+    if anchor_segments.count(current_segment) > 1:
+        return None
     fingerprint_payload = {
         "target_index": index,
         "context_left_index": sparse_left,
@@ -19969,6 +20070,8 @@ def _runtime_occurrence_binding_is_valid(
         ):
             return False
         relative_index = index - left_index
+        if segments.count(current_segment) > 1:
+            return False
         if (
             segments[relative_index] != current_segment
             or abs(timestamps[relative_index] - current_time) > 1e-6
@@ -20035,6 +20138,8 @@ def _runtime_occurrence_binding_is_valid(
     ):
         return False
     target_position = indexes.index(index)
+    if segments.count(current_segment) > 1:
+        return False
     if segments[target_position] != current_segment or abs(timestamps[target_position] - current_time) > 1e-6:
         return False
     fingerprint_payload = {
@@ -20066,8 +20171,20 @@ def bind_runtime_raw_content_identity(
         for entry in run.get("entries", [])
         if isinstance(entry, int)
     }
+    segment_owners = collections.Counter(
+        row.get("segment") for row in raw_assignments
+        if isinstance(row, dict) and isinstance(row.get("segment"), int)
+    )
+    skipped_shared_segment: list[int] = []
     runtime: dict[int, dict[str, object]] = {}
     for index, raw_assignment in enumerate(raw_assignments):
+        if (
+            isinstance(raw_assignment, dict)
+            and isinstance(raw_assignment.get("segment"), int)
+            and segment_owners[raw_assignment["segment"]] > 1
+        ):
+            skipped_shared_segment.append(index + 1)
+            continue
         if not isinstance(raw_assignment, dict):
             continue
         occurrence_binding = _entry_occurrence_binding(entries, raw_assignments, index)
@@ -20109,6 +20226,7 @@ def bind_runtime_raw_content_identity(
         "minimum_score": TRUSTED_ALIGNMENT_SCORE,
         "candidate_count": len(runtime),
         "entries": [index + 1 for index in sorted(runtime)],
+        "skipped_shared_asr_segment_entries": skipped_shared_segment,
     }
 
 
@@ -21551,7 +21669,9 @@ def collect_central_timing_candidates(
             except (TypeError, ValueError):
                 raw_identity_time = math.nan
                 raw_identity_score = 0.0
-            raw_peak = _strong_vocal_onset_near(vocal_onset_features, raw_identity_time)
+            raw_peak = _strong_vocal_onset_near(
+                vocal_onset_features, raw_identity_time, require_absolute_vocal=True
+            )
             if raw_peak is not None and raw_identity_score >= TRUSTED_ALIGNMENT_SCORE:
                 raw_occurrence_evidence = candidate_occurrence_evidence_from_binding(
                     entries,
@@ -21581,8 +21701,12 @@ def collect_central_timing_candidates(
                         raw_time=peak_time,
                         spans=(),
                         confidence=min(raw_identity_score, peak_strength),
-                        identity_support="supported",
-                        sequence_support="supported",
+                        identity_support=(
+                            "supported" if raw_occurrence_evidence is not None else "unavailable"
+                        ),
+                        sequence_support=(
+                            "supported" if raw_occurrence_evidence is not None else "unavailable"
+                        ),
                         acoustic_support="supported",
                         direct_onset_support="supported",
                         acoustic_strength=peak_strength,
@@ -24726,9 +24850,7 @@ def commit_final_timing_state(
         )
 
     report["timing_state_schema_version"] = 3
-    report["algorithm_source_sha256"] = hashlib.sha256(
-        Path(__file__).read_bytes()
-    ).hexdigest()
+    report["algorithm_source_sha256"] = validated_loaded_source_sha256()
     report["central_timing_state"] = final_rows
     report["ctc_prefix_probes"] = generation_diagnostics.get("ctc_prefix_probes", [])
     report["ctc_prefix_probe_count"] = generation_diagnostics.get("ctc_prefix_probe_count", 0)
@@ -25172,7 +25294,7 @@ def report_has_verified_central_commit(report: dict[str, object]) -> bool:
     ):
         return False
     try:
-        source_sha = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+        source_sha = validated_loaded_source_sha256()
     except OSError:
         return False
     if report.get("algorithm_source_sha256") != source_sha:
@@ -26198,7 +26320,7 @@ def _bundle_capability_projection(
         except (LrcError, OSError):
             source_audio = None
     alignment_audio = retrieved("alignment_audio_sha256")
-    algorithm_source = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    algorithm_source = validated_loaded_source_sha256()
     return safe_json, source_audio, alignment_audio, algorithm_source
 
 
@@ -26965,7 +27087,7 @@ def _build_unresolved_evidence_requirements_projection(
     assignments = report.get("assignments")
     if not isinstance(assignments, list) or len(assignments) != len(state.decisions):
         raise LrcError("Unresolved evidence projection does not match assignments")
-    source_revision = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    source_revision = validated_loaded_source_sha256()
     selection = report.get("candidate_selection")
     selection_binding = _timing_content_digest(selection if isinstance(selection, dict) else {})
     central_state_binding = _timing_content_digest(report.get("central_timing_state", []))
@@ -27138,7 +27260,7 @@ def _validate_unresolved_evidence_requirements_projection(
     binding = projection.get("revision_binding")
     if not isinstance(binding, dict):
         raise LrcError("Unresolved evidence requirements revision binding is missing")
-    current_source = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    current_source = validated_loaded_source_sha256()
     if binding.get("algorithm_source_sha256") != current_source:
         raise LrcError("Unresolved evidence requirements source binding changed")
     if binding.get("algorithm_revision") != report.get("algorithm_revision", LRC_ALGORITHM_REVISION):
@@ -28730,7 +28852,7 @@ def _public_backend_capability_summary(
         "capability": safe_capability,
         "candidate_report_revision": _backend_projection_field(candidate_report_revision),
         "algorithm_source_sha256": _backend_projection_field(
-            hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+            validated_loaded_source_sha256()
         ),
         "algorithm_revision": _backend_projection_field(LRC_ALGORITHM_REVISION),
     }
@@ -28769,7 +28891,7 @@ def _public_local_capability_summary(
         "producer": "local-whisper-aligner",
         "capability": fields,
         "algorithm_source_sha256": _backend_projection_field(
-            hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+            validated_loaded_source_sha256()
         ),
         "algorithm_revision": _backend_projection_field(LRC_ALGORITHM_REVISION),
     }
@@ -33279,7 +33401,7 @@ def _build_backend_provenance_projection_seed(
         "generation_candidates": generation,
         "selection": central_candidate_selection_payload(selection),
         "producer_capabilities": [local_summary] if local_summary is not None else [],
-        "algorithm_source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "algorithm_source_sha256": validated_loaded_source_sha256(),
         "algorithm_revision": LRC_ALGORITHM_REVISION,
         "peer_simulation": peer_simulation,
         "cross_backend_material_conflicts": cross_backend_material_conflicts,
@@ -33386,7 +33508,7 @@ def _validate_backend_provenance_projection(
         report.get("candidate_selection", {})
     ):
         raise LrcError("Backend provenance projection selection binding changed")
-    current_source_sha = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    current_source_sha = validated_loaded_source_sha256()
     if projection.get("algorithm_source_sha256") != current_source_sha:
         raise LrcError("Backend provenance projection source binding changed")
     peer_simulation = projection.get("peer_simulation")
@@ -34137,17 +34259,21 @@ def duplicate_lyric_offset_consensus(
             groups.setdefault(normalized, []).append(index)
     pairs: list[dict[str, object]] = []
     for normalized, indexes in groups.items():
-        if len(indexes) != 2:
+        if len(indexes) < 2:
             continue
-        first, second = indexes
-        pairs.append(
-            {
-                "normalized": normalized,
-                "entries": [first + 1, second + 1],
-                "entry_delta": second - first,
-                "delta_seconds": round(timestamps[second] - timestamps[first], 3),
-            }
-        )
+        # With 3+ chorus occurrences, compare consecutive occurrences only.
+        # All-pairs would conflate adjacent and skip-over repeat structures.
+        for ordinal, (first, second) in enumerate(zip(indexes, indexes[1:]), 1):
+            pairs.append(
+                {
+                    "normalized": normalized,
+                    "entries": [first + 1, second + 1],
+                    "entry_delta": second - first,
+                    "delta_seconds": round(timestamps[second] - timestamps[first], 3),
+                    "occurrence_count": len(indexes),
+                    "occurrence_pair": ordinal,
+                }
+            )
 
     # Preserve the historical evidence floor: fewer than four duplicate pairs
     # are not enough to establish a repeat-offset model at all.  v14.4 changes
@@ -34175,7 +34301,10 @@ def duplicate_lyric_offset_consensus(
     for pair in pairs:
         by_entry_delta[int(pair["entry_delta"])].append(pair)
     for entry_delta, members in sorted(by_entry_delta.items()):
-        if len(members) < 2:
+        # A repeated *single lyric* is not enough to independently certify a
+        # section offset, regardless of how many times that line appears.
+        independent_lyrics = len({item["normalized"] for item in members})
+        if len(members) < 2 or independent_lyrics < 2:
             continue
         deltas = [float(item["delta_seconds"]) for item in members]
         median_delta = float(statistics.median(deltas))
@@ -34187,6 +34316,7 @@ def duplicate_lyric_offset_consensus(
             "median_delta_seconds": round(median_delta, 3),
             "mad_seconds": round(mad, 3),
             "pair_count": len(members),
+            "independent_lyrics": independent_lyrics,
             "pairs": [dict(item) for item in members],
         })
 
