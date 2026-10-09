@@ -254,11 +254,17 @@ class _PersistentHelperClient:
                     proc.wait(timeout=2.0)
                 except subprocess.TimeoutExpired:
                     proc.kill()
-        try:
-            if proc.stdin is not None:
-                proc.stdin.close()
-        except OSError:
-            pass
+                    proc.wait(timeout=5.0)
+        # The reader threads do not own these descriptors. Python can emit
+        # ResourceWarning for both Popen pipes when the worker exits during
+        # failed startup or a retry timeout.
+        for stream in (proc.stdin, proc.stdout, proc.stderr):
+            if stream is None:
+                continue
+            try:
+                stream.close()
+            except (OSError, ValueError):
+                pass
 
 
 class _PersistentHelperPool:
