@@ -7740,7 +7740,19 @@ def infer_spoken_language(entries: list[LyricEntry]) -> str:
     kana_count = sum(1 for ch in sample if "\u3040" <= ch <= "\u30ff")
     cjk_count = sum(1 for ch in sample if "\u3400" <= ch <= "\u9fff")
     total_text = max(1, latin_count + kana_count + cjk_count)
-    if latin_count / total_text >= 0.55:
+    # Romanized English refrains can dominate character count despite the
+    # song being predominantly Japanese by lyric line. Use the entire line
+    # distribution to avoid switching such mixed-language songs to English.
+    sung_lines = [entry_sung_text(e) for e in entries if entry_sung_text(e).strip()]
+    english_lines = sum(
+        sum("a" <= c.lower() <= "z" for c in line)
+        > 1.3 * sum("\u3040" <= c <= "\u30ff" or "\u3400" <= c <= "\u9fff" for c in line)
+        for line in sung_lines
+    )
+    if latin_count / total_text >= 0.55 and (
+        kana_count == 0 and cjk_count == 0
+        or english_lines >= max(1, math.ceil(.65 * len(sung_lines)))
+    ):
         return "en"
     if kana_count > 0:
         return "ja"

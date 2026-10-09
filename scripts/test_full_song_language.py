@@ -16,4 +16,8 @@ class WholeSongLanguageTests(unittest.TestCase):
     self.assertEqual(l.infer_spoken_language([l.LyricEntry(['在遠方的光芒'])]),'zh')
  def test_no_lyrics(self):
     self.assertEqual(l.infer_spoken_language([]),'ja')
+ def test_english_refrain_does_not_override_japanese_majority(self):
+    song=[l.LyricEntry(['あの日の夢から目覚めて']) for _ in range(29)]
+    song.extend(l.LyricEntry(['The bubbles are gathering the stars']) for _ in range(16))
+    self.assertEqual(l.infer_spoken_language(song),'ja')
 if __name__=='__main__':unittest.main()
