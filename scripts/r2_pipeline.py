@@ -25,6 +25,7 @@ if str(SCRIPTS) not in sys.path:
 
 import auto_lrc  # noqa: E402
 import reviewer_layer  # noqa: E402
+import reviewer_independent_offset as vocal_offset  # noqa: E402
 
 TRUST_REVIEWERS = reviewer_layer.SHIPPED_REVIEWERS
 
@@ -206,25 +207,33 @@ def build_r2_sidecar(
             }
         )
 
+    # S2 independent calibration: NEVER derive reviewer offsets from CUR,
+    # FIN, Central's chosen time, or manual BK. Acoustic onsets are a separate
+    # witness from the Demucs-isolated vocal audio.
     offsets: dict[str, float] = {}
-    sample_counts: dict[str, int] = {}
-    for name in REVIEWERS:
-        paired_current: list[float | None] = []
-        paired_reviewer: list[float | None] = []
-        count = 0
-        for current, reviewer in zip(current_times, reviewer_series[name], strict=True):
-            if current is None or reviewer is None:
-                continue
-            if abs(float(reviewer) - float(current)) >= reviewer_layer.OFFSET_SAMPLE_LIMIT_SECONDS:
-                continue
-            paired_current.append(current)
-            paired_reviewer.append(reviewer)
-            count += 1
-        sample_counts[name] = count
-        if count >= MIN_OFFSET_SAMPLES:
-            offsets[name] = reviewer_layer.estimate_offset_seconds(
-                paired_current, paired_reviewer
+    sample_counts: dict[str, int] = {name: 0 for name in REVIEWERS}
+    offset_status: dict[str, str] = {name: "VOCAL_STEM_UNAVAILABLE" for name in REVIEWERS}
+    vocal_path_value = song.get("vocal_audio_path")
+    vocal_path = Path(vocal_path_value) if isinstance(vocal_path_value, str) else None
+    if vocal_path is not None and vocal_path.is_file():
+        try:
+            vocal_duration = auto_lrc.probe_duration(vocal_path)
+            features = auto_lrc.analyze_vocal_onsets(vocal_path, vocal_duration)
+            peaks = vocal_offset.anchor_peaks_from_vocal_features(
+                features.frame_times, features.rms_db, features.onset_strength
             )
+            for name in REVIEWERS:
+                observation = vocal_offset.calibrate_reviewer_vocal_offset(
+                    reviewer_series[name], peaks, min_samples=MIN_OFFSET_SAMPLES
+                )
+                sample_counts[name] = observation.sample_count
+                offset_status[name] = observation.status
+                if observation.offset_seconds is not None:
+                    offsets[name] = observation.offset_seconds
+        except (OSError, ValueError, auto_lrc.LrcError) as exc:
+            offset_status = {
+                name: f"VOCAL_ANALYSIS_FAILED:{type(exc).__name__}" for name in REVIEWERS
+            }
 
     return {
         "schema": 1,
@@ -233,6 +242,9 @@ def build_r2_sidecar(
         "required_agreements": 1,
         "offsets": offsets,
         "offset_sample_counts": sample_counts,
+        "offset_calibration_method": "independent-isolated-vocal-onsets-v1",
+        "offset_calibration_status": offset_status,
+        "offset_calibration_uses_central": False,
         "rows": row_values,
     }
 
@@ -281,23 +293,30 @@ def build_reviewer_trust_report(
         for name in TRUST_REVIEWERS:
             reviewer_series[name].append(times[name])
 
+    # Reviewer-trust is not allowed to calibrate on its OWN final output.
+    # Reuse the same independent audio-onset-only estimator as R2b.
     offsets: dict[str, float] = {}
     sample_counts: dict[str, int] = {}
+    offset_status: dict[str, str] = {}
+    vocal_value = song.get("vocal_audio_path")
+    vocal_file = Path(vocal_value) if isinstance(vocal_value, str) else None
+    peaks: tuple[float, ...] = ()
+    if vocal_file is not None and vocal_file.is_file():
+        try:
+            features = auto_lrc.analyze_vocal_onsets(vocal_file, auto_lrc.probe_duration(vocal_file))
+            peaks = vocal_offset.anchor_peaks_from_vocal_features(
+                features.frame_times, features.rms_db, features.onset_strength
+            )
+        except (OSError, ValueError, auto_lrc.LrcError):
+            peaks = ()
     for name in TRUST_REVIEWERS:
-        count = sum(
-            1
-            for final_time, reviewer_time in zip(
-                normalized_final, reviewer_series[name], strict=True
-            )
-            if reviewer_time is not None
-            and abs(float(reviewer_time) - float(final_time))
-            < reviewer_layer.OFFSET_SAMPLE_LIMIT_SECONDS
+        offset = vocal_offset.calibrate_reviewer_vocal_offset(
+            reviewer_series[name], peaks, min_samples=MIN_OFFSET_SAMPLES
         )
-        sample_counts[name] = count
-        if count >= MIN_OFFSET_SAMPLES:
-            offsets[name] = reviewer_layer.estimate_offset_seconds(
-                normalized_final, reviewer_series[name]
-            )
+        sample_counts[name] = offset.sample_count
+        offset_status[name] = offset.status
+        if offset.offset_seconds is not None:
+            offsets[name] = offset.offset_seconds
 
     output_rows: list[dict[str, object]] = []
     trusted_count = 0
@@ -347,6 +366,9 @@ def build_reviewer_trust_report(
         "reviewers": list(TRUST_REVIEWERS),
         "offsets": offsets,
         "offset_sample_counts": sample_counts,
+        "offset_calibration_status": offset_status,
+        "offset_calibration_method": "independent-isolated-vocal-onsets-v1",
+        "offset_calibration_uses_final_output": False,
         "trusted_count": trusted_count,
         "review_count": len(output_rows) - trusted_count,
         "rows": output_rows,

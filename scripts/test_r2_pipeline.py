@@ -105,15 +105,17 @@ class R2PipelineTests(unittest.TestCase):
 
         self.assertEqual(sidecar["policy"], "R2b")
         self.assertEqual(sidecar["required_agreements"], 1)
-        self.assertEqual(sidecar["offset_sample_counts"], {"HUBP": 8, "WX": 8, "XLSR": 8})
-        self.assertAlmostEqual(sidecar["offsets"]["HUBP"], 0.05, places=6)
-        self.assertAlmostEqual(sidecar["offsets"]["WX"], 0.10, places=6)
-        self.assertAlmostEqual(sidecar["offsets"]["XLSR"], 0.20, places=6)
+        # There is no independent vocal audio in this synthetic payload.
+        # 1.3 must fail closed instead of calibrating to CUR itself.
+        self.assertEqual(sidecar["offset_sample_counts"], {"HUBP": 0, "WX": 0, "XLSR": 0})
+        self.assertEqual(sidecar["offsets"], {})
+        self.assertFalse(sidecar["offset_calibration_uses_central"])
+        self.assertEqual(sidecar["offset_calibration_method"], "independent-isolated-vocal-onsets-v1")
 
         payload["songs"][0]["rows"] = rows[:7]
         limited_hubp = {"rows": {key: value for key, value in hubp_rows.items() if not key.endswith("::8")}}
         limited = r2_pipeline.build_r2_sidecar(payload, limited_hubp)
-        self.assertEqual(limited["offset_sample_counts"], {"HUBP": 7, "WX": 7, "XLSR": 7})
+        self.assertEqual(limited["offset_sample_counts"], {"HUBP": 0, "WX": 0, "XLSR": 0})
         self.assertEqual(limited["offsets"], {})
 
     def test_optional_hub_command_is_absent_by_default_and_added_only_when_requested(self) -> None:
@@ -165,7 +167,7 @@ class R2PipelineTests(unittest.TestCase):
         self.assertEqual(result["trusted_count"], 0)
         self.assertEqual(result["review_count"], 8)
 
-    def test_balanced_and_loose_profiles_use_final_r2_time(self) -> None:
+    def test_balanced_and_loose_profiles_fail_closed_without_independent_vocal(self) -> None:
         payload, hubp, final_times = self._trust_inputs()
         balanced = r2_pipeline.build_reviewer_trust_report(
             payload, hubp, final_times, profile="balanced"
@@ -173,9 +175,10 @@ class R2PipelineTests(unittest.TestCase):
         loose = r2_pipeline.build_reviewer_trust_report(
             payload, hubp, final_times, profile="loose"
         )
-        self.assertEqual(balanced["trusted_count"], 8)
-        self.assertEqual(loose["trusted_count"], 8)
-        self.assertTrue(all(row["reviewer_trusted"] for row in balanced["rows"]))
+        self.assertEqual(balanced["trusted_count"], 0)
+        self.assertEqual(loose["trusted_count"], 0)
+        self.assertFalse(balanced["offset_calibration_uses_final_output"])
+        self.assertTrue(all(not row["reviewer_trusted"] for row in balanced["rows"]))
 
     def test_reviewer_profiles_fail_closed_for_non_japanese_or_missing_hub(self) -> None:
         english, hubp, final_times = self._trust_inputs(language="english")
