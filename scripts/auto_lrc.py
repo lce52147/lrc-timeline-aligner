@@ -8180,7 +8180,12 @@ def is_instrumental_marker(entry: LyricEntry) -> bool:
     normalized = normalize_match_text(text)
     marker_text = text.strip("()[]{}").strip().lower()
     marker_words = ("instrumental", "intro", "interlude", "outro", "間奏", "イントロ", "アウトロ")
-    return text == "♪" or not normalized or (text.startswith("(") and any(word in marker_text for word in marker_words))
+    return (
+        text.casefold() == "[oogg_rana]"
+        or text == "♪"
+        or not normalized
+        or (text.startswith("(") and any(word in marker_text for word in marker_words))
+    )
 
 
 def remove_instrumental_markers(entries: list[LyricEntry]) -> tuple[list[LyricEntry], list[dict[str, object]]]:

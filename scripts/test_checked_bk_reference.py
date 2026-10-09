@@ -71,6 +71,14 @@ class CheckedBkReferenceTests(unittest.TestCase):
         self.assertIsNotNone(hint)
         self.assertEqual(hint[1],[11.25,22.75])
 
+    def test_legacy_timestamped_oogg_provenance_not_sung(self):
+        marker=a.LyricEntry(['[oogg_rana]'],1648)
+        real=a.LyricEntry(['first singing line'],1736)
+        kept,skipped=a.remove_instrumental_markers([marker,real])
+        self.assertEqual(len(kept),1)
+        self.assertEqual(a.entry_sung_text(kept[0]),'first singing line')
+        self.assertEqual(len(skipped),1)
+
     def test_unknown_bracketed_lyric_not_silently_dropped(self):
         self.bk.write_text('[madeup_hook]\n[00:01.00]Song lyric\n',encoding='utf-8')
         raw=a.load_lyrics(self.bk)
