@@ -12076,6 +12076,18 @@ def apply_hybrid_ctc_opening_onset_backtrack(
     return refined, report, changes
 
 
+
+def _stage_demucs_input(audio_path: Path, staging_dir: Path, tag: str) -> Path:
+    # Deliberately preserve the original bytes and vocal_cache_identity.
+    suffix = audio_path.suffix.lower()
+    if not re.fullmatch(r"\.[a-z0-9]{1,8}", suffix):
+        raise OSError(f"Unsupported Demucs input extension: {suffix!r}")
+    safe_tag = re.sub(r"[^A-Za-z0-9_-]", "_", tag)[:40] or "source"
+    staged = staging_dir / f"audio_{safe_tag}{suffix}"
+    shutil.copyfile(audio_path, staged)
+    return staged
+
+
 def vocal_onset_features(
     audio_path: Path, duration: float, args: argparse.Namespace
 ) -> tuple[AudioFeatures | None, str | None]:
@@ -12086,6 +12098,10 @@ def vocal_onset_features(
         return None, "missing-asr-python"
     with tempfile.TemporaryDirectory(prefix="lrc-vocals-") as temp_name:
         temp_dir = Path(temp_name)
+        try:
+            safe_audio = _stage_demucs_input(audio_path, temp_dir, "onset")
+        except OSError as exc:
+            return None, f"demucs-input-stage-failed: {exc}"
         command = [
             str(python_exe),
             "-m",
@@ -12097,12 +12113,12 @@ def vocal_onset_features(
             "cuda",
             "-o",
             str(temp_dir),
-            str(audio_path),
+            str(safe_audio),
         ]
         proc = subprocess.run(command, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         if proc.returncode != 0:
             detail = (proc.stderr or proc.stdout).strip().replace("\n", " ")
-            return None, f"demucs-failed: {detail[:240]}"
+            return None, f"demucs-failed: {detail[-1000:]}"
         stems = list(temp_dir.rglob("vocals.mp3"))
         if not stems:
             return None, "demucs-did-not-write-vocals"
@@ -12169,11 +12185,61 @@ def vocal_cache_identity(audio_path: Path, python_exe: Path) -> dict[str, object
     }
 
 
-def prepare_vocal_ctc_audio(audio_path: Path, args: argparse.Namespace) -> tuple[Path, str, str | None]:
-    """Build or reuse the isolated vocal track used by primary CTC alignment.
+def _demucs_vocal_stem_valid(path: Path, source_audio: Path) -> bool:
+    """Reject truncated/corrupt audio even when a cache file is non-empty."""
+    try:
+        if path.stat().st_size < 4096:
+            return False
+        proc = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-select_streams", "a:0",
+                "-show_entries",
+                "stream=codec_name,sample_rate,channels:format=duration",
+                "-of", "json", str(path),
+            ],
+            check=False, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=12,
+        )
+        if proc.returncode != 0:
+            return False
+        probe = json.loads(proc.stdout)
+        streams = probe.get("streams") or []
+        if len(streams) != 1:
+            return False
+        stream = streams[0]
+        if (
+            str(stream.get("codec_name", "")).lower() != "mp3"
+            or int(stream.get("sample_rate", 0)) < 8000
+            or int(stream.get("channels", 0)) < 1
+        ):
+            return False
+        duration = float(probe["format"]["duration"])
+        if not math.isfinite(duration) or duration < 1:
+            return False
+        source_duration = probe_duration(source_audio)
+        if abs(duration - source_duration) > max(2.5, source_duration * 0.03):
+            return False
+        return True
+    except (OSError, ValueError, TypeError, KeyError, AttributeError,
+            OverflowError, LrcError, subprocess.SubprocessError):
+        return False
 
-    The cache is addressed by source bytes plus separator identity.  Path, file
-    size, and mtime are never authority for cache identity.
+
+def _demucs_write_error(cache_dir: Path, detail: str) -> str:
+    """Preserve full stderr under the song's own content-addressed cache."""
+    log_file = cache_dir / "demucs_last_error.log"
+    try:
+        log_file.write_text(detail, encoding="utf-8")
+        return str(log_file)
+    except OSError:
+        return "unavailable"
+
+
+def prepare_vocal_ctc_audio(audio_path: Path, args: argparse.Namespace) -> tuple[Path, str, str | None]:
+    """Build or reuse a validated content-addressed isolated vocal stem.
+
+    The temporary output folder is unique per invocation and cannot select an
+    earlier Demucs run's result from the shared cache tree.
     """
     if not getattr(args, "vocal_ctc", True):
         return audio_path, "mix", "disabled"
@@ -12187,38 +12253,44 @@ def prepare_vocal_ctc_audio(audio_path: Path, args: argparse.Namespace) -> tuple
     key = str(identity["vocal_cache_key"])
     cache_dir = DEFAULT_VOCAL_CACHE_DIR / key
     cached = cache_dir / "vocals.mp3"
-    if cached.exists() and cached.stat().st_size > 0:
+    if cached.is_file() and _demucs_vocal_stem_valid(cached, audio_path):
         return cached, "vocal-stem", "cache-hit"
     cache_dir.mkdir(parents=True, exist_ok=True)
     demucs_env = os.environ.copy()
     demucs_env["PYTHONUTF8"] = "1"
     demucs_env["PYTHONIOENCODING"] = "utf-8"
-    proc = subprocess.run(
-        [
-            str(python_exe), "-X", "utf8", "-m", "demucs", "--two-stems", "vocals", "--mp3", "--shifts", "0", "-d", "cuda",
-            "-o", str(cache_dir), str(audio_path),
-        ],
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        env=demucs_env,
-    )
-    if proc.returncode:
-        detail = (proc.stderr or proc.stdout).strip().replace("\\n", " ")
-        return audio_path, "mix", f"demucs-failed: {detail[:180]}"
-    stems = list(cache_dir.rglob("vocals.mp3"))
-    if not stems:
-        return audio_path, "mix", "demucs-did-not-write-vocals"
-    stem = stems[0]
-    if stem != cached:
-        try:
-            stem.replace(cached)
-        except OSError:
-            cached = stem
+    try:
+        with tempfile.TemporaryDirectory(prefix="lrc-demucs-run-", dir=cache_dir) as temp_name:
+            run_dir = Path(temp_name)
+            staged_input = _stage_demucs_input(audio_path, run_dir, key)
+            current_output = run_dir / "out"
+            proc = subprocess.run(
+                [
+                    str(python_exe), "-X", "utf8", "-m", "demucs",
+                    "--two-stems", "vocals", "--mp3", "--shifts", "0",
+                    "-d", "cuda", "-o", str(current_output), str(staged_input),
+                ],
+                check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, encoding="utf-8", errors="replace", env=demucs_env,
+            )
+            if proc.returncode:
+                detail = (proc.stderr or proc.stdout or "").strip()
+                logfile = _demucs_write_error(cache_dir, detail)
+                tail = " ".join(detail[-1300:].splitlines())
+                return audio_path, "mix", f"demucs-failed: {tail} [full-log: {logfile}]"
+            new_stems = list(current_output.rglob("vocals.mp3"))
+            if len(new_stems) != 1:
+                return audio_path, "mix", f"demucs-invalid-output-count={len(new_stems)}"
+            if not _demucs_vocal_stem_valid(new_stems[0], audio_path):
+                return audio_path, "mix", "demucs-invalid-generated-vocal-stem"
+            # The output file and the cache are on the same volume, so replace
+            # makes a single atomic publication instead of a partial cache.
+            os.replace(new_stems[0], cached)
+            (cache_dir / "demucs_last_error.log").unlink(missing_ok=True)
+    except OSError as exc:
+        return audio_path, "mix", f"demucs-input-or-cache-io-failed: {type(exc).__name__}: {exc}"
     return cached, "vocal-stem", "generated"
+
 
 def nearest_onset_evidence(features: AudioFeatures, timestamp: float) -> tuple[float, float] | None:
     mask = (features.frame_times >= timestamp - 0.35) & (features.frame_times <= timestamp + 0.35)

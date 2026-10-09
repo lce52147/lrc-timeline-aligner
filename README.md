@@ -19,6 +19,8 @@ The `reviewer-validity` selector now compares reviewer support before a reviewer
 
 ## Known limitations（已知限制）
 
+Occurrence loss is a known v1.2 limitation: whole-song CTC may misidentify repeated sung passages and collapse or shift consecutive lyric rows. Verified examples: 04 影色舞, 03. Choir ‘S’ Choir, 01.ミレニアの水槽, and My Dearest. Manual listening is required; model confidence alone is insufficient.
+
 The measurements below describe one 37-song / 1414-row analysis pool; the former acceptance subset has been merged into that pool, so there is no independent validation set. On the published selector, the full pool reaches 86.92% PCO@0.2 with 6.15% of rows over 1 s. The Japanese subset (30 songs / 1203 rows) reaches 90.86% PCO@0.2 with 3.74% over 1 s, while the English subset (7 songs / 211 rows) reaches 64.46% PCO@0.2 with 19.91% over 1 s. Median per-song PCO@0.2 is 92%; 22 songs reach at least 90%, and 2 songs are below 60% (`04 影色舞`, 38%; `03. Choir ‘S’ Choir`, 39%). These corpus results are descriptive and do not predict accuracy on arbitrary songs.
 
 R2's shipped reviewer set is designed around Japanese models. English songs receive almost no usable reviewer evidence, so reviewer endorsement and trust labels provide little help there. Reviewer trust labeling defaults to `none`; the measured trusted rows are Japanese only, and the labels are auxiliary review information rather than a correctness guarantee.

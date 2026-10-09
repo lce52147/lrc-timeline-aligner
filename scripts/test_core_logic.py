@@ -152,6 +152,7 @@ class VocalStemDeterminismTests(unittest.TestCase):
                 ),
                 mock.patch.object(auto_lrc, "DEFAULT_VOCAL_CACHE_DIR", cache_root),
                 mock.patch.object(auto_lrc.subprocess, "run", side_effect=fake_run) as run_command,
+                mock.patch.object(auto_lrc, "_demucs_vocal_stem_valid", return_value=True),
             ):
                 path, source, status = auto_lrc.prepare_vocal_ctc_audio(audio, args)
 
@@ -13283,6 +13284,104 @@ class V12Node19DuplicateOwnerRecomputeTests(unittest.TestCase):
             process_calls["commit_evaluated_backend"],
             process_calls["_postcommit_recompute_duplicate_review"],
         )
+
+
+class DemucsCacheIsolationTests(unittest.TestCase):
+    def setUp(self):
+        self.td=TemporaryDirectory(prefix="demucs_io_test_")
+        self.addCleanup(self.td.cleanup)
+        self.root=Path(self.td.name)
+        self.audio=self.root/"03.ぼうやの夢よ .flac"
+        self.audio.write_bytes(b"source-bytes-never-change")
+        self.python=self.root/"python.exe"
+        self.python.write_bytes(b"")
+        self.cache_root=self.root/"cache"
+        self.key="isolated-test"
+        self.args=type("Args",(),{"vocal_ctc":True})()
+        for patch in (
+            mock.patch.object(auto_lrc,"default_ctc_python",return_value=self.python),
+            mock.patch.object(auto_lrc,"vocal_cache_identity",return_value={"vocal_cache_key":self.key}),
+            mock.patch.object(auto_lrc,"DEFAULT_VOCAL_CACHE_DIR",self.cache_root),
+        ):
+            patch.start()
+            self.addCleanup(patch.stop)
+        self.cached=self.cache_root/self.key/"vocals.mp3"
+
+    def run_fake_demucs(self,*,generate=b"NEW_VALID_STEM"*1000,stderr=None):
+        def runner(command,**kwargs):
+            if stderr is not None:
+                return subprocess.CompletedProcess(command,1,"",stderr)
+            dest=Path(command[command.index("-o")+1])/"htdemucs"/"current"/"vocals.mp3"
+            dest.parent.mkdir(parents=True,exist_ok=True)
+            dest.write_bytes(generate)
+            return subprocess.CompletedProcess(command,0,"","")
+        return mock.patch.object(auto_lrc.subprocess,"run",side_effect=runner)
+
+    def test_existing_stale_stem_does_not_override_new_output(self):
+        stale=self.cache_root/self.key/"htdemucs"/"00_failed"/"vocals.mp3"
+        stale.parent.mkdir(parents=True,exist_ok=True)
+        stale.write_bytes(b"STALE"*2000)
+        with self.run_fake_demucs(),mock.patch.object(auto_lrc,"_demucs_vocal_stem_valid",return_value=True):
+            path,kind,status=auto_lrc.prepare_vocal_ctc_audio(self.audio,self.args)
+        self.assertEqual((path,kind,status),(self.cached,"vocal-stem","generated"))
+        self.assertEqual(path.read_bytes(),b"NEW_VALID_STEM"*1000)
+        self.assertTrue(stale.exists())
+
+    def test_one_byte_corrupt_cache_is_rebuilt_not_hit(self):
+        self.cached.parent.mkdir(parents=True,exist_ok=True)
+        self.cached.write_bytes(b"X")
+        def validity(path,source):
+            self.assertEqual(source,self.audio)
+            return path.stat().st_size>4096
+        with self.run_fake_demucs(),mock.patch.object(auto_lrc,"_demucs_vocal_stem_valid",side_effect=validity):
+            path,kind,status=auto_lrc.prepare_vocal_ctc_audio(self.audio,self.args)
+        self.assertEqual((kind,status),("vocal-stem","generated"))
+        self.assertEqual(path.read_bytes(),b"NEW_VALID_STEM"*1000)
+
+    def test_demucs_error_keeps_full_traceback_tail_and_log(self):
+        error="Log progress "+"x"*800+"\nTraceback (most recent call last):\nFileNotFoundError: sentinel-root-cause"
+        with self.run_fake_demucs(stderr=error),mock.patch.object(auto_lrc,"_demucs_vocal_stem_valid",return_value=True):
+            path,kind,status=auto_lrc.prepare_vocal_ctc_audio(self.audio,self.args)
+        self.assertEqual((path,kind),(self.audio,"mix"))
+        self.assertIn("FileNotFoundError: sentinel-root-cause",status)
+        self.assertEqual((self.cached.parent/"demucs_last_error.log").read_text(encoding="utf-8"),error)
+
+    def test_valid_cache_is_reused_without_demucs(self):
+        self.cached.parent.mkdir(parents=True,exist_ok=True)
+        self.cached.write_bytes(b"VALID"*2400)
+        with mock.patch.object(auto_lrc,"_demucs_vocal_stem_valid",return_value=True), \
+             mock.patch.object(auto_lrc.subprocess,"run",side_effect=AssertionError("unexpected Demucs")):
+            path,kind,status=auto_lrc.prepare_vocal_ctc_audio(self.audio,self.args)
+        self.assertEqual((path,kind,status),(self.cached,"vocal-stem","cache-hit"))
+
+    def test_generated_invalid_stem_is_rejected(self):
+        with self.run_fake_demucs(generate=b"X"),mock.patch.object(
+            auto_lrc,"_demucs_vocal_stem_valid",return_value=False
+        ):
+            path,kind,status=auto_lrc.prepare_vocal_ctc_audio(self.audio,self.args)
+        self.assertEqual((path,kind,status),(self.audio,"mix","demucs-invalid-generated-vocal-stem"))
+        self.assertFalse(self.cached.exists())
+
+    def test_ffprobe_validator_checks_codec_duration_and_channels(self):
+        vocal=self.root/"vocals.mp3"
+        vocal.write_bytes(b"M"*6000)
+        source_duration=200.0
+        sample={"streams":[{"codec_name":"mp3","sample_rate":"44100","channels":2}],
+                "format":{"duration":"199.8"}}
+        def runner(command,**kwargs):
+            self.assertEqual(command[0],"ffprobe")
+            return subprocess.CompletedProcess(command,0,json.dumps(sample),"")
+        with mock.patch.object(auto_lrc.subprocess,"run",side_effect=runner), \
+             mock.patch.object(auto_lrc,"probe_duration",return_value=source_duration):
+            self.assertTrue(auto_lrc._demucs_vocal_stem_valid(vocal,self.audio))
+            sample["format"]["duration"]="10"
+            self.assertFalse(auto_lrc._demucs_vocal_stem_valid(vocal,self.audio))
+            sample["format"]["duration"]="199.8"
+            sample["streams"][0]["codec_name"]="invalid"
+            self.assertFalse(auto_lrc._demucs_vocal_stem_valid(vocal,self.audio))
+            sample["streams"][0]["codec_name"]="mp3"
+            sample["streams"][0]["channels"]=0
+            self.assertFalse(auto_lrc._demucs_vocal_stem_valid(vocal,self.audio))
 
 
 if __name__ == "__main__":
