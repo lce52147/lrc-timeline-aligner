@@ -38,6 +38,7 @@ from typing import Literal, Mapping, Sequence
 
 import numpy as np
 
+from ctc_confidence import ctc_alignment_confidence
 import arbiter as timing_arbiter
 from export_alignment_audit import build_rows as build_audit_rows
 from export_alignment_audit import write_anchor_template
@@ -8644,7 +8645,7 @@ def run_ctc_alignment(
                 )
         # A forced path always has a position, but a weak path is only a draft
         # candidate. Do not let its existence become a fake "trusted" result.
-        confidence = 0.90 if ctc_score >= 0.08 else 0.70 if ctc_score >= 0.03 else 0.35
+        confidence = ctc_alignment_confidence(ctc_score)
         assignments.append(
             {
                 "entry": index + 1,

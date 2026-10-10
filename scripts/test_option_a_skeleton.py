@@ -11,6 +11,13 @@ from segment_skeleton_production import run_segment_skeleton
 
 
 class OptionADPTests(unittest.TestCase):
+    def test_p4_common_ctc_score_mapping(self):
+        from ctc_confidence import ctc_alignment_confidence
+        for score in (-.01,0.,.0299,.03,.0799,.08,.2,1.):
+            expected=.90 if score>=.08 else .70 if score>=.03 else .35
+            self.assertEqual(ctc_alignment_confidence(score),expected)
+            self.assertEqual(ctc_alignment_confidence(score,has_start=False),0.)
+
     def test_single_lyric_three_times_requires_no_unique_repeat_anchor(self):
         texts=["hello refrain"]*3+["verse words"]*2
         audio=[(1,3),(6,8),(11,13),(16,20)]

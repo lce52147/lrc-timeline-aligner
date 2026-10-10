@@ -13,6 +13,7 @@ from typing import Callable,Sequence
 from dataclasses import replace
 from types import SimpleNamespace
 
+from ctc_confidence import ctc_alignment_confidence
 from segment_skeleton import plan_segment_skeleton,validate_local_ctc
 
 MAX_GPU_PASSAGES=64
@@ -225,8 +226,7 @@ def run_segment_skeleton(
               'ctc_score':round(float(row['ctc_score']),6),
               'romaji':row.get('romaji'),
               'segment':plan.assignments[i].passage_index,
-              'score':(.90 if float(row['ctc_score'])>=.08 else
-                .70 if float(row['ctc_score'])>=.03 else .35),
+              'score':ctc_alignment_confidence(float(row['ctc_score'])), 
               'timing_repair':'segment-skeleton-local-ctc',
               'timing_repair_source':'torchaudio-mms-fa',
               'segment_dp_confidence':plan.assignments[i].confidence,
