@@ -24,10 +24,21 @@ class S5GateTests(unittest.TestCase):
     def test_malformed_missing_fails_closed(self):
         self.assertEqual(evaluate_s5_rows(self.rows()[:2],song_id="demo",expected_rows=4)["status"],
                          "BLOCKED_MISSING_OR_PARTIAL_ROWS")
-    def test_fake_nonmonotonic_candidate_rejected(self):
+    def test_new_nonmonotonic_candidate_blocks_release(self):
         rows=self.rows();rows[2]["candidate_s"]=5.
-        self.assertEqual(evaluate_s5_rows(rows,song_id="demo")["status"],
-                         "BLOCKED_NONMONOTONIC_CANDIDATE_S")
+        song=evaluate_s5_rows(rows,song_id="demo")
+        self.assertEqual(song["new_backtrack_pairs"],[2])
+        self.assertFalse(evaluate_s5_corpus([song],expected_songs=1)["checks"]["no_new_backtracks"])
+    def test_inherited_main_backtrack_is_a_warning(self):
+        rows=self.rows()
+        rows[2]["main_s"]=5.
+        rows[2]["candidate_s"]=5.
+        song=evaluate_s5_rows(rows,song_id="inherited")
+        self.assertEqual(song["inherited_backtrack_pairs"],[2])
+        self.assertEqual(song["new_backtrack_pairs"],[])
+        gate=evaluate_s5_corpus([song],expected_songs=1)
+        self.assertTrue(gate["checks"]["no_new_backtracks"])
+        self.assertEqual(gate["inherited_backtracks"][0]["reason"],"INHERITED_BACKTRACK")
     def test_missing_reference_clock_blocks(self):
         rows=self.rows();del rows[2]["bk_s"]
         self.assertEqual(evaluate_s5_rows(rows,song_id="demo")["status"],"BLOCKED_INVALID_CLOCK")

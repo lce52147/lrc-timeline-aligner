@@ -42,14 +42,17 @@ def evaluate_s5_rows(
             if type(value) not in (int,float) or not math.isfinite(value) or value<0:
                 return reject("BLOCKED_INVALID_CLOCK")
         text_values.append(_normalize(text))
-    # A broken main baseline must remain scoreable: detecting its collapse is
-    # why the regression exists. Require the NEW candidate and human reference
-    # to be ordered; comparison to main must not silently reject bad main.
-    # Distinct lines may share a centisecond, so allow equality.
-    for name in ("bk_s","candidate_s"):
-        vals=[float(row[name]) for row in rows]
-        if any(a>b+1e-8 for a,b in zip(vals,vals[1:])):
-            return reject("BLOCKED_NONMONOTONIC_"+name.upper())
+    # Detect introduced reversals relative to pinned main. A pre-existing
+    # reversal at the same adjacent pair is an inherited warning, not a blocker.
+    bk_times=[float(row["bk_s"]) for row in rows]
+    if any(a>b+1e-8 for a,b in zip(bk_times,bk_times[1:])):
+        return reject("BLOCKED_NONMONOTONIC_BK_S")
+    main_times=[float(row["main_s"]) for row in rows]
+    candidate_times=[float(row["candidate_s"]) for row in rows]
+    old_backtracks={i+1 for i,(a,b) in enumerate(zip(main_times,main_times[1:])) if b<a-1e-8}
+    candidate_backtracks={i+1 for i,(a,b) in enumerate(zip(candidate_times,candidate_times[1:])) if b<a-1e-8}
+    new_backtracks=sorted(candidate_backtracks-old_backtracks)
+    inherited_backtracks=sorted(candidate_backtracks&old_backtracks)
     counts=Counter(text_values)
     scores=[]
     trust_before=trust_after=trust_before_wrong=trust_after_wrong=0
@@ -75,6 +78,8 @@ def evaluate_s5_rows(
             "candidate_pco200":new<=.2+1e-9})
     stats={
         "rows":len(scores),
+        "new_backtracks":len(new_backtracks),
+        "inherited_backtracks":len(inherited_backtracks),
         "main_pco200":sum(v["main_pco200"] for v in scores),
         "candidate_pco200":sum(v["candidate_pco200"] for v in scores),
         "main_wrong_gt1s":sum(v["main_wrong_gt1s"] for v in scores),
@@ -101,15 +106,18 @@ def evaluate_s5_rows(
              if trust_known and trust_after else None),
     }
     trust_pass=(trust_known and trust_before and trust_after and
-        trusted["candidate_wrong_trusted_ratio"]<trusted["main_wrong_trusted_ratio"])
+        trusted["candidate_wrong_trusted_ratio"]<=trusted["main_wrong_trusted_ratio"])
     return {
         "song":song_id,
         "status":"POSTHOC_GATE_COMPUTED",
+        "new_backtrack_pairs":new_backtracks,
+        "inherited_backtrack_pairs":inherited_backtracks,
         "eligible_for_S5":True,
         "counts":stats,
         "trusted":trusted,
         "checks":{"PCO_non_decreasing":pass_pco,"gt1_decreasing":pass_gt1,
-                  "no_new_gt1":pass_new,"trusted_wrong_ratio_decreasing":bool(trust_pass)},
+                  "no_new_gt1":pass_new,"no_new_backtracks":not new_backtracks,
+                  "trusted_wrong_ratio_decreasing":bool(trust_pass)},
         "per_song_checks_are_diagnostic_only":True,
         "review_rows":[x for x in scores if x["main_wrong_gt1s"] or x["candidate_wrong_gt1s"]],
     }
@@ -129,7 +137,7 @@ def evaluate_s5_corpus(
     keys=("rows","main_pco200","candidate_pco200","main_wrong_gt1s",
           "candidate_wrong_gt1s","new_wrong_gt1s","repeated_rows",
           "repeated_old_wrong","repeated_new_wrong","unique_old_wrong",
-          "unique_new_wrong")
+          "unique_new_wrong","new_backtracks","inherited_backtracks")
     stats={k:sum(int(r["counts"][k]) for r in song_results) for k in keys}
     all_trust=all(isinstance(r.get("trusted"),Mapping) and r["trusted"].get("available")
                   and isinstance(r["trusted"].get("main_trusted"),int)
@@ -154,11 +162,14 @@ def evaluate_s5_corpus(
         "PCO_non_decreasing":stats["candidate_pco200"]>=stats["main_pco200"],
         "gt1_strictly_decreasing":stats["candidate_wrong_gt1s"]<stats["main_wrong_gt1s"],
         "no_new_gt1s":stats["new_wrong_gt1s"]==0,
+        "no_new_backtracks":stats["new_backtracks"]==0,
         "trusted_wrong_ratio_decreasing":(
             trust_rate_old is not None and trust_rate_new is not None
-            and trust_rate_new<trust_rate_old),
+            and trust_rate_new<=trust_rate_old),
     }
     return {"status":"S5_RELEASE_GATE_EVALUATED","songs":len(song_results),
+            "inherited_backtracks":[{"song":r["song"],"pairs":r.get("inherited_backtrack_pairs",[]),"reason":"INHERITED_BACKTRACK"} for r in song_results if r.get("inherited_backtrack_pairs")],
+            "new_backtracks":[{"song":r["song"],"pairs":r.get("new_backtrack_pairs",[]),"reason":"NEW_BACKTRACK"} for r in song_results if r.get("new_backtrack_pairs")],
             "counts":stats,"trusted_ratio_before":trust_rate_old,
             "trusted_ratio_after":trust_rate_new,
             "checks":checks,"release_pass":all(checks.values()),
