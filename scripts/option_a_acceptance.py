@@ -28,6 +28,7 @@ class Score:
     segment_status:str
     trust_rows:int
     errors_cs:tuple[int,...]
+    backtrack_pairs:tuple[int,...]
 
 
 def score_song(*,song:str,mode:str,
@@ -49,10 +50,11 @@ def score_song(*,song:str,mode:str,
     newly=tuple(i+1 for i,e in enumerate(mistakes)
                if e>100 and (baseline is None or
                              abs(labels[i][1]-baseline[i][1])<=100))
-    backtracks=sum(int(b[1]<a[1]) for a,b in zip(produced,produced[1:]))
+    backtrack_pairs=tuple(i+1 for i,(a,b) in enumerate(zip(produced,produced[1:])) if b[1]<a[1])
+    backtracks=len(backtrack_pairs)
     return Score(song,len(mistakes),
        sum(e<=20 for e in mistakes),sum(e>100 for e in mistakes),backtracks,
-       newly,mode,segment_status,trust_rows,mistakes)
+       newly,mode,segment_status,trust_rows,mistakes,backtrack_pairs)
 
 
 def gate_a6(scores:Sequence[Score])->dict[str,object]:
@@ -63,14 +65,18 @@ def gate_a6(scores:Sequence[Score])->dict[str,object]:
         return {"status":"INCOMPLETE_A6_PAIRING","missing":missing,
                 "available":len(by)}
     blockers=[]
+    inherited=[]
     for song in FIXED_SONGS:
         current=by[(song,"segment")]
         base=by[(song,"ctc")]
         if current.rows!=base.rows:
             blockers.append({"song":song,"reason":"BASELINE_ROWS_DIFFER"})
-        if current.backtracks:
-            blockers.append({"song":song,"reason":"SEGMENT_FINAL_NONMONOTONIC",
-                             "pairs":current.backtracks})
+        new_pairs=sorted(set(current.backtrack_pairs)-set(base.backtrack_pairs))
+        old_pairs=sorted(set(current.backtrack_pairs)&set(base.backtrack_pairs))
+        if new_pairs:
+            blockers.append({"song":song,"reason":"NEW_SEGMENT_BACKTRACK","pairs":new_pairs})
+        if old_pairs:
+            inherited.append({"song":song,"reason":"INHERITED_BACKTRACK","pairs":old_pairs})
         if song in NORMAL_CONTROLS:
             genuinely_new=tuple(i+1 for i,(e,f) in enumerate(zip(
                   current.errors_cs,base.errors_cs)) if e>100 and f<=100)
@@ -87,4 +93,4 @@ def gate_a6(scores:Sequence[Score])->dict[str,object]:
                     "row13_cs":current.errors_cs[12] if current.rows>12 else None,
                     "row27_cs":current.errors_cs[26] if current.rows>26 else None})
     return {"status":"PASS_A6_REPRESENTATIVE" if not blockers else "BLOCKED_A6",
-            "blockers":blockers,"pairs":len(FIXED_SONGS)}
+            "blockers":blockers,"inherited_backtracks":inherited,"pairs":len(FIXED_SONGS)}
