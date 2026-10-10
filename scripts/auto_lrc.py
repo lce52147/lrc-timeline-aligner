@@ -10244,6 +10244,37 @@ def try_ctc_candidate(
 ) -> tuple[list[float], dict[str, object], str | None]:
     try:
         timestamps, report = run_ctc_alignment(audio_path, entries, duration, args)
+        skeleton_mode = str(getattr(args, "skeleton", "ctc"))
+        if skeleton_mode == "segment" and str(getattr(args, "timing_source", "")) == "auto":
+            from segment_skeleton_production import run_segment_skeleton
+            if report.get("ctc_audio_source") == "vocal-stem":
+                timestamps, report, skeleton_details = run_segment_skeleton(
+                    report=report,
+                    timestamps=timestamps,
+                    lyric_texts=[entry_sung_text(entry) for entry in entries],
+                    vocal_stem=ctc_alignment_audio_path(report, audio_path),
+                    duration=duration,
+                    audio_api=sys.modules[__name__],
+                    python_exe=default_ctc_python(),
+                    ctc_helper=Path(__file__).resolve().parent / "ctc_align.py",
+                    device=str(getattr(args, "whisperx_device", "auto")),
+                    helper_runner=lambda command, timeout: _run_model_helper_command(
+                        command, mode="ctc"
+                    ),
+                    romanizer=japanese_romaji,
+                )
+            else:
+                report["segment_skeleton_status"] = {
+                    "status": "FALLBACK_CTC",
+                    "reason": "NO_ISOLATED_VOCAL_STEM",
+                    "whole_song": True,
+                }
+        else:
+            report["segment_skeleton_status"] = {
+                "status": "CTC_SELECTED",
+                "reason": "EXPLICIT_CTC_OR_NON_AUTO",
+                "whole_song": True,
+            }
         return timestamps, report, None
     except LrcError as exc:
         return [], {"backend": "ctc", "error": str(exc)}, str(exc)
@@ -12966,7 +12997,12 @@ def run_auto_backend_competition(
             and isinstance(ctc_candidate.get("report"), dict)
             and isinstance(ctc_candidate.get("timestamps"), list)
         ):
-            window_timestamps, window_report, local_window_changes = apply_ctc_local_window_realign(
+            if ctc_candidate["report"].get("segment_skeleton_status", {}).get("status") == "SEGMENT_CURRENT":
+                window_timestamps, window_report, local_window_changes = (
+                    list(ctc_candidate["timestamps"]), ctc_candidate["report"], []
+                )
+            else:
+                window_timestamps, window_report, local_window_changes = apply_ctc_local_window_realign(
                 ctc_alignment_audio_path(ctc_candidate["report"], audio_path),
                 entries,
                 list(ctc_candidate["timestamps"]),
@@ -13058,6 +13094,17 @@ def run_auto_backend_competition(
         ),
         None,
     ) or choose_alignment_candidate(candidates)
+    segment_ctc_seed = next(
+        (candidate for candidate in candidates
+         if candidate.get("backend") == "ctc"
+         and not candidate.get("error")
+         and isinstance(candidate.get("report"), dict)
+         and candidate["report"].get("segment_skeleton_status", {}).get("status")
+           == "SEGMENT_CURRENT"),
+        None
+    )
+    if segment_ctc_seed is not None:
+        selected = segment_ctc_seed
     candidate_labels = [
         f"{candidate.get('backend')}:{float(candidate.get('quality', candidate_selection_quality(candidate.get('report', {}))) or -100.0):.1f}"
         for candidate in candidates
@@ -13073,6 +13120,23 @@ def run_auto_backend_competition(
     selected_timestamps = list(selected["timestamps"])
     selected_backend = str(selected.get("backend", selected_report.get("backend", "auto")))
     if selected_backend == "ctc":
+        if segment_ctc_seed is not None:
+            # Keep REAL independent WhisperX identity/onset evidence without
+            # letting the global WhisperX clock compete as another skeleton.
+            # The existing runtime binder verifies each non-borrowed row and
+            # its occurrence binding; no synthetic witnesses are introduced.
+            for whisper_candidate in candidates:
+                if (whisper_candidate.get("backend") == "whisperx"
+                        and not whisper_candidate.get("error")
+                        and isinstance(whisper_candidate.get("report"), dict)
+                        and isinstance(whisper_candidate.get("timestamps"), list)
+                        and len(whisper_candidate["timestamps"]) == len(entries)):
+                    whisperx_evidence_candidates.append((
+                        list(whisper_candidate["timestamps"]),
+                        whisper_candidate["report"],
+                        "complete-independent-whisperx",
+                    ))
+                    break
         if whisperx_evidence_candidates:
             bind_runtime_whisperx_row_evidence(
                 selected_report, entries, whisperx_evidence_candidates
@@ -13217,9 +13281,19 @@ def run_auto_backend_competition(
         "refined_legacy_quality": round(selected_quality, 3),
     }
     selected_report["backend"] = selected_backend
-    generation_candidates = _central_preview_generation_candidates(
-        candidates, selected_backend, selected_timestamps, selected_report
-    )
+    if segment_ctc_seed is not None:
+        # A successful segment skeleton is the sole positional current. The
+        # failure path retains the entire original 1.2 backend competition.
+        generation_candidates = [{
+            "backend": "ctc",
+            "timestamps": list(selected_timestamps),
+            "report": selected_report,
+            "error": None,
+        }]
+    else:
+        generation_candidates = _central_preview_generation_candidates(
+            candidates, selected_backend, selected_timestamps, selected_report
+        )
 
     preview_records: list[dict[str, object]] = []
     shared_retry_helper_cache: dict[str, tuple[str, object]] = {}
@@ -25136,7 +25210,11 @@ def prepare_backend_timing_preview(
     # S1: stage untrusted bounded vocal-passage CTC hypotheses. Only Central
     # may validate them. DP/recurrence do not claim final LRC authority.
     segment_structure_diagnostics: dict[str, object] | None = None
-    if preview_report.get("backend") == "ctc" and preview_report.get("ctc_audio_source") == "vocal-stem":
+    if (preview_report.get("backend") == "ctc"
+        and preview_report.get("ctc_audio_source") == "vocal-stem"
+        and preview_report.get("segment_skeleton_status", {}).get("status")
+           not in {"SEGMENT_CURRENT","FALLBACK_CTC","CTC_SELECTED"}
+    ):
         from segment_production import try_stage_structural_ctc
         preview_report, segment_structure_diagnostics = try_stage_structural_ctc(
             report=preview_report,
@@ -36318,6 +36396,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Per-song reviewer evidence sidecar for reviewer-validity mode. Missing evidence fails closed to Central.",
+    )
+    parser.add_argument(
+        "--skeleton", choices=("segment", "ctc"), default="segment",
+        help="Option A: segment-vocal-DP-local-CTC current (whole-song fail-closed to CTC); "
+             "ctc: original whole-song MMS CTC skeleton.",
     )
     parser.add_argument("--whisper-cli", help="Path to whisper.cpp whisper-cli.exe.")
     parser.add_argument("--whisper-model", help="Path to whisper.cpp ggml model.")

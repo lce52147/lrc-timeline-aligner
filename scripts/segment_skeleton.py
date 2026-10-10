@@ -1,0 +1,165 @@
+"""LRC13 Option A: full-song vocal-passage skeleton, never BK times."""
+from __future__ import annotations
+from dataclasses import dataclass
+import math
+from typing import Sequence
+from segment_structure import VocalPassage, merge_vocal_passages
+
+MERGE_GAP_S=.65
+MIN_PASSAGE_S=.38
+MAX_INTERLINE_SILENCE=3.0
+MAX_LINES_PER_PASSAGE=12
+MIN_PASSAGE_LINE_RATIO=.20
+MAX_SINGLE_PASSAGE_DURATION_RATIO=.60
+MIN_GLOBAL_MARGIN=.03
+MAX_DP_COST_PER_ROW=2.8
+CTC_PRIOR_WEIGHT=.035
+MAX_CTC_PRIOR_PENALTY=4.
+SKIP_PENALTY=.70
+
+@dataclass(frozen=True)
+class SkeletonAssignment:
+    passage_index:int
+    initial_time_s:float
+    confidence:float
+
+@dataclass(frozen=True)
+class SkeletonPlan:
+    status:str
+    reason:str
+    passages:tuple[VocalPassage,...]
+    assignments:tuple[SkeletonAssignment,...]
+    groups:tuple[tuple[int,int,int],...]
+    dp_cost:float
+    dp_margin:float
+    diagnostics:dict[str,object]
+
+def _lengths_from_text(texts:Sequence[str],romanizer:object=None)->tuple[int,...]:
+    lengths=[]
+    for t in texts:
+        reading=romanizer(t) if callable(romanizer) else t
+        if not isinstance(reading,str):reading=t
+        lengths.append(max(1,sum(c.isalnum() for c in reading)))
+    return tuple(lengths)
+
+def _path_cost(passage:VocalPassage,counts:Sequence[int],all_chars:int,
+               total_voice:float,consumed_chars:int,voice_before:float,
+               priors:Sequence[float|None],start_index:int)->float:
+    actual=sum(counts)
+    expected=max(.12,total_voice*actual/max(1,all_chars))
+    ratio=max(passage.duration/expected,.001)
+    density=1.12*abs(math.log(ratio))
+    progress_lyric=(consumed_chars+actual/2)/max(all_chars,1)
+    progress_voice=(voice_before+passage.duration/2)/max(total_voice,.1)
+    progress=.85*abs(progress_lyric-progress_voice)
+    prior_cost=0.;total=max(1,actual);cumulative=0.
+    for k,length in enumerate(counts):
+        t=passage.start+.04+max(.0,passage.duration-.08)*cumulative/total
+        c=priors[start_index+k]
+        if c is not None and math.isfinite(c):
+            prior_cost+=CTC_PRIOR_WEIGHT*min(abs(t-c),MAX_CTC_PRIOR_PENALTY)
+        cumulative+=length
+    crowding=.40*max(0.,len(counts)/max(passage.duration,.2)-2.25)
+    return density+progress+prior_cost+crowding
+
+def plan_segment_skeleton(segments:Sequence[tuple[float,float]], *,
+    duration:float,lyric_texts:Sequence[str],romanizer:object=None,
+    ctc_priors:Sequence[float|None]|None=None,
+    raw_asr_events:Sequence[tuple[float,str]]=())->SkeletonPlan:
+    """Monotonic global Viterbi: 2 independent best paths, no unique-repeat anchor."""
+    vocal=merge_vocal_passages(segments,duration=duration,
+                              merge_gap_s=MERGE_GAP_S,min_duration_s=MIN_PASSAGE_S)
+    n,m=len(lyric_texts),len(vocal)
+    blocked=lambda reason,**kw:SkeletonPlan("FALLBACK_CTC",reason,vocal,(),(),math.inf,0.,
+                                          {"passages":m,"rows":n,**kw})
+    if not n or not m or not math.isfinite(duration) or duration<=0:
+        return blocked("NO_VOCAL_OR_LYRICS")
+    if m<n*MIN_PASSAGE_LINE_RATIO:
+        return blocked("TOO_FEW_PASSAGES",ratio=round(m/n,4))
+    if max(v.duration for v in vocal)>MAX_SINGLE_PASSAGE_DURATION_RATIO*duration:
+        return blocked("DOMINANT_PASSAGE")
+    lengths=_lengths_from_text(lyric_texts,romanizer)
+    priors=tuple(ctc_priors) if ctc_priors is not None else (None,)*n
+    if len(priors)!=n:return blocked("INVALID_PRIORS")
+    if m*MAX_LINES_PER_PASSAGE<n:return blocked("INSUFFICIENT_CAPACITY")
+    prefix=[0]
+    for v in lengths:prefix.append(prefix[-1]+v)
+    voice_before=[0.]
+    for v in vocal:voice_before.append(voice_before[-1]+v.duration)
+    total_voice=voice_before[-1]
+    dp=[[(math.inf,()),(math.inf,())] for _ in range(n+1)]
+    dp[0]=[(0.,()),(math.inf,())]
+    for j,passage in enumerate(vocal):
+        nxt=[[(math.inf,()),(math.inf,())] for _ in range(n+1)]
+        for done,paths in enumerate(dp):
+            for cost,path in paths:
+                if not math.isfinite(cost):continue
+                for count in range(min(MAX_LINES_PER_PASSAGE,n-done)+1):
+                    increment=SKIP_PENALTY if count==0 else _path_cost(
+                        passage,lengths[done:done+count],prefix[-1],total_voice,
+                        prefix[done],voice_before[j],priors,done)
+                    score=cost+increment
+                    slot=nxt[done+count];step=(*path,count)
+                    if score<slot[0][0]-1e-10:
+                        slot[1]=slot[0];slot[0]=(score,step)
+                    elif step!=slot[0][1] and score<slot[1][0]-1e-10:
+                        slot[1]=(score,step)
+        dp=nxt
+    best,runner=dp[n]
+    if not math.isfinite(best[0]):return blocked("NO_COMPLETE_DP_PATH")
+    margin=runner[0]-best[0] if math.isfinite(runner[0]) else 999.
+    if margin<MIN_GLOBAL_MARGIN:return blocked("AMBIGUOUS_DP",margin=round(margin,6))
+    if best[0]/n>MAX_DP_COST_PER_ROW:
+        return blocked("HIGH_DP_COST",cost_per_row=round(best[0]/n,4))
+    groups=[];assignments=[];idx=0
+    for j,(passage,count) in enumerate(zip(vocal,best[1])):
+        if not count:continue
+        group_lengths=lengths[idx:idx+count]
+        total=sum(group_lengths);running=0
+        for length in group_lengths:
+            t=passage.start+min(.10,passage.duration*.035)
+            t+=max(0.,passage.duration-min(.20,passage.duration*.07))*running/max(1,total)
+            assignments.append(SkeletonAssignment(j,round(t,3),
+               round(max(0.,min(1.,margin/(margin+1.0))),5)))
+            running+=length
+        groups.append((idx,idx+count,j));idx+=count
+    if idx!=n:return blocked("INCOMPLETE_ROW_ASSIGNMENT")
+    times=[q.initial_time_s for q in assignments]
+    if any(b<=a+.019 for a,b in zip(times,times[1:])):
+        return blocked("NONMONOTONIC_PROPOSED_STARTS")
+    return SkeletonPlan("READY","OK",vocal,tuple(assignments),tuple(groups),
+      round(best[0],6),round(margin,6),{
+       "passages":m,"rows":n,"ratio":round(m/n,4),
+       "mean_length":round(sum(lengths)/n,2),
+       "raw_asr_events_seen":len(raw_asr_events),
+       "DP_cost_per_row":round(best[0]/n,5),
+       "DP_margin":round(margin,6),
+       "params":{"merge_gap_s":MERGE_GAP_S,"min_passage_s":MIN_PASSAGE_S,
+        "max_interline_silence":MAX_INTERLINE_SILENCE,
+        "max_lines_per_passage":MAX_LINES_PER_PASSAGE,
+        "min_passage_line_ratio":MIN_PASSAGE_LINE_RATIO,
+        "max_dominant_ratio":MAX_SINGLE_PASSAGE_DURATION_RATIO,
+        "min_dp_margin":MIN_GLOBAL_MARGIN,
+        "max_cost_per_row":MAX_DP_COST_PER_ROW}
+      })
+
+def validate_local_ctc(plan:SkeletonPlan,rows:Sequence[dict[str,object]], *,
+                       duration:float,minimum_score:float=.0002)->tuple[bool,str]:
+    if plan.status!="READY":return False,plan.reason
+    if len(rows)!=len(plan.assignments):return False,"LOCAL_ROW_COUNT"
+    last=-1.
+    for row,match in zip(rows,plan.assignments):
+        t=row.get("start");s=row.get("ctc_score")
+        if not isinstance(t,(int,float)) or not math.isfinite(t):
+            return False,"LOCAL_INVALID_START"
+        if not isinstance(s,(int,float)) or not math.isfinite(s):
+            return False,"LOCAL_INVALID_SCORE"
+        passage=plan.passages[match.passage_index]
+        if not passage.start-.35<=t<=passage.end+.35 or not 0<=t<=duration:
+            return False,"LOCAL_OUTSIDE_PASSAGE"
+        if t<=last+.019:return False,"LOCAL_NONMONOTONIC"
+        spans=row.get("token_spans")
+        if not isinstance(spans,list) or not spans:return False,"LOCAL_MISSING_TOKEN_SPANS"
+        if s<minimum_score:return False,"LOCAL_WEAK_CTC_SUPPORT"
+        last=float(t)
+    return True,"VALID_LOCAL_CTC"
