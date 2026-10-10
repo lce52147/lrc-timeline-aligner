@@ -4278,6 +4278,27 @@ class LrcError(RuntimeError):
     pass
 
 
+class SegmentSkeletonRollback(LrcError):
+    """Full Central rejected this segment-current sequence; retry whole old run."""
+
+
+def segment_postcentral_nonmonotonic(
+    report: dict[str, object],
+    written_times: tuple[CanonicalWrittenTime, ...],
+) -> tuple[int, ...]:
+    """Only completed segment skeletons need a CTC retry.
+
+    This does not change a single Central decision, time, or proof state.
+    """
+    status = report.get("segment_skeleton_status")
+    if not isinstance(status, dict) or status.get("status") != "SEGMENT_CURRENT":
+        return ()
+    return tuple(
+        index+1 for index in range(1, len(written_times))
+        if written_times[index].centiseconds < written_times[index-1].centiseconds
+    )
+
+
 def validated_loaded_source_sha256() -> str:
     """Bind evidence to the code loaded on process startup, fail on mid-run edit.
 
@@ -36204,12 +36225,27 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
         if final_timing_state is not None
         else tuple(canonicalize_lrc_time(timestamp) for timestamp in timestamps)
     )
+    violations = segment_postcentral_nonmonotonic(report, written_times)
+    if violations and str(getattr(args, "skeleton", "ctc")) == "segment":
+        # Never write a mixed or backwards draft. Return to original whole
+        # backend competition, not a per-row timestamp repair.
+        raise SegmentSkeletonRollback(
+            f"segment-current final Central backtracks at rows {violations}"
+        )
     if args.probe:
         DEFAULT_PROBE_DIR.mkdir(parents=True, exist_ok=True)
     report_dir = Path(args.report_dir).expanduser().resolve() if args.report_dir else DEFAULT_REPORT_DIR
     report_path, audit_path, template_path = report_artifact_paths(audio_path, output_path, report_dir)
     metadata_lines = None
     report.setdefault("backend", timing_source)
+    if getattr(args, "option_a_rollback_reason", None):
+        report["segment_skeleton_status"] = {
+            "status": "FALLBACK_CTC",
+            "reason": "POSTCENTRAL_NONMONOTONIC",
+            "detail": str(args.option_a_rollback_reason)[:300],
+            "whole_song": True,
+            "BK_used": False,
+        }
     report["requested_timing_source"] = args.timing_source
     report["resolved_timing_source"] = timing_source
     report.update(
@@ -36529,7 +36565,16 @@ def main(argv: list[str] | None = None) -> int:
     for raw_audio in args.audio:
         temp_snapshot = _managed_temp_snapshot()
         try:
-            process_audio(Path(raw_audio).expanduser().resolve(), args)
+            try:
+                process_audio(Path(raw_audio).expanduser().resolve(), args)
+            except SegmentSkeletonRollback as retry_reason:
+                # Same exact input, full 1.2-style CTC/WhisperX competition,
+                # Central and reviewer recomputed. No partial row adoption.
+                progress_log(f"Option A whole-song Central rollback: {retry_reason}")
+                old_args = copy.copy(args)
+                old_args.skeleton = "ctc"
+                old_args.option_a_rollback_reason = str(retry_reason)
+                process_audio(Path(raw_audio).expanduser().resolve(), old_args)
         except LrcError as exc:
             failures += 1
             print(f"ERROR: {exc}", file=sys.stderr)
