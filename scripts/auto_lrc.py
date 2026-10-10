@@ -13281,6 +13281,19 @@ def run_auto_backend_competition(
         "refined_legacy_quality": round(selected_quality, 3),
     }
     selected_report["backend"] = selected_backend
+    if segment_ctc_seed is None and str(getattr(args,"skeleton","ctc"))=="segment":
+        # A failed segment pass must retain its whole-song fallback reason
+        # even when the unmodified 1.2 competition selects a hybrid/WX
+        # backend afterwards. This is diagnostic only.
+        for fallback_candidate in candidates:
+            failure_status=(
+                fallback_candidate.get("report",{}).get("segment_skeleton_status")
+                if isinstance(fallback_candidate.get("report"),dict) else None)
+            if (fallback_candidate.get("backend")=="ctc"
+                    and isinstance(failure_status,dict)
+                    and failure_status.get("status")=="FALLBACK_CTC"):
+                selected_report["segment_skeleton_status"]=copy.deepcopy(failure_status)
+                break
     if segment_ctc_seed is not None:
         # A successful segment skeleton is the sole positional current. The
         # failure path retains the entire original 1.2 backend competition.
