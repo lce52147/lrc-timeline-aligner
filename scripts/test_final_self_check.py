@@ -44,6 +44,34 @@ class H2Tests(unittest.TestCase):
         state,entries=self.make([3,8,13],['a','b','c'])
         g=l.compute_final_timing_self_check({'assignments':[{}, {'ctc_first_token_start':4.0},{}]},state,entries)
         self.assertIn('F4-ctc-final-disagreement',g['flags_by_entry']['2'])
+    def test_f4_preserved_global_ctc_source(self):
+        state,entries=self.make([160.89],['dream'])
+        report={'assignments':[{'ctc_first_token_start':160.89,
+               'global_ctc_first_token_start':164.79}]}
+        result=l.compute_final_timing_self_check(report,state,entries)
+        self.assertIn('F4-ctc-final-disagreement',result['flags_by_entry']['1'])
+
+    def test_f5_dream_row28_repeated_untrusted_flag_without_retiming(self):
+        words=[f'line_{i}' for i in range(30)]
+        words[12]=words[27]="I'm dreaming without you"
+        times=[float(i)*6 for i in range(30)]
+        times[27]=160.89
+        state,entries=self.make(times,words)
+        assignments=[{'ctc_first_token_start':t,'global_ctc_first_token_start':t}
+                     for t in times]
+        assignments[27]['global_ctc_first_token_start']=164.79
+        assignments[28]['global_ctc_first_token_start']=times[28]+3.9
+        report={'assignments':assignments,
+                'segment_skeleton_status':{'status':'SEGMENT_CURRENT'}}
+        result=l.compute_final_timing_self_check(report,state,entries)
+        self.assertIn('skeleton_global_ctc_disagreement',result['flags_by_entry']['28'])
+        self.assertNotIn('skeleton_global_ctc_disagreement',
+                         result['flags_by_entry'].get('29',[]))
+        self.assertEqual(state.decisions[27].written_time.seconds,160.89)
+        report['segment_skeleton_status']={'status':'FALLBACK_CTC'}
+        fallback=l.compute_final_timing_self_check(report,state,entries)
+        self.assertNotIn('skeleton_global_ctc_disagreement',fallback['flags_by_entry']['28'])
+
     def test_f3_nonmonotonic_two_lines(self):
         state,entries=self.make([4,3],['a','b'])
         data=l.compute_final_timing_self_check({'assignments':[{},{}]},state,entries)

@@ -57,6 +57,7 @@ class OptionAProductionTests(unittest.TestCase):
         times=[1.2,2.2,4.2,5.2]
         report={'backend':'ctc','ctc_audio_source':'vocal-stem',
                 'assignments':[{'entry':i+1,'timestamp':t,'ctc_score':.03,
+                   'ctc_first_token_start':t,
                    'ctc_token_spans':[{'start':t,'end':t+.1,'score':.5,'char':'a'}]}
                    for i,t in enumerate(times)],'ctc_acoustic_backtracks':[{'row':1}]}
         def fake_runner(cmd,timeout):
@@ -86,6 +87,12 @@ class OptionAProductionTests(unittest.TestCase):
             self.assertEqual(len(t),4)
             self.assertTrue(all(b>a for a,b in zip(t,t[1:])))
             self.assertNotIn('ctc_acoustic_backtracks',r)
+            self.assertEqual(r['global_ctc_diagnostics']['ctc_acoustic_backtracks'],[{'row':1}])
+            self.assertEqual([z['global_ctc_first_token_start'] for z in r['assignments']],
+                             [1.2,2.2,4.2,5.2])
+            self.assertEqual([z['global_ctc_score'] for z in r['assignments']],[.03]*4)
+            self.assertTrue(all(z['global_ctc_token_spans'][0]['char']=='a'
+                             for z in r['assignments']))
             self.assertTrue(all(z['timing_repair']=='segment-skeleton-local-ctc'
                                for z in r['assignments']))
     def test_any_helper_failure_retains_complete_global_original(self):

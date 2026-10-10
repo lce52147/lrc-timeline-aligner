@@ -24688,9 +24688,16 @@ def compute_final_timing_self_check(
             ) and decision.candidate.source.startswith("raw-")
         ):
             flagged[i].append("F2-repeated-content-identity")
-        first = assignment.get("ctc_first_token_start")
+        first = assignment.get("global_ctc_first_token_start", assignment.get("ctc_first_token_start"))
         if isinstance(first, (int, float)) and math.isfinite(float(first)) and abs(times[i - 1] - float(first)) > 1.0:
             flagged[i].append("F4-ctc-final-disagreement")
+        sk = report.get("segment_skeleton_status")
+        global_first = assignment.get("global_ctc_first_token_start")
+        if (isinstance(sk, dict) and sk.get("status") == "SEGMENT_CURRENT"
+            and counts[key] >= 2 and isinstance(global_first, (int, float))
+            and math.isfinite(float(global_first))
+            and abs(times[i - 1] - float(global_first)) > 3.0):
+            flagged[i].append("skeleton_global_ctc_disagreement")
     gaps=[b-a for a,b in zip(times,times[1:])]
     # Any backward timestamp is inherently invalid, even for only two lines.
     for index, gap in enumerate(gaps, 1):

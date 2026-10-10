@@ -1,0 +1,23 @@
+{
+  "status": "SEGMENT_CURRENT",
+  "row28": {
+    "BK": 164.65,
+    "P5_written": 160.89,
+    "preP5_written": 160.89,
+    "global_ctc_first_token_start": 164.794,
+    "ctc_first_token_start": 160.888,
+    "self_check_flags": [
+      "F4-ctc-final-disagreement",
+      "skeleton_global_ctc_disagreement"
+    ],
+    "final_self_check_flags": [
+      "F4-ctc-final-disagreement",
+      "skeleton_global_ctc_disagreement"
+    ],
+    "timing_trusted": false
+  },
+  "fresh_global_field_count": 30,
+  "line_count": 30,
+  "timestamp_match_rows": 30,
+  "timestamp_diffs": []
+}

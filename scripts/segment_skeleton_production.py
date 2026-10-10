@@ -212,6 +212,11 @@ def run_segment_skeleton(
         output_times=[float(row['start']) for row in rows]
         for i,(old,row,actual) in enumerate(zip(assignments,rows,output_times)):
             if not isinstance(old,dict):return fallback('ASSIGNMENT_INVALID')
+            # Preserve whole-song CTC as independent evidence before replacing
+            # the active, passage-local clocks and acoustic confidence.
+            old['global_ctc_first_token_start']=copy.deepcopy(old.get('ctc_first_token_start'))
+            old['global_ctc_score']=copy.deepcopy(old.get('ctc_score'))
+            old['global_ctc_token_spans']=copy.deepcopy(old.get('ctc_token_spans'))
             old.update({
               'timestamp':round(actual,3),
               'ctc_first_token_start':round(actual,3),
@@ -226,10 +231,16 @@ def run_segment_skeleton(
               'timing_repair_source':'torchaudio-mms-fa',
               'segment_dp_confidence':plan.assignments[i].confidence,
             })
-        # Never carry acoustic proposals from the abandoned global CTC path.
-        cloned.pop('ctc_acoustic_backtracks',None)
-        cloned.pop('ctc_boundary_validation_stages',None)
-        cloned.pop('ctc_local_window_realign',None)
+        # Preserve the original full-song diagnostics, without allowing
+        # abandoned global proposals to remain authoritative active fields.
+        global_keys=(
+            'ctc_acoustic_backtracks','ctc_boundary_validation_stages',
+            'ctc_local_window_realign','ctc_low_score_runs',
+            'ctc_confidence_collapse',
+        )
+        cloned['global_ctc_diagnostics']={
+            key:copy.deepcopy(cloned.pop(key,None)) for key in global_keys
+        }
         cloned['strategy']='segment-skeleton-mms-ctc'
         cloned['ctc_low_score_entries']=[
             {'entry':i+1,'text':lyric_texts[i],'ctc_score':a['ctc_score']}
