@@ -29,12 +29,14 @@ def compete_ctc_adjacent_boundaries(
     temp_dir: Path,
     runner: Callable[..., object],
     max_proposals: int = 6,
+    priority_rows: Sequence[int] = (),
 ) -> tuple[list[dict[str, object]] | None, dict[str, object]]:
     """Returns entire corrected row vector, or None on ANY helper/data error."""
     lookup = {int(x["row"]): dict(x) for x in rows}
     if len(lookup) != len(rows) or set(lookup) != set(range(1,len(rows)+1)):
         return None, {"status":"BLOCKED_INVALID_OLD_ROW_COVERAGE"}
     anchor_rows = {i for first,last,_ in anchored for i in range(first,last+1)}
+    priority_set = {int(i) for i in priority_rows}
     proposals = []
     used_bundles: set[int] = set()
     for i in range(len(bundles)-1):
@@ -47,10 +49,10 @@ def compete_ctc_adjacent_boundaries(
         first=lookup[right.start_row]
         move=None
         if (left.end_row>left.start_row and left.end_row not in anchor_rows
-            and 0<=float(last["ctc_score"])<.12):
+            and (0<=float(last["ctc_score"])<.12 or left.end_row in priority_set)):
             move=(left.end_row,"L_TO_R")
         elif (right.end_row>right.start_row and right.start_row not in anchor_rows
-              and 0<=float(first["ctc_score"])<.12):
+              and (0<=float(first["ctc_score"])<.12 or right.start_row in priority_set)):
             move=(right.start_row,"R_TO_L")
         if move is None:
             continue

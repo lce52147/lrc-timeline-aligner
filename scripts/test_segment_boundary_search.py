@@ -54,6 +54,16 @@ class BoundarySearchTests(unittest.TestCase):
         self.assertEqual(changed[1]["passage"],1)
         self.assertAlmostEqual(changed[1]["time"],3.12)
         self.assertEqual(self.rows[1]["passage"],0)
+    def test_p2_min_marginal_priority_routes_even_high_score_edge(self):
+        for row in self.rows:
+            row['ctc_score']=.5
+        unchanged,diag=self.run_search()
+        self.assertEqual(diag['proposals'],0)
+        refined,priority=self.run_search(priority_rows=(2,))
+        self.assertEqual(priority['status'],'BOUNDARY_RESEARCH_COMPLETE')
+        self.assertEqual(priority['proposals'],1)
+        self.assertIsNotNone(refined)
+
     def test_persistently_weak_alt_is_rejected(self):
         def weak(cmd,**kwargs):
             result=self.fake_runner(cmd,**kwargs)

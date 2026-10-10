@@ -4,7 +4,9 @@ from dataclasses import dataclass
 import math
 import unicodedata
 from collections import Counter
+from functools import lru_cache
 from typing import Sequence
+from segment_min_marginals import min_sum_passage_marginals
 from segment_structure import VocalPassage, merge_vocal_passages
 
 MERGE_GAP_S=.65
@@ -155,7 +157,34 @@ def plan_segment_skeleton(segments:Sequence[tuple[float,float]], *,
     best,runner=dp[n]
     if not math.isfinite(best[0]):return blocked("NO_COMPLETE_DP_PATH")
     margin=runner[0]-best[0] if math.isfinite(runner[0]) else 999.
-    if margin<MIN_GLOBAL_MARGIN:return blocked("AMBIGUOUS_DP",margin=round(margin,6))
+    # P2: independent min-sum forward/backward over the exact same graph
+    # as the monotonic Viterbi path.  Global runner-up margin is diagnostic
+    # only; one ambiguous adjacent boundary must not reject the whole song.
+    @lru_cache(maxsize=None)
+    def transition(j:int,done:int,count:int)->float:
+        if count==0:
+            return SKIP_PENALTY
+        return _path_cost(
+            vocal[j],lengths[done:done+count],prefix[-1],total_voice,
+            prefix[done],voice_before[j],priors,done,
+            lyrics_match=match_texts[done:done+count],
+            asr_match=asr_by_passage[j])
+    try:
+        marginal=min_sum_passage_marginals(
+            passage_count=m,row_count=n,transition=transition,
+            max_lines_per_passage=MAX_LINES_PER_PASSAGE,
+            ambiguity_limit=MIN_GLOBAL_MARGIN)
+    except ValueError as error:
+        return blocked("MIN_MARGINAL_UNAVAILABLE",detail=str(error)[:120])
+    if abs(marginal.global_cost-best[0])>1e-6:
+        return blocked("MIN_MARGINAL_OBJECTIVE_DRIFT",
+                       expected=round(best[0],6),
+                       computed=round(marginal.global_cost,6))
+    structural=tuple(marginal.nonadjacent_ambiguous_rows)
+    if len(structural)/n>.10:
+        return blocked("STRUCTURAL_DP_AMBIGUITY",
+                       nonadjacent_rows=list(structural),
+                       nonadjacent_fraction=round(len(structural)/n,5))
     if best[0]/n>MAX_DP_COST_PER_ROW:
         return blocked("HIGH_DP_COST",cost_per_row=round(best[0]/n,4))
     groups=[];assignments=[];idx=0
@@ -166,8 +195,10 @@ def plan_segment_skeleton(segments:Sequence[tuple[float,float]], *,
         for length in group_lengths:
             t=passage.start+min(.10,passage.duration*.035)
             t+=max(0.,passage.duration-min(.20,passage.duration*.07))*running/max(1,total)
+            row_marginal=marginal.rows[len(assignments)]
             assignments.append(SkeletonAssignment(j,round(t,3),
-               round(max(0.,min(1.,margin/(margin+1.0))),5)))
+               round(max(0.,row_marginal.confidence),5)
+               if math.isfinite(row_marginal.confidence) else 999.0))
             running+=length
         groups.append((idx,idx+count,j));idx+=count
     if idx!=n:return blocked("INCOMPLETE_ROW_ASSIGNMENT")
@@ -181,6 +212,15 @@ def plan_segment_skeleton(segments:Sequence[tuple[float,float]], *,
        "raw_asr_events_seen":len(raw_asr_events),
        "DP_cost_per_row":round(best[0]/n,5),
        "DP_margin":round(margin,6),
+       "P2_min_marginal":True,
+       "adjacent_ambiguous_rows":list(marginal.adjacent_ambiguous_rows),
+       "nonadjacent_ambiguous_rows":list(structural),
+       "per_line_min_marginal":[
+           {"entry":row.entry,"best_passage":row.best_passage,
+            "second_passage":row.alternative_passage,
+            "confidence":round(row.confidence,6) if math.isfinite(row.confidence) else None,
+            "ambiguity":row.ambiguity}
+           for row in marginal.rows],
        "params":{"merge_gap_s":MERGE_GAP_S,"min_passage_s":MIN_PASSAGE_S,
         "max_interline_silence":MAX_INTERLINE_SILENCE,
         "max_lines_per_passage":MAX_LINES_PER_PASSAGE,

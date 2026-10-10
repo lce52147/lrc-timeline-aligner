@@ -130,6 +130,7 @@ def run_segment_skeleton(
                     runner=lambda command,**kw:helper_runner(
                         command,timeout=float(kw.get("timeout",LOCAL_CTC_TIMEOUT_S))),
                     max_proposals=10,
+                    priority_rows=plan.diagnostics.get('adjacent_ambiguous_rows',()),
                 )
                 if refined is None:
                     return fallback("BOUNDARY_COMPETITION_FAILED",
@@ -176,6 +177,33 @@ def run_segment_skeleton(
                            if float(r.get('ctc_score') or 0.)<.005],
                 failed_proposal_rows=len(rows),
             )
+        # No BK clocks: require an independent raw-ASR paragraph text
+        # improvement for material structural relocation. Raw ASR also feeds
+        # P1 DP, so the evidence is corroborating, not independent proof.
+        from segment_asr_corroboration import check_asr_corroboration
+        output_times=[float(row['start']) for row in rows]
+        asr_corroboration=check_asr_corroboration(
+            lyric_texts=lyric_texts,global_times=original,
+            skeleton_times=output_times,raw_asr_events=raw_asr_events,
+            romanizer=romanizer)
+        if asr_corroboration.get('fallback'):
+            return fallback('ASR_UNCORROBORATED_STRUCTURE',
+                            raw_asr_corroboration=asr_corroboration)
+        # A local path in the selected passage alone cannot establish
+        # occurrence identity. Compare the SAME group text with adjacent
+        # passage windows before allowing any structural timing promotion.
+        from segment_group_acoustic import check_group_placement
+        placement_diag=check_group_placement(
+            rows=rows,passage_ids=row_to_passage,passages=plan.passages,
+            lyric_texts=lyric_texts,stem=vocal_stem,duration=duration,
+            python=python_exe,helper=ctc_helper,device=device,
+            runner=helper_runner,timeout=LOCAL_CTC_TIMEOUT_S)
+        if placement_diag.get('status')!='OK':
+            return fallback('GROUP_PLACEMENT_EVIDENCE_FAILED',
+                            group_placement=placement_diag)
+        if placement_diag.get('fallback'):
+            return fallback('GROUP_PLACEMENT_UNSUPPORTED',
+                            group_placement=placement_diag)
         # Same MMS CTC model on the same isolated stem: a wholesale
         # structural move must improve genuine acoustic fit over the global
         # weakly aligned path. High-volume changes require stronger evidence.
@@ -193,14 +221,19 @@ def run_segment_skeleton(
         gain=sum(y-x for x,y in zip(old_scores,new_scores))/len(rows)
         displaced=sum(abs(float(y["start"])-x)>DISPLACEMENT_SECONDS
                       for y,x in zip(rows,original))/len(rows)
-        if gain<MIN_GLOBAL_CTC_SCORE_GAIN or (
-                displaced>HIGH_DISPLACEMENT_FRACTION
-                and gain<HIGH_DISPLACEMENT_MIN_GAIN):
-            return fallback("INSUFFICIENT_GLOBAL_ACOUSTIC_SUPPORT",
-                mean_ctc_gain=round(gain,5),
-                displaced_fraction=round(displaced,5),
-                minimum_gain=MIN_GLOBAL_CTC_SCORE_GAIN,
-                high_displacement_min_gain=HIGH_DISPLACEMENT_MIN_GAIN)
+        # P3: global-path and short-window CTC path probabilities are not
+        # comparable calibration. The old gain/displacement rule is now
+        # read-only diagnostic; group-vs-neighbor CTC is the placement gate.
+        legacy_gain_diagnostics={
+            'mean_ctc_gain':round(gain,5),
+            'displaced_fraction':round(displaced,5),
+            'would_block_under_legacy_gain':bool(
+                gain<MIN_GLOBAL_CTC_SCORE_GAIN or (
+                    displaced>HIGH_DISPLACEMENT_FRACTION and
+                    gain<HIGH_DISPLACEMENT_MIN_GAIN)),
+            'legacy_gain_threshold':MIN_GLOBAL_CTC_SCORE_GAIN,
+            'legacy_high_displacement_gain_threshold':HIGH_DISPLACEMENT_MIN_GAIN,
+        }
         if cached is None:
             _RUNTIME_CACHE.clear()  # at most one all-song GPU result
             _RUNTIME_CACHE[cache_key]=(copy.deepcopy(rows),{
@@ -213,6 +246,20 @@ def run_segment_skeleton(
         if not isinstance(assignments,list) or len(assignments)!=len(rows):
             return fallback('ASSIGNMENT_COUNT_CHANGED')
         output_times=[float(row['start']) for row in rows]
+        # P5's documented F5 condition is a structural warning. While
+        # remediating P1, reject the entire new skeleton if that warning
+        # contradicts an original repeat occurrence by over 3 seconds.
+        # This is an acoustic/global-CTC evidence guard, not a BK lookup.
+        from collections import Counter
+        normalized=[audio_api.normalize_match_text(t) for t in lyric_texts]
+        repetitions=Counter(normalized)
+        repeat_conflicts=[i+1 for i,(key,prev,now)
+            in enumerate(zip(normalized,original,output_times))
+            if key and repetitions[key]>=2 and abs(now-prev)>3.0]
+        if repeat_conflicts and asr_corroboration.get('reason')!='CORROBORATED':
+            return fallback('REPEATED_SKELETON_GLOBAL_CTC_CONFLICT',
+                            entries=repeat_conflicts,
+                            comparison_threshold_seconds=3.0)
         for i,(old,row,actual) in enumerate(zip(assignments,rows,output_times)):
             if not isinstance(old,dict):return fallback('ASSIGNMENT_INVALID')
             # Preserve whole-song CTC as independent evidence before replacing
@@ -262,6 +309,41 @@ def run_segment_skeleton(
             {'entry':i+1,'text':lyric_texts[i],
              'flags':['ctc_low_path_confidence'],'severity':'medium','review_required':True}
             for i,a in enumerate(assignments) if a['ctc_score']<.03]
+        # Unsupported groups still below the all-song rollback threshold
+        # must remain review-required and untrusted without changing clocks.
+        for entry in placement_diag.get('unsupported_rows',[]):
+            index=int(entry)-1
+            assignment=assignments[index]
+            assignment['group_placement_unsupported']=True
+            flags=assignment.get('flags')
+            flags=list(flags) if isinstance(flags,list) else []
+            if 'group_placement_unsupported' not in flags:
+                flags.append('group_placement_unsupported')
+            assignment['flags']=flags
+            cloned['suspicious_alignments'].append({
+                'entry':index+1,'text':lyric_texts[index],
+                'flags':['group_placement_unsupported'],
+                'severity':'high','review_required':True})
+        # P2: marginal confidence measures another best complete path,
+        # not global second-path margin. Structural ambiguity left under
+        # the 10% atomic-rollback threshold must still be explicitly reviewed.
+        # P6: .0002 is the hard CTC floor; <.005 is additionally actionable.
+        for index,assignment in enumerate(assignments):
+            marks=[]
+            if index+1 in plan.diagnostics.get('nonadjacent_ambiguous_rows',()):
+                marks.append('segment_structural_ambiguity')
+            if float(assignment.get('ctc_score',0.0))<.005:
+                marks.append('segment_weak_ctc_support')
+            if marks:
+                flags=assignment.get('flags')
+                flags=list(flags) if isinstance(flags,list) else []
+                for mark in marks:
+                    if mark not in flags:flags.append(mark)
+                assignment['flags']=flags
+                assignment['segment_weak_ctc_untrusted']=True
+                cloned['suspicious_alignments'].append({
+                    'entry':index+1,'text':lyric_texts[index],
+                    'flags':marks,'severity':'high','review_required':True})
         cloned['suspicious_alignment_count']=len(cloned['suspicious_alignments'])
         cloned['review_required_count']=len(cloned['suspicious_alignments'])
         cloned['review_required']=bool(cloned['suspicious_alignments'])
@@ -278,6 +360,10 @@ def run_segment_skeleton(
           'displaced_fraction':round(displaced,5),
           'boundary_competition':boundary_diag,
           'two_dp_acoustic':dual_diag,
+          'group_placement_acoustic':placement_diag,
+          'raw_asr_corroboration':asr_corroboration,
+          'legacy_global_gain_diagnostics':legacy_gain_diagnostics,
+          'repeated_global_ctc_conflicts':repeat_conflicts,
           'runtime_cache_hit':cached is not None,
           'passage_energies':[
              {"start":round(p.start,3),"end":round(p.end,3),

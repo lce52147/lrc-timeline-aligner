@@ -23144,6 +23144,9 @@ ACTIONABLE_SUSPICIOUS_FLAGS = frozenset({
     "phonetic_anchor_disagreement",
     "duplicate_occurrence_offset_mismatch",
     "ctc_confidence_collapse",
+    "group_placement_unsupported",
+    "segment_structural_ambiguity",
+    "segment_weak_ctc_support",
 } | CTC_BOUNDARY_REVIEW_FLAGS)
 
 NON_ACTIONABLE_VERIFICATION_FAILURES = frozenset({
@@ -25447,6 +25450,8 @@ def assignment_timing_is_trusted(item: object) -> bool:
     for a second after the selected timestamp.
     """
     if not assignment_has_timing(item) or not isinstance(item, dict):
+        return False
+    if item.get("group_placement_unsupported") or item.get("segment_weak_ctc_untrusted"):
         return False
     if "timestamp_status" in item or "normalized_timing_evidence" in item:
         if item.get("timestamp_status") != "selected_valid":

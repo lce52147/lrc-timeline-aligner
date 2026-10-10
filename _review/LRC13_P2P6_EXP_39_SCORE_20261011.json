@@ -1,0 +1,1104 @@
+{
+  "status": "P2P6_EXP_LAYER_39_POSTHOC_SCORED",
+  "scope": "Skeleton-layer local CTC uses cached vocal stem and frozen pinned main CTC seed; no Central/WhisperX/reviewer",
+  "not_same_as_full_A7": "Frozen pinned main CTC alignment evidence may differ from global CTC at lrc-1.3 stage",
+  "experimental_p2p6_hard_gate_pass": false,
+  "active_worse_songs": [
+    "01.エガクミライ",
+    "06.ビビッド",
+    "01.おやすみモノクローム",
+    "02. JANE DOE",
+    "08.月の唄",
+    "10.深夜特急",
+    "12. 終点の先が在るとするならば。",
+    "远航星的告别 - 鸣潮先约电台,jixwang,Tarokiki"
+  ],
+  "counts": {
+    "rows": 1487,
+    "pco_old": 1285,
+    "pco_new": 1254,
+    "gt1_old": 115,
+    "gt1_new": 142,
+    "new_gt1": 31,
+    "new_backtracks": 0,
+    "active": 8
+  },
+  "songs": [
+    {
+      "song": "01. The Day the Starlight Arrived 星辉抵达之日",
+      "index": 1,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "GROUP_PLACEMENT_UNSUPPORTED",
+      "rows": 24,
+      "PCO200_old": 18,
+      "PCO200_new": 18,
+      "wrong_gt1_old": 2,
+      "wrong_gt1_new": 2,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 22.734,
+      "worse": false
+    },
+    {
+      "song": "01.エガクミライ",
+      "index": 2,
+      "active": true,
+      "status": "SEGMENT_CURRENT",
+      "reason": "VALID_LOCAL_CTC",
+      "rows": 27,
+      "PCO200_old": 27,
+      "PCO200_new": 25,
+      "wrong_gt1_old": 0,
+      "wrong_gt1_new": 0,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 14,
+      "stage_seconds": 20.531,
+      "worse": true
+    },
+    {
+      "song": "01.感情グラス",
+      "index": 3,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "STRUCTURAL_DP_AMBIGUITY",
+      "rows": 40,
+      "PCO200_old": 40,
+      "PCO200_new": 40,
+      "wrong_gt1_old": 0,
+      "wrong_gt1_new": 0,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 1.485,
+      "worse": false
+    },
+    {
+      "song": "03. Choir ‘S’ Choir",
+      "index": 4,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "GROUP_PLACEMENT_UNSUPPORTED",
+      "rows": 44,
+      "PCO200_old": 16,
+      "PCO200_new": 16,
+      "wrong_gt1_old": 22,
+      "wrong_gt1_new": 22,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 29.875,
+      "worse": false
+    },
+    {
+      "song": "03. 過去に囚われている",
+      "index": 5,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "REPEATED_SKELETON_GLOBAL_CTC_CONFLICT",
+      "rows": 68,
+      "PCO200_old": 65,
+      "PCO200_new": 65,
+      "wrong_gt1_old": 0,
+      "wrong_gt1_new": 0,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 28.157,
+      "worse": false
+    },
+    {
+      "song": "04 影色舞",
+      "index": 6,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "REPEATED_SKELETON_GLOBAL_CTC_CONFLICT",
+      "rows": 52,
+      "PCO200_old": 18,
+      "PCO200_new": 18,
+      "wrong_gt1_old": 32,
+      "wrong_gt1_new": 32,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 16.875,
+      "worse": false
+    },
+    {
+      "song": "06.ビビッド",
+      "index": 7,
+      "active": true,
+      "status": "SEGMENT_CURRENT",
+      "reason": "VALID_LOCAL_CTC",
+      "rows": 55,
+      "PCO200_old": 34,
+      "PCO200_new": 20,
+      "wrong_gt1_old": 3,
+      "wrong_gt1_new": 18,
+      "new_gt1": [
+        {
+          "line": 2,
+          "BK": 19.3,
+          "global_CTC": 19.382,
+          "local_skeleton": 18.22
+        },
+        {
+          "line": 3,
+          "BK": 22.5,
+          "global_CTC": 22.902,
+          "local_skeleton": 20.8
+        },
+        {
+          "line": 4,
+          "BK": 25.6,
+          "global_CTC": 25.802,
+          "local_skeleton": 27.042
+        },
+        {
+          "line": 5,
+          "BK": 30.3,
+          "global_CTC": 30.383,
+          "local_skeleton": 31.5
+        },
+        {
+          "line": 8,
+          "BK": 39.5,
+          "global_CTC": 39.784,
+          "local_skeleton": 42.22
+        },
+        {
+          "line": 10,
+          "BK": 47.4,
+          "global_CTC": 47.404,
+          "local_skeleton": 49.802
+        },
+        {
+          "line": 19,
+          "BK": 83.0,
+          "global_CTC": 83.187,
+          "local_skeleton": 85.3
+        },
+        {
+          "line": 27,
+          "BK": 109.5,
+          "global_CTC": 109.57,
+          "local_skeleton": 110.76
+        },
+        {
+          "line": 28,
+          "BK": 114.0,
+          "global_CTC": 113.89,
+          "local_skeleton": 115.54
+        },
+        {
+          "line": 31,
+          "BK": 124.0,
+          "global_CTC": 124.231,
+          "local_skeleton": 117.609
+        },
+        {
+          "line": 32,
+          "BK": 127.3,
+          "global_CTC": 127.431,
+          "local_skeleton": 120.8
+        },
+        {
+          "line": 39,
+          "BK": 151.0,
+          "global_CTC": 151.014,
+          "local_skeleton": 147.698
+        },
+        {
+          "line": 40,
+          "BK": 152.6,
+          "global_CTC": 152.614,
+          "local_skeleton": 148.158
+        },
+        {
+          "line": 41,
+          "BK": 157.3,
+          "global_CTC": 157.414,
+          "local_skeleton": 149.799
+        },
+        {
+          "line": 42,
+          "BK": 159.0,
+          "global_CTC": 159.074,
+          "local_skeleton": 150.139
+        },
+        {
+          "line": 43,
+          "BK": 161.0,
+          "global_CTC": 160.994,
+          "local_skeleton": 150.82
+        },
+        {
+          "line": 44,
+          "BK": 162.6,
+          "global_CTC": 162.615,
+          "local_skeleton": 153.62
+        }
+      ],
+      "new_backtracks": [],
+      "changed_clocks": 34,
+      "stage_seconds": 27.906,
+      "worse": true
+    },
+    {
+      "song": "10.方舟",
+      "index": 8,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "GROUP_PLACEMENT_UNSUPPORTED",
+      "rows": 37,
+      "PCO200_old": 34,
+      "PCO200_new": 34,
+      "wrong_gt1_old": 0,
+      "wrong_gt1_new": 0,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 20.984,
+      "worse": false
+    },
+    {
+      "song": "11.ユートピア",
+      "index": 9,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "INSUFFICIENT_GLOBAL_ACOUSTIC_SUPPORT",
+      "rows": 32,
+      "PCO200_old": 32,
+      "PCO200_new": 32,
+      "wrong_gt1_old": 0,
+      "wrong_gt1_new": 0,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 16.938,
+      "worse": false
+    },
+    {
+      "song": "Ever be my love",
+      "index": 10,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "GROUP_PLACEMENT_UNSUPPORTED",
+      "rows": 24,
+      "PCO200_old": 18,
+      "PCO200_new": 18,
+      "wrong_gt1_old": 1,
+      "wrong_gt1_new": 1,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 16.89,
+      "worse": false
+    },
+    {
+      "song": "01 - フロム",
+      "index": 11,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "GROUP_PLACEMENT_UNSUPPORTED",
+      "rows": 35,
+      "PCO200_old": 34,
+      "PCO200_new": 34,
+      "wrong_gt1_old": 0,
+      "wrong_gt1_new": 0,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 23.344,
+      "worse": false
+    },
+    {
+      "song": "01. Elegy Dedicated With Love",
+      "index": 12,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "STRUCTURAL_DP_AMBIGUITY",
+      "rows": 37,
+      "PCO200_old": 35,
+      "PCO200_new": 35,
+      "wrong_gt1_old": 1,
+      "wrong_gt1_new": 1,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 2.609,
+      "worse": false
+    },
+    {
+      "song": "01.おやすみモノクローム",
+      "index": 13,
+      "active": true,
+      "status": "SEGMENT_CURRENT",
+      "reason": "VALID_LOCAL_CTC",
+      "rows": 40,
+      "PCO200_old": 39,
+      "PCO200_new": 32,
+      "wrong_gt1_old": 0,
+      "wrong_gt1_new": 6,
+      "new_gt1": [
+        {
+          "line": 4,
+          "BK": 18.42,
+          "global_CTC": 18.441,
+          "local_skeleton": 19.94
+        },
+        {
+          "line": 5,
+          "BK": 28.9,
+          "global_CTC": 28.922,
+          "local_skeleton": 30.44
+        },
+        {
+          "line": 15,
+          "BK": 86.29,
+          "global_CTC": 86.307,
+          "local_skeleton": 89.6
+        },
+        {
+          "line": 18,
+          "BK": 100.15,
+          "global_CTC": 100.168,
+          "local_skeleton": 101.62
+        },
+        {
+          "line": 30,
+          "BK": 169.31,
+          "global_CTC": 169.333,
+          "local_skeleton": 172.92
+        },
+        {
+          "line": 33,
+          "BK": 186.57,
+          "global_CTC": 186.614,
+          "local_skeleton": 189.08
+        }
+      ],
+      "new_backtracks": [],
+      "changed_clocks": 20,
+      "stage_seconds": 26.782,
+      "worse": true
+    },
+    {
+      "song": "01. それでも雨は降るんだね",
+      "index": 14,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "GROUP_PLACEMENT_UNSUPPORTED",
+      "rows": 55,
+      "PCO200_old": 55,
+      "PCO200_new": 55,
+      "wrong_gt1_old": 0,
+      "wrong_gt1_new": 0,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 29.141,
+      "worse": false
+    },
+    {
+      "song": "01. ふり",
+      "index": 15,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "TOO_FEW_PASSAGES",
+      "rows": 57,
+      "PCO200_old": 54,
+      "PCO200_new": 54,
+      "wrong_gt1_old": 0,
+      "wrong_gt1_new": 0,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 0.516,
+      "worse": false
+    },
+    {
+      "song": "01. やっぱり雨は降るんだね",
+      "index": 16,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "TOO_FEW_PASSAGES",
+      "rows": 67,
+      "PCO200_old": 67,
+      "PCO200_new": 67,
+      "wrong_gt1_old": 0,
+      "wrong_gt1_new": 0,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 0.578,
+      "worse": false
+    },
+    {
+      "song": "01.ミレニアの水槽",
+      "index": 17,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "GROUP_PLACEMENT_UNSUPPORTED",
+      "rows": 45,
+      "PCO200_old": 32,
+      "PCO200_new": 32,
+      "wrong_gt1_old": 10,
+      "wrong_gt1_new": 10,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 25.64,
+      "worse": false
+    },
+    {
+      "song": "01.最大幸福度",
+      "index": 18,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "GROUP_PLACEMENT_UNSUPPORTED",
+      "rows": 45,
+      "PCO200_old": 42,
+      "PCO200_new": 42,
+      "wrong_gt1_old": 0,
+      "wrong_gt1_new": 0,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 24.328,
+      "worse": false
+    },
+    {
+      "song": "01. 芽吹くとき",
+      "index": 19,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "INSUFFICIENT_GLOBAL_ACOUSTIC_SUPPORT",
+      "rows": 25,
+      "PCO200_old": 24,
+      "PCO200_new": 24,
+      "wrong_gt1_old": 0,
+      "wrong_gt1_new": 0,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 18.329,
+      "worse": false
+    },
+    {
+      "song": "01. 雨模様",
+      "index": 20,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "TOO_FEW_PASSAGES",
+      "rows": 49,
+      "PCO200_old": 43,
+      "PCO200_new": 43,
+      "wrong_gt1_old": 1,
+      "wrong_gt1_new": 1,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 0.406,
+      "worse": false
+    },
+    {
+      "song": "02. Georgette Me, Georgette You",
+      "index": 21,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "GROUP_PLACEMENT_UNSUPPORTED",
+      "rows": 18,
+      "PCO200_old": 13,
+      "PCO200_new": 13,
+      "wrong_gt1_old": 5,
+      "wrong_gt1_new": 5,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 19.625,
+      "worse": false
+    },
+    {
+      "song": "02. JANE DOE",
+      "index": 22,
+      "active": true,
+      "status": "SEGMENT_CURRENT",
+      "reason": "VALID_LOCAL_CTC",
+      "rows": 24,
+      "PCO200_old": 21,
+      "PCO200_new": 20,
+      "wrong_gt1_old": 1,
+      "wrong_gt1_new": 2,
+      "new_gt1": [
+        {
+          "line": 17,
+          "BK": 124.23,
+          "global_CTC": 124.685,
+          "local_skeleton": 121.135
+        },
+        {
+          "line": 18,
+          "BK": 130.06,
+          "global_CTC": 130.066,
+          "local_skeleton": 131.48
+        }
+      ],
+      "new_backtracks": [],
+      "changed_clocks": 8,
+      "stage_seconds": 19.109,
+      "worse": true
+    },
+    {
+      "song": "03.春を待つ (feat. 倚水)",
+      "index": 23,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "INSUFFICIENT_GLOBAL_ACOUSTIC_SUPPORT",
+      "rows": 39,
+      "PCO200_old": 39,
+      "PCO200_new": 39,
+      "wrong_gt1_old": 0,
+      "wrong_gt1_new": 0,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 23.813,
+      "worse": false
+    },
+    {
+      "song": "04. Scarborough Fair",
+      "index": 24,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "GROUP_PLACEMENT_UNSUPPORTED",
+      "rows": 14,
+      "PCO200_old": 13,
+      "PCO200_new": 13,
+      "wrong_gt1_old": 1,
+      "wrong_gt1_new": 1,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 9.328,
+      "worse": false
+    },
+    {
+      "song": "04.可惜夜",
+      "index": 25,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "INSUFFICIENT_GLOBAL_ACOUSTIC_SUPPORT",
+      "rows": 24,
+      "PCO200_old": 23,
+      "PCO200_new": 23,
+      "wrong_gt1_old": 0,
+      "wrong_gt1_new": 0,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 16.89,
+      "worse": false
+    },
+    {
+      "song": "05.遠雷",
+      "index": 26,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "INSUFFICIENT_GLOBAL_ACOUSTIC_SUPPORT",
+      "rows": 28,
+      "PCO200_old": 27,
+      "PCO200_new": 27,
+      "wrong_gt1_old": 0,
+      "wrong_gt1_new": 0,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 19.704,
+      "worse": false
+    },
+    {
+      "song": "06. あの世行きのバスに乗ってさらば。",
+      "index": 27,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "GROUP_PLACEMENT_UNSUPPORTED",
+      "rows": 40,
+      "PCO200_old": 34,
+      "PCO200_new": 34,
+      "wrong_gt1_old": 2,
+      "wrong_gt1_new": 2,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 24.218,
+      "worse": false
+    },
+    {
+      "song": "08.月の唄",
+      "index": 28,
+      "active": true,
+      "status": "SEGMENT_CURRENT",
+      "reason": "VALID_LOCAL_CTC",
+      "rows": 38,
+      "PCO200_old": 36,
+      "PCO200_new": 36,
+      "wrong_gt1_old": 0,
+      "wrong_gt1_new": 1,
+      "new_gt1": [
+        {
+          "line": 4,
+          "BK": 38.47,
+          "global_CTC": 38.482,
+          "local_skeleton": 40.9
+        }
+      ],
+      "new_backtracks": [],
+      "changed_clocks": 6,
+      "stage_seconds": 23.25,
+      "worse": true
+    },
+    {
+      "song": "08 春日影 (MyGO!!!!! Ver.)",
+      "index": 29,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "INSUFFICIENT_GLOBAL_ACOUSTIC_SUPPORT",
+      "rows": 39,
+      "PCO200_old": 38,
+      "PCO200_new": 38,
+      "wrong_gt1_old": 0,
+      "wrong_gt1_new": 0,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 25.25,
+      "worse": false
+    },
+    {
+      "song": "09. ツユ - レインフォール",
+      "index": 30,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "INSUFFICIENT_GLOBAL_ACOUSTIC_SUPPORT",
+      "rows": 74,
+      "PCO200_old": 71,
+      "PCO200_new": 71,
+      "wrong_gt1_old": 0,
+      "wrong_gt1_new": 0,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 34.422,
+      "worse": false
+    },
+    {
+      "song": "10.深夜特急",
+      "index": 31,
+      "active": true,
+      "status": "SEGMENT_CURRENT",
+      "reason": "VALID_LOCAL_CTC",
+      "rows": 41,
+      "PCO200_old": 41,
+      "PCO200_new": 39,
+      "wrong_gt1_old": 0,
+      "wrong_gt1_new": 2,
+      "new_gt1": [
+        {
+          "line": 5,
+          "BK": 47.38,
+          "global_CTC": 47.364,
+          "local_skeleton": 50.78
+        },
+        {
+          "line": 21,
+          "BK": 126.21,
+          "global_CTC": 126.211,
+          "local_skeleton": 129.54
+        }
+      ],
+      "new_backtracks": [],
+      "changed_clocks": 15,
+      "stage_seconds": 21.235,
+      "worse": true
+    },
+    {
+      "song": "12. ツユ - 朧月夜物語",
+      "index": 32,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "GROUP_PLACEMENT_UNSUPPORTED",
+      "rows": 23,
+      "PCO200_old": 19,
+      "PCO200_new": 19,
+      "wrong_gt1_old": 3,
+      "wrong_gt1_new": 3,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 15.281,
+      "worse": false
+    },
+    {
+      "song": "12.琥珀の国",
+      "index": 33,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "INSUFFICIENT_GLOBAL_ACOUSTIC_SUPPORT",
+      "rows": 32,
+      "PCO200_old": 31,
+      "PCO200_new": 31,
+      "wrong_gt1_old": 0,
+      "wrong_gt1_new": 0,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 20.359,
+      "worse": false
+    },
+    {
+      "song": "12. 終点の先が在るとするならば。",
+      "index": 34,
+      "active": true,
+      "status": "SEGMENT_CURRENT",
+      "reason": "VALID_LOCAL_CTC",
+      "rows": 32,
+      "PCO200_old": 25,
+      "PCO200_new": 24,
+      "wrong_gt1_old": 4,
+      "wrong_gt1_new": 4,
+      "new_gt1": [
+        {
+          "line": 19,
+          "BK": 72.82,
+          "global_CTC": 72.764,
+          "local_skeleton": 75.502
+        }
+      ],
+      "new_backtracks": [],
+      "changed_clocks": 23,
+      "stage_seconds": 17.0,
+      "worse": true
+    },
+    {
+      "song": "13.薔薇の下で",
+      "index": 35,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "GROUP_PLACEMENT_UNSUPPORTED",
+      "rows": 30,
+      "PCO200_old": 30,
+      "PCO200_new": 30,
+      "wrong_gt1_old": 0,
+      "wrong_gt1_new": 0,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 22.844,
+      "worse": false
+    },
+    {
+      "song": "持续瞬间的永恒 - 鸣潮先约电台,jixwang,markmilian",
+      "index": 36,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "INSUFFICIENT_GLOBAL_ACOUSTIC_SUPPORT",
+      "rows": 27,
+      "PCO200_old": 26,
+      "PCO200_new": 26,
+      "wrong_gt1_old": 0,
+      "wrong_gt1_new": 0,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 16.797,
+      "worse": false
+    },
+    {
+      "song": "远航星的告别 - 鸣潮先约电台,jixwang,Tarokiki",
+      "index": 37,
+      "active": true,
+      "status": "SEGMENT_CURRENT",
+      "reason": "VALID_LOCAL_CTC",
+      "rows": 33,
+      "PCO200_old": 26,
+      "PCO200_new": 22,
+      "wrong_gt1_old": 0,
+      "wrong_gt1_new": 2,
+      "new_gt1": [
+        {
+          "line": 1,
+          "BK": 23.5,
+          "global_CTC": 23.543,
+          "local_skeleton": 25.44
+        },
+        {
+          "line": 19,
+          "BK": 108.5,
+          "global_CTC": 108.552,
+          "local_skeleton": 111.08
+        }
+      ],
+      "new_backtracks": [],
+      "changed_clocks": 12,
+      "stage_seconds": 14.015,
+      "worse": true
+    },
+    {
+      "song": "09.夢遊",
+      "index": 38,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "REPEATED_SKELETON_GLOBAL_CTC_CONFLICT",
+      "rows": 30,
+      "PCO200_old": 25,
+      "PCO200_new": 25,
+      "wrong_gt1_old": 4,
+      "wrong_gt1_new": 4,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 20.625,
+      "worse": false
+    },
+    {
+      "song": "01 My Dearest",
+      "index": 39,
+      "active": false,
+      "status": "FALLBACK_CTC",
+      "reason": "INSUFFICIENT_GLOBAL_ACOUSTIC_SUPPORT",
+      "rows": 43,
+      "PCO200_old": 20,
+      "PCO200_new": 20,
+      "wrong_gt1_old": 23,
+      "wrong_gt1_new": 23,
+      "new_gt1": [],
+      "new_backtracks": [],
+      "changed_clocks": 0,
+      "stage_seconds": 29.797,
+      "worse": false
+    }
+  ],
+  "introduced_gt1": [
+    {
+      "song": "06.ビビッド",
+      "line": 2,
+      "BK": 19.3,
+      "global_CTC": 19.382,
+      "local_skeleton": 18.22
+    },
+    {
+      "song": "06.ビビッド",
+      "line": 3,
+      "BK": 22.5,
+      "global_CTC": 22.902,
+      "local_skeleton": 20.8
+    },
+    {
+      "song": "06.ビビッド",
+      "line": 4,
+      "BK": 25.6,
+      "global_CTC": 25.802,
+      "local_skeleton": 27.042
+    },
+    {
+      "song": "06.ビビッド",
+      "line": 5,
+      "BK": 30.3,
+      "global_CTC": 30.383,
+      "local_skeleton": 31.5
+    },
+    {
+      "song": "06.ビビッド",
+      "line": 8,
+      "BK": 39.5,
+      "global_CTC": 39.784,
+      "local_skeleton": 42.22
+    },
+    {
+      "song": "06.ビビッド",
+      "line": 10,
+      "BK": 47.4,
+      "global_CTC": 47.404,
+      "local_skeleton": 49.802
+    },
+    {
+      "song": "06.ビビッド",
+      "line": 19,
+      "BK": 83.0,
+      "global_CTC": 83.187,
+      "local_skeleton": 85.3
+    },
+    {
+      "song": "06.ビビッド",
+      "line": 27,
+      "BK": 109.5,
+      "global_CTC": 109.57,
+      "local_skeleton": 110.76
+    },
+    {
+      "song": "06.ビビッド",
+      "line": 28,
+      "BK": 114.0,
+      "global_CTC": 113.89,
+      "local_skeleton": 115.54
+    },
+    {
+      "song": "06.ビビッド",
+      "line": 31,
+      "BK": 124.0,
+      "global_CTC": 124.231,
+      "local_skeleton": 117.609
+    },
+    {
+      "song": "06.ビビッド",
+      "line": 32,
+      "BK": 127.3,
+      "global_CTC": 127.431,
+      "local_skeleton": 120.8
+    },
+    {
+      "song": "06.ビビッド",
+      "line": 39,
+      "BK": 151.0,
+      "global_CTC": 151.014,
+      "local_skeleton": 147.698
+    },
+    {
+      "song": "06.ビビッド",
+      "line": 40,
+      "BK": 152.6,
+      "global_CTC": 152.614,
+      "local_skeleton": 148.158
+    },
+    {
+      "song": "06.ビビッド",
+      "line": 41,
+      "BK": 157.3,
+      "global_CTC": 157.414,
+      "local_skeleton": 149.799
+    },
+    {
+      "song": "06.ビビッド",
+      "line": 42,
+      "BK": 159.0,
+      "global_CTC": 159.074,
+      "local_skeleton": 150.139
+    },
+    {
+      "song": "06.ビビッド",
+      "line": 43,
+      "BK": 161.0,
+      "global_CTC": 160.994,
+      "local_skeleton": 150.82
+    },
+    {
+      "song": "06.ビビッド",
+      "line": 44,
+      "BK": 162.6,
+      "global_CTC": 162.615,
+      "local_skeleton": 153.62
+    },
+    {
+      "song": "01.おやすみモノクローム",
+      "line": 4,
+      "BK": 18.42,
+      "global_CTC": 18.441,
+      "local_skeleton": 19.94
+    },
+    {
+      "song": "01.おやすみモノクローム",
+      "line": 5,
+      "BK": 28.9,
+      "global_CTC": 28.922,
+      "local_skeleton": 30.44
+    },
+    {
+      "song": "01.おやすみモノクローム",
+      "line": 15,
+      "BK": 86.29,
+      "global_CTC": 86.307,
+      "local_skeleton": 89.6
+    },
+    {
+      "song": "01.おやすみモノクローム",
+      "line": 18,
+      "BK": 100.15,
+      "global_CTC": 100.168,
+      "local_skeleton": 101.62
+    },
+    {
+      "song": "01.おやすみモノクローム",
+      "line": 30,
+      "BK": 169.31,
+      "global_CTC": 169.333,
+      "local_skeleton": 172.92
+    },
+    {
+      "song": "01.おやすみモノクローム",
+      "line": 33,
+      "BK": 186.57,
+      "global_CTC": 186.614,
+      "local_skeleton": 189.08
+    },
+    {
+      "song": "02. JANE DOE",
+      "line": 17,
+      "BK": 124.23,
+      "global_CTC": 124.685,
+      "local_skeleton": 121.135
+    },
+    {
+      "song": "02. JANE DOE",
+      "line": 18,
+      "BK": 130.06,
+      "global_CTC": 130.066,
+      "local_skeleton": 131.48
+    },
+    {
+      "song": "08.月の唄",
+      "line": 4,
+      "BK": 38.47,
+      "global_CTC": 38.482,
+      "local_skeleton": 40.9
+    },
+    {
+      "song": "10.深夜特急",
+      "line": 5,
+      "BK": 47.38,
+      "global_CTC": 47.364,
+      "local_skeleton": 50.78
+    },
+    {
+      "song": "10.深夜特急",
+      "line": 21,
+      "BK": 126.21,
+      "global_CTC": 126.211,
+      "local_skeleton": 129.54
+    },
+    {
+      "song": "12. 終点の先が在るとするならば。",
+      "line": 19,
+      "BK": 72.82,
+      "global_CTC": 72.764,
+      "local_skeleton": 75.502
+    },
+    {
+      "song": "远航星的告别 - 鸣潮先约电台,jixwang,Tarokiki",
+      "line": 1,
+      "BK": 23.5,
+      "global_CTC": 23.543,
+      "local_skeleton": 25.44
+    },
+    {
+      "song": "远航星的告别 - 鸣潮先约电台,jixwang,Tarokiki",
+      "line": 19,
+      "BK": 108.5,
+      "global_CTC": 108.552,
+      "local_skeleton": 111.08
+    }
+  ],
+  "BK_scoring_only_after_inference": true
+}

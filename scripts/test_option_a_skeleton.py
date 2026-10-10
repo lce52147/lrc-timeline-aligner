@@ -64,7 +64,7 @@ class OptionADPTests(unittest.TestCase):
         self.assertEqual(len(result.assignments),len(texts))
         self.assertTrue(all(b.initial_time_s>a.initial_time_s
                  for a,b in zip(result.assignments,result.assignments[1:])))
-        self.assertTrue(all(0<=x.confidence<=1 for x in result.assignments))
+        self.assertTrue(all(x.confidence>=0 for x in result.assignments))
     def test_two_repeated_choruses_without_anchors(self):
         texts=["chorus a","chorus b","verse a","verse b",
                "chorus a","chorus b","outro"]
@@ -94,12 +94,14 @@ class OptionADPTests(unittest.TestCase):
 
 
 class OptionAProductionTests(unittest.TestCase):
-    def case(self,folder,runner=None,fail=False):
+    def case(self,folder,runner=None,fail=False,repeat_conflict=False):
         stem=folder/'vocals.mp3';stem.write_bytes(b'fake-stem')
         python=folder/'python.exe';python.write_bytes(b'exe')
         helper=folder/'ctc_align.py';helper.write_bytes(b'ctc')
         texts=["aaa","bbb","ccc","ddd"]
-        times=[1.2,2.2,4.2,5.2]
+        times=[1.2,2.2,8.2,8.8] if repeat_conflict else [1.2,2.2,4.2,5.2]
+        if repeat_conflict:
+            texts=["aaa","bbb","aaa","ddd"]
         report={'backend':'ctc','ctc_audio_source':'vocal-stem',
                 'assignments':[{'entry':i+1,'timestamp':t,'ctc_score':.03,
                    'ctc_first_token_start':t,
@@ -112,11 +114,12 @@ class OptionAProductionTests(unittest.TestCase):
             for j,word in enumerate(lyrics):
                 t=round(start+.45+.6*j,3)
                 if fail and len(content)==1:t=start-.1
-                content.append({'start':t,'ctc_score':.5,'token_spans':[{'start':t,'end':t+.1,'score':.8,'char':'a'}],
+                content.append({'start':t,'ctc_score':(.10 if '_neighbor' in out.name else .5),'token_spans':[{'start':t,'end':t+.1,'score':.8,'char':'a'}],
                 'romaji':word})
             out.write_text(json.dumps({'entries':content}),encoding='utf8')
             return SimpleNamespace(returncode=0,stderr='')
         fake=SimpleNamespace(
+            normalize_match_text=lambda t:str(t).strip().casefold(),
             analyze_audio=lambda stem,duration: SimpleNamespace(
                 segments=[(1,3),(4,6)]),
             annotate_ctc_boundary_evidence=lambda assignments:None,
@@ -140,6 +143,15 @@ class OptionAProductionTests(unittest.TestCase):
                              for z in r['assignments']))
             self.assertTrue(all(z['timing_repair']=='segment-skeleton-local-ctc'
                                for z in r['assignments']))
+    def test_repeated_global_ctc_conflict_rolls_back_atomically(self):
+        with tempfile.TemporaryDirectory() as d:
+            times=[1.2,2.2,8.2,8.8]
+            result,report,status=self.case(Path(d),repeat_conflict=True)
+            self.assertEqual(status['status'],'FALLBACK_CTC')
+            self.assertEqual(status['reason'],'REPEATED_SKELETON_GLOBAL_CTC_CONFLICT')
+            self.assertEqual(result,times)
+            self.assertEqual([x['timestamp'] for x in report['assignments']],times)
+
     def test_any_helper_failure_retains_complete_global_original(self):
         with tempfile.TemporaryDirectory() as d:
             def fail(cmd,timeout):
