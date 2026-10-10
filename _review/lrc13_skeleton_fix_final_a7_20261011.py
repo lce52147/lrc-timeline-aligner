@@ -13,11 +13,17 @@ if not gate_path.is_file():raise SystemExit('FINAL_A7_BLOCKED_NO_A6_GATE')
 gate=json.loads(gate_path.read_text(encoding='utf8'))
 if gate.get('experimental_asr_correlated_hard_gate_pass')!=True:
  raise SystemExit('A7_BLOCKED_A6_NOT_PASS: '+str(gate.get('status')))
-ab_path=V/'LRC13_SKELETON_FIX_FINAL_7_AB_20261011'/'FINAL7_SERIAL_MANIFEST.json'
+ab_path=V/'LRC13_OPTION_A_FINAL7_FULL_CENTRAL_20261010'/'FINAL7_SERIAL_MANIFEST.json'
 if not ab_path.is_file():raise SystemExit('A7_BLOCKED_FULL_7_NOT_RUN')
 ab=json.loads(ab_path.read_text(encoding='utf8'))
 if len(ab.get('cases',[]))!=14 or any(x.get('status')!='GENERATED' for x in ab.get('cases',[])):
  raise SystemExit('A7_BLOCKED_FULL_7_NOT_ALL_GENERATED')
+ab_score_path=V/'LRC13_SKELETON_FIX_FINAL7_SCORE_20261011.json'
+if not ab_score_path.is_file():
+ raise SystemExit('A7_BLOCKED_FULL7_SCORE_MISSING')
+ab_score=json.loads(ab_score_path.read_text(encoding='utf8'))
+if ab_score.get('gate')!='PASS_FINAL7_AB':
+ raise SystemExit('A7_BLOCKED_FULL7_NOT_PASS')
 corpus=json.loads((V/'LRC13_S5_39_CORPUS_PREFLIGHT_20261010.json').read_text(encoding='utf8'))
 assert len(corpus['corpus'])==39 and corpus['summary']['paths_complete']==39
 out=V/'LRC13_SKELETON_FIX_FINAL_A7_39_20261011'
