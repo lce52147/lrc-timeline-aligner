@@ -10284,6 +10284,7 @@ def try_ctc_candidate(
                         command, mode="ctc"
                     ),
                     romanizer=japanese_romaji,
+                    raw_asr_events=getattr(args,'_skeleton_raw_asr_events',()),
                 )
             else:
                 report["segment_skeleton_status"] = {
@@ -12974,6 +12975,16 @@ def run_auto_backend_competition(
 
     if default_ctc_ready():
         progress_log("running CTC candidate")
+        # Synthetic caller/test arguments may be immutable objects; only
+        # argparse-style mutable namespaces carry optional raw ASR context.
+        raw_skeleton_events = tuple(
+            (float(s.start),float(s.end),str(s.text))
+            for s in (raw_diagnostic_segments or ())
+        )
+        try:
+            setattr(args, '_skeleton_raw_asr_events', raw_skeleton_events)
+        except (AttributeError, TypeError):
+            pass
         ctc_timestamps, ctc_report, ctc_error = try_ctc_candidate(audio_path, entries, duration, args)
         if not ctc_error and isinstance(ctc_report, dict):
             progress_log(

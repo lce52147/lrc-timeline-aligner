@@ -2,6 +2,8 @@
 from __future__ import annotations
 from dataclasses import dataclass
 import math
+import unicodedata
+from collections import Counter
 from typing import Sequence
 from segment_structure import VocalPassage, merge_vocal_passages
 
@@ -13,6 +15,7 @@ MIN_PASSAGE_LINE_RATIO=.20
 MAX_SINGLE_PASSAGE_DURATION_RATIO=.60
 MIN_GLOBAL_MARGIN=.03
 MAX_DP_COST_PER_ROW=2.8
+W_ASR=1.0
 CTC_PRIOR_WEIGHT=.035
 MAX_CTC_PRIOR_PENALTY=4.
 SKIP_PENALTY=.70
@@ -34,6 +37,42 @@ class SkeletonPlan:
     dp_margin:float
     diagnostics:dict[str,object]
 
+def _text_for_match(value:str, romanizer:object=None)->str:
+    """Stable, BK-free unicode/romaji normalization for lyric and raw ASR."""
+    clean=unicodedata.normalize('NFKC',value).casefold()
+    if callable(romanizer):
+        candidate=romanizer(clean)
+        if isinstance(candidate,str) and candidate.strip():
+            clean=unicodedata.normalize('NFKC',candidate).casefold()
+    return ''.join(ch for ch in clean if ch.isalnum())
+
+def _dice_bigram(a:str,b:str)->float:
+    if not a or not b:return 0.
+    if len(a)<2 or len(b)<2:return float(a==b)
+    x=Counter(a[i:i+2] for i in range(len(a)-1))
+    y=Counter(b[i:i+2] for i in range(len(b)-1))
+    overlap=sum((x&y).values())
+    return 2.0*overlap/(sum(x.values())+sum(y.values()))
+
+def _asr_for_passages(passages:Sequence[VocalPassage],
+                      events:Sequence[tuple[float,float,str]],
+                      romanizer:object=None)->tuple[str,...]:
+    """Temporal overlap only; paragraph boundaries, never synthetic line times."""
+    seen=[[] for _ in passages]
+    for event in events:
+        if not isinstance(event,(tuple,list)) or len(event)!=3:continue
+        start,end,text=event
+        if not (isinstance(start,(int,float)) and isinstance(end,(int,float))
+                and math.isfinite(start) and math.isfinite(end) and end>start
+                and isinstance(text,str) and text.strip()):
+            continue
+        content=_text_for_match(text,romanizer)
+        if not content:continue
+        for j,passage in enumerate(passages):
+            if min(end,passage.end)>max(start,passage.start):
+                seen[j].append(content)
+    return tuple(''.join(words) for words in seen)
+
 def _lengths_from_text(texts:Sequence[str],romanizer:object=None)->tuple[int,...]:
     lengths=[]
     for t in texts:
@@ -44,7 +83,9 @@ def _lengths_from_text(texts:Sequence[str],romanizer:object=None)->tuple[int,...
 
 def _path_cost(passage:VocalPassage,counts:Sequence[int],all_chars:int,
                total_voice:float,consumed_chars:int,voice_before:float,
-               priors:Sequence[float|None],start_index:int)->float:
+               priors:Sequence[float|None],start_index:int,
+               *,lyrics_match:Sequence[str]=(),asr_match:str='',
+               asr_weight:float=W_ASR)->float:
     actual=sum(counts)
     expected=max(.12,total_voice*actual/max(1,all_chars))
     ratio=max(passage.duration/expected,.001)
@@ -60,12 +101,14 @@ def _path_cost(passage:VocalPassage,counts:Sequence[int],all_chars:int,
             prior_cost+=CTC_PRIOR_WEIGHT*min(abs(t-c),MAX_CTC_PRIOR_PENALTY)
         cumulative+=length
     crowding=.40*max(0.,len(counts)/max(passage.duration,.2)-2.25)
-    return density+progress+prior_cost+crowding
+    content=(asr_weight*(1.0-_dice_bigram(''.join(lyrics_match),asr_match))
+             if asr_match and lyrics_match else 0.0)
+    return density+progress+prior_cost+crowding+content
 
 def plan_segment_skeleton(segments:Sequence[tuple[float,float]], *,
     duration:float,lyric_texts:Sequence[str],romanizer:object=None,
     ctc_priors:Sequence[float|None]|None=None,
-    raw_asr_events:Sequence[tuple[float,str]]=())->SkeletonPlan:
+    raw_asr_events:Sequence[tuple[float,float,str]]=())->SkeletonPlan:
     """Monotonic global Viterbi: 2 independent best paths, no unique-repeat anchor."""
     vocal=merge_vocal_passages(segments,duration=duration,
                               merge_gap_s=MERGE_GAP_S,min_duration_s=MIN_PASSAGE_S)
@@ -79,6 +122,8 @@ def plan_segment_skeleton(segments:Sequence[tuple[float,float]], *,
     if max(v.duration for v in vocal)>MAX_SINGLE_PASSAGE_DURATION_RATIO*duration:
         return blocked("DOMINANT_PASSAGE")
     lengths=_lengths_from_text(lyric_texts,romanizer)
+    match_texts=tuple(_text_for_match(t,romanizer) for t in lyric_texts)
+    asr_by_passage=_asr_for_passages(vocal,raw_asr_events,romanizer)
     priors=tuple(ctc_priors) if ctc_priors is not None else (None,)*n
     if len(priors)!=n:return blocked("INVALID_PRIORS")
     if m*MAX_LINES_PER_PASSAGE<n:return blocked("INSUFFICIENT_CAPACITY")
@@ -97,7 +142,9 @@ def plan_segment_skeleton(segments:Sequence[tuple[float,float]], *,
                 for count in range(min(MAX_LINES_PER_PASSAGE,n-done)+1):
                     increment=SKIP_PENALTY if count==0 else _path_cost(
                         passage,lengths[done:done+count],prefix[-1],total_voice,
-                        prefix[done],voice_before[j],priors,done)
+                        prefix[done],voice_before[j],priors,done,
+                        lyrics_match=match_texts[done:done+count],
+                        asr_match=asr_by_passage[j])
                     score=cost+increment
                     slot=nxt[done+count];step=(*path,count)
                     if score<slot[0][0]-1e-10:

@@ -1,0 +1,1292 @@
+{
+  "rule": "No BK timestamps or scoring used. Acoustic and raw ASR transcript content only.",
+  "songs": [
+    {
+      "index": 2,
+      "song": "01.エガクミライ",
+      "groups": [
+        {
+          "rows": [
+            1,
+            1
+          ],
+          "passage": 0,
+          "ASR_chars": 28,
+          "lyric_chars": 28,
+          "dice": 1.0
+        },
+        {
+          "rows": [
+            2,
+            5
+          ],
+          "passage": 1,
+          "ASR_chars": 94,
+          "lyric_chars": 132,
+          "dice": 0.8304
+        },
+        {
+          "rows": [
+            6,
+            6
+          ],
+          "passage": 4,
+          "ASR_chars": 33,
+          "lyric_chars": 35,
+          "dice": 0.9697
+        },
+        {
+          "rows": [
+            7,
+            7
+          ],
+          "passage": 5,
+          "ASR_chars": 60,
+          "lyric_chars": 38,
+          "dice": 0.75
+        },
+        {
+          "rows": [
+            8,
+            8
+          ],
+          "passage": 6,
+          "ASR_chars": 26,
+          "lyric_chars": 23,
+          "dice": 0.9362
+        },
+        {
+          "rows": [
+            9,
+            12
+          ],
+          "passage": 7,
+          "ASR_chars": 105,
+          "lyric_chars": 115,
+          "dice": 0.8165
+        },
+        {
+          "rows": [
+            13,
+            13
+          ],
+          "passage": 8,
+          "ASR_chars": 32,
+          "lyric_chars": 32,
+          "dice": 1.0
+        },
+        {
+          "rows": [
+            14,
+            14
+          ],
+          "passage": 9,
+          "ASR_chars": 33,
+          "lyric_chars": 28,
+          "dice": 0.8136
+        },
+        {
+          "rows": [
+            15,
+            15
+          ],
+          "passage": 10,
+          "ASR_chars": 97,
+          "lyric_chars": 28,
+          "dice": 0.4228
+        },
+        {
+          "rows": [
+            16,
+            16
+          ],
+          "passage": 11,
+          "ASR_chars": 42,
+          "lyric_chars": 28,
+          "dice": 0.7353
+        },
+        {
+          "rows": [
+            17,
+            17
+          ],
+          "passage": 12,
+          "ASR_chars": 50,
+          "lyric_chars": 32,
+          "dice": 0.6
+        },
+        {
+          "rows": [
+            18,
+            18
+          ],
+          "passage": 13,
+          "ASR_chars": 38,
+          "lyric_chars": 38,
+          "dice": 1.0
+        },
+        {
+          "rows": [
+            19,
+            20
+          ],
+          "passage": 15,
+          "ASR_chars": 113,
+          "lyric_chars": 69,
+          "dice": 0.5778
+        },
+        {
+          "rows": [
+            21,
+            21
+          ],
+          "passage": 16,
+          "ASR_chars": 0,
+          "lyric_chars": 26,
+          "dice": null
+        },
+        {
+          "rows": [
+            22,
+            26
+          ],
+          "passage": 17,
+          "ASR_chars": 544,
+          "lyric_chars": 137,
+          "dice": 0.3004
+        },
+        {
+          "rows": [
+            27,
+            27
+          ],
+          "passage": 18,
+          "ASR_chars": 248,
+          "lyric_chars": 36,
+          "dice": 0.1064
+        }
+      ],
+      "asr_paragraphs": 96,
+      "asr_uncovered_groups": 1,
+      "mean_dice": 0.7239,
+      "min_dice": 0.1064,
+      "groups_lt_030": 1,
+      "groups_lt_050": 3,
+      "groups_lt_070": 5
+    },
+    {
+      "index": 5,
+      "song": "03. 過去に囚われている",
+      "groups": [
+        {
+          "rows": [
+            1,
+            2
+          ],
+          "passage": 0,
+          "ASR_chars": 80,
+          "lyric_chars": 54,
+          "dice": 0.7879
+        },
+        {
+          "rows": [
+            3,
+            7
+          ],
+          "passage": 1,
+          "ASR_chars": 123,
+          "lyric_chars": 125,
+          "dice": 0.9431
+        },
+        {
+          "rows": [
+            8,
+            10
+          ],
+          "passage": 3,
+          "ASR_chars": 60,
+          "lyric_chars": 60,
+          "dice": 1.0
+        },
+        {
+          "rows": [
+            11,
+            22
+          ],
+          "passage": 4,
+          "ASR_chars": 257,
+          "lyric_chars": 237,
+          "dice": 0.9065
+        },
+        {
+          "rows": [
+            23,
+            24
+          ],
+          "passage": 5,
+          "ASR_chars": 52,
+          "lyric_chars": 52,
+          "dice": 0.8431
+        },
+        {
+          "rows": [
+            25,
+            27
+          ],
+          "passage": 6,
+          "ASR_chars": 94,
+          "lyric_chars": 95,
+          "dice": 0.9947
+        },
+        {
+          "rows": [
+            28,
+            33
+          ],
+          "passage": 7,
+          "ASR_chars": 217,
+          "lyric_chars": 162,
+          "dice": 0.8382
+        },
+        {
+          "rows": [
+            34,
+            35
+          ],
+          "passage": 9,
+          "ASR_chars": 58,
+          "lyric_chars": 36,
+          "dice": 0.7609
+        },
+        {
+          "rows": [
+            36,
+            40
+          ],
+          "passage": 10,
+          "ASR_chars": 89,
+          "lyric_chars": 91,
+          "dice": 0.9551
+        },
+        {
+          "rows": [
+            41,
+            42
+          ],
+          "passage": 12,
+          "ASR_chars": 49,
+          "lyric_chars": 49,
+          "dice": 0.75
+        },
+        {
+          "rows": [
+            43,
+            44
+          ],
+          "passage": 13,
+          "ASR_chars": 65,
+          "lyric_chars": 64,
+          "dice": 0.9449
+        },
+        {
+          "rows": [
+            45,
+            51
+          ],
+          "passage": 14,
+          "ASR_chars": 212,
+          "lyric_chars": 176,
+          "dice": 0.7876
+        },
+        {
+          "rows": [
+            52,
+            53
+          ],
+          "passage": 16,
+          "ASR_chars": 36,
+          "lyric_chars": 36,
+          "dice": 1.0
+        },
+        {
+          "rows": [
+            54,
+            59
+          ],
+          "passage": 17,
+          "ASR_chars": 146,
+          "lyric_chars": 161,
+          "dice": 0.8328
+        },
+        {
+          "rows": [
+            60,
+            62
+          ],
+          "passage": 18,
+          "ASR_chars": 68,
+          "lyric_chars": 91,
+          "dice": 0.7643
+        },
+        {
+          "rows": [
+            63,
+            63
+          ],
+          "passage": 19,
+          "ASR_chars": 53,
+          "lyric_chars": 27,
+          "dice": 0.6667
+        },
+        {
+          "rows": [
+            64,
+            68
+          ],
+          "passage": 21,
+          "ASR_chars": 134,
+          "lyric_chars": 136,
+          "dice": 0.9403
+        }
+      ],
+      "asr_paragraphs": 81,
+      "asr_uncovered_groups": 0,
+      "mean_dice": 0.8657,
+      "min_dice": 0.6667,
+      "groups_lt_030": 0,
+      "groups_lt_050": 0,
+      "groups_lt_070": 1
+    },
+    {
+      "index": 6,
+      "song": "04 影色舞",
+      "groups": [
+        {
+          "rows": [
+            1,
+            3
+          ],
+          "passage": 0,
+          "ASR_chars": 93,
+          "lyric_chars": 76,
+          "dice": 0.7904
+        },
+        {
+          "rows": [
+            4,
+            7
+          ],
+          "passage": 1,
+          "ASR_chars": 78,
+          "lyric_chars": 78,
+          "dice": 1.0
+        },
+        {
+          "rows": [
+            8,
+            12
+          ],
+          "passage": 2,
+          "ASR_chars": 74,
+          "lyric_chars": 87,
+          "dice": 0.6667
+        },
+        {
+          "rows": [
+            13,
+            17
+          ],
+          "passage": 3,
+          "ASR_chars": 106,
+          "lyric_chars": 86,
+          "dice": 0.7895
+        },
+        {
+          "rows": [
+            18,
+            21
+          ],
+          "passage": 4,
+          "ASR_chars": 88,
+          "lyric_chars": 93,
+          "dice": 0.7933
+        },
+        {
+          "rows": [
+            22,
+            24
+          ],
+          "passage": 5,
+          "ASR_chars": 76,
+          "lyric_chars": 73,
+          "dice": 0.898
+        },
+        {
+          "rows": [
+            25,
+            28
+          ],
+          "passage": 6,
+          "ASR_chars": 72,
+          "lyric_chars": 77,
+          "dice": 0.7891
+        },
+        {
+          "rows": [
+            29,
+            37
+          ],
+          "passage": 7,
+          "ASR_chars": 189,
+          "lyric_chars": 168,
+          "dice": 0.8732
+        },
+        {
+          "rows": [
+            38,
+            41
+          ],
+          "passage": 8,
+          "ASR_chars": 65,
+          "lyric_chars": 83,
+          "dice": 0.7945
+        },
+        {
+          "rows": [
+            42,
+            43
+          ],
+          "passage": 9,
+          "ASR_chars": 68,
+          "lyric_chars": 61,
+          "dice": 0.0945
+        },
+        {
+          "rows": [
+            44,
+            48
+          ],
+          "passage": 10,
+          "ASR_chars": 132,
+          "lyric_chars": 86,
+          "dice": 0.5741
+        },
+        {
+          "rows": [
+            49,
+            52
+          ],
+          "passage": 11,
+          "ASR_chars": 93,
+          "lyric_chars": 82,
+          "dice": 0.8439
+        }
+      ],
+      "asr_paragraphs": 72,
+      "asr_uncovered_groups": 0,
+      "mean_dice": 0.7423,
+      "min_dice": 0.0945,
+      "groups_lt_030": 1,
+      "groups_lt_050": 1,
+      "groups_lt_070": 3
+    },
+    {
+      "index": 7,
+      "song": "06.ビビッド",
+      "groups": [
+        {
+          "rows": [
+            1,
+            4
+          ],
+          "passage": 1,
+          "ASR_chars": 42,
+          "lyric_chars": 88,
+          "dice": 0.6406
+        },
+        {
+          "rows": [
+            5,
+            5
+          ],
+          "passage": 4,
+          "ASR_chars": 26,
+          "lyric_chars": 26,
+          "dice": 1.0
+        },
+        {
+          "rows": [
+            6,
+            6
+          ],
+          "passage": 5,
+          "ASR_chars": 17,
+          "lyric_chars": 17,
+          "dice": 0.9375
+        },
+        {
+          "rows": [
+            7,
+            7
+          ],
+          "passage": 6,
+          "ASR_chars": 21,
+          "lyric_chars": 20,
+          "dice": 0.6154
+        },
+        {
+          "rows": [
+            8,
+            9
+          ],
+          "passage": 8,
+          "ASR_chars": 31,
+          "lyric_chars": 41,
+          "dice": 0.7714
+        },
+        {
+          "rows": [
+            10,
+            20
+          ],
+          "passage": 11,
+          "ASR_chars": 203,
+          "lyric_chars": 277,
+          "dice": 0.8033
+        },
+        {
+          "rows": [
+            21,
+            21
+          ],
+          "passage": 14,
+          "ASR_chars": 27,
+          "lyric_chars": 21,
+          "dice": 0.8696
+        },
+        {
+          "rows": [
+            22,
+            22
+          ],
+          "passage": 15,
+          "ASR_chars": 26,
+          "lyric_chars": 27,
+          "dice": 0.902
+        },
+        {
+          "rows": [
+            23,
+            25
+          ],
+          "passage": 16,
+          "ASR_chars": 67,
+          "lyric_chars": 68,
+          "dice": 0.9474
+        },
+        {
+          "rows": [
+            26,
+            26
+          ],
+          "passage": 17,
+          "ASR_chars": 16,
+          "lyric_chars": 16,
+          "dice": 1.0
+        },
+        {
+          "rows": [
+            27,
+            27
+          ],
+          "passage": 19,
+          "ASR_chars": 28,
+          "lyric_chars": 28,
+          "dice": 1.0
+        },
+        {
+          "rows": [
+            28,
+            31
+          ],
+          "passage": 21,
+          "ASR_chars": 64,
+          "lyric_chars": 87,
+          "dice": 0.8322
+        },
+        {
+          "rows": [
+            32,
+            43
+          ],
+          "passage": 22,
+          "ASR_chars": 233,
+          "lyric_chars": 252,
+          "dice": 0.8075
+        },
+        {
+          "rows": [
+            44,
+            55
+          ],
+          "passage": 23,
+          "ASR_chars": 366,
+          "lyric_chars": 288,
+          "dice": 0.8528
+        }
+      ],
+      "asr_paragraphs": 63,
+      "asr_uncovered_groups": 0,
+      "mean_dice": 0.8557,
+      "min_dice": 0.6154,
+      "groups_lt_030": 0,
+      "groups_lt_050": 0,
+      "groups_lt_070": 2
+    },
+    {
+      "index": 11,
+      "song": "01 - フロム",
+      "groups": [
+        {
+          "rows": [
+            1,
+            4
+          ],
+          "passage": 2,
+          "ASR_chars": 65,
+          "lyric_chars": 102,
+          "dice": 0.7515
+        },
+        {
+          "rows": [
+            5,
+            6
+          ],
+          "passage": 4,
+          "ASR_chars": 44,
+          "lyric_chars": 44,
+          "dice": 1.0
+        },
+        {
+          "rows": [
+            7,
+            13
+          ],
+          "passage": 5,
+          "ASR_chars": 155,
+          "lyric_chars": 164,
+          "dice": 0.8517
+        },
+        {
+          "rows": [
+            14,
+            24
+          ],
+          "passage": 13,
+          "ASR_chars": 418,
+          "lyric_chars": 276,
+          "dice": 0.2139
+        },
+        {
+          "rows": [
+            25,
+            29
+          ],
+          "passage": 14,
+          "ASR_chars": 242,
+          "lyric_chars": 85,
+          "dice": 0.1538
+        },
+        {
+          "rows": [
+            30,
+            31
+          ],
+          "passage": 15,
+          "ASR_chars": 110,
+          "lyric_chars": 56,
+          "dice": 0.2561
+        },
+        {
+          "rows": [
+            32,
+            35
+          ],
+          "passage": 16,
+          "ASR_chars": 286,
+          "lyric_chars": 98,
+          "dice": 0.178
+        }
+      ],
+      "asr_paragraphs": 99,
+      "asr_uncovered_groups": 0,
+      "mean_dice": 0.4864,
+      "min_dice": 0.1538,
+      "groups_lt_030": 4,
+      "groups_lt_050": 4,
+      "groups_lt_070": 4
+    },
+    {
+      "index": 14,
+      "song": "01. それでも雨は降るんだね",
+      "groups": [
+        {
+          "rows": [
+            1,
+            1
+          ],
+          "passage": 0,
+          "ASR_chars": 22,
+          "lyric_chars": 39,
+          "dice": 0.678
+        },
+        {
+          "rows": [
+            2,
+            2
+          ],
+          "passage": 1,
+          "ASR_chars": 73,
+          "lyric_chars": 42,
+          "dice": 0.708
+        },
+        {
+          "rows": [
+            3,
+            4
+          ],
+          "passage": 2,
+          "ASR_chars": 96,
+          "lyric_chars": 61,
+          "dice": 0.7742
+        },
+        {
+          "rows": [
+            5,
+            6
+          ],
+          "passage": 3,
+          "ASR_chars": 47,
+          "lyric_chars": 48,
+          "dice": 0.9892
+        },
+        {
+          "rows": [
+            7,
+            10
+          ],
+          "passage": 4,
+          "ASR_chars": 86,
+          "lyric_chars": 106,
+          "dice": 0.7684
+        },
+        {
+          "rows": [
+            11,
+            14
+          ],
+          "passage": 5,
+          "ASR_chars": 124,
+          "lyric_chars": 124,
+          "dice": 0.9837
+        },
+        {
+          "rows": [
+            15,
+            17
+          ],
+          "passage": 6,
+          "ASR_chars": 80,
+          "lyric_chars": 88,
+          "dice": 0.7952
+        },
+        {
+          "rows": [
+            18,
+            18
+          ],
+          "passage": 7,
+          "ASR_chars": 15,
+          "lyric_chars": 15,
+          "dice": 1.0
+        },
+        {
+          "rows": [
+            19,
+            20
+          ],
+          "passage": 8,
+          "ASR_chars": 49,
+          "lyric_chars": 49,
+          "dice": 1.0
+        },
+        {
+          "rows": [
+            21,
+            21
+          ],
+          "passage": 9,
+          "ASR_chars": 15,
+          "lyric_chars": 37,
+          "dice": 0.56
+        },
+        {
+          "rows": [
+            22,
+            23
+          ],
+          "passage": 10,
+          "ASR_chars": 58,
+          "lyric_chars": 79,
+          "dice": 0.8444
+        },
+        {
+          "rows": [
+            24,
+            24
+          ],
+          "passage": 11,
+          "ASR_chars": 49,
+          "lyric_chars": 33,
+          "dice": 0.7
+        },
+        {
+          "rows": [
+            25,
+            25
+          ],
+          "passage": 12,
+          "ASR_chars": 54,
+          "lyric_chars": 31,
+          "dice": 0.6988
+        },
+        {
+          "rows": [
+            26,
+            27
+          ],
+          "passage": 13,
+          "ASR_chars": 42,
+          "lyric_chars": 36,
+          "dice": 0.3421
+        },
+        {
+          "rows": [
+            28,
+            29
+          ],
+          "passage": 14,
+          "ASR_chars": 31,
+          "lyric_chars": 38,
+          "dice": 0.8955
+        },
+        {
+          "rows": [
+            30,
+            30
+          ],
+          "passage": 15,
+          "ASR_chars": 29,
+          "lyric_chars": 38,
+          "dice": 0.6769
+        },
+        {
+          "rows": [
+            31,
+            35
+          ],
+          "passage": 16,
+          "ASR_chars": 136,
+          "lyric_chars": 149,
+          "dice": 0.8763
+        },
+        {
+          "rows": [
+            36,
+            37
+          ],
+          "passage": 18,
+          "ASR_chars": 65,
+          "lyric_chars": 65,
+          "dice": 1.0
+        },
+        {
+          "rows": [
+            38,
+            38
+          ],
+          "passage": 19,
+          "ASR_chars": 15,
+          "lyric_chars": 15,
+          "dice": 1.0
+        },
+        {
+          "rows": [
+            39,
+            41
+          ],
+          "passage": 20,
+          "ASR_chars": 67,
+          "lyric_chars": 93,
+          "dice": 0.7468
+        },
+        {
+          "rows": [
+            42,
+            45
+          ],
+          "passage": 21,
+          "ASR_chars": 74,
+          "lyric_chars": 102,
+          "dice": 0.8161
+        },
+        {
+          "rows": [
+            46,
+            49
+          ],
+          "passage": 22,
+          "ASR_chars": 139,
+          "lyric_chars": 142,
+          "dice": 0.8459
+        },
+        {
+          "rows": [
+            50,
+            52
+          ],
+          "passage": 23,
+          "ASR_chars": 102,
+          "lyric_chars": 103,
+          "dice": 0.7882
+        },
+        {
+          "rows": [
+            53,
+            55
+          ],
+          "passage": 25,
+          "ASR_chars": 53,
+          "lyric_chars": 67,
+          "dice": 0.8136
+        }
+      ],
+      "asr_paragraphs": 105,
+      "asr_uncovered_groups": 0,
+      "mean_dice": 0.8042,
+      "min_dice": 0.3421,
+      "groups_lt_030": 0,
+      "groups_lt_050": 1,
+      "groups_lt_070": 5
+    },
+    {
+      "index": 18,
+      "song": "01.最大幸福度",
+      "groups": [
+        {
+          "rows": [
+            1,
+            1
+          ],
+          "passage": 7,
+          "ASR_chars": 50,
+          "lyric_chars": 21,
+          "dice": 0.2319
+        },
+        {
+          "rows": [
+            2,
+            2
+          ],
+          "passage": 8,
+          "ASR_chars": 67,
+          "lyric_chars": 21,
+          "dice": 0.2093
+        },
+        {
+          "rows": [
+            3,
+            14
+          ],
+          "passage": 9,
+          "ASR_chars": 120,
+          "lyric_chars": 307,
+          "dice": 0.5271
+        },
+        {
+          "rows": [
+            15,
+            16
+          ],
+          "passage": 10,
+          "ASR_chars": 67,
+          "lyric_chars": 58,
+          "dice": 0.9268
+        },
+        {
+          "rows": [
+            17,
+            22
+          ],
+          "passage": 13,
+          "ASR_chars": 114,
+          "lyric_chars": 130,
+          "dice": 0.8678
+        },
+        {
+          "rows": [
+            23,
+            34
+          ],
+          "passage": 14,
+          "ASR_chars": 512,
+          "lyric_chars": 335,
+          "dice": 0.755
+        },
+        {
+          "rows": [
+            35,
+            36
+          ],
+          "passage": 15,
+          "ASR_chars": 53,
+          "lyric_chars": 37,
+          "dice": 0.8182
+        },
+        {
+          "rows": [
+            37,
+            39
+          ],
+          "passage": 16,
+          "ASR_chars": 45,
+          "lyric_chars": 46,
+          "dice": 0.9213
+        },
+        {
+          "rows": [
+            40,
+            40
+          ],
+          "passage": 17,
+          "ASR_chars": 23,
+          "lyric_chars": 22,
+          "dice": 0.9302
+        },
+        {
+          "rows": [
+            41,
+            45
+          ],
+          "passage": 18,
+          "ASR_chars": 151,
+          "lyric_chars": 149,
+          "dice": 0.8859
+        }
+      ],
+      "asr_paragraphs": 61,
+      "asr_uncovered_groups": 0,
+      "mean_dice": 0.7074,
+      "min_dice": 0.2093,
+      "groups_lt_030": 2,
+      "groups_lt_050": 2,
+      "groups_lt_070": 3
+    },
+    {
+      "index": 22,
+      "song": "02. JANE DOE",
+      "groups": [
+        {
+          "rows": [
+            1,
+            1
+          ],
+          "passage": 0,
+          "ASR_chars": 36,
+          "lyric_chars": 36,
+          "dice": 1.0
+        },
+        {
+          "rows": [
+            2,
+            2
+          ],
+          "passage": 1,
+          "ASR_chars": 38,
+          "lyric_chars": 38,
+          "dice": 1.0
+        },
+        {
+          "rows": [
+            3,
+            3
+          ],
+          "passage": 2,
+          "ASR_chars": 52,
+          "lyric_chars": 54,
+          "dice": 0.8654
+        },
+        {
+          "rows": [
+            4,
+            4
+          ],
+          "passage": 3,
+          "ASR_chars": 19,
+          "lyric_chars": 19,
+          "dice": 1.0
+        },
+        {
+          "rows": [
+            5,
+            5
+          ],
+          "passage": 4,
+          "ASR_chars": 18,
+          "lyric_chars": 18,
+          "dice": 1.0
+        },
+        {
+          "rows": [
+            6,
+            8
+          ],
+          "passage": 6,
+          "ASR_chars": 115,
+          "lyric_chars": 96,
+          "dice": 0.8995
+        },
+        {
+          "rows": [
+            9,
+            9
+          ],
+          "passage": 7,
+          "ASR_chars": 8,
+          "lyric_chars": 8,
+          "dice": 1.0
+        },
+        {
+          "rows": [
+            10,
+            10
+          ],
+          "passage": 8,
+          "ASR_chars": 41,
+          "lyric_chars": 32,
+          "dice": 0.7606
+        },
+        {
+          "rows": [
+            11,
+            11
+          ],
+          "passage": 9,
+          "ASR_chars": 31,
+          "lyric_chars": 29,
+          "dice": 0.931
+        },
+        {
+          "rows": [
+            12,
+            13
+          ],
+          "passage": 10,
+          "ASR_chars": 54,
+          "lyric_chars": 54,
+          "dice": 0.9057
+        },
+        {
+          "rows": [
+            14,
+            17
+          ],
+          "passage": 11,
+          "ASR_chars": 75,
+          "lyric_chars": 100,
+          "dice": 0.578
+        },
+        {
+          "rows": [
+            18,
+            18
+          ],
+          "passage": 15,
+          "ASR_chars": 11,
+          "lyric_chars": 11,
+          "dice": 1.0
+        },
+        {
+          "rows": [
+            19,
+            21
+          ],
+          "passage": 16,
+          "ASR_chars": 108,
+          "lyric_chars": 96,
+          "dice": 0.9307
+        },
+        {
+          "rows": [
+            22,
+            24
+          ],
+          "passage": 18,
+          "ASR_chars": 71,
+          "lyric_chars": 82,
+          "dice": 0.9007
+        }
+      ],
+      "asr_paragraphs": 67,
+      "asr_uncovered_groups": 0,
+      "mean_dice": 0.9123,
+      "min_dice": 0.578,
+      "groups_lt_030": 0,
+      "groups_lt_050": 0,
+      "groups_lt_070": 1
+    },
+    {
+      "index": 24,
+      "song": "04. Scarborough Fair",
+      "groups": [
+        {
+          "rows": [
+            1,
+            1
+          ],
+          "passage": 1,
+          "ASR_chars": 27,
+          "lyric_chars": 28,
+          "dice": 0.6415
+        },
+        {
+          "rows": [
+            2,
+            13
+          ],
+          "passage": 7,
+          "ASR_chars": 135,
+          "lyric_chars": 298,
+          "dice": 0.1763
+        },
+        {
+          "rows": [
+            14,
+            14
+          ],
+          "passage": 15,
+          "ASR_chars": 108,
+          "lyric_chars": 28,
+          "dice": 0.2985
+        }
+      ],
+      "asr_paragraphs": 69,
+      "asr_uncovered_groups": 0,
+      "mean_dice": 0.3721,
+      "min_dice": 0.1763,
+      "groups_lt_030": 2,
+      "groups_lt_050": 2,
+      "groups_lt_070": 3
+    }
+  ]
+}

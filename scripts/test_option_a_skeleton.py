@@ -18,6 +18,44 @@ class OptionADPTests(unittest.TestCase):
             self.assertEqual(ctc_alignment_confidence(score),expected)
             self.assertEqual(ctc_alignment_confidence(score,has_start=False),0.)
 
+    def test_p1_raw_asr_bigram_content_penalty(self):
+        from segment_skeleton import _dice_bigram,_asr_for_passages,_text_for_match
+        from segment_structure import VocalPassage
+        self.assertAlmostEqual(_dice_bigram('dreaming','dreaming'),1.0)
+        self.assertEqual(_dice_bigram('dreaming','zxy'),0.0)
+        self.assertEqual(_text_for_match('ＡｌＰＨＡ!'), 'alpha')
+        passages=(VocalPassage(1,3),VocalPassage(6,8))
+        self.assertEqual(_asr_for_passages(passages,
+            ((1.1,2.9,'first'),(6.1,7.9,'second'))),('first','second'))
+
+    def test_p1_no_asr_must_preserve_dp(self):
+        texts=['verse','repeat','repeat','outro']
+        seg=[(1,4),(6,9),(11,14),(16,19)]
+        baseline=plan_segment_skeleton(seg,duration=22.,lyric_texts=texts)
+        none=plan_segment_skeleton(seg,duration=22.,lyric_texts=texts,raw_asr_events=())
+        self.assertEqual(baseline,none)
+
+    def test_p1_dp_content_changes_group_choice(self):
+        seg=[(1,4),(6,9),(11,14)]
+        words=['alpha','beta']
+        blank=plan_segment_skeleton(seg,duration=22.,lyric_texts=words)
+        events=[(1,4,'junk'),(6,9,'alpha'),(11,14,'beta')]
+        content=plan_segment_skeleton(seg,duration=22.,lyric_texts=words,
+                                      raw_asr_events=events)
+        self.assertEqual(blank.status,'READY')
+        self.assertEqual(content.status,'READY')
+        self.assertEqual([x.passage_index for x in blank.assignments],[0,2])
+        self.assertEqual([x.passage_index for x in content.assignments],[1,2])
+
+    def test_p1_repetitions_in_order(self):
+        seg=[(1,4),(6,9),(11,14),(16,19)]
+        words=['repeat','repeat','repeat','end']
+        raw=[(1,3,'repeat'),(6,8,'repeat'),(11,13,'repeat'),(16,18,'end')]
+        result=plan_segment_skeleton(seg,duration=21.,lyric_texts=words,raw_asr_events=raw)
+        self.assertEqual(result.status,'READY')
+        ids=[x.passage_index for x in result.assignments]
+        self.assertEqual(ids,sorted(ids))
+
     def test_single_lyric_three_times_requires_no_unique_repeat_anchor(self):
         texts=["hello refrain"]*3+["verse words"]*2
         audio=[(1,3),(6,8),(11,13),(16,20)]

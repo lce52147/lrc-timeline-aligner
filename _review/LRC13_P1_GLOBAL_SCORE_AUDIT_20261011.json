@@ -1,0 +1,83 @@
+[
+  {
+    "song": "01.エガクミライ",
+    "rows": 27,
+    "mean": 0.3218,
+    "median": 0.348,
+    "count_ge_008": 27,
+    "count_ge_003": 27,
+    "count_lt_0005": 0
+  },
+  {
+    "song": "03. 過去に囚われている",
+    "rows": 68,
+    "mean": 0.3241,
+    "median": 0.3723,
+    "count_ge_008": 49,
+    "count_ge_003": 56,
+    "count_lt_0005": 6
+  },
+  {
+    "song": "04 影色舞",
+    "rows": 52,
+    "mean": 0.101,
+    "median": 0.0682,
+    "count_ge_008": 22,
+    "count_ge_003": 38,
+    "count_lt_0005": 7
+  },
+  {
+    "song": "06.ビビッド",
+    "rows": 55,
+    "mean": 0.2169,
+    "median": 0.082,
+    "count_ge_008": 28,
+    "count_ge_003": 32,
+    "count_lt_0005": 9
+  },
+  {
+    "song": "01 - フロム",
+    "rows": 35,
+    "mean": 0.1272,
+    "median": 0.1114,
+    "count_ge_008": 26,
+    "count_ge_003": 34,
+    "count_lt_0005": 0
+  },
+  {
+    "song": "01. それでも雨は降るんだね",
+    "rows": 55,
+    "mean": 0.1239,
+    "median": 0.0631,
+    "count_ge_008": 23,
+    "count_ge_003": 35,
+    "count_lt_0005": 1
+  },
+  {
+    "song": "01.最大幸福度",
+    "rows": 45,
+    "mean": 0.1618,
+    "median": 0.1103,
+    "count_ge_008": 25,
+    "count_ge_003": 37,
+    "count_lt_0005": 0
+  },
+  {
+    "song": "02. JANE DOE",
+    "rows": 24,
+    "mean": 0.3641,
+    "median": 0.3947,
+    "count_ge_008": 24,
+    "count_ge_003": 24,
+    "count_lt_0005": 0
+  },
+  {
+    "song": "04. Scarborough Fair",
+    "rows": 14,
+    "mean": 0.1623,
+    "median": 0.1262,
+    "count_ge_008": 9,
+    "count_ge_003": 13,
+    "count_lt_0005": 0
+  }
+]

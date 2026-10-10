@@ -39,6 +39,7 @@ def run_segment_skeleton(
     device:str,
     helper_runner:Callable[...,object],
     romanizer:Callable[[str],str|None]|None=None,
+    raw_asr_events:Sequence[tuple[float,float,str]]=(),
 )->tuple[list[float],dict[str,object],dict[str,object]]:
     original=list(timestamps)
     def fallback(reason:str,**kw:object):
@@ -56,7 +57,8 @@ def run_segment_skeleton(
         features=audio_api.analyze_audio(vocal_stem,duration)
         plan=plan_segment_skeleton(
             features.segments,duration=duration,lyric_texts=lyric_texts,
-            romanizer=romanizer,ctc_priors=original)
+            romanizer=romanizer,ctc_priors=original,
+            raw_asr_events=raw_asr_events)
         if plan.status!='READY':
             return fallback(plan.reason,DP_diagnostics=plan.diagnostics)
         if len(plan.groups)>MAX_GPU_PASSAGES:
