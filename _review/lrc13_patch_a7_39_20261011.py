@@ -13,7 +13,7 @@ if not gate_path.is_file():raise SystemExit('FINAL_A7_BLOCKED_NO_A6_GATE')
 gate=json.loads(gate_path.read_text(encoding='utf8'))
 if gate.get('experimental_asr_correlated_hard_gate_pass')!=True:
  raise SystemExit('A7_BLOCKED_A6_NOT_PASS: '+str(gate.get('status')))
-ab_path=V/'LRC13_FINAL7_PROVISIONAL_RERUN_20261011'/'PATCH7_SERIAL_MANIFEST.json'
+ab_path=V/'LRC13_PATCH7_PROVISIONAL_RERUN_20261011'/'PATCH7_SERIAL_MANIFEST.json'
 if not ab_path.is_file():raise SystemExit('A7_BLOCKED_FULL_7_NOT_RUN')
 ab=json.loads(ab_path.read_text(encoding='utf8'))
 if len(ab.get('cases',[]))!=14 or any(x.get('status')!='GENERATED' for x in ab.get('cases',[])):

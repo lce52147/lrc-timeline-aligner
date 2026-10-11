@@ -2,7 +2,7 @@
 from pathlib import Path
 import json,sys
 v=Path(__file__).resolve().parent
-src=v/'LRC13_FINAL7_PROVISIONAL_RERUN_20261011'/'PATCH7_SERIAL_MANIFEST.json'
+src=v/'LRC13_PATCH7_PROVISIONAL_RERUN_20261011'/'PATCH7_SERIAL_MANIFEST.json'
 man=json.loads(src.read_text(encoding='utf8'))
 cases=man.get('cases',[])
 assert len(cases)==14,('INCOMPLETE_7_AB',len(cases))
