@@ -69,17 +69,53 @@ def choose_anchors(rows,features):
         for i in violating:logs[i]['reasons'].append('NONMONOTONIC_ANCHOR_PAIR')
     return [i for i in candidates if i not in violating],logs
 
-def ll_segment(emission,tokens:list[int],blank:int)->tuple[float,object]:
-    # Exact frame-wise CTC log probability along best constrained Viterbi path.
-    # Same torchaudio emissions and target tokenizer for H0 and H1.
-    if not tokens or emission.shape[0]<len(tokens)*2-1:
-        raise ValueError('INSUFFICIENT_EMISSION_FRAMES')
-    target=torch.tensor(tokens,dtype=torch.int32).unsqueeze(0)
-    labels,scores=torchaudio.functional.forced_align(
-        emission.unsqueeze(0),target,blank=blank)
-    ll=float(scores[0].sum().item())
-    if not math.isfinite(ll):raise ValueError('NONFINITE_VITERBI_LL')
-    return ll,labels[0]
+def viterbi_ctc_ll(emission,tokens:list[int],blank:int,
+                   fixed_onset_frames:dict[int,int]|None=None)->float:
+    """Same emission, transcript and frame-wise CTC Viterbi objective for H0/H1.
+
+    H0 requires each line's *first* target token to emit at the existing
+    global-CTC clock. H1 omits that constraint. Unlike independent line
+    re-alignment, this retains blank/repeated-character transition rules
+    across line boundaries and scores every frame exactly once.
+    """
+    x=emission.detach().cpu().numpy()
+    T=len(x)
+    if not tokens or T<len(tokens):raise ValueError('CTC_INSUFFICIENT_FRAMES')
+    labels=np.full(2*len(tokens)+1,int(blank),dtype=np.int64)
+    labels[1::2]=np.asarray(tokens,dtype=np.int64)
+    S=len(labels)
+    skip_allowed=np.zeros(S,dtype=np.bool_)
+    skip_allowed[3::2]=labels[3::2]!=labels[1:-2:2]
+    boundaries=sorted((int(frame),2*int(index)+1)
+                      for index,frame in (fixed_onset_frames or {}).items())
+    if any(f<0 or f>=T or j>=S for f,j in boundaries):
+        raise ValueError('OUT_OF_WINDOW_H0_FIXED_ONSET')
+    if any(a[0]>=b[0] or a[1]>=b[1]
+           for a,b in zip(boundaries,boundaries[1:])):
+        raise ValueError('NONMONOTONIC_H0_FIXED_ONSETS')
+    dp=np.full(S,-np.inf,dtype=np.float64)
+    dp[0]=0.
+    next_boundary=0
+    for t in range(T):
+        stay=dp
+        adv=np.empty(S,dtype=np.float64)
+        adv[0]=-np.inf
+        adv[1:]=dp[:-1]
+        skip=np.full(S,-np.inf,dtype=np.float64)
+        skip[2:]=np.where(skip_allowed[2:],dp[:-2],-np.inf)
+        nxt=np.maximum(np.maximum(stay,adv),skip)+x[t,labels]
+        if next_boundary<len(boundaries):
+            frame,state=boundaries[next_boundary]
+            if t<frame:
+                nxt[state:]=-np.inf
+            elif t==frame:
+                nxt[:state]=-np.inf
+                nxt[state+1:]=-np.inf
+                next_boundary+=1
+        dp=nxt
+    score=float(max(dp[-2:]))
+    if not math.isfinite(score):raise ValueError('NO_FINITE_CTC_PATH')
+    return score
 
 def evaluate_interval(emission,aligner,tokenizer,rows,left,right,
                       vocal_features,duration,blank):
@@ -106,7 +142,7 @@ def evaluate_interval(emission,aligner,tokenizer,rows,left,right,
     merged=[q for seq in target_ids for q in seq]
     sub=emission[fst:fen].contiguous()
     try:
-        h1ll,_=ll_segment(sub,merged,blank)
+        h1ll=viterbi_ctc_ll(sub,merged,blank)
         h1_spans=aligner(sub,tuple(target_ids))
     except Exception as exc:
         interval['status']='H1_ALIGN_ERROR';interval['reason']=str(exc)[:280];return interval
@@ -116,19 +152,18 @@ def evaluate_interval(emission,aligner,tokenizer,rows,left,right,
     h0_times=[start_of(rows[j]) for j in indexes]
     if any(t is None for t in h0_times):
         interval['status']='H0_NO_CLOCK';return interval
-    # H0 hard-bound to existing full-song lyric starts; forced align each
-    # line inside its own [start, next-start] partition, with blanks in gaps.
-    starts=[fst]+[max(fst,min(fen,frame(t))) for t in h0_times[1:]]
-    starts[0]=max(fst,min(fen,frame(h0_times[0])))
-    boundaries=starts+[fen]
-    # Every H0 frame scored once, including the leading blank-only region.
-    h0ll=float(sub[:max(0,starts[0]-fst),blank].sum().item())
+    # Hard-constrain first-token emission at every original global CTC
+    # timestamp, *without* resetting CTC DP between lyric lines.
+    offsets=[]
+    counter=0
+    for toks in target_ids:
+        offsets.append(counter)
+        counter+=len(toks)
+    onset_frames={offset:(frame(clock)-fst) for offset,clock in zip(offsets,h0_times)}
     try:
-        for idx,toks in enumerate(target_ids):
-            s,e=boundaries[idx:idx+2]
-            if e<=s:raise ValueError('H0_NONMONOTONIC_INTERVAL')
-            val,_=ll_segment(emission[s:e].contiguous(),toks,blank)
-            h0ll+=val
+        h0ll=viterbi_ctc_ll(sub,merged,blank,onset_frames)
+        if h0ll>h1ll+0.0001:
+            raise ValueError('H0_EXCEEDS_UNCONSTRAINED_H1')
     except Exception as exc:
         interval['status']='H0_CONSTRAINED_ERROR';interval['reason']=str(exc)[:260];return interval
     ft=np.asarray(vocal_features.frame_times,dtype=np.float64)

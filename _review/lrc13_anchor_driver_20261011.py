@@ -2,7 +2,7 @@
 from pathlib import Path
 import json,subprocess,sys,os,time,traceback
 ROOT=Path(__file__).resolve().parents[1];V=ROOT/'_review'
-F=V/'LRC13_ANCHOR_GPU_20261011';F.mkdir(exist_ok=True)
+F=V/'LRC13_ANCHOR_GPU_V2_20261011';F.mkdir(exist_ok=True)
 manifest=F/'MANIFEST.json'
 status=V/'LRC13_WORK_STATUS_20261011.json'
 corpus=json.loads((V/'LRC13_S5_39_CORPUS_PREFLIGHT_20261010.json').read_text(encoding='utf8'))['corpus']
