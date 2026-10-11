@@ -51,7 +51,7 @@ for number,item in enumerate(corpus['corpus'],1):
  env={**os.environ,'PYTHONUTF8':'1','PYTHONIOENCODING':'utf8',
       'LRC_EVIDENCE_WORKERS':'1'}
  t=time.monotonic()
- print('A7_BEGIN',number,'/39',item['title'].encode('unicode_escape').decode(),flush=True)
+ print('A7_BEGIN',number,'/39',item.get('title',item['id']).encode('unicode_escape').decode(),flush=True)
  try:
   with log.open('wb') as f:
    process=subprocess.run(cmd,cwd=ROOT,env=env,stdout=f,
@@ -60,7 +60,7 @@ for number,item in enumerate(corpus['corpus'],1):
   record={'id':item['id'],'title':item.get('title',item['id']),'status':state,
       'exit':process.returncode}
  except subprocess.TimeoutExpired:
-  record={'id':item['id'],'title':item['title'],'status':'TIMED_OUT'}
+  record={'id':item['id'],'title':item.get('title',item['id']),'status':'TIMED_OUT'}
  record.update({'elapsed_s':round(time.monotonic()-t,2),
     'candidate':str(generated),'log':str(log),
     'human_timestamps_inference':False})
