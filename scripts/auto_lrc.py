@@ -4799,13 +4799,19 @@ def build_lyric_preflight(
             transformations.append({"kind": "display-lines-split", "line": line_number})
         if is_instrumental_marker(LyricEntry([content])):
             transformations.append({"kind": "instrumental-marker-removed", "line": line_number})
+        if not normalize_match_text(content) and not any(ch.isalpha() for ch in content):
+            transformations.append({"kind": "normalized-empty-removed", "line": line_number})
         if "�" in content or re.search(r"\?{3,}", content) or re.search(
             r"心得|推薦|樓主|作詞|作曲|編曲|翻譯|http|bilibili|BV[0-9A-Za-z]{8,}",
             content, flags=re.IGNORECASE,
         ):
             garbage.append({"line": line_number, "text": content[:160]})
+    raw_times = [lrc_time_key(tag.group(0)) for line in raw_lines for tag in LRC_TIMESTAMP_RE.finditer(line)]
+    duplicate_times = {time for time, count in collections.Counter(raw_times).items() if time is not None and count > 1}
     kept_ids = {id(entry) for entry in kept_entries}
     for index, entry in enumerate(document.entries, 1):
+        if entry.source_time_cs in duplicate_times and len(entry.lines) > 1:
+            transformations.append({"kind": "translation-pair-merged", "entry": index})
         if id(entry) not in kept_ids:
             transformations.append({
                 "kind": "generated-title-removed", "entry": index,
