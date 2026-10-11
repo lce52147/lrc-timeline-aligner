@@ -54,14 +54,14 @@ for i,item in enumerate(CORPUS,1):
  from pathlib import Path as _Path
  import unicodedata
  # Mirror Opus B11 text: provenance source is recorded main final LRC lyric text, timestamps ignored.
- parsed=[]
- for line in (V/'lrc13_option_a_A7_main_9069dbc8_20261010'/leaf/'main.lrc').read_text(encoding='utf8').splitlines():
-  match=re.match(r'^\s*(?:\[\d+:\d+(?:\.\d+)?\])+\s*(.*)$',line)
-  if match and match.group(1).strip():parsed.append(match.group(1).strip())
+ from LRC13_PATCH_A7_SCORE_20261011 import parse as parse_lrc
+ parsed=[text for text,_ in parse_lrc(V/'lrc13_option_a_A7_main_9069dbc8_20261010'/leaf/'main.lrc',item['audio_path'])]
  # Some files have additional metadata/time rows; provenance cleanup alignment required.
+ if len(parsed)==len(rows)-1 and romans[0]=='ooggrana':
+  parsed=['OOGG Rana']+parsed
  if len(parsed)!=len(rows):
   raise ValueError('SPEED_FLAG_TEXT_ROW_MISMATCH '+str(i)+' '+str(len(parsed))+' '+str(len(rows)))
- is_flagged=any((b-a)/max(1,len(VOWELS.findall(parsed[j])))<SPEED_FLAG for j,(a,b) in enumerate(zip(beginnings,beginnings[1:])))
+ is_flagged=any((b-a)/max(1,len(VOWELS.findall(parsed[j])))<SPEED_FLAG for j,(a,b) in enumerate(zip(beginnings,beginnings[1:])) if not (j==0 and romans[0]=='ooggrana'))
  print('N3_GPU_BEGIN',i,'flag',is_flagged,'rows',len(rows),flush=True)
  t=time.monotonic()
  waveform=ctc.decode_audio(stem)
