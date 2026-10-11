@@ -108,6 +108,28 @@ class LyricParserRegressionTests(unittest.TestCase):
             kept = auto_lrc.remove_generated_title_cards(entries, Path("song.flac"))
         self.assertEqual(kept, [entries[0], entries[2], entries[3], entries[4]])
 
+    def test_translation_pairing_uses_whole_file_ratio_and_direction(self):
+        sparse = [
+            auto_lrc.LyricEntry([line]) for line in
+            ["さよなら", "再見", "Hello world", "This is another", "Last line"]
+        ]
+        self.assertEqual(auto_lrc.merge_adjacent_translation_lines(sparse), sparse)
+        dense = [
+            auto_lrc.LyricEntry([line]) for line in
+            ["さよなら", "再見", "ありがとう", "謝謝", "Ending"]
+        ]
+        self.assertEqual(
+            [entry.lines for entry in auto_lrc.merge_adjacent_translation_lines(dense)],
+            [["さよなら", "再見"], ["ありがとう", "謝謝"], ["Ending"]],
+        )
+        reversed_order = [
+            auto_lrc.LyricEntry(["再見"]), auto_lrc.LyricEntry(["さよなら"])
+        ]
+        self.assertEqual(
+            auto_lrc.merge_adjacent_translation_lines(reversed_order),
+            reversed_order,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

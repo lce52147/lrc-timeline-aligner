@@ -4675,26 +4675,37 @@ def lyric_line_script(text: str) -> str:
 
 
 def merge_adjacent_translation_lines(entries: list[LyricEntry]) -> list[LyricEntry]:
-    """Treat adjacent source/translation lines as one sung lyric entry."""
+    """Merge source/translation pairs only when they dominate the whole file."""
+    pair_starts: list[int] = []
+    index = 0
+    while index + 1 < len(entries):
+        current, following = entries[index], entries[index + 1]
+        is_pair = (
+            len(current.lines) == len(following.lines) == 1
+            and current.source_time_cs is None
+            and following.source_time_cs is None
+            and lyric_line_script(current.lines[0]) in {"japanese", "latin"}
+            and lyric_line_script(following.lines[0]) == "han"
+        )
+        if is_pair:
+            pair_starts.append(index)
+            index += 2
+        else:
+            index += 1
+    if len(pair_starts) * 20 <= len(entries) * 6:
+        return entries
+    starts = set(pair_starts)
     merged: list[LyricEntry] = []
     index = 0
     while index < len(entries):
-        current = entries[index]
-        following = entries[index + 1] if index + 1 < len(entries) else None
-        if (
-            following is not None
-            and len(current.lines) == 1
-            and len(following.lines) == 1
-            and current.source_time_cs is None
-            and following.source_time_cs is None
-        ):
-            pair = {lyric_line_script(current.lines[0]), lyric_line_script(following.lines[0])}
-            if pair in ({"japanese", "han"}, {"latin", "han"}):
-                merged.append(LyricEntry([current.lines[0], following.lines[0]]))
-                index += 2
-                continue
-        merged.append(current)
-        index += 1
+        if index in starts:
+            merged.append(LyricEntry([
+                entries[index].lines[0], entries[index + 1].lines[0]
+            ]))
+            index += 2
+        else:
+            merged.append(entries[index])
+            index += 1
     return merged
 
 
