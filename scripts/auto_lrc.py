@@ -23164,6 +23164,7 @@ ACTIONABLE_SUSPICIOUS_FLAGS = frozenset({
     "unresolved_raw_ctc_disagreement",
     "unresolved_ctc_disagreement",
     "candidate_disagreement",
+    "unresolved-precentral-disagreement",
     "phonetic_anchor_disagreement",
     "duplicate_occurrence_offset_mismatch",
     "ctc_confidence_collapse",
@@ -24062,6 +24063,37 @@ def _final_post_central_material_conflict_entries(
     )
 
 
+def _precentral_candidate_gap_exceeds_half_second(
+    row: object,
+    selected_time: float,
+) -> bool:
+    """Retain review if ANY historical candidate differs by over 0.5 second."""
+    if not isinstance(row, dict):
+        return False
+    observed = False
+    values = row.get("candidate_timestamps")
+    if isinstance(values, dict):
+        for value in values.values():
+            if isinstance(value, bool):
+                continue
+            try:
+                timestamp = float(value)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(timestamp):
+                continue
+            observed = True
+            if abs(timestamp - selected_time) > 0.5:
+                return True
+    if not observed:
+        try:
+            spread = float(row.get("candidate_disagreement_seconds"))
+        except (ValueError, TypeError):
+            spread = 0.0
+        return math.isfinite(spread) and spread > 0.5
+    return False
+
+
 def _central_decision_supersedes_suspicious_row(
     decision: TimingDecision,
     audit: TimingInvariantAudit,
@@ -24088,6 +24120,8 @@ def _central_decision_supersedes_suspicious_row(
     ):
         return False
     selected_time = decision.written_time.seconds
+    if _precentral_candidate_gap_exceeds_half_second(row, selected_time):
+        return False
     drift_falsified_ids = _runtime_raw_timing_drift_falsified_candidate_ids(
         report if isinstance(report, dict) else None,
         decision.entry_index + 1,
@@ -24610,6 +24644,19 @@ def _project_suspicious_alignments_to_central_state(
             row["severity"] = "resolved"
             row["resolution"] = "superseded-by-verified-central-decision"
         else:
+            if _precentral_candidate_gap_exceeds_half_second(
+                row, decision.written_time.seconds
+            ):
+                flags = row.get("flags")
+                if isinstance(flags, list) and any(
+                    str(flag) in CENTRAL_RESOLVABLE_SUSPICIOUS_FLAGS
+                    for flag in flags
+                ):
+                    if "unresolved-precentral-disagreement" not in flags:
+                        flags.append("unresolved-precentral-disagreement")
+                    row.pop("resolution", None)
+                    if row.get("severity") == "resolved":
+                        row["severity"] = "medium"
             row["review_required"] = bool(
                 _suspicious_row_requires_review(row)
                 or entry in material_conflict_entries

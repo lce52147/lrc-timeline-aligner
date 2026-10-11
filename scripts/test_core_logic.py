@@ -11643,11 +11643,11 @@ class V1410MaterialHypothesisReviewRegressionTests(unittest.TestCase):
         }
         return decision, audit, row
 
-    def test_diagnostic_only_raw_disagreement_can_clear_after_verified_central_decision(self):
+    def test_diagnostic_only_raw_disagreement_keeps_review_when_distant(self):
         decision, audit, row = self.review_fixture()
         report = {"hypothesis_arbitration": {"entries": [], "falsification_count": 0}}
         self.assertTrue(audit.timing_trusted)
-        self.assertTrue(
+        self.assertFalse(
             auto_lrc._central_decision_supersedes_suspicious_row(
                 decision, audit, row, report
             )
@@ -11825,7 +11825,7 @@ class V1410MaterialHypothesisReviewRegressionTests(unittest.TestCase):
             )
         )
 
-    def test_explicit_context_falsification_can_clear_distant_raw_disagreement(self):
+    def test_explicit_context_falsification_keeps_distant_review(self):
         decision, audit, row = self.review_fixture()
         report = {
             "hypothesis_arbitration": {
@@ -11838,7 +11838,7 @@ class V1410MaterialHypothesisReviewRegressionTests(unittest.TestCase):
                 "falsification_count": 1,
             }
         }
-        self.assertTrue(
+        self.assertFalse(
             auto_lrc._central_decision_supersedes_suspicious_row(
                 decision, audit, row, report
             )
