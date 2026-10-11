@@ -36072,6 +36072,8 @@ def write_lrc(
     output_path.write_text("\n".join(body) + "\n", encoding="utf-8-sig")
 
 
+from lrc_review_tsv import write_review_tsv
+
 def report_artifact_paths(audio_path: Path, output_path: Path, report_dir: Path) -> tuple[Path, Path, Path]:
     report_dir.mkdir(parents=True, exist_ok=True)
     identity = f"{audio_path.resolve()}\0{output_path.resolve()}".casefold().encode("utf-8")
@@ -36560,6 +36562,9 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
     if skipped_markers:
         report["skipped_marker_entries"] = skipped_markers
         report["skipped_marker_count"] = len(skipped_markers)
+    review_tsv_path = report_path.with_name(report_path.name.replace(".align-report.json", ".review.tsv"))
+    report["review_tsv_path"] = str(review_tsv_path)
+    write_review_tsv(review_tsv_path, report, entries)
     progress_log(f"writing report: {report_path}")
     write_alignment_report(report_path, report)
 
@@ -36614,6 +36619,7 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
         f"timing_source={timing_source}, heuristic_mode={args.mode}, strategy={strategy})"
     )
     print(f"REPORT: {report_path}")
+    print(f"REVIEW: {review_tsv_path}")
     return output_path
 
 

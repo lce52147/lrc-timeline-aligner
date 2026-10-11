@@ -314,6 +314,7 @@ if ($exitCode -eq 0) {
         $resolved = if ($report.resolved_timing_source) { $report.resolved_timing_source } else { "(missing)" }
         $strategy = if ($report.strategy) { $report.strategy } else { "(missing)" }
         Write-Host "Report: $reportPath" -ForegroundColor DarkGray
+        if ($report.review_tsv_path) { Write-Host "Review TSV: $($report.review_tsv_path)" -ForegroundColor Yellow }
         Write-Host "Resolved timing source: $resolved" -ForegroundColor Green
         Write-Host "Backend: $backend" -ForegroundColor Green
         Write-Host "Strategy: $strategy" -ForegroundColor Green
