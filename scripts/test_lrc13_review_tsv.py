@@ -140,6 +140,30 @@ class LyricParserRegressionTests(unittest.TestCase):
         self.assertEqual(kept, [korean, cyrillic])
         self.assertEqual([row["text"] for row in removed], ["♪"])
 
+    def test_preflight_records_input_changes_and_unsupported_script(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "source.lrc"
+            path.write_text(
+                "[00:00.00]Artist - Title\n"
+                "[00:01.00][00:03.00]hello  你好\n"
+                "[00:05.00]사랑해\n",
+                encoding="utf-8",
+            )
+            document = auto_lrc.load_lyrics(path)
+            with mock.patch.object(auto_lrc, "audio_track_labels", return_value=("Artist", "Title")):
+                kept = auto_lrc.remove_generated_title_cards(document.entries, Path("song.flac"))
+                preflight = auto_lrc.build_lyric_preflight(
+                    path, document, kept, Path("song.flac")
+                )
+        self.assertEqual(preflight["status"], "INPUT_SUSPECT")
+        self.assertEqual(preflight["unsupported_script_entries"][0]["code"], "UNSUPPORTED_SCRIPT")
+        self.assertEqual(preflight["raw_asr_coverage"], "NOT_AVAILABLE")
+        kinds = [item["kind"] for item in preflight["transformations"]]
+        self.assertIn("generated-title-removed", kinds)
+        self.assertIn("multi-timestamp-expanded", kinds)
+        self.assertIn("display-lines-split", kinds)
+
 
 if __name__ == "__main__":
     unittest.main()

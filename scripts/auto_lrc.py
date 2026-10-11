@@ -4767,6 +4767,84 @@ def load_lyrics(path: Path, skip_comments: bool = False) -> LyricDocument:
     return LyricDocument(entries=entries, metadata_lines=metadata_lines, saw_timestamps=saw_timestamps)
 
 
+def build_lyric_preflight(
+    lyrics_path: Path,
+    document: LyricDocument,
+    kept_entries: list[LyricEntry],
+    audio_path: Path,
+) -> dict[str, object]:
+    """Audit lyric input transformations without modifying the parsed entries."""
+    raw_lines = lyrics_path.read_text(encoding="utf-8-sig").splitlines()
+    transformations: list[dict[str, object]] = []
+    unsupported: list[dict[str, object]] = []
+    garbage: list[dict[str, object]] = []
+    for line_number, raw_line in enumerate(raw_lines, 1):
+        stripped = raw_line.strip()
+        if not stripped:
+            transformations.append({"kind": "empty-line-ignored", "line": line_number})
+            continue
+        match = LRC_LINE_RE.match(stripped)
+        content = match.group(2) if match else stripped
+        if match:
+            count = len(list(LRC_TIMESTAMP_RE.finditer(match.group(1))))
+            if count > 1:
+                transformations.append({
+                    "kind": "multi-timestamp-expanded", "line": line_number,
+                    "copies": count,
+                })
+        if len(split_group_text(content, preserve_single=True)) > 1:
+            transformations.append({"kind": "display-lines-split", "line": line_number})
+        if "�" in content or re.search(r"\?{3,}", content):
+            garbage.append({"line": line_number, "text": content[:160]})
+    kept_ids = {id(entry) for entry in kept_entries}
+    for index, entry in enumerate(document.entries, 1):
+        if id(entry) not in kept_ids:
+            transformations.append({
+                "kind": "generated-title-removed", "entry": index,
+                "text": entry_sung_text(entry)[:160],
+            })
+    _, title = audio_track_labels(audio_path)
+    if (
+        document.entries
+        and document.entries[0].source_time_cs is None
+        and id(document.entries[0]) in kept_ids
+        and normalize_match_text(entry_sung_text(document.entries[0]))
+        == normalize_match_text(title)
+    ):
+        transformations.append({"kind": "plain-title-preserved", "entry": 1})
+    if not document.saw_timestamps:
+        plain = [line.strip() for line in raw_lines if line.strip()]
+        neighbors = set(zip(plain, plain[1:]))
+        for index, entry in enumerate(document.entries, 1):
+            if len(entry.lines) == 2 and tuple(entry.lines) in neighbors:
+                transformations.append({
+                    "kind": "translation-pair-merged", "entry": index,
+                    "text": list(entry.lines),
+                })
+    for index, entry in enumerate(kept_entries, 1):
+        for line in entry.lines:
+            if not normalize_match_text(line) and any(ch.isalpha() for ch in line):
+                unsupported.append({
+                    "entry": index, "text": line[:160], "code": "UNSUPPORTED_SCRIPT",
+                })
+    reason_codes = []
+    if unsupported:
+        reason_codes.append("UNSUPPORTED_SCRIPT")
+    if garbage:
+        reason_codes.append("SUSPECT_GARBAGE")
+    return {
+        "status": "INPUT_SUSPECT" if reason_codes else "OK",
+        "reason_codes": reason_codes,
+        "raw_line_count": len(raw_lines),
+        "parsed_entries": len(document.entries),
+        "retained_entries": len(kept_entries),
+        "transformations": transformations,
+        "unsupported_script_entries": unsupported,
+        "garbage_entries": garbage,
+        "raw_asr_coverage": "NOT_AVAILABLE",
+    }
+
+
 def find_lyrics(audio_path: Path, *, include_checked: bool = False) -> Path:
     candidates = [
         audio_path.with_suffix(".lyrics.lrc"),
@@ -36262,6 +36340,7 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
     progress_log(f"lyrics source: {lyrics_path}")
     lyrics = load_lyrics(lyrics_path)
     entries = remove_generated_title_cards(lyrics.entries, audio_path)
+    preflight = build_lyric_preflight(lyrics_path, lyrics, entries, audio_path)
     if args.probe:
         identity = str(audio_path.resolve()).casefold().encode("utf-8")
         suffix = hashlib.sha256(identity).hexdigest()[:10]
@@ -36320,6 +36399,10 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
         entries, skipped_markers = remove_instrumental_markers(entries)
         if skipped_markers:
             progress_log(f"skipped non-lyric markers: count={len(skipped_markers)}")
+            preflight["transformations"].extend(
+                {"kind": "instrumental-marker-removed", **item}
+                for item in skipped_markers
+            )
         if not entries:
             raise LrcError("No lyric text entries remain after skipping instrumental markers")
 
@@ -36639,6 +36722,9 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
     if skipped_markers:
         report["skipped_marker_entries"] = skipped_markers
         report["skipped_marker_count"] = len(skipped_markers)
+    preflight["retained_entries"] = len(entries)
+    report["lyric_preflight"] = preflight
+    report["input_status"] = preflight["status"]
     review_tsv_path = report_path.with_name(report_path.name.replace(".align-report.json", ".review.tsv"))
     report["review_tsv_path"] = str(review_tsv_path)
     write_review_tsv(review_tsv_path, report, entries)
