@@ -130,6 +130,16 @@ class LyricParserRegressionTests(unittest.TestCase):
             reversed_order,
         )
 
+    def test_unsupported_letter_scripts_are_not_treated_as_instrumental(self):
+        korean = auto_lrc.LyricEntry(["사랑해"])
+        cyrillic = auto_lrc.LyricEntry(["Привет"])
+        music_note = auto_lrc.LyricEntry(["♪"])
+        kept, removed = auto_lrc.remove_instrumental_markers(
+            [korean, cyrillic, music_note]
+        )
+        self.assertEqual(kept, [korean, cyrillic])
+        self.assertEqual([row["text"] for row in removed], ["♪"])
+
 
 if __name__ == "__main__":
     unittest.main()

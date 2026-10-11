@@ -8246,7 +8246,7 @@ def is_instrumental_marker(entry: LyricEntry) -> bool:
     return (
         text.casefold() == "[oogg_rana]"
         or text == "♪"
-        or not normalized
+        or (not normalized and not any(char.isalpha() for char in text))
         or (wrapped and any(word in marker_text for word in marker_words))
     )
 
