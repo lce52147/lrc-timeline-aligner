@@ -13341,6 +13341,16 @@ def run_auto_backend_competition(
             candidates, selected_backend, selected_timestamps, selected_report
         )
 
+    if str(getattr(args, "timing_source_policy", "default")) == "ctc-first":
+        # CTC is the single permitted final backend. All earlier ASR/WX
+        # acquisition and CTC diagnostic flags stay intact; the opt-in policy
+        # only prevents selecting a non-CTC backend's timestamp authority.
+        generation_candidates = [
+            item for item in generation_candidates
+            if item.get("backend") == "ctc"
+        ]
+        if not generation_candidates:
+            raise LrcError("ctc-first requires a CTC final backend")
     preview_records: list[dict[str, object]] = []
     shared_retry_helper_cache: dict[str, tuple[str, object]] = {}
     for candidate in generation_candidates:

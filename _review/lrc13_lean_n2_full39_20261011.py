@@ -9,7 +9,7 @@ V=Path(__file__).resolve().parent;ROOT=V.parent
 OUT=V/'LRC13_LEAN_N2_CTC_FIRST_39_20261011';OUT.mkdir(exist_ok=True)
 MANIFEST=OUT/'MANIFEST.json';STATUS=V/'LRC13_WORK_STATUS_20261011.json'
 corpus=json.loads((V/'LRC13_S5_39_CORPUS_PREFLIGHT_20261010.json').read_text(encoding='utf8'))['corpus']
-existing=json.loads(MANIFEST.read_text(encoding='utf8')).get('cases',[]) if MANIFEST.is_file() else []
+existing=[x for x in json.loads(MANIFEST.read_text(encoding='utf8')).get('cases',[]) if x.get('status')=='PRODUCED'] if MANIFEST.is_file() else []
 done={r['index'] for r in existing if r.get('status')=='PRODUCED'}
 from run_demucs_37_regression_20261008 import build
 sidecars={x['title']:x['sidecar'] for x in build()}
