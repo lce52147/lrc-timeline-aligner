@@ -334,5 +334,56 @@ class R2PipelineTests(unittest.TestCase):
         )
 
 
+
+class ReviewerCacheRegressionTests(unittest.TestCase):
+    def test_same_title_different_audio_directories_have_distinct_work_dirs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            a = base / "album-A" / "Same Name.flac"
+            b = base / "album-B" / "Same Name.flac"
+            self.assertNotEqual(
+                r2_pipeline.reviewer_work_directory(base / "work", a),
+                r2_pipeline.reviewer_work_directory(base / "work", b),
+            )
+
+    def test_stale_hubp_is_removed_before_reviewer_commands_run(self) -> None:
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lyrics = root / "song.lyrics.txt"
+            vocal = root / "vocals.wav"
+            report_path = root / "baseline.json"
+            result_path = root / "reviewer-evidence.json"
+            work_dir = root / "work"
+            work_dir.mkdir()
+            lyrics.write_text("\n".join(f"新歌詞{n}" for n in range(1, 9)) + "\n", encoding="utf-8")
+            vocal.write_bytes(b"fake audio")
+            report = R2PipelineTests()._baseline_report(lyrics, vocal)
+            report_path.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+            (work_dir / "hubp-plan.json").write_text('{"status":"OLD"}', encoding="utf-8")
+            (work_dir / "hubp-raw.json").write_text(
+                json.dumps({"status":"OK","rows":{"song::1":{"status":"OK","time":999}}}),
+                encoding="utf-8",
+            )
+            observed = []
+
+            def fake_run(command, log):
+                observed.append((
+                    (work_dir / "hubp-plan.json").exists(),
+                    (work_dir / "hubp-raw.json").exists(),
+                ))
+                return 0
+
+            with mock.patch.object(r2_pipeline, "_run_logged", side_effect=fake_run):
+                r2_pipeline.acquire_reviewer_evidence(report_path, result_path, work_dir)
+
+            self.assertTrue(observed)
+            self.assertEqual(observed[0], (False, False))
+            payload = json.loads((work_dir / "reviewer-data.json").read_text(encoding="utf-8"))
+            self.assertEqual(payload["songs"][0]["rows"][0]["text"], "新歌詞1")
+            self.assertFalse((work_dir / "hubp-raw.json").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

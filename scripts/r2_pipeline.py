@@ -51,6 +51,13 @@ def _safe_name(value: str) -> str:
     return cleaned or "song"
 
 
+def reviewer_work_directory(base: Path, audio_path: Path) -> Path:
+    """Keep reviewer artifacts from identically named songs independent."""
+    canonical_audio = str(audio_path.expanduser().resolve()).casefold()
+    suffix = hashlib.sha256(canonical_audio.encode("utf-8")).hexdigest()[:12]
+    return base / f"{_safe_name(audio_path.stem)}--{suffix}"
+
+
 def _current_candidate(assignment: Mapping[str, object]) -> Mapping[str, object]:
     candidates = assignment.get("candidates")
     if not isinstance(candidates, list):
@@ -642,6 +649,10 @@ def acquire_reviewer_evidence(
     hubp_path = work_dir / "hubp-raw.json"
     log_path = work_dir / "reviewers.log"
     status_path = work_dir / "reviewer-status.json"
+    # HUBP resumes any song previously marked OK, even when its lyrics changed.
+    # Invalidate the complete HUBP plan/output pair on every acquisition.
+    for stale_path in (plan_path, hubp_path):
+        stale_path.unlink(missing_ok=True)
     _write_json(data_path, payload)
 
     python_path = reviewer_python or auto_lrc.default_whisperx_python()
@@ -787,7 +798,9 @@ def main(argv: list[str] | None = None) -> int:
     if parsed.probe:
         parser.error("R2 production pipeline does not support --probe")
     audio_path = Path(parsed.audio[0]).expanduser().resolve()
-    run_dir = Path(args.work_dir).expanduser().resolve() / _safe_name(audio_path.stem)
+    run_dir = reviewer_work_directory(
+        Path(args.work_dir).expanduser().resolve(), audio_path
+    )
     baseline_output = run_dir / "baseline.lrc"
     baseline_report_dir = run_dir / "baseline-reports"
     evidence_path = run_dir / "reviewer-evidence.json"
