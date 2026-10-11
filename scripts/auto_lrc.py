@@ -22380,6 +22380,15 @@ def collect_central_timing_candidates(
                     )
                 )
 
+        if (report.get("segment_skeleton_status") or {}).get("status") == "SEGMENT_CURRENT":
+            from segment_peer_outlier import exclude_uncorroborated_whisperx_fusion
+            candidates, excluded = exclude_uncorroborated_whisperx_fusion(candidates)
+            if excluded:
+                raw_assignment["segment_peer_fusion_exclusions"] = [
+                    {"source":x.source, "time":x.written_time.seconds,
+                     "reason":"uncorroborated-distant-fused-onset"}
+                    for x in excluded
+                ]
         unique = {candidate.candidate_id: candidate for candidate in candidates}
         candidate_sets.append(tuple(unique[key] for key in sorted(unique)))
 
