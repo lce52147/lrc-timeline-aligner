@@ -85,7 +85,7 @@ def evaluate_interval(emission,aligner,tokenizer,rows,left,right,
                       vocal_features,duration,blank):
     # left/right zero based anchor positions; -1 and len(rows) virtual.
     indexes=list(range(left+1,right))
-    if not indexes:return {'status':'NO_INTERNAL_ROWS','lines':[]}
+    if not indexes:return {'status':'NO_INTERNAL_ROWS','rows':[]}
     wstart=max(0.,end_of(rows[left]) if left>=0 else 0.)
     wend=min(duration,start_of(rows[right]) if right<len(rows) else duration)
     interval={'left_anchor':left+1 if left>=0 else 0,

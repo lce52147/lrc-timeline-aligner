@@ -6,7 +6,7 @@ F=V/'LRC13_ANCHOR_GPU_20261011';F.mkdir(exist_ok=True)
 manifest=F/'MANIFEST.json'
 status=V/'LRC13_WORK_STATUS_20261011.json'
 corpus=json.loads((V/'LRC13_S5_39_CORPUS_PREFLIGHT_20261010.json').read_text(encoding='utf8'))['corpus']
-cases=json.loads(manifest.read_text(encoding='utf8'))['cases'] if manifest.is_file() else []
+cases=[x for x in json.loads(manifest.read_text(encoding='utf8'))['cases'] if x.get('status')=='DONE'] if manifest.is_file() else []
 done={x['index'] for x in cases if x.get('status')=='DONE'}
 def emit(state,**details):
  o={'phase':state,'task':'ANCHOR_ARCH_39_CTC_ONLY','done':sum(z.get('status')=='DONE' for z in cases),'total':39,
