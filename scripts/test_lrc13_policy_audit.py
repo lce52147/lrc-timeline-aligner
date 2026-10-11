@@ -49,5 +49,49 @@ class TimingPolicyRegressionTests(unittest.TestCase):
                 self.assertEqual(value.value.id, "selected_eval")
 
 
+    def test_ctc_evidence_binding_runs_on_actual_generation_path(self) -> None:
+        tree = ast.parse(Path(auto_lrc.__file__).read_text(encoding="utf-8"))
+        generation = next(
+            node for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "run_auto_backend_competition"
+        )
+        calls = [
+            node for node in ast.walk(generation)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        ]
+        binders = [
+            node for node in calls
+            if node.func.id == "bind_ctc_generation_candidate_evidence"
+        ]
+        self.assertEqual(len(binders), 1)
+        self.assertEqual(
+            [arg.id for arg in binders[0].args if isinstance(arg, ast.Name)],
+            ["generation_candidates", "entries", "whisperx_evidence_candidates"],
+        )
+        previews = [
+            node.lineno for node in calls
+            if node.func.id == "prepare_backend_timing_preview"
+        ]
+        self.assertEqual(len(previews), 1)
+        self.assertLess(binders[0].lineno, previews[0])
+
+    def test_ctc_candidate_receives_row_and_tail_evidence_when_seed_is_whisper(self) -> None:
+        from unittest import mock
+        report = {"backend": "ctc", "assignments": [{"entry": 1, "timestamp": 3.0}]}
+        candidate = {"backend": "ctc", "timestamps": [3.0], "report": report}
+        entries = [auto_lrc.LyricEntry(["hello"])]
+        evidence = [([2.9], {"backend": "whisperx"}, "complete-independent-whisperx")]
+        with (
+            mock.patch.object(auto_lrc, "bind_runtime_whisperx_row_evidence") as row,
+            mock.patch.object(auto_lrc, "bind_runtime_whisperx_ctc_consensus") as consensus,
+            mock.patch.object(auto_lrc, "bind_runtime_ctc_assignment_tail_fallback") as tail,
+        ):
+            auto_lrc.bind_ctc_generation_candidate_evidence([candidate], entries, evidence)
+            row.assert_called_once_with(report, entries, evidence)
+            consensus.assert_called_once_with(report, entries, [3.0], evidence)
+            tail.assert_called_once_with(report, entries)
+
+
 if __name__ == "__main__":
     unittest.main()

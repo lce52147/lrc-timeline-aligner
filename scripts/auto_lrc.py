@@ -12920,6 +12920,32 @@ def _central_preview_generation_candidates(
         result.append(selected_payload)
     return result
 
+def bind_ctc_generation_candidate_evidence(
+    generation_candidates: list[dict[str, object]],
+    entries: list[LyricEntry],
+    whisperx_evidence_candidates: list[tuple[list[float], dict[str, object], str]],
+) -> None:
+    """Attach existing runtime evidence to each valid CTC generation candidate."""
+    for candidate in generation_candidates:
+        report = candidate.get("report")
+        timestamps = candidate.get("timestamps")
+        if (
+            candidate.get("backend") != "ctc"
+            or candidate.get("error")
+            or not isinstance(report, dict)
+            or not isinstance(timestamps, list)
+            or len(timestamps) != len(entries)
+        ):
+            continue
+        if whisperx_evidence_candidates:
+            bind_runtime_whisperx_row_evidence(
+                report, entries, whisperx_evidence_candidates
+            )
+            bind_runtime_whisperx_ctc_consensus(
+                report, entries, timestamps, whisperx_evidence_candidates
+            )
+        bind_runtime_ctc_assignment_tail_fallback(report, entries)
+
 
 def run_auto_backend_competition(
     audio_path: Path,
@@ -13341,6 +13367,29 @@ def run_auto_backend_competition(
         generation_candidates = _central_preview_generation_candidates(
             candidates, selected_backend, selected_timestamps, selected_report
         )
+
+    # Preserve independent WhisperX evidence even when it supplied the seed.
+    for whisper_candidate in candidates:
+        if (
+            whisper_candidate.get("backend") == "whisperx"
+            and not whisper_candidate.get("error")
+            and isinstance(whisper_candidate.get("report"), dict)
+            and isinstance(whisper_candidate.get("timestamps"), list)
+            and len(whisper_candidate["timestamps"]) == len(entries)
+        ):
+            if not any(
+                evidence_report is whisper_candidate["report"]
+                for _, evidence_report, _ in whisperx_evidence_candidates
+            ):
+                whisperx_evidence_candidates.append((
+                    list(whisper_candidate["timestamps"]),
+                    whisper_candidate["report"],
+                    "complete-independent-whisperx",
+                ))
+            break
+    bind_ctc_generation_candidate_evidence(
+        generation_candidates, entries, whisperx_evidence_candidates
+    )
 
     if str(getattr(args, "timing_source_policy", "default")) == "ctc-first":
         # CTC is the single permitted final backend. All earlier ASR/WX
