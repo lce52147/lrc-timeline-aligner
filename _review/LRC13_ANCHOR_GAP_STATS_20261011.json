@@ -1,0 +1,373 @@
+{
+  "status": "GAPS_SCORED_39",
+  "repeated_rows": 412,
+  "repeat_bounded_two_real_anchors": 313,
+  "repeat_nonanchor_with_virtual_edges": 412,
+  "interval_seconds": {
+    "n": 205,
+    "min": 0.76,
+    "median": 11.401,
+    "p90": 54.423,
+    "max": 118.784
+  },
+  "interval_row_count": {
+    "n": 205,
+    "min": 1,
+    "median": 2,
+    "p90": 9,
+    "max": 16
+  },
+  "songs": [
+    {
+      "song": "01. The Day the Starlight Arrived 星辉抵达之日",
+      "sung_rows": 24,
+      "anchors": 18,
+      "repeated_rows": 0,
+      "repeated_with_both_real_anchors": 0,
+      "repeated_nonanchor_with_virtual_edges": 0,
+      "intervals_with_internal_rows": 3
+    },
+    {
+      "song": "01.エガクミライ",
+      "sung_rows": 27,
+      "anchors": 17,
+      "repeated_rows": 6,
+      "repeated_with_both_real_anchors": 3,
+      "repeated_nonanchor_with_virtual_edges": 6,
+      "intervals_with_internal_rows": 2
+    },
+    {
+      "song": "01.感情グラス",
+      "sung_rows": 40,
+      "anchors": 26,
+      "repeated_rows": 8,
+      "repeated_with_both_real_anchors": 4,
+      "repeated_nonanchor_with_virtual_edges": 8,
+      "intervals_with_internal_rows": 8
+    },
+    {
+      "song": "03. Choir ‘S’ Choir",
+      "sung_rows": 44,
+      "anchors": 4,
+      "repeated_rows": 21,
+      "repeated_with_both_real_anchors": 6,
+      "repeated_nonanchor_with_virtual_edges": 21,
+      "intervals_with_internal_rows": 3
+    },
+    {
+      "song": "03. 過去に囚われている",
+      "sung_rows": 68,
+      "anchors": 17,
+      "repeated_rows": 39,
+      "repeated_with_both_real_anchors": 36,
+      "repeated_nonanchor_with_virtual_edges": 39,
+      "intervals_with_internal_rows": 8
+    },
+    {
+      "song": "04 影色舞",
+      "sung_rows": 52,
+      "anchors": 19,
+      "repeated_rows": 12,
+      "repeated_with_both_real_anchors": 6,
+      "repeated_nonanchor_with_virtual_edges": 12,
+      "intervals_with_internal_rows": 8
+    },
+    {
+      "song": "06.ビビッド",
+      "sung_rows": 55,
+      "anchors": 27,
+      "repeated_rows": 16,
+      "repeated_with_both_real_anchors": 8,
+      "repeated_nonanchor_with_virtual_edges": 16,
+      "intervals_with_internal_rows": 4
+    },
+    {
+      "song": "10.方舟",
+      "sung_rows": 37,
+      "anchors": 26,
+      "repeated_rows": 10,
+      "repeated_with_both_real_anchors": 8,
+      "repeated_nonanchor_with_virtual_edges": 10,
+      "intervals_with_internal_rows": 6
+    },
+    {
+      "song": "11.ユートピア",
+      "sung_rows": 32,
+      "anchors": 27,
+      "repeated_rows": 2,
+      "repeated_with_both_real_anchors": 2,
+      "repeated_nonanchor_with_virtual_edges": 2,
+      "intervals_with_internal_rows": 3
+    },
+    {
+      "song": "Ever be my love",
+      "sung_rows": 24,
+      "anchors": 12,
+      "repeated_rows": 10,
+      "repeated_with_both_real_anchors": 5,
+      "repeated_nonanchor_with_virtual_edges": 10,
+      "intervals_with_internal_rows": 2
+    },
+    {
+      "song": "01 - フロム",
+      "sung_rows": 35,
+      "anchors": 18,
+      "repeated_rows": 12,
+      "repeated_with_both_real_anchors": 6,
+      "repeated_nonanchor_with_virtual_edges": 12,
+      "intervals_with_internal_rows": 7
+    },
+    {
+      "song": "01. Elegy Dedicated With Love",
+      "sung_rows": 37,
+      "anchors": 21,
+      "repeated_rows": 10,
+      "repeated_with_both_real_anchors": 10,
+      "repeated_nonanchor_with_virtual_edges": 10,
+      "intervals_with_internal_rows": 5
+    },
+    {
+      "song": "01.おやすみモノクローム",
+      "sung_rows": 40,
+      "anchors": 25,
+      "repeated_rows": 11,
+      "repeated_with_both_real_anchors": 11,
+      "repeated_nonanchor_with_virtual_edges": 11,
+      "intervals_with_internal_rows": 7
+    },
+    {
+      "song": "01. それでも雨は降るんだね",
+      "sung_rows": 55,
+      "anchors": 18,
+      "repeated_rows": 14,
+      "repeated_with_both_real_anchors": 11,
+      "repeated_nonanchor_with_virtual_edges": 14,
+      "intervals_with_internal_rows": 9
+    },
+    {
+      "song": "01. ふり",
+      "sung_rows": 57,
+      "anchors": 32,
+      "repeated_rows": 4,
+      "repeated_with_both_real_anchors": 3,
+      "repeated_nonanchor_with_virtual_edges": 4,
+      "intervals_with_internal_rows": 9
+    },
+    {
+      "song": "01. やっぱり雨は降るんだね",
+      "sung_rows": 67,
+      "anchors": 31,
+      "repeated_rows": 25,
+      "repeated_with_both_real_anchors": 25,
+      "repeated_nonanchor_with_virtual_edges": 25,
+      "intervals_with_internal_rows": 8
+    },
+    {
+      "song": "01.ミレニアの水槽",
+      "sung_rows": 45,
+      "anchors": 13,
+      "repeated_rows": 16,
+      "repeated_with_both_real_anchors": 8,
+      "repeated_nonanchor_with_virtual_edges": 16,
+      "intervals_with_internal_rows": 3
+    },
+    {
+      "song": "01.最大幸福度",
+      "sung_rows": 45,
+      "anchors": 22,
+      "repeated_rows": 2,
+      "repeated_with_both_real_anchors": 1,
+      "repeated_nonanchor_with_virtual_edges": 2,
+      "intervals_with_internal_rows": 6
+    },
+    {
+      "song": "01. 芽吹くとき",
+      "sung_rows": 25,
+      "anchors": 16,
+      "repeated_rows": 8,
+      "repeated_with_both_real_anchors": 8,
+      "repeated_nonanchor_with_virtual_edges": 8,
+      "intervals_with_internal_rows": 4
+    },
+    {
+      "song": "01. 雨模様",
+      "sung_rows": 49,
+      "anchors": 31,
+      "repeated_rows": 10,
+      "repeated_with_both_real_anchors": 9,
+      "repeated_nonanchor_with_virtual_edges": 10,
+      "intervals_with_internal_rows": 14
+    },
+    {
+      "song": "02. Georgette Me, Georgette You",
+      "sung_rows": 18,
+      "anchors": 8,
+      "repeated_rows": 8,
+      "repeated_with_both_real_anchors": 6,
+      "repeated_nonanchor_with_virtual_edges": 8,
+      "intervals_with_internal_rows": 4
+    },
+    {
+      "song": "02. JANE DOE",
+      "sung_rows": 24,
+      "anchors": 12,
+      "repeated_rows": 12,
+      "repeated_with_both_real_anchors": 4,
+      "repeated_nonanchor_with_virtual_edges": 12,
+      "intervals_with_internal_rows": 3
+    },
+    {
+      "song": "03.春を待つ (feat. 倚水)",
+      "sung_rows": 39,
+      "anchors": 25,
+      "repeated_rows": 12,
+      "repeated_with_both_real_anchors": 6,
+      "repeated_nonanchor_with_virtual_edges": 12,
+      "intervals_with_internal_rows": 4
+    },
+    {
+      "song": "04. Scarborough Fair",
+      "sung_rows": 14,
+      "anchors": 5,
+      "repeated_rows": 5,
+      "repeated_with_both_real_anchors": 3,
+      "repeated_nonanchor_with_virtual_edges": 5,
+      "intervals_with_internal_rows": 6
+    },
+    {
+      "song": "04.可惜夜",
+      "sung_rows": 24,
+      "anchors": 15,
+      "repeated_rows": 8,
+      "repeated_with_both_real_anchors": 7,
+      "repeated_nonanchor_with_virtual_edges": 8,
+      "intervals_with_internal_rows": 4
+    },
+    {
+      "song": "05.遠雷",
+      "sung_rows": 28,
+      "anchors": 26,
+      "repeated_rows": 2,
+      "repeated_with_both_real_anchors": 2,
+      "repeated_nonanchor_with_virtual_edges": 2,
+      "intervals_with_internal_rows": 2
+    },
+    {
+      "song": "06. あの世行きのバスに乗ってさらば。",
+      "sung_rows": 40,
+      "anchors": 10,
+      "repeated_rows": 9,
+      "repeated_with_both_real_anchors": 7,
+      "repeated_nonanchor_with_virtual_edges": 9,
+      "intervals_with_internal_rows": 5
+    },
+    {
+      "song": "08.月の唄",
+      "sung_rows": 38,
+      "anchors": 22,
+      "repeated_rows": 10,
+      "repeated_with_both_real_anchors": 5,
+      "repeated_nonanchor_with_virtual_edges": 10,
+      "intervals_with_internal_rows": 3
+    },
+    {
+      "song": "08 春日影 (MyGO!!!!! Ver.)",
+      "sung_rows": 39,
+      "anchors": 24,
+      "repeated_rows": 14,
+      "repeated_with_both_real_anchors": 14,
+      "repeated_nonanchor_with_virtual_edges": 14,
+      "intervals_with_internal_rows": 5
+    },
+    {
+      "song": "09. ツユ - レインフォール",
+      "sung_rows": 74,
+      "anchors": 37,
+      "repeated_rows": 30,
+      "repeated_with_both_real_anchors": 30,
+      "repeated_nonanchor_with_virtual_edges": 30,
+      "intervals_with_internal_rows": 16
+    },
+    {
+      "song": "10.深夜特急",
+      "sung_rows": 41,
+      "anchors": 23,
+      "repeated_rows": 16,
+      "repeated_with_both_real_anchors": 16,
+      "repeated_nonanchor_with_virtual_edges": 16,
+      "intervals_with_internal_rows": 4
+    },
+    {
+      "song": "12. ツユ - 朧月夜物語",
+      "sung_rows": 23,
+      "anchors": 16,
+      "repeated_rows": 0,
+      "repeated_with_both_real_anchors": 0,
+      "repeated_nonanchor_with_virtual_edges": 0,
+      "intervals_with_internal_rows": 5
+    },
+    {
+      "song": "12.琥珀の国",
+      "sung_rows": 32,
+      "anchors": 22,
+      "repeated_rows": 10,
+      "repeated_with_both_real_anchors": 10,
+      "repeated_nonanchor_with_virtual_edges": 10,
+      "intervals_with_internal_rows": 2
+    },
+    {
+      "song": "12. 終点の先が在るとするならば。",
+      "sung_rows": 32,
+      "anchors": 9,
+      "repeated_rows": 7,
+      "repeated_with_both_real_anchors": 7,
+      "repeated_nonanchor_with_virtual_edges": 7,
+      "intervals_with_internal_rows": 6
+    },
+    {
+      "song": "13.薔薇の下で",
+      "sung_rows": 30,
+      "anchors": 24,
+      "repeated_rows": 2,
+      "repeated_with_both_real_anchors": 2,
+      "repeated_nonanchor_with_virtual_edges": 2,
+      "intervals_with_internal_rows": 2
+    },
+    {
+      "song": "持续瞬间的永恒 - 鸣潮先约电台,jixwang,markmilian",
+      "sung_rows": 27,
+      "anchors": 24,
+      "repeated_rows": 3,
+      "repeated_with_both_real_anchors": 3,
+      "repeated_nonanchor_with_virtual_edges": 3,
+      "intervals_with_internal_rows": 3
+    },
+    {
+      "song": "远航星的告别 - 鸣潮先约电台,jixwang,Tarokiki",
+      "sung_rows": 33,
+      "anchors": 14,
+      "repeated_rows": 12,
+      "repeated_with_both_real_anchors": 12,
+      "repeated_nonanchor_with_virtual_edges": 12,
+      "intervals_with_internal_rows": 4
+    },
+    {
+      "song": "09.夢遊",
+      "sung_rows": 30,
+      "anchors": 21,
+      "repeated_rows": 7,
+      "repeated_with_both_real_anchors": 3,
+      "repeated_nonanchor_with_virtual_edges": 7,
+      "intervals_with_internal_rows": 3
+    },
+    {
+      "song": "01 My Dearest",
+      "sung_rows": 43,
+      "anchors": 15,
+      "repeated_rows": 9,
+      "repeated_with_both_real_anchors": 6,
+      "repeated_nonanchor_with_virtual_edges": 9,
+      "intervals_with_internal_rows": 5
+    }
+  ]
+}

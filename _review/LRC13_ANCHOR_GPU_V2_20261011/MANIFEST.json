@@ -1,0 +1,591 @@
+{
+  "status": "ANCHOR_GPU_39_FROZEN",
+  "cases": [
+    {
+      "index": 1,
+      "id": "01.thedaythestarlightarrived星辉抵达之日",
+      "title": "01. The Day the Starlight Arrived 星辉抵达之日",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\01_01.thedaythestarlightarrived星辉抵达之日\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\01_01.thedaythestarlightarrived星辉抵达之日\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\01_01.thedaythestarlightarrived星辉抵达之日\\FROZEN_HYPOTHESES.json",
+      "seconds": 13.84
+    },
+    {
+      "index": 2,
+      "id": "01.エガクミライ",
+      "title": "01.エガクミライ",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\02_01.エガクミライ\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\02_01.エガクミライ\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\02_01.エガクミライ\\FROZEN_HYPOTHESES.json",
+      "seconds": 12.61
+    },
+    {
+      "index": 3,
+      "id": "01.感情グラス",
+      "title": "01.感情グラス",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\03_01.感情グラス\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\03_01.感情グラス\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\03_01.感情グラス\\FROZEN_HYPOTHESES.json",
+      "seconds": 12.56
+    },
+    {
+      "index": 4,
+      "id": "03.choir‘s’choir",
+      "title": "03. Choir ‘S’ Choir",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\04_03.choir‘s’choir\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\04_03.choir‘s’choir\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\04_03.choir‘s’choir\\FROZEN_HYPOTHESES.json",
+      "seconds": 14.33
+    },
+    {
+      "index": 5,
+      "id": "03.過去に囚われている",
+      "title": "03. 過去に囚われている",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\05_03.過去に囚われている\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\05_03.過去に囚われている\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\05_03.過去に囚われている\\FROZEN_HYPOTHESES.json",
+      "seconds": 12.01
+    },
+    {
+      "index": 6,
+      "id": "04影色舞",
+      "title": "04 影色舞",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\06_04影色舞\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\06_04影色舞\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\06_04影色舞\\FROZEN_HYPOTHESES.json",
+      "seconds": 11.16
+    },
+    {
+      "index": 7,
+      "id": "06.ビビッド",
+      "title": "06.ビビッド",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\07_06.ビビッド\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\07_06.ビビッド\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\07_06.ビビッド\\FROZEN_HYPOTHESES.json",
+      "seconds": 11.67
+    },
+    {
+      "index": 8,
+      "id": "10.方舟",
+      "title": "10.方舟",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\08_10.方舟\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\08_10.方舟\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\08_10.方舟\\FROZEN_HYPOTHESES.json",
+      "seconds": 13.0
+    },
+    {
+      "index": 9,
+      "id": "11.ユートピア",
+      "title": "11.ユートピア",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\09_11.ユートピア\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\09_11.ユートピア\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\09_11.ユートピア\\FROZEN_HYPOTHESES.json",
+      "seconds": 11.27
+    },
+    {
+      "index": 10,
+      "id": "everbemylove",
+      "title": "Ever be my love",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\10_everbemylove\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\10_everbemylove\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\10_everbemylove\\FROZEN_HYPOTHESES.json",
+      "seconds": 9.91
+    },
+    {
+      "index": 11,
+      "id": "01-フロム",
+      "title": "01 - フロム",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\11_01-フロム\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\11_01-フロム\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\11_01-フロム\\FROZEN_HYPOTHESES.json",
+      "seconds": 13.17
+    },
+    {
+      "index": 12,
+      "id": "01.elegydedicatedwithlove",
+      "title": "01. Elegy Dedicated With Love",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\12_01.elegydedicatedwithlove\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\12_01.elegydedicatedwithlove\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\12_01.elegydedicatedwithlove\\FROZEN_HYPOTHESES.json",
+      "seconds": 14.66
+    },
+    {
+      "index": 13,
+      "id": "01.おやすみモノクローム",
+      "title": "01.おやすみモノクローム",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\13_01.おやすみモノクローム\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\13_01.おやすみモノクローム\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\13_01.おやすみモノクローム\\FROZEN_HYPOTHESES.json",
+      "seconds": 12.92
+    },
+    {
+      "index": 14,
+      "id": "01.それでも雨は降るんだね",
+      "title": "01. それでも雨は降るんだね",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\14_01.それでも雨は降るんだね\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\14_01.それでも雨は降るんだね\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\14_01.それでも雨は降るんだね\\FROZEN_HYPOTHESES.json",
+      "seconds": 11.23
+    },
+    {
+      "index": 15,
+      "id": "01.ふり",
+      "title": "01. ふり",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\15_01.ふり\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\15_01.ふり\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\15_01.ふり\\FROZEN_HYPOTHESES.json",
+      "seconds": 9.24
+    },
+    {
+      "index": 16,
+      "id": "01.やっぱり雨は降るんだね",
+      "title": "01. やっぱり雨は降るんだね",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\16_01.やっぱり雨は降るんだね\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\16_01.やっぱり雨は降るんだね\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\16_01.やっぱり雨は降るんだね\\FROZEN_HYPOTHESES.json",
+      "seconds": 11.58
+    },
+    {
+      "index": 17,
+      "id": "01.ミレニアの水槽",
+      "title": "01.ミレニアの水槽",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\17_01.ミレニアの水槽\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\17_01.ミレニアの水槽\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\17_01.ミレニアの水槽\\FROZEN_HYPOTHESES.json",
+      "seconds": 12.61
+    },
+    {
+      "index": 18,
+      "id": "01.最大幸福度",
+      "title": "01.最大幸福度",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\18_01.最大幸福度\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\18_01.最大幸福度\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\18_01.最大幸福度\\FROZEN_HYPOTHESES.json",
+      "seconds": 11.24
+    },
+    {
+      "index": 19,
+      "id": "01.芽吹くとき",
+      "title": "01. 芽吹くとき",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\19_01.芽吹くとき\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\19_01.芽吹くとき\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\19_01.芽吹くとき\\FROZEN_HYPOTHESES.json",
+      "seconds": 10.27
+    },
+    {
+      "index": 20,
+      "id": "01.雨模様",
+      "title": "01. 雨模様",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\20_01.雨模様\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\20_01.雨模様\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\20_01.雨模様\\FROZEN_HYPOTHESES.json",
+      "seconds": 8.48
+    },
+    {
+      "index": 21,
+      "id": "02.georgetteme,georgetteyou",
+      "title": "02. Georgette Me, Georgette You",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\21_02.georgetteme,georgetteyou\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\21_02.georgetteme,georgetteyou\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\21_02.georgetteme,georgetteyou\\FROZEN_HYPOTHESES.json",
+      "seconds": 10.89
+    },
+    {
+      "index": 22,
+      "id": "02.janedoe",
+      "title": "02. JANE DOE",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\22_02.janedoe\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\22_02.janedoe\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\22_02.janedoe\\FROZEN_HYPOTHESES.json",
+      "seconds": 11.08
+    },
+    {
+      "index": 23,
+      "id": "03.春を待つ(feat.倚水)",
+      "title": "03.春を待つ (feat. 倚水)",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\23_03.春を待つ(feat.倚水)\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\23_03.春を待つ(feat.倚水)\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\23_03.春を待つ(feat.倚水)\\FROZEN_HYPOTHESES.json",
+      "seconds": 11.97
+    },
+    {
+      "index": 24,
+      "id": "04.scarboroughfair",
+      "title": "04. Scarborough Fair",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\24_04.scarboroughfair\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\24_04.scarboroughfair\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\24_04.scarboroughfair\\FROZEN_HYPOTHESES.json",
+      "seconds": 7.83
+    },
+    {
+      "index": 25,
+      "id": "04.可惜夜",
+      "title": "04.可惜夜",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\25_04.可惜夜\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\25_04.可惜夜\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\25_04.可惜夜\\FROZEN_HYPOTHESES.json",
+      "seconds": 10.97
+    },
+    {
+      "index": 26,
+      "id": "05.遠雷",
+      "title": "05.遠雷",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\26_05.遠雷\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\26_05.遠雷\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\26_05.遠雷\\FROZEN_HYPOTHESES.json",
+      "seconds": 10.66
+    },
+    {
+      "index": 27,
+      "id": "06.あの世行きのバスに乗ってさらば。",
+      "title": "06. あの世行きのバスに乗ってさらば。",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\27_06.あの世行きのバスに乗ってさらば。\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\27_06.あの世行きのバスに乗ってさらば。\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\27_06.あの世行きのバスに乗ってさらば。\\FROZEN_HYPOTHESES.json",
+      "seconds": 9.48
+    },
+    {
+      "index": 28,
+      "id": "08.月の唄",
+      "title": "08.月の唄",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\28_08.月の唄\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\28_08.月の唄\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\28_08.月の唄\\FROZEN_HYPOTHESES.json",
+      "seconds": 11.42
+    },
+    {
+      "index": 29,
+      "id": "08春日影(mygo!!!!!ver.)",
+      "title": "08 春日影 (MyGO!!!!! Ver.)",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\29_08春日影(mygo!!!!!ver.)\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\29_08春日影(mygo!!!!!ver.)\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\29_08春日影(mygo!!!!!ver.)\\FROZEN_HYPOTHESES.json",
+      "seconds": 11.94
+    },
+    {
+      "index": 30,
+      "id": "09.ツユ-レインフォール",
+      "title": "09. ツユ - レインフォール",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\30_09.ツユ-レインフォール\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\30_09.ツユ-レインフォール\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\30_09.ツユ-レインフォール\\FROZEN_HYPOTHESES.json",
+      "seconds": 10.66
+    },
+    {
+      "index": 31,
+      "id": "10.深夜特急",
+      "title": "10.深夜特急",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\31_10.深夜特急\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\31_10.深夜特急\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\31_10.深夜特急\\FROZEN_HYPOTHESES.json",
+      "seconds": 11.97
+    },
+    {
+      "index": 32,
+      "id": "12.ツユ-朧月夜物語",
+      "title": "12. ツユ - 朧月夜物語",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\32_12.ツユ-朧月夜物語\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\32_12.ツユ-朧月夜物語\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\32_12.ツユ-朧月夜物語\\FROZEN_HYPOTHESES.json",
+      "seconds": 9.28
+    },
+    {
+      "index": 33,
+      "id": "12.琥珀の国",
+      "title": "12.琥珀の国",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\33_12.琥珀の国\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\33_12.琥珀の国\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\33_12.琥珀の国\\FROZEN_HYPOTHESES.json",
+      "seconds": 11.33
+    },
+    {
+      "index": 34,
+      "id": "12.終点の先が在るとするならば。",
+      "title": "12. 終点の先が在るとするならば。",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\34_12.終点の先が在るとするならば。\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\34_12.終点の先が在るとするならば。\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\34_12.終点の先が在るとするならば。\\FROZEN_HYPOTHESES.json",
+      "seconds": 9.12
+    },
+    {
+      "index": 35,
+      "id": "13.薔薇の下で",
+      "title": "13.薔薇の下で",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\35_13.薔薇の下で\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\35_13.薔薇の下で\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\35_13.薔薇の下で\\FROZEN_HYPOTHESES.json",
+      "seconds": 12.36
+    },
+    {
+      "index": 36,
+      "id": "持续瞬间的永恒-鸣潮先约电台,jixwang,markmilian",
+      "title": "持续瞬间的永恒 - 鸣潮先约电台,jixwang,markmilian",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\36_持续瞬间的永恒-鸣潮先约电台,jixwang,markmilian\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\36_持续瞬间的永恒-鸣潮先约电台,jixwang,markmilian\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\36_持续瞬间的永恒-鸣潮先约电台,jixwang,markmilian\\FROZEN_HYPOTHESES.json",
+      "seconds": 9.66
+    },
+    {
+      "index": 37,
+      "id": "远航星的告别-鸣潮先约电台,jixwang,tarokiki",
+      "title": "远航星的告别 - 鸣潮先约电台,jixwang,Tarokiki",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\37_远航星的告别-鸣潮先约电台,jixwang,tarokiki\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\37_远航星的告别-鸣潮先约电台,jixwang,tarokiki\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\37_远航星的告别-鸣潮先约电台,jixwang,tarokiki\\FROZEN_HYPOTHESES.json",
+      "seconds": 10.84
+    },
+    {
+      "index": 38,
+      "id": "09.夢遊",
+      "title": "09.夢遊",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\38_09.夢遊\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\38_09.夢遊\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\38_09.夢遊\\FROZEN_HYPOTHESES.json",
+      "seconds": 9.59
+    },
+    {
+      "index": 39,
+      "id": "01 My Dearest",
+      "title": "01 My Dearest",
+      "command": [
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\.venv-asr\\Scripts\\python.exe",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\lrc13_anchor_engine_20261011.py",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\39_01 My Dearest\\REQUEST_BK_BLIND.json",
+        "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\39_01 My Dearest\\FROZEN_HYPOTHESES.json"
+      ],
+      "status": "DONE",
+      "exit_code": 0,
+      "output": "D:\\Users\\Administrator\\Documents\\LRC tools\\_review\\LRC13_ANCHOR_GPU_V2_20261011\\39_01 My Dearest\\FROZEN_HYPOTHESES.json",
+      "seconds": 16.64
+    }
+  ],
+  "BK_timestamps_used": false
+}
