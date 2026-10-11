@@ -4794,7 +4794,12 @@ def build_lyric_preflight(
                 })
         if len(split_group_text(content, preserve_single=True)) > 1:
             transformations.append({"kind": "display-lines-split", "line": line_number})
-        if "�" in content or re.search(r"\?{3,}", content):
+        if is_instrumental_marker(LyricEntry([content])):
+            transformations.append({"kind": "instrumental-marker-removed", "line": line_number})
+        if "�" in content or re.search(r"\?{3,}", content) or re.search(
+            r"心得|推薦|樓主|作詞|作曲|編曲|翻譯|http|bilibili|BV[0-9A-Za-z]{8,}",
+            content, flags=re.IGNORECASE,
+        ):
             garbage.append({"line": line_number, "text": content[:160]})
     kept_ids = {id(entry) for entry in kept_entries}
     for index, entry in enumerate(document.entries, 1):
@@ -4860,11 +4865,18 @@ def raw_asr_lyric_coverage(
     lines = [line for line in lines if line]
     if not transcript or not lines:
         return {"status": "NOT_AVAILABLE"}
-    matched = sum(line in transcript for line in lines)
+    positions = [transcript.find(line) for line in lines]
+    matched = sum(pos >= 0 for pos in positions)
     fraction = matched / len(lines)
+    observed = [pos for pos in positions if pos >= 0]
+    order_reversals = sum(b < a for a, b in zip(observed, observed[1:]))
     return {
-        "status": "LOW_COVERAGE" if len(lines) >= 5 and fraction < 0.35 else "OK",
+        "status": (
+            "LOW_COVERAGE" if fraction < 0.50 else
+            "ORDER_INCONSISTENT" if order_reversals > 3 else "OK"
+        ),
         "matched_lines": matched,
+        "order_reversals": order_reversals,
         "total_lines": len(lines),
         "coverage_percent": round(fraction * 100.0, 2),
         "source": "existing-raw-whispercpp",
@@ -36756,9 +36768,9 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
     raw_coverage = report.get("lyric_raw_asr_coverage")
     if isinstance(raw_coverage, dict):
         preflight["raw_asr_coverage"] = raw_coverage
-        if raw_coverage.get("status") == "LOW_COVERAGE":
+        if raw_coverage.get("status") in {"LOW_COVERAGE", "ORDER_INCONSISTENT"}:
             preflight["status"] = "INPUT_SUSPECT"
-            preflight["reason_codes"].append("RAW_ASR_LOW_COVERAGE")
+            preflight["reason_codes"].append("RAW_ASR_" + str(raw_coverage["status"]))
     preflight["retained_entries"] = len(entries)
     report["lyric_preflight"] = preflight
     report["input_status"] = preflight["status"]
