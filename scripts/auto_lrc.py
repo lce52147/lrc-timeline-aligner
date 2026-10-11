@@ -25724,6 +25724,24 @@ def update_report_confidence_metrics(report: dict[str, object]) -> None:
     suspicious = report.get("suspicious_alignments")
     suspicious_rows = [row for row in suspicious if isinstance(row, dict)] if isinstance(suspicious, list) else []
     for row in suspicious_rows:
+        # A later final-line downgrade invalidates an older Central resolution.
+        entry = row.get("entry")
+        if central_committed and isinstance(entry, int) and 1 <= entry <= len(assignments):
+            assignment = assignments[entry - 1]
+            if isinstance(assignment, dict) and row.get("resolution"):
+                flags = assignment.get("flags")
+                active_failure = isinstance(flags, list) and any(
+                    _timing_failure_requires_review(str(flag)) for flag in flags
+                )
+                if (
+                    active_failure
+                    or bool(assignment.get("review_required"))
+                    or not assignment_timing_is_trusted(assignment)
+                ):
+                    row.pop("resolution", None)
+                    if row.get("severity") == "resolved":
+                        prior = row.get("original_severity")
+                        row["severity"] = prior if prior in {"high", "medium", "low"} else "medium"
         row["review_required"] = _suspicious_row_requires_review(row)
     report["suspicious_alignment_count"] = len(suspicious_rows)
     severity_counts = {"high": 0, "medium": 0, "low": 0}
