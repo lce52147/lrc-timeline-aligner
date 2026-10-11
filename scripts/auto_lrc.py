@@ -36073,6 +36073,7 @@ def write_lrc(
 
 
 from lrc_review_tsv import write_review_tsv
+from lrc_publication import publish_pair, recover_pair
 
 def report_artifact_paths(audio_path: Path, output_path: Path, report_dir: Path) -> tuple[Path, Path, Path]:
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -36183,6 +36184,9 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
         output_path = DEFAULT_PROBE_DIR / f"{audio_path.stem}--{suffix}.probe.lrc"
     else:
         output_path = Path(args.output).expanduser().resolve() if args.output else audio_path.with_suffix(".lrc")
+    recovery_dir = Path(args.report_dir).expanduser().resolve() if args.report_dir else DEFAULT_REPORT_DIR
+    recovery_report, _, _ = report_artifact_paths(audio_path, output_path, recovery_dir)
+    recover_pair(output_path, recovery_report)
     # Refuse an accidental overwrite before model inference.  Previously this
     # check lived in write_lrc(), after CTC/ASR had already consumed minutes of
     # GPU time for a probe whose destination could not be written.
@@ -36532,18 +36536,7 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
         report["output_trust_status"] = "unverified"
     else:
         report["output_trust_status"] = "trusted"
-    progress_log(f"writing LRC: {output_path}")
-    write_lrc(
-        output_path,
-        audio_path,
-        lyrics_path,
-        entries,
-        written_times,
-        duration,
-        args.overwrite,
-        metadata_lines,
-        f"LRC tools {strategy}",
-    )
+    progress_log(f"staging LRC and report pair: {output_path}")
     report.setdefault("backend", timing_source)
     report["requested_timing_source"] = args.timing_source
     report["resolved_timing_source"] = timing_source
@@ -36565,8 +36558,15 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
     review_tsv_path = report_path.with_name(report_path.name.replace(".align-report.json", ".review.tsv"))
     report["review_tsv_path"] = str(review_tsv_path)
     write_review_tsv(review_tsv_path, report, entries)
-    progress_log(f"writing report: {report_path}")
-    write_alignment_report(report_path, report)
+    progress_log(f"publishing LRC/report pair: {report_path}")
+    publish_pair(
+        output_path, report_path,
+        lambda stage: write_lrc(
+            stage, audio_path, lyrics_path, entries, written_times, duration,
+            True, metadata_lines, f"LRC tools {strategy}",
+        ),
+        lambda stage: write_alignment_report(stage, report),
+    )
 
     if strategy.startswith("weighted-fallback"):
         print(
@@ -36606,7 +36606,7 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
         report["strict_failure_reason"] = strict_reason
         report["review_audit_path"] = str(audit_path)
         report["anchor_template_path"] = str(template_path)
-        write_alignment_report(report_path, report)
+        publish_pair(output_path, report_path, lambda q: shutil.copy2(output_path,q), lambda q: write_alignment_report(q,report))
         raise LrcError(
             f"strict review failed for {output_path}: {strict_reason}. "
             f"Draft LRC, report, review audit, and anchor template were written; inspect {audit_path}, "
