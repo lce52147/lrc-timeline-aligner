@@ -92,6 +92,68 @@ class TimingPolicyRegressionTests(unittest.TestCase):
             consensus.assert_called_once_with(report, entries, [3.0], evidence)
             tail.assert_called_once_with(report, entries)
 
+    def test_ctc_first_retains_whisper_candidates_for_disagreement_evidence(self) -> None:
+        ctc = auto_lrc.make_timing_candidate(
+            entry_index=0, entry_text="hello", source="ctc-current",
+            raw_time=3.0, current=True,
+        )
+        whisper = auto_lrc.make_timing_candidate(
+            entry_index=0, entry_text="hello", source="whisperx-forced",
+            raw_time=1.0,
+        )
+        candidate_sets = ((ctc, whisper),)
+        self.assertIs(
+            auto_lrc.apply_central_timing_source_policy(candidate_sets, "ctc-first"),
+            candidate_sets,
+        )
+        decision = auto_lrc.select_timing_decision(
+            entry_index=0,
+            candidates=candidate_sets[0],
+            previous_candidate=None,
+            selection_revision=1,
+            timing_source_policy="ctc-first",
+        )
+        self.assertEqual(decision.written_time.centiseconds, 300)
+        self.assertIn(
+            whisper.candidate_id,
+            {item.candidate.candidate_id for item in decision.rejected_candidates},
+        )
+
+    def test_evaluator_does_not_drop_whisper_evidence_before_central(self) -> None:
+        tree = ast.parse(Path(auto_lrc.__file__).read_text(encoding="utf-8"))
+        evaluator = next(
+            node for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "evaluate_backend_timing"
+        )
+        self.assertFalse(any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "apply_central_timing_source_policy"
+            for node in ast.walk(evaluator)
+        ))
+
+    def test_ctc_first_evaluator_retains_all_candidates_but_commits_ctc(self) -> None:
+        from test_core_logic import CentralTimingStateTests
+        fixture = CentralTimingStateTests()
+        ctc = fixture.candidate(
+            3.0, fixture.coherent_spans(3.0), source="ctc-full", current=True
+        )
+        whisper = fixture.candidate(
+            1.0, fixture.coherent_spans(1.0), source="whisperx-forced"
+        )
+        evaluated = auto_lrc.evaluate_backend_timing(
+            "ctc", ((ctc, whisper),), fixture.report(1, backend="ctc"), {},
+            timing_source_policy="ctc-first",
+        )
+        self.assertEqual(evaluated.candidate_sets[0], (ctc, whisper))
+        self.assertEqual(evaluated.state.decisions[0].written_time.centiseconds, 300)
+        self.assertIn(
+            whisper.candidate_id,
+            {item.candidate.candidate_id
+             for item in evaluated.state.decisions[0].rejected_candidates},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

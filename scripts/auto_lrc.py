@@ -3884,6 +3884,7 @@ def select_timing_decision(
     occurrence_entries: list[LyricEntry] | tuple[LyricEntry, ...] | None = None,
     arbiter_mode: Literal["off", "gross-rescue", "reviewer-validity"] = "off",
     reviewer_evidence: dict[str, object] | None = None,
+    timing_source_policy: Literal["default", "ctc-first"] = "default",
 ) -> TimingDecision:
     if arbiter_mode not in {"off", "gross-rescue", "reviewer-validity"}:
         raise ValueError(f"unsupported timing arbiter mode: {arbiter_mode}")
@@ -3896,12 +3897,23 @@ def select_timing_decision(
         )
         for candidate in sorted(candidates, key=lambda item: item.candidate_id)
     )
+    if timing_source_policy not in {"default", "ctc-first"}:
+        raise ValueError(f"unsupported timing-source policy: {timing_source_policy}")
+    eligible_ids = {
+        item.candidate_id for item in candidates
+        if timing_source_policy == "default"
+        or ("whisper" not in item.source.lower() and "raw" not in item.source.lower())
+    }
+    if not eligible_ids:
+        raise LrcError(f"ctc-first: no eligible time candidate at line {entry_index + 1}")
     current_evaluation = (
         None
         if peer_graph is not None
         and peer_graph.mode == "cross_backend_neutral"
         else next(
-            (evaluation for evaluation in evaluations if evaluation.candidate.current),
+            (evaluation for evaluation in evaluations
+             if evaluation.candidate.current
+             and evaluation.candidate.candidate_id in eligible_ids),
             None,
         )
     )
@@ -3935,7 +3947,10 @@ def select_timing_decision(
                 else evaluation
                 for evaluation in evaluations
             )
-    valid = tuple(evaluation for evaluation in evaluations if evaluation.valid)
+    valid = tuple(
+        evaluation for evaluation in evaluations
+        if evaluation.valid and evaluation.candidate.candidate_id in eligible_ids
+    )
     winner: CandidateEvaluation | None = None
     if reviewer_endorsed_current:
         reviewer_challengers = tuple(
@@ -4027,7 +4042,10 @@ def select_timing_decision(
             winner = current_evaluation
 
     if winner is None:
-        provisional = current_evaluation or evaluations[0]
+        provisional = current_evaluation or next(
+            evaluation for evaluation in evaluations
+            if evaluation.candidate.candidate_id in eligible_ids
+        )
         status: Literal["selected_valid", "provisional_unresolved"] = "provisional_unresolved"
         selected_id = None
         provisional_id = provisional.candidate.candidate_id
@@ -4206,9 +4224,13 @@ def build_final_timing_state(
     occurrence_entries: list[LyricEntry] | tuple[LyricEntry, ...] | None = None,
     arbiter_mode: Literal["off", "gross-rescue", "reviewer-validity"] = "off",
     reviewer_evidence: tuple[dict[str, object] | None, ...] | None = None,
+    timing_source_policy: Literal["default", "ctc-first"] = "default",
 ) -> FinalTimingState:
     if worklist_order not in {"forward", "reverse"}:
         raise ValueError(f"unsupported timing worklist order: {worklist_order}")
+    candidate_sets = apply_central_timing_source_policy(
+        candidate_sets, timing_source_policy
+    )
     if any(not candidates for candidates in candidate_sets):
         empty_index = next(index for index, candidates in enumerate(candidate_sets) if not candidates)
         raise ValueError(f"entry {empty_index + 1} has no provisional timing candidate")
@@ -4249,6 +4271,7 @@ def build_final_timing_state(
             occurrence_entries=occurrence_entries,
             arbiter_mode=arbiter_mode,
             reviewer_evidence=reviewer_evidence[index],
+            timing_source_policy=timing_source_policy,
         )
         old_decision = decisions[index]
         decisions[index] = new_decision
@@ -26357,7 +26380,7 @@ def apply_central_timing_source_policy(
     candidate_sets: tuple[tuple[TimingCandidate, ...], ...],
     policy: Literal["default", "ctc-first"] = "default",
 ) -> tuple[tuple[TimingCandidate, ...], ...]:
-    """Only remove Whisper/RAW from FINAL timing eligibility.
+    """Validate eligibility while retaining Whisper/RAW evidence.
 
     The candidates are still collected as diagnostics and review evidence.
     Default path is strictly identity-preserving (no copy, sort or mutation).
@@ -26367,17 +26390,14 @@ def apply_central_timing_source_policy(
         return candidate_sets
     if policy != "ctc-first":
         raise ValueError(f"unsupported timing-source policy: {policy}")
-    kept_rows = []
     for line, candidates in enumerate(candidate_sets, 1):
-        kept = tuple(
-            c for c in candidates
-            if "whisper" not in c.source.lower()
-            and "raw" not in c.source.lower()
-        )
-        if not kept:
+        if not any(
+            "whisper" not in candidate.source.lower()
+            and "raw" not in candidate.source.lower()
+            for candidate in candidates
+        ):
             raise LrcError(f"ctc-first: no eligible time candidate at line {line}")
-        kept_rows.append(kept)
-    return tuple(kept_rows)
+    return candidate_sets
 
 
 def evaluate_backend_timing(
@@ -26395,9 +26415,6 @@ def evaluate_backend_timing(
         raise ValueError(f"unsupported timing arbiter mode: {arbiter_mode}")
     if str(report.get("backend") or "") != backend:
         raise LrcError("Backend identity does not match central evaluation report")
-    candidate_sets = apply_central_timing_source_policy(
-        candidate_sets, timing_source_policy
-    )
     report_projection_revision = timing_report_evaluation_revision(report)
     tail_evidence_context = _tail_evidence_context_from_report(report)
     independent_tails = runtime_independent_tail_evidence(
@@ -26448,6 +26465,7 @@ def evaluate_backend_timing(
         occurrence_entries=occurrence_entries,
         arbiter_mode=arbiter_mode,
         reviewer_evidence=reviewer_evidence,
+        timing_source_policy=timing_source_policy,
     )
     state, finding_states = evaluate_final_timing_state_for_report(
         base_state,
