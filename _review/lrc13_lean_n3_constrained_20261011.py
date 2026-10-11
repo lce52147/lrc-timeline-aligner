@@ -24,7 +24,7 @@ def plan(romans,ctc_dictionary,syl,minimum,spf):
  lines=[]
  for i,(roman,n) in enumerate(zip(romans,syl)):
   assert roman and all(c in ctc_dictionary for c in roman)
-  cap=math.ceil(float(n)*minimum/spf-1e-10) if i<len(romans)-1 else 0
+  cap=max(0,math.ceil(float(n)*minimum/spf-1e-10)-1) if i<len(romans)-1 else 0
   # Age saturation can occur at cap; all transitions to next line require age >= cap.
   # cap=0 means any age sufficient (for last lyric irrelevant).
   ids=np.empty(2*len(roman),dtype=np.int32)
@@ -60,7 +60,7 @@ def step(logp,previous,lead,plans,pointers=None,step_index=0):
    if point is not None:point[:,1:]=chosen[:,:-1]
    over=best[:,cap]>best[:,cap-1]
    nxt[:,cap]=np.maximum(best[:,cap],best[:,cap-1])
-   if point is not None:point[:,cap]=np.where(over,chosen[:,cap]+4,chosen[:,cap-1])
+   if point is not None:point[:,cap]=np.where(over,chosen[:,cap]+8,chosen[:,cap-1])
   else:
    nxt[:,0]=best[:,0]
    if point is not None:point[:,0]=chosen[:,0]
@@ -125,8 +125,8 @@ def traceback(logprob,plans,checkpoints,final_states,final_lead,checkpoint=180):
     age=plans[row][0] # previous line is mature at this transition
     state=len(plans[row][1])-(1 if kind==3 else 2)
    else:
-    from_cap=kind>=4
-    move=kind%4
+    from_cap=kind>=8
+    move=kind%8
     assert move in (0,1,2)
     state-=move
     age=age if from_cap else max(0,age-1)

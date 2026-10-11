@@ -22,4 +22,15 @@ for seed in range(6):
  starts=traceback(emissions,p,check,state,lead,checkpoint=13)
  assert abs(expected-actual)<1e-3,(seed,expected,actual)
  assert len(starts)==len(texts) and all(a<b for a,b in zip(starts,starts[1:])),starts
-print('N3_UNIT_6_RANDOM_FROZEN_SMIN0_SCORE_AND_TRACE_PASS')
+for seed in range(3):
+ rng=np.random.default_rng(80+seed)
+ em=rng.normal(size=(70,5)).astype(np.float32)
+ em=em-np.log(np.exp(em).sum(axis=1))[:,None]
+ p0=plan(['ab','cd'],dic,[2,1],0,.02)
+ p1=plan(['ab','cd'],dic,[2,1],.10,.02)
+ base,_,_,_=forward(em,p0,checkpoint=13)
+ fixed,ck,dp,lead=forward(em,p1,checkpoint=13)
+ times=traceback(em,p1,ck,dp,lead,checkpoint=13)
+ assert len(times)==2 and times[1]-times[0]>=10,(seed,times)
+ assert fixed<=base+1e-4,(seed,base,fixed)
+print('N3_UNIT_6_ZERO_PLUS_3_CONSTRAINED_EXACT_DP_PASS')

@@ -25240,6 +25240,7 @@ def finalize_production_timing(
         report,
         diagnostics,
         arbiter_mode=str(getattr(args, "arbiter", "off")),
+        timing_source_policy=str(getattr(args, "timing_source_policy", "default")),
     )
     return commit_evaluated_backend(select_evaluated_backend((evaluated,)), report)
 
@@ -25335,6 +25336,7 @@ def prepare_backend_timing_preview(
         candidate_sets,
         preview_report,
         diagnostics,
+        timing_source_policy=str(getattr(args, "timing_source_policy", "default")),
     )
     fixed_point_rounds: list[dict[str, object]] = []
     for round_index in range(1, 5):
@@ -25412,6 +25414,7 @@ def prepare_backend_timing_preview(
             candidate_sets,
             preview_report,
             diagnostics,
+            timing_source_policy=str(getattr(args, "timing_source_policy", "default")),
         )
     arbiter_mode = str(getattr(args, "arbiter", "off"))
     if arbiter_mode != "off":
@@ -25424,6 +25427,7 @@ def prepare_backend_timing_preview(
             preview_report,
             diagnostics,
             arbiter_mode=arbiter_mode,
+            timing_source_policy=str(getattr(args, "timing_source_policy", "default")),
         )
     preview_report["alignment_fixed_point_rounds"] = copy.deepcopy(fixed_point_rounds)
     preview_report["alignment_fixed_point_round_count"] = len(fixed_point_rounds)
@@ -26141,6 +26145,33 @@ def thaw_generation_diagnostics(evaluated: EvaluatedBackendTiming) -> dict[str, 
     return value
 
 
+def apply_central_timing_source_policy(
+    candidate_sets: tuple[tuple[TimingCandidate, ...], ...],
+    policy: Literal["default", "ctc-first"] = "default",
+) -> tuple[tuple[TimingCandidate, ...], ...]:
+    """Only remove Whisper/RAW from FINAL timing eligibility.
+
+    The candidates are still collected as diagnostics and review evidence.
+    Default path is strictly identity-preserving (no copy, sort or mutation).
+    Matches B11 classification: source contains "whisper" or "raw".
+    """
+    if policy == "default":
+        return candidate_sets
+    if policy != "ctc-first":
+        raise ValueError(f"unsupported timing-source policy: {policy}")
+    kept_rows = []
+    for line, candidates in enumerate(candidate_sets, 1):
+        kept = tuple(
+            c for c in candidates
+            if "whisper" not in c.source.lower()
+            and "raw" not in c.source.lower()
+        )
+        if not kept:
+            raise LrcError(f"ctc-first: no eligible time candidate at line {line}")
+        kept_rows.append(kept)
+    return tuple(kept_rows)
+
+
 def evaluate_backend_timing(
     backend: str,
     candidate_sets: tuple[tuple[TimingCandidate, ...], ...],
@@ -26150,11 +26181,15 @@ def evaluate_backend_timing(
     worklist_order: Literal["forward", "reverse"] = "forward",
     peer_graph: PeerGraphPolicy | None = None,
     arbiter_mode: Literal["off", "gross-rescue", "reviewer-validity"] = "off",
+    timing_source_policy: Literal["default", "ctc-first"] = "default",
 ) -> EvaluatedBackendTiming:
     if arbiter_mode not in {"off", "gross-rescue", "reviewer-validity"}:
         raise ValueError(f"unsupported timing arbiter mode: {arbiter_mode}")
     if str(report.get("backend") or "") != backend:
         raise LrcError("Backend identity does not match central evaluation report")
+    candidate_sets = apply_central_timing_source_policy(
+        candidate_sets, timing_source_policy
+    )
     report_projection_revision = timing_report_evaluation_revision(report)
     tail_evidence_context = _tail_evidence_context_from_report(report)
     independent_tails = runtime_independent_tail_evidence(
@@ -36472,6 +36507,11 @@ def build_parser() -> argparse.ArgumentParser:
             "gross-rescue applies the registered R1 valid-current preservation rule; "
             "reviewer-validity lets independent reviewer agreement satisfy only registered soft evidence gaps."
         ),
+    )
+    parser.add_argument(
+        "--timing-source-policy", choices=("default", "ctc-first"),
+        default="default",
+        help="N2 opt-in: Whisper/RAW remains diagnostic evidence but cannot select final timing.",
     )
     parser.add_argument(
         "--reviewer-evidence",
