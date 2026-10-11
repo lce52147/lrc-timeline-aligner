@@ -164,6 +164,38 @@ class LyricParserRegressionTests(unittest.TestCase):
         self.assertIn("multi-timestamp-expanded", kinds)
         self.assertIn("display-lines-split", kinds)
 
+    def test_raw_asr_coverage_is_bounded_and_does_not_invent_evidence(self):
+        entries = [
+            auto_lrc.LyricEntry([line]) for line in
+            ["hello world", "goodbye moon", "open the door", "another line", "final verse"]
+        ]
+        self.assertEqual(
+            auto_lrc.raw_asr_lyric_coverage(entries, None)["status"],
+            "NOT_AVAILABLE",
+        )
+        missing = auto_lrc.raw_asr_lyric_coverage(
+            entries, [auto_lrc.AsrSegment(0.0, 10.0, "completely different speech")]
+        )
+        self.assertEqual(missing["status"], "LOW_COVERAGE")
+        self.assertEqual(missing["matched_lines"], 0)
+        matched = auto_lrc.raw_asr_lyric_coverage(
+            entries,
+            [auto_lrc.AsrSegment(
+                0.0, 10.0,
+                "hello world goodbye moon open the door another line final verse",
+            )],
+        )
+        self.assertEqual(matched["status"], "OK")
+        self.assertEqual(matched["coverage_percent"], 100.0)
+
+    def test_raw_asr_preflight_is_wired_to_existing_generation_path(self):
+        import inspect
+        generation = inspect.getsource(auto_lrc.run_auto_backend_competition)
+        processing = inspect.getsource(auto_lrc.process_audio)
+        self.assertIn("raw_asr_lyric_coverage(", generation)
+        self.assertIn('report_copy["lyric_raw_asr_coverage"] = raw_coverage', generation)
+        self.assertIn('preflight["raw_asr_coverage"] = raw_coverage', processing)
+
 
 if __name__ == "__main__":
     unittest.main()

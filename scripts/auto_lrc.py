@@ -4845,6 +4845,33 @@ def build_lyric_preflight(
     }
 
 
+def raw_asr_lyric_coverage(
+    entries: list[LyricEntry],
+    raw_segments: list[AsrSegment] | None,
+) -> dict[str, object]:
+    """Measure independent raw-ASR lyric text coverage without rerunning ASR."""
+    if not raw_segments:
+        return {"status": "NOT_AVAILABLE"}
+    transcript = normalize_match_text(" ".join(segment.text for segment in raw_segments))
+    lines = [
+        normalize_match_text(entry_sung_text(entry))
+        for entry in entries
+    ]
+    lines = [line for line in lines if line]
+    if not transcript or not lines:
+        return {"status": "NOT_AVAILABLE"}
+    matched = sum(line in transcript for line in lines)
+    fraction = matched / len(lines)
+    return {
+        "status": "LOW_COVERAGE" if len(lines) >= 5 and fraction < 0.35 else "OK",
+        "matched_lines": matched,
+        "total_lines": len(lines),
+        "coverage_percent": round(fraction * 100.0, 2),
+        "source": "existing-raw-whispercpp",
+        "diagnostic_only": True,
+    }
+
+
 def find_lyrics(audio_path: Path, *, include_checked: bool = False) -> Path:
     candidates = [
         audio_path.with_suffix(".lyrics.lrc"),
@@ -13118,6 +13145,9 @@ def run_auto_backend_competition(
             }
         )
 
+    raw_coverage = raw_asr_lyric_coverage(
+        entries, raw_diagnostic_segments if raw_diagnostic_report is not None else None
+    )
     if default_ctc_ready():
         progress_log("running CTC candidate")
         # Synthetic caller/test arguments may be immutable objects; only
@@ -13534,6 +13564,7 @@ def run_auto_backend_competition(
         backend = str(candidate.get("backend") or candidate_report.get("backend") or "unknown")
         report_copy = copy.deepcopy(candidate_report)
         report_copy["backend"] = backend
+        report_copy["lyric_raw_asr_coverage"] = raw_coverage
         progress_log(f"central preview backend={backend}")
         preview_timestamps, preview_report, evaluated, _anchor_changes = prepare_backend_timing_preview(
             audio_path,
@@ -36722,6 +36753,12 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
     if skipped_markers:
         report["skipped_marker_entries"] = skipped_markers
         report["skipped_marker_count"] = len(skipped_markers)
+    raw_coverage = report.get("lyric_raw_asr_coverage")
+    if isinstance(raw_coverage, dict):
+        preflight["raw_asr_coverage"] = raw_coverage
+        if raw_coverage.get("status") == "LOW_COVERAGE":
+            preflight["status"] = "INPUT_SUSPECT"
+            preflight["reason_codes"].append("RAW_ASR_LOW_COVERAGE")
     preflight["retained_entries"] = len(entries)
     report["lyric_preflight"] = preflight
     report["input_status"] = preflight["status"]
