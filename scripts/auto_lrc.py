@@ -4451,29 +4451,26 @@ def audio_track_labels(audio_path: Path) -> tuple[str, str]:
 
 
 def remove_generated_title_cards(entries: list[LyricEntry], audio_path: Path) -> list[LyricEntry]:
-    """Remove generated LRC cards and an untimed source title header from alignment."""
+    """Remove only a matching zero-time generated Artist - Title card."""
     artist, title = audio_track_labels(audio_path)
     normalized_title = normalize_match_text(title)
+    normalized_artist = normalize_match_text(artist)
     kept: list[LyricEntry] = []
-    for index, entry in enumerate(entries):
+    for entry in entries:
         text = entry_sung_text(entry).strip()
+        card = re.fullmatch(r"(.+?)\s+-\s+(.+)", text)
         is_title_card = (
             entry.source_time_cs == 0
             and len(entry.lines) == 1
-            and "-" in text
-            and normalized_title
-            and normalized_title in normalize_match_text(text)
+            and card is not None
+            and bool(normalized_title)
+            and normalize_match_text(card.group(2)) == normalized_title
+            and (
+                not normalized_artist
+                or normalize_match_text(card.group(1)) == normalized_artist
+            )
         )
-        # A plain text lyric source commonly starts with "title / translation".
-        # It is metadata, not a zero-second sung line.  The generated LRC title
-        # card already represents it, so never offer it to a forced aligner.
-        is_untimed_source_header = (
-            index == 0
-            and entry.source_time_cs is None
-            and normalized_title
-            and normalize_match_text(text) == normalized_title
-        )
-        if not is_title_card and not is_untimed_source_header:
+        if not is_title_card:
             kept.append(entry)
     return kept
 

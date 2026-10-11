@@ -247,7 +247,7 @@ class AnchorHintTests(unittest.TestCase):
         finally:
             auto_lrc.audio_track_labels = original_labels  # type: ignore[assignment]
 
-    def test_untimed_source_title_header_is_not_reused_as_alignment_lyric(self) -> None:
+    def test_untimed_source_title_is_preserved_as_potential_sung_lyric(self) -> None:
         original_labels = auto_lrc.audio_track_labels
         auto_lrc.audio_track_labels = lambda _path: ("", "Song Title")  # type: ignore[assignment]
         try:
@@ -258,7 +258,7 @@ class AnchorHintTests(unittest.TestCase):
 
             kept = remove_generated_title_cards(entries, Path("dummy.flac"))
 
-            self.assertEqual([entry.lines[0] for entry in kept], ["actual lyric"])
+            self.assertEqual([entry.lines[0] for entry in kept], ["Song Title", "actual lyric"])
         finally:
             auto_lrc.audio_track_labels = original_labels  # type: ignore[assignment]
 

@@ -95,6 +95,19 @@ class LyricParserRegressionTests(unittest.TestCase):
             [["Intro"], ["Chorus"], ["Verse"], ["Second at same time"], ["Chorus"]],
         )
 
+    def test_plain_title_is_kept_and_only_matching_generated_card_removed(self):
+        from unittest import mock
+        entries = [
+            auto_lrc.LyricEntry(["Title"]),
+            auto_lrc.LyricEntry(["Artist - Title"], 0),
+            auto_lrc.LyricEntry(["Artist - Title"], 100),
+            auto_lrc.LyricEntry(["Another - Title"], 0),
+            auto_lrc.LyricEntry(["Artist - Other"], 0),
+        ]
+        with mock.patch.object(auto_lrc, "audio_track_labels", return_value=("Artist", "Title")):
+            kept = auto_lrc.remove_generated_title_cards(entries, Path("song.flac"))
+        self.assertEqual(kept, [entries[0], entries[2], entries[3], entries[4]])
+
 
 if __name__ == "__main__":
     unittest.main()
