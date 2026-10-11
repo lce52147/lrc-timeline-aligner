@@ -3902,8 +3902,8 @@ def select_timing_decision(
         raise ValueError(f"unsupported timing-source policy: {timing_source_policy}")
     eligible_ids = {
         item.candidate_id for item in candidates
-        if timing_source_policy == "default"
-        or ("whisper" not in item.source.lower() and "raw" not in item.source.lower())
+        if (timing_source_policy == "default" and item.source != "mutual-acoustic-recurrence")
+        or (item.source != "mutual-acoustic-recurrence" and "whisper" not in item.source.lower() and "raw" not in item.source.lower())
     }
     if not eligible_ids:
         raise LrcError(f"ctc-first: no eligible time candidate at line {entry_index + 1}")
