@@ -52,6 +52,16 @@ class ReviewSidecarTests(unittest.TestCase):
             )
             self.assertIn("hello\tUNTRUSTED", path.read_text(encoding="utf-8-sig"))
 
+class LyricParserRegressionTests(unittest.TestCase):
+    def test_wrapped_instrumental_markers_are_removed_without_losing_lyrics(self):
+        markers = ["（間奏）", "【間奏】", "［間奏］", "[Instrumental]", "(intro)", "{outro}"]
+        entries = [auto_lrc.LyricEntry([text]) for text in markers]
+        sung = auto_lrc.LyricEntry(["這段歌詞提到間奏，但不是標記"])
+        entries.append(sung)
+        kept, removed = auto_lrc.remove_instrumental_markers(entries)
+        self.assertEqual(kept, [sung])
+        self.assertEqual([row["text"] for row in removed], markers)
+
 
 if __name__ == "__main__":
     unittest.main()

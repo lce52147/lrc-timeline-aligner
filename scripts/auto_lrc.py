@@ -8224,13 +8224,15 @@ def estimated_segment_text_time(entry_text: str, raw_entry_text: str, segment: A
 def is_instrumental_marker(entry: LyricEntry) -> bool:
     text = (entry.lines[0] if entry.lines else entry.alignment_text).strip()
     normalized = normalize_match_text(text)
-    marker_text = text.strip("()[]{}").strip().lower()
+    marker_text = text.strip("()[]{}（）【】［］").strip().casefold()
     marker_words = ("instrumental", "intro", "interlude", "outro", "間奏", "イントロ", "アウトロ")
+    bracket_pairs = (("(", ")"), ("[", "]"), ("{", "}"), ("（", "）"), ("【", "】"), ("［", "］"))
+    wrapped = any(text.startswith(a) and text.endswith(b) for a, b in bracket_pairs)
     return (
         text.casefold() == "[oogg_rana]"
         or text == "♪"
         or not normalized
-        or (text.startswith("(") and any(word in marker_text for word in marker_words))
+        or (wrapped and any(word in marker_text for word in marker_words))
     )
 
 
