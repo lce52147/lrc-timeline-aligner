@@ -74,6 +74,27 @@ class LyricParserRegressionTests(unittest.TestCase):
             with self.subTest(tag=tag):
                 self.assertEqual(auto_lrc.lrc_time_key(tag), expected)
 
+    def test_multi_timestamp_lines_expand_and_sort_without_merging(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "repeat.lrc"
+            path.write_text(
+                "[00:10.00][00:30.00]Chorus\n"
+                "[00:20.00]Verse\n"
+                "[00:00.00]Intro\n"
+                "[00:20.00]Second at same time\n",
+                encoding="utf-8",
+            )
+            document = auto_lrc.load_lyrics(path)
+        self.assertTrue(document.saw_timestamps)
+        self.assertEqual(
+            [entry.source_time_cs for entry in document.entries],
+            [0, 1000, 2000, 2000, 3000],
+        )
+        self.assertEqual(
+            [entry.lines for entry in document.entries],
+            [["Intro"], ["Chorus"], ["Verse"], ["Second at same time"], ["Chorus"]],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

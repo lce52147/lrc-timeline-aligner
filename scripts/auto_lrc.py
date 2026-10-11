@@ -4705,7 +4705,6 @@ def load_lyrics(path: Path, skip_comments: bool = False) -> LyricDocument:
     text = path.read_text(encoding="utf-8-sig")
     entries: list[LyricEntry] = []
     metadata_lines: list[str] = []
-    previous_time_key: int | None = None
     saw_timestamps = False
 
     for raw in text.splitlines():
@@ -4723,24 +4722,31 @@ def load_lyrics(path: Path, skip_comments: bool = False) -> LyricDocument:
         lrc_match = LRC_LINE_RE.match(raw)
         if lrc_match:
             saw_timestamps = True
-            time_key = lrc_time_key(lrc_match.group(1))
             display_lines = split_group_text(lrc_match.group(2), preserve_single=True)
             if not display_lines:
                 continue
-            if entries and time_key == previous_time_key:
-                entries[-1].lines.extend(display_lines)
-            else:
-                entries.append(LyricEntry(display_lines, time_key))
-            previous_time_key = time_key
+            for tag in LRC_TIMESTAMP_RE.finditer(lrc_match.group(1)):
+                time_key = lrc_time_key(tag.group(0))
+                if time_key is not None:
+                    entries.append(LyricEntry(list(display_lines), time_key))
             continue
 
         display_lines = split_group_text(stripped)
         if not display_lines:
             continue
         entries.append(LyricEntry(display_lines))
-        previous_time_key = None
 
-    if not saw_timestamps:
+    if saw_timestamps:
+        # Sort only timed entries, keeping untimed rows in their original slots.
+        timed = iter(sorted(
+            (entry for entry in entries if entry.source_time_cs is not None),
+            key=lambda entry: entry.source_time_cs,
+        ))
+        entries = [
+            next(timed) if entry.source_time_cs is not None else entry
+            for entry in entries
+        ]
+    else:
         entries = merge_adjacent_translation_lines(entries)
     if not entries:
         raise LrcError(f"No lyric lines found in {path}")
