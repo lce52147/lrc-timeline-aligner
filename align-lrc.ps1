@@ -12,6 +12,9 @@ param(
     [ValidateSet("off", "gross-rescue", "reviewer-validity")]
     [string] $Arbiter = "reviewer-validity",
 
+    [ValidateSet("default", "ctc-first")]
+    [string] $TimingSourcePolicy = "ctc-first",
+
     [string] $ReviewerEvidence,
 
     [string] $WhisperCli,
@@ -147,7 +150,7 @@ if (-not $pythonCommand) {
     throw "Python was not found on PATH."
 }
 
-$argsList = @($backend, "--mode", $Mode, "--timing-source", $TimingSource, "--arbiter", $Arbiter)
+$argsList = @($backend, "--mode", $Mode, "--timing-source", $TimingSource, "--arbiter", $Arbiter, "--timing-source-policy", $TimingSourcePolicy)
 if ($ReviewerEvidence) {
     if ($Paths.Count -ne 1) {
         throw "-ReviewerEvidence can only be used with exactly one FLAC path."
@@ -210,6 +213,7 @@ $argsList += @("--report-dir", $ReportDirectory)
 Write-Host "LRC tools: generating same-folder .lrc" -ForegroundColor Cyan
 Write-Host "Reports: $ReportDirectory" -ForegroundColor DarkGray
 Write-Host "Arbiter: $Arbiter" -ForegroundColor DarkCyan
+Write-Host "Timing policy: $TimingSourcePolicy" -ForegroundColor DarkCyan
 if ($VocalOnsetRefine) {
     Write-Host "Vocal onset refinement: experimental Demucs GPU candidate tiebreak enabled" -ForegroundColor DarkCyan
 }

@@ -1078,6 +1078,7 @@ class EvaluatedBackendTiming:
     summary: CentralTrustSummary
     quality: float
     arbiter_mode: Literal["off", "gross-rescue", "reviewer-validity"] = "off"
+    timing_source_policy: Literal["default", "ctc-first"] = "default"
 
 
 @dataclass(frozen=True)
@@ -17519,6 +17520,7 @@ def _precommit_neutral_boundary_arbitration(
         report,
         generation_diagnostics,
         arbiter_mode=selected_eval.arbiter_mode,
+        timing_source_policy=selected_eval.timing_source_policy,
     )
 
     # First try the full blind trigger set exactly as before.  When several
@@ -17587,6 +17589,7 @@ def _precommit_neutral_boundary_arbitration(
                 report,
                 isolated_generation_diagnostics,
                 arbiter_mode=selected_eval.arbiter_mode,
+                timing_source_policy=selected_eval.timing_source_policy,
             )
             isolated_selection = _neutral_arbitration_selection_with_revised_eval(
                 selection, selected_eval, isolated_eval
@@ -17668,6 +17671,7 @@ def _precommit_neutral_boundary_arbitration(
             report,
             consolidated_generation_diagnostics,
             arbiter_mode=selected_eval.arbiter_mode,
+            timing_source_policy=selected_eval.timing_source_policy,
         )
         consolidated_selection = _neutral_arbitration_selection_with_revised_eval(
             selection, selected_eval, consolidated_eval
@@ -26306,6 +26310,7 @@ def evaluate_backend_timing(
         summary=summary,
         quality=quality,
         arbiter_mode=arbiter_mode,
+        timing_source_policy=timing_source_policy,
     )
 
 
@@ -32651,6 +32656,7 @@ def _precommit_independent_peer_existing_candidate_recovery(
             report,
             generation_diagnostics,
             arbiter_mode=selected_eval.arbiter_mode,
+            timing_source_policy=selected_eval.timing_source_policy,
         )
         revised_selection = _neutral_arbitration_selection_with_revised_eval(
             selection, selected_eval, revised_eval
@@ -33330,6 +33336,7 @@ def _precommit_hubert_existing_candidate_recovery(
             report,
             generation_diagnostics,
             arbiter_mode=selected_eval.arbiter_mode,
+            timing_source_policy=selected_eval.timing_source_policy,
         )
         revised_selection = _neutral_arbitration_selection_with_revised_eval(
             selection, selected_eval, revised_eval
@@ -36520,8 +36527,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--timing-source-policy", choices=("default", "ctc-first"),
-        default="default",
-        help="N2 opt-in: Whisper/RAW remains diagnostic evidence but cannot select final timing.",
+        default="ctc-first",
+        help="N2 production default: Whisper/RAW are diagnostic-only; explicit default restores legacy.",
     )
     parser.add_argument(
         "--reviewer-evidence",
