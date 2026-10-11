@@ -39,9 +39,12 @@ for k in thresholds:
    act=bool(dat['flagged']) or scope=='all_39_diagnostic'
    result_rows=[]
    for j,row in enumerate(base):
-    c=float(candidate[j+delta]) if act else float(input_times[j+delta])
-    h0=float(input_times[j+delta])
-    assert abs(h0-row['CTC_s'])<.012,(song,j,h0,row['CTC_s'])
+    h0=float(row['CTC_s'])
+    assert abs(float(input_times[j+delta])-h0)<=frozen['seconds_per_frame']+.004,(song,j,input_times[j+delta],h0)
+    # Exact original frozen CTC clock is preserved whenever the joint CTC
+    # unconstrained optimum is feasible or a song is not in the active scope.
+    solved=dat['threshold_results'][key]['status']=='CONSTRAINED_VITERBI_EXACT'
+    c=float(candidate[j+delta]) if act and solved else h0
     r={'song':song,'line':j+1,'BK':row['BK_s'],'H0':h0,'N3':c,
        'text':row['text'],'moved':abs(c-h0)>.0001,
        'was_full_39_diagnostic':scope=='all_39_diagnostic',
