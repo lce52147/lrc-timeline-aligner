@@ -1,5 +1,5 @@
 {
-  "status": "LEAN_PIPELINE_ALL_TASKS_SCORED_39",
+  "status": "LEAN_PIPELINE_N2_FINISH_AUDITED_39",
   "summary": {
     "N3_zero_parity_39": true,
     "N3_all_scopes": {
@@ -57425,5 +57425,5867 @@
     }
   },
   "development_set_only": true,
-  "production_policy_default": "off"
+  "production_policy_default": "off",
+  "N2_finish_audit": {
+    "status": "N2_FINISH_AUDITED_39",
+    "metrics": {
+      "skeleton_A7": {
+        "PCO200": 1314,
+        "gt1": 83,
+        "gt05": 105,
+        "listen": 618,
+        "listen_ratio": 0.4156018829858776,
+        "silent_gt1": 3,
+        "silent_gt05": 13
+      },
+      "skeleton_N2": {
+        "PCO200": 1314,
+        "gt1": 83,
+        "gt05": 105,
+        "listen": 416,
+        "listen_ratio": 0.2797579018157364,
+        "silent_gt1": 4,
+        "silent_gt05": 13
+      },
+      "N2_N2": {
+        "PCO200": 1317,
+        "gt1": 82,
+        "gt05": 106,
+        "listen": 416,
+        "listen_ratio": 0.2797579018157364,
+        "silent_gt1": 4,
+        "silent_gt05": 14
+      },
+      "N2_A7": {
+        "PCO200": 1317,
+        "gt1": 82,
+        "gt05": 106,
+        "listen": 618,
+        "listen_ratio": 0.4156018829858776,
+        "silent_gt1": 7,
+        "silent_gt05": 17
+      },
+      "A7_A7": {
+        "PCO200": 1295,
+        "gt1": 84,
+        "gt05": 120,
+        "listen": 618,
+        "listen_ratio": 0.4156018829858776,
+        "silent_gt1": 4,
+        "silent_gt05": 19
+      },
+      "skeleton_N1": {
+        "PCO200": 1314,
+        "gt1": 83,
+        "gt05": 105,
+        "listen": 757,
+        "listen_ratio": 0.5090786819098857,
+        "silent_gt1": 6,
+        "silent_gt05": 13
+      },
+      "N2_N1": {
+        "PCO200": 1317,
+        "gt1": 82,
+        "gt05": 106,
+        "listen": 757,
+        "listen_ratio": 0.5090786819098857,
+        "silent_gt1": 5,
+        "silent_gt05": 13
+      },
+      "main_A7": {
+        "PCO200": 1268,
+        "gt1": 117,
+        "gt05": 146,
+        "listen": 618,
+        "listen_ratio": 0.4156018829858776,
+        "silent_gt1": 5,
+        "silent_gt05": 19
+      }
+    },
+    "flag_A7_counts": {
+      "candidate_disagreement": 159,
+      "unresolved-material-alternative": 405,
+      "long_line_disagreement": 22,
+      "tail-conflict-without-independent-current-opening": 137,
+      "insufficient-minimum-proof": 151,
+      "previous-tail-ownership-unknown": 128,
+      "no-strict-opening-proof": 121,
+      "F4-ctc-final-disagreement": 72,
+      "temporal-incoherence": 25,
+      "phonetic_anchor_disagreement": 35,
+      "previous-tail-overlap": 9,
+      "short_line_onset_uncertain": 5,
+      "F3-compressed-or-nonmonotonic": 45,
+      "ctc_zero_gap_compressed_prefix": 10,
+      "F1-vocal-absent": 7,
+      "skeleton_global_ctc_disagreement": 11,
+      "duplicate_occurrence_offset_mismatch": 5,
+      "F2-repeated-content-identity": 19,
+      "F3-nonmonotonic": 2,
+      "nonmonotonic-line-start": 1
+    },
+    "flag_N2_counts": {
+      "candidate_disagreement": 159,
+      "long_line_disagreement": 22,
+      "tail-conflict-without-independent-current-opening": 225,
+      "previous-tail-ownership-unknown": 211,
+      "no-strict-opening-proof": 215,
+      "insufficient-minimum-proof": 261,
+      "unresolved-material-alternative": 72,
+      "temporal-incoherence": 32,
+      "phonetic_anchor_disagreement": 35,
+      "previous-tail-overlap": 14,
+      "short_line_onset_uncertain": 5,
+      "F4-ctc-final-disagreement": 45,
+      "F3-compressed-or-nonmonotonic": 45,
+      "ctc_zero_gap_compressed_prefix": 10,
+      "F1-vocal-absent": 9,
+      "skeleton_global_ctc_disagreement": 11,
+      "duplicate_occurrence_offset_mismatch": 5,
+      "F3-nonmonotonic": 2,
+      "nonmonotonic-line-start": 1
+    },
+    "flag_deltas": {
+      "F1-vocal-absent": 2,
+      "F2-repeated-content-identity": -19,
+      "F4-ctc-final-disagreement": -27,
+      "insufficient-minimum-proof": 110,
+      "no-strict-opening-proof": 94,
+      "previous-tail-overlap": 5,
+      "previous-tail-ownership-unknown": 83,
+      "tail-conflict-without-independent-current-opening": 88,
+      "temporal-incoherence": 7,
+      "unresolved-material-alternative": -333
+    },
+    "failure_deltas": {
+      "F1-vocal-absent": 2,
+      "F2-repeated-content-identity": -19,
+      "F4-ctc-final-disagreement": -27,
+      "insufficient-minimum-proof": 110,
+      "no-strict-opening-proof": 94,
+      "previous-tail-overlap": 5,
+      "previous-tail-ownership-unknown": 83,
+      "tail-conflict-without-independent-current-opening": 88,
+      "temporal-incoherence": 7,
+      "unresolved-material-alternative": -333
+    },
+    "review_reason_deltas": {
+      "actionable-suspicious-conflict": -40,
+      "actionable-timing-failure": 8,
+      "final-self-check": -35,
+      "unresolved-material-alternative": -333
+    },
+    "marked_lost": [
+      {
+        "song": "01. The Day the Starlight Arrived 星辉抵达之日",
+        "line": 1,
+        "N2_err": 1.26,
+        "A7_flags": [
+          "candidate_disagreement",
+          "long_line_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "candidate_disagreement",
+          "long_line_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. The Day the Starlight Arrived 星辉抵达之日",
+        "line": 15,
+        "N2_err": 0.05,
+        "A7_flags": [
+          "F4-ctc-final-disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "final-self-check",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.エガクミライ",
+        "line": 1,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.エガクミライ",
+        "line": 2,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.エガクミライ",
+        "line": 4,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.エガクミライ",
+        "line": 10,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.エガクミライ",
+        "line": 19,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.エガクミライ",
+        "line": 24,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.感情グラス",
+        "line": 3,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.感情グラス",
+        "line": 5,
+        "N2_err": -0.01,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.感情グラス",
+        "line": 18,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.感情グラス",
+        "line": 19,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "candidate_disagreement"
+        ],
+        "N2_flags": [
+          "candidate_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.感情グラス",
+        "line": 28,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.感情グラス",
+        "line": 33,
+        "N2_err": 0.01,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.感情グラス",
+        "line": 37,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.感情グラス",
+        "line": 39,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "candidate_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "candidate_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "03. 過去に囚われている",
+        "line": 5,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "03. 過去に囚われている",
+        "line": 21,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "03. 過去に囚われている",
+        "line": 25,
+        "N2_err": -0.01,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "03. 過去に囚われている",
+        "line": 39,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "03. 過去に囚われている",
+        "line": 40,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "03. 過去に囚われている",
+        "line": 42,
+        "N2_err": -0.01,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "03. 過去に囚われている",
+        "line": 45,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "03. 過去に囚われている",
+        "line": 62,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "04 影色舞",
+        "line": 5,
+        "N2_err": 0.03,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "04 影色舞",
+        "line": 6,
+        "N2_err": 0.05,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "04 影色舞",
+        "line": 13,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "F2-repeated-content-identity",
+          "duplicate_occurrence_offset_mismatch",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "final-self-check",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "04 影色舞",
+        "line": 29,
+        "N2_err": 0.01,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "04 影色舞",
+        "line": 36,
+        "N2_err": 0.01,
+        "A7_flags": [
+          "insufficient-minimum-proof",
+          "previous-tail-ownership-unknown",
+          "tail-conflict-without-independent-current-opening"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "06.ビビッド",
+        "line": 1,
+        "N2_err": 0.1,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "06.ビビッド",
+        "line": 5,
+        "N2_err": 0.08,
+        "A7_flags": [
+          "F4-ctc-final-disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "final-self-check",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "06.ビビッド",
+        "line": 9,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "06.ビビッド",
+        "line": 10,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "06.ビビッド",
+        "line": 16,
+        "N2_err": -0.01,
+        "A7_flags": [
+          "F2-repeated-content-identity"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "final-self-check"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "06.ビビッド",
+        "line": 17,
+        "N2_err": 0.12,
+        "A7_flags": [
+          "F2-repeated-content-identity"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "final-self-check"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "06.ビビッド",
+        "line": 18,
+        "N2_err": 0.2,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "06.ビビッド",
+        "line": 39,
+        "N2_err": 0.01,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "06.ビビッド",
+        "line": 40,
+        "N2_err": 0.01,
+        "A7_flags": [],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "06.ビビッド",
+        "line": 42,
+        "N2_err": 0.07,
+        "A7_flags": [],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "06.ビビッド",
+        "line": 55,
+        "N2_err": 0.22,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "10.方舟",
+        "line": 12,
+        "N2_err": 0.04,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "10.方舟",
+        "line": 17,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "10.方舟",
+        "line": 28,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "11.ユートピア",
+        "line": 7,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "11.ユートピア",
+        "line": 14,
+        "N2_err": 0.03,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "11.ユートピア",
+        "line": 18,
+        "N2_err": 0.03,
+        "A7_flags": [
+          "candidate_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "candidate_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "11.ユートピア",
+        "line": 20,
+        "N2_err": 0.05,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "11.ユートピア",
+        "line": 21,
+        "N2_err": 0.05,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "11.ユートピア",
+        "line": 22,
+        "N2_err": 0.07,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "11.ユートピア",
+        "line": 29,
+        "N2_err": -0.01,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "Ever be my love",
+        "line": 1,
+        "N2_err": 0.06,
+        "A7_flags": [
+          "candidate_disagreement",
+          "long_line_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "candidate_disagreement",
+          "long_line_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "Ever be my love",
+        "line": 3,
+        "N2_err": 0.16,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "Ever be my love",
+        "line": 6,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "Ever be my love",
+        "line": 7,
+        "N2_err": 0.23,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "Ever be my love",
+        "line": 9,
+        "N2_err": 0.18,
+        "A7_flags": [
+          "duplicate_occurrence_offset_mismatch",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "Ever be my love",
+        "line": 14,
+        "N2_err": 0.25,
+        "A7_flags": [
+          "insufficient-minimum-proof",
+          "no-strict-opening-proof",
+          "previous-tail-ownership-unknown",
+          "tail-conflict-without-independent-current-opening",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "Ever be my love",
+        "line": 17,
+        "N2_err": 0.19,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "Ever be my love",
+        "line": 20,
+        "N2_err": 0.01,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01 - フロム",
+        "line": 3,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01 - フロム",
+        "line": 11,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01 - フロム",
+        "line": 28,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. Elegy Dedicated With Love",
+        "line": 1,
+        "N2_err": 0.01,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. Elegy Dedicated With Love",
+        "line": 2,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "phonetic_anchor_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "phonetic_anchor_disagreement"
+        ],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. Elegy Dedicated With Love",
+        "line": 5,
+        "N2_err": -0.01,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. Elegy Dedicated With Love",
+        "line": 11,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. Elegy Dedicated With Love",
+        "line": 15,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. Elegy Dedicated With Love",
+        "line": 22,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "phonetic_anchor_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "phonetic_anchor_disagreement"
+        ],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. Elegy Dedicated With Love",
+        "line": 24,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "insufficient-minimum-proof",
+          "previous-tail-ownership-unknown",
+          "tail-conflict-without-independent-current-opening",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. Elegy Dedicated With Love",
+        "line": 33,
+        "N2_err": 0.03,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.おやすみモノクローム",
+        "line": 2,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.おやすみモノクローム",
+        "line": 5,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.おやすみモノクローム",
+        "line": 6,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.おやすみモノクローム",
+        "line": 8,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.おやすみモノクローム",
+        "line": 12,
+        "N2_err": 0.04,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.おやすみモノクローム",
+        "line": 13,
+        "N2_err": 0.03,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.おやすみモノクローム",
+        "line": 19,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.おやすみモノクローム",
+        "line": 24,
+        "N2_err": 0.06,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.おやすみモノクローム",
+        "line": 28,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "candidate_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "candidate_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.おやすみモノクローム",
+        "line": 31,
+        "N2_err": 0.04,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.おやすみモノクローム",
+        "line": 33,
+        "N2_err": 0.04,
+        "A7_flags": [
+          "F4-ctc-final-disagreement",
+          "candidate_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "candidate_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "final-self-check",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.おやすみモノクローム",
+        "line": 34,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.おやすみモノクローム",
+        "line": 37,
+        "N2_err": 0.06,
+        "A7_flags": [
+          "F2-repeated-content-identity",
+          "F4-ctc-final-disagreement",
+          "candidate_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "candidate_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "final-self-check",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.おやすみモノクローム",
+        "line": 39,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.おやすみモノクローム",
+        "line": 40,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. それでも雨は降るんだね",
+        "line": 2,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. それでも雨は降るんだね",
+        "line": 6,
+        "N2_err": 0.01,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. それでも雨は降るんだね",
+        "line": 11,
+        "N2_err": 0.05,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. それでも雨は降るんだね",
+        "line": 12,
+        "N2_err": 0.01,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. それでも雨は降るんだね",
+        "line": 15,
+        "N2_err": 0.01,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. それでも雨は降るんだね",
+        "line": 23,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. それでも雨は降るんだね",
+        "line": 25,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. それでも雨は降るんだね",
+        "line": 26,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. それでも雨は降るんだね",
+        "line": 28,
+        "N2_err": 0.01,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. それでも雨は降るんだね",
+        "line": 42,
+        "N2_err": 0.03,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. それでも雨は降るんだね",
+        "line": 47,
+        "N2_err": 0.03,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. それでも雨は降るんだね",
+        "line": 54,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. ふり",
+        "line": 2,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. ふり",
+        "line": 11,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. ふり",
+        "line": 12,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. ふり",
+        "line": 35,
+        "N2_err": 0.01,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. やっぱり雨は降るんだね",
+        "line": 2,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. やっぱり雨は降るんだね",
+        "line": 21,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. やっぱり雨は降るんだね",
+        "line": 23,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. やっぱり雨は降るんだね",
+        "line": 24,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. やっぱり雨は降るんだね",
+        "line": 28,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. やっぱり雨は降るんだね",
+        "line": 43,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. やっぱり雨は降るんだね",
+        "line": 46,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. やっぱり雨は降るんだね",
+        "line": 48,
+        "N2_err": -0.33,
+        "A7_flags": [
+          "insufficient-minimum-proof",
+          "no-strict-opening-proof",
+          "previous-tail-ownership-unknown",
+          "tail-conflict-without-independent-current-opening",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. やっぱり雨は降るんだね",
+        "line": 50,
+        "N2_err": -0.01,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. やっぱり雨は降るんだね",
+        "line": 53,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. やっぱり雨は降るんだね",
+        "line": 55,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. やっぱり雨は降るんだね",
+        "line": 56,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. やっぱり雨は降るんだね",
+        "line": 57,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. やっぱり雨は降るんだね",
+        "line": 60,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. やっぱり雨は降るんだね",
+        "line": 66,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.ミレニアの水槽",
+        "line": 2,
+        "N2_err": -0.01,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.ミレニアの水槽",
+        "line": 5,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.ミレニアの水槽",
+        "line": 10,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "F4-ctc-final-disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "final-self-check",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.ミレニアの水槽",
+        "line": 11,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "F4-ctc-final-disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "final-self-check",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.ミレニアの水槽",
+        "line": 12,
+        "N2_err": -0.02,
+        "A7_flags": [
+          "insufficient-minimum-proof",
+          "no-strict-opening-proof",
+          "previous-tail-ownership-unknown",
+          "tail-conflict-without-independent-current-opening",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.ミレニアの水槽",
+        "line": 13,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "F2-repeated-content-identity",
+          "F4-ctc-final-disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "final-self-check",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.ミレニアの水槽",
+        "line": 22,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.ミレニアの水槽",
+        "line": 29,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.ミレニアの水槽",
+        "line": 42,
+        "N2_err": 0.03,
+        "A7_flags": [
+          "insufficient-minimum-proof",
+          "no-strict-opening-proof",
+          "previous-tail-ownership-unknown",
+          "tail-conflict-without-independent-current-opening",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.最大幸福度",
+        "line": 5,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.最大幸福度",
+        "line": 6,
+        "N2_err": 0.3,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.最大幸福度",
+        "line": 12,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.最大幸福度",
+        "line": 13,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.最大幸福度",
+        "line": 14,
+        "N2_err": -0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.最大幸福度",
+        "line": 18,
+        "N2_err": 0.0,
+        "A7_flags": [],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.最大幸福度",
+        "line": 20,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.最大幸福度",
+        "line": 22,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "F4-ctc-final-disagreement",
+          "candidate_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "candidate_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "final-self-check",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.最大幸福度",
+        "line": 32,
+        "N2_err": 0.01,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.最大幸福度",
+        "line": 34,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.最大幸福度",
+        "line": 36,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.最大幸福度",
+        "line": 37,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.最大幸福度",
+        "line": 38,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.最大幸福度",
+        "line": 39,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.最大幸福度",
+        "line": 40,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. 芽吹くとき",
+        "line": 9,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "candidate_disagreement",
+          "long_line_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "candidate_disagreement",
+          "long_line_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. 芽吹くとき",
+        "line": 14,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "candidate_disagreement"
+        ],
+        "N2_flags": [
+          "candidate_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. 芽吹くとき",
+        "line": 15,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "candidate_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "candidate_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. 雨模様",
+        "line": 3,
+        "N2_err": 0.04,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. 雨模様",
+        "line": 8,
+        "N2_err": 0.07,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. 雨模様",
+        "line": 12,
+        "N2_err": 0.07,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. 雨模様",
+        "line": 17,
+        "N2_err": 0.09,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. 雨模様",
+        "line": 25,
+        "N2_err": -0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. 雨模様",
+        "line": 26,
+        "N2_err": 0.11,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. 雨模様",
+        "line": 28,
+        "N2_err": 0.01,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. 雨模様",
+        "line": 30,
+        "N2_err": -0.03,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. 雨模様",
+        "line": 37,
+        "N2_err": 0.05,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "02. Georgette Me, Georgette You",
+        "line": 4,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "02. JANE DOE",
+        "line": 2,
+        "N2_err": -0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "02. JANE DOE",
+        "line": 5,
+        "N2_err": -0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "02. JANE DOE",
+        "line": 6,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "02. JANE DOE",
+        "line": 7,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "02. JANE DOE",
+        "line": 8,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "02. JANE DOE",
+        "line": 13,
+        "N2_err": -0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "02. JANE DOE",
+        "line": 17,
+        "N2_err": 0.46,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "02. JANE DOE",
+        "line": 18,
+        "N2_err": 0.01,
+        "A7_flags": [
+          "candidate_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "candidate_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "02. JANE DOE",
+        "line": 19,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "02. JANE DOE",
+        "line": 21,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "03.春を待つ (feat. 倚水)",
+        "line": 25,
+        "N2_err": 0.04,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "03.春を待つ (feat. 倚水)",
+        "line": 29,
+        "N2_err": 0.05,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "03.春を待つ (feat. 倚水)",
+        "line": 30,
+        "N2_err": 0.03,
+        "A7_flags": [
+          "candidate_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "candidate_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "04. Scarborough Fair",
+        "line": 8,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "phonetic_anchor_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "phonetic_anchor_disagreement"
+        ],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "04.可惜夜",
+        "line": 5,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "04.可惜夜",
+        "line": 12,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "candidate_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "candidate_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "04.可惜夜",
+        "line": 16,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "05.遠雷",
+        "line": 4,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "candidate_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "candidate_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "05.遠雷",
+        "line": 17,
+        "N2_err": 0.01,
+        "A7_flags": [
+          "candidate_disagreement"
+        ],
+        "N2_flags": [
+          "candidate_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "05.遠雷",
+        "line": 19,
+        "N2_err": 0.03,
+        "A7_flags": [
+          "candidate_disagreement"
+        ],
+        "N2_flags": [
+          "candidate_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "05.遠雷",
+        "line": 23,
+        "N2_err": -0.03,
+        "A7_flags": [
+          "insufficient-minimum-proof",
+          "previous-tail-ownership-unknown",
+          "tail-conflict-without-independent-current-opening",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "05.遠雷",
+        "line": 26,
+        "N2_err": -0.03,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "06. あの世行きのバスに乗ってさらば。",
+        "line": 3,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "candidate_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "candidate_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "06. あの世行きのバスに乗ってさらば。",
+        "line": 5,
+        "N2_err": 0.09,
+        "A7_flags": [],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "06. あの世行きのバスに乗ってさらば。",
+        "line": 7,
+        "N2_err": -0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "06. あの世行きのバスに乗ってさらば。",
+        "line": 8,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "06. あの世行きのバスに乗ってさらば。",
+        "line": 9,
+        "N2_err": -0.98,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "06. あの世行きのバスに乗ってさらば。",
+        "line": 10,
+        "N2_err": 0.01,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "06. あの世行きのバスに乗ってさらば。",
+        "line": 18,
+        "N2_err": -0.03,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "06. あの世行きのバスに乗ってさらば。",
+        "line": 25,
+        "N2_err": 0.01,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "06. あの世行きのバスに乗ってさらば。",
+        "line": 27,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "06. あの世行きのバスに乗ってさらば。",
+        "line": 29,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "08.月の唄",
+        "line": 12,
+        "N2_err": 0.33,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "08.月の唄",
+        "line": 17,
+        "N2_err": 0.04,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "08.月の唄",
+        "line": 18,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "08.月の唄",
+        "line": 19,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "08.月の唄",
+        "line": 24,
+        "N2_err": 0.01,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "08.月の唄",
+        "line": 32,
+        "N2_err": 0.04,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "08.月の唄",
+        "line": 35,
+        "N2_err": 0.03,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "08 春日影 (MyGO!!!!! Ver.)",
+        "line": 4,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "phonetic_anchor_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "phonetic_anchor_disagreement"
+        ],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "08 春日影 (MyGO!!!!! Ver.)",
+        "line": 7,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "08 春日影 (MyGO!!!!! Ver.)",
+        "line": 8,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "08 春日影 (MyGO!!!!! Ver.)",
+        "line": 10,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "08 春日影 (MyGO!!!!! Ver.)",
+        "line": 13,
+        "N2_err": 0.03,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "08 春日影 (MyGO!!!!! Ver.)",
+        "line": 16,
+        "N2_err": 0.03,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "08 春日影 (MyGO!!!!! Ver.)",
+        "line": 18,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "08 春日影 (MyGO!!!!! Ver.)",
+        "line": 27,
+        "N2_err": -0.61,
+        "A7_flags": [
+          "candidate_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "candidate_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "08 春日影 (MyGO!!!!! Ver.)",
+        "line": 28,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "08 春日影 (MyGO!!!!! Ver.)",
+        "line": 30,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "09. ツユ - レインフォール",
+        "line": 14,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "09. ツユ - レインフォール",
+        "line": 19,
+        "N2_err": 0.03,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "09. ツユ - レインフォール",
+        "line": 22,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "09. ツユ - レインフォール",
+        "line": 24,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "09. ツユ - レインフォール",
+        "line": 34,
+        "N2_err": 0.03,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "09. ツユ - レインフォール",
+        "line": 38,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "09. ツユ - レインフォール",
+        "line": 45,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "09. ツユ - レインフォール",
+        "line": 47,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "09. ツユ - レインフォール",
+        "line": 56,
+        "N2_err": 0.04,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "09. ツユ - レインフォール",
+        "line": 61,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "09. ツユ - レインフォール",
+        "line": 64,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "09. ツユ - レインフォール",
+        "line": 68,
+        "N2_err": 0.04,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "09. ツユ - レインフォール",
+        "line": 74,
+        "N2_err": 0.48,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "10.深夜特急",
+        "line": 5,
+        "N2_err": -0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "10.深夜特急",
+        "line": 15,
+        "N2_err": 0.01,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "10.深夜特急",
+        "line": 27,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "12. ツユ - 朧月夜物語",
+        "line": 3,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "candidate_disagreement",
+          "long_line_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "candidate_disagreement",
+          "long_line_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "12. ツユ - 朧月夜物語",
+        "line": 6,
+        "N2_err": 0.03,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "12. ツユ - 朧月夜物語",
+        "line": 7,
+        "N2_err": 0.03,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "12. ツユ - 朧月夜物語",
+        "line": 11,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "12.琥珀の国",
+        "line": 7,
+        "N2_err": 0.04,
+        "A7_flags": [
+          "candidate_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "candidate_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "12.琥珀の国",
+        "line": 10,
+        "N2_err": 0.04,
+        "A7_flags": [
+          "candidate_disagreement"
+        ],
+        "N2_flags": [
+          "candidate_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "12.琥珀の国",
+        "line": 11,
+        "N2_err": 0.01,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "12.琥珀の国",
+        "line": 13,
+        "N2_err": 0.08,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "12.琥珀の国",
+        "line": 17,
+        "N2_err": 0.04,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "12.琥珀の国",
+        "line": 19,
+        "N2_err": 0.05,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "12.琥珀の国",
+        "line": 24,
+        "N2_err": 0.03,
+        "A7_flags": [
+          "candidate_disagreement",
+          "short_line_onset_uncertain",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "candidate_disagreement",
+          "short_line_onset_uncertain"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "12.琥珀の国",
+        "line": 29,
+        "N2_err": 0.34,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "12.琥珀の国",
+        "line": 32,
+        "N2_err": 0.04,
+        "A7_flags": [
+          "candidate_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "candidate_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "12. 終点の先が在るとするならば。",
+        "line": 4,
+        "N2_err": 0.04,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "12. 終点の先が在るとするならば。",
+        "line": 10,
+        "N2_err": 0.01,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "12. 終点の先が在るとするならば。",
+        "line": 12,
+        "N2_err": 0.05,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "12. 終点の先が在るとするならば。",
+        "line": 17,
+        "N2_err": 0.17,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "12. 終点の先が在るとするならば。",
+        "line": 18,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "12. 終点の先が在るとするならば。",
+        "line": 29,
+        "N2_err": -0.67,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "12. 終点の先が在るとするならば。",
+        "line": 31,
+        "N2_err": 0.01,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "13.薔薇の下で",
+        "line": 6,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "13.薔薇の下で",
+        "line": 15,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "13.薔薇の下で",
+        "line": 16,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "candidate_disagreement",
+          "insufficient-minimum-proof",
+          "long_line_disagreement",
+          "previous-tail-ownership-unknown",
+          "tail-conflict-without-independent-current-opening",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "candidate_disagreement",
+          "long_line_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "13.薔薇の下で",
+        "line": 17,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "candidate_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "candidate_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "13.薔薇の下で",
+        "line": 18,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "13.薔薇の下で",
+        "line": 19,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "13.薔薇の下で",
+        "line": 20,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "13.薔薇の下で",
+        "line": 22,
+        "N2_err": 0.18,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "13.薔薇の下で",
+        "line": 25,
+        "N2_err": 0.02,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "远航星的告别 - 鸣潮先约电台,jixwang,Tarokiki",
+        "line": 4,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "远航星的告别 - 鸣潮先约电台,jixwang,Tarokiki",
+        "line": 7,
+        "N2_err": 0.07,
+        "A7_flags": [
+          "insufficient-minimum-proof",
+          "previous-tail-ownership-unknown",
+          "tail-conflict-without-independent-current-opening"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "远航星的告别 - 鸣潮先约电台,jixwang,Tarokiki",
+        "line": 9,
+        "N2_err": 0.23,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "远航星的告别 - 鸣潮先约电台,jixwang,Tarokiki",
+        "line": 11,
+        "N2_err": 0.21,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "远航星的告别 - 鸣潮先约电台,jixwang,Tarokiki",
+        "line": 14,
+        "N2_err": -0.01,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "远航星的告别 - 鸣潮先约电台,jixwang,Tarokiki",
+        "line": 22,
+        "N2_err": 0.19,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "远航星的告别 - 鸣潮先约电台,jixwang,Tarokiki",
+        "line": 24,
+        "N2_err": 0.14,
+        "A7_flags": [
+          "F2-repeated-content-identity"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "final-self-check"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "远航星的告别 - 鸣潮先约电台,jixwang,Tarokiki",
+        "line": 25,
+        "N2_err": 0.2,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "09.夢遊",
+        "line": 11,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "candidate_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "candidate_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "09.夢遊",
+        "line": 19,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "insufficient-minimum-proof",
+          "previous-tail-ownership-unknown",
+          "tail-conflict-without-independent-current-opening",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "09.夢遊",
+        "line": 20,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "candidate_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "candidate_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "09.夢遊",
+        "line": 25,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "phonetic_anchor_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "phonetic_anchor_disagreement"
+        ],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01 My Dearest",
+        "line": 10,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01 My Dearest",
+        "line": 12,
+        "N2_err": 0.0,
+        "A7_flags": [
+          "insufficient-minimum-proof",
+          "previous-tail-ownership-unknown",
+          "tail-conflict-without-independent-current-opening"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [],
+        "N2_review_reasons": []
+      }
+    ],
+    "marked_gained": [
+      {
+        "song": "01. The Day the Starlight Arrived 星辉抵达之日",
+        "line": 2
+      },
+      {
+        "song": "01. The Day the Starlight Arrived 星辉抵达之日",
+        "line": 3
+      },
+      {
+        "song": "01. The Day the Starlight Arrived 星辉抵达之日",
+        "line": 4
+      },
+      {
+        "song": "01. The Day the Starlight Arrived 星辉抵达之日",
+        "line": 5
+      },
+      {
+        "song": "01. The Day the Starlight Arrived 星辉抵达之日",
+        "line": 18
+      },
+      {
+        "song": "01.感情グラス",
+        "line": 11
+      },
+      {
+        "song": "01.感情グラス",
+        "line": 30
+      },
+      {
+        "song": "03. Choir ‘S’ Choir",
+        "line": 13
+      },
+      {
+        "song": "03. Choir ‘S’ Choir",
+        "line": 14
+      },
+      {
+        "song": "03. Choir ‘S’ Choir",
+        "line": 27
+      },
+      {
+        "song": "04 影色舞",
+        "line": 1
+      },
+      {
+        "song": "06.ビビッド",
+        "line": 21
+      },
+      {
+        "song": "06.ビビッド",
+        "line": 35
+      },
+      {
+        "song": "06.ビビッド",
+        "line": 38
+      },
+      {
+        "song": "10.方舟",
+        "line": 27
+      },
+      {
+        "song": "Ever be my love",
+        "line": 19
+      },
+      {
+        "song": "Ever be my love",
+        "line": 23
+      },
+      {
+        "song": "01. Elegy Dedicated With Love",
+        "line": 32
+      },
+      {
+        "song": "01.おやすみモノクローム",
+        "line": 36
+      },
+      {
+        "song": "01. それでも雨は降るんだね",
+        "line": 8
+      },
+      {
+        "song": "01. ふり",
+        "line": 57
+      },
+      {
+        "song": "01. やっぱり雨は降るんだね",
+        "line": 1
+      },
+      {
+        "song": "01. やっぱり雨は降るんだね",
+        "line": 22
+      },
+      {
+        "song": "01. やっぱり雨は降るんだね",
+        "line": 45
+      },
+      {
+        "song": "01.ミレニアの水槽",
+        "line": 23
+      },
+      {
+        "song": "01.ミレニアの水槽",
+        "line": 27
+      },
+      {
+        "song": "01.ミレニアの水槽",
+        "line": 28
+      },
+      {
+        "song": "01.ミレニアの水槽",
+        "line": 30
+      },
+      {
+        "song": "01.ミレニアの水槽",
+        "line": 31
+      },
+      {
+        "song": "01.ミレニアの水槽",
+        "line": 36
+      },
+      {
+        "song": "01.ミレニアの水槽",
+        "line": 37
+      },
+      {
+        "song": "01.最大幸福度",
+        "line": 25
+      },
+      {
+        "song": "01.最大幸福度",
+        "line": 27
+      },
+      {
+        "song": "01.最大幸福度",
+        "line": 31
+      },
+      {
+        "song": "01.最大幸福度",
+        "line": 44
+      },
+      {
+        "song": "04. Scarborough Fair",
+        "line": 11
+      },
+      {
+        "song": "04. Scarborough Fair",
+        "line": 12
+      },
+      {
+        "song": "05.遠雷",
+        "line": 28
+      },
+      {
+        "song": "06. あの世行きのバスに乗ってさらば。",
+        "line": 37
+      },
+      {
+        "song": "08.月の唄",
+        "line": 27
+      },
+      {
+        "song": "08 春日影 (MyGO!!!!! Ver.)",
+        "line": 20
+      },
+      {
+        "song": "09. ツユ - レインフォール",
+        "line": 25
+      },
+      {
+        "song": "12. 終点の先が在るとするならば。",
+        "line": 6
+      },
+      {
+        "song": "12. 終点の先が在るとするならば。",
+        "line": 7
+      },
+      {
+        "song": "12. 終点の先が在るとするならば。",
+        "line": 19
+      },
+      {
+        "song": "12. 終点の先が在るとするならば。",
+        "line": 28
+      },
+      {
+        "song": "持续瞬间的永恒 - 鸣潮先约电台,jixwang,markmilian",
+        "line": 27
+      },
+      {
+        "song": "远航星的告别 - 鸣潮先约电台,jixwang,Tarokiki",
+        "line": 3
+      },
+      {
+        "song": "远航星的告别 - 鸣潮先约电台,jixwang,Tarokiki",
+        "line": 27
+      },
+      {
+        "song": "远航星的告别 - 鸣潮先约电台,jixwang,Tarokiki",
+        "line": 29
+      },
+      {
+        "song": "远航星的告别 - 鸣潮先约电台,jixwang,Tarokiki",
+        "line": 32
+      },
+      {
+        "song": "09.夢遊",
+        "line": 4
+      },
+      {
+        "song": "09.夢遊",
+        "line": 8
+      },
+      {
+        "song": "09.夢遊",
+        "line": 18
+      },
+      {
+        "song": "09.夢遊",
+        "line": 23
+      },
+      {
+        "song": "01 My Dearest",
+        "line": 4
+      },
+      {
+        "song": "01 My Dearest",
+        "line": 18
+      },
+      {
+        "song": "01 My Dearest",
+        "line": 28
+      }
+    ],
+    "per_song": [
+      {
+        "song": "01. The Day the Starlight Arrived 星辉抵达之日",
+        "rows": 24,
+        "A7_marked": 13,
+        "N2_marked": 16,
+        "lost_lines": [
+          1,
+          15
+        ],
+        "gained_lines": [
+          2,
+          3,
+          4,
+          5,
+          18
+        ],
+        "flags_delta": {
+          "F4-ctc-final-disagreement": -2,
+          "insufficient-minimum-proof": 7,
+          "no-strict-opening-proof": 7,
+          "previous-tail-ownership-unknown": 5,
+          "tail-conflict-without-independent-current-opening": 5,
+          "unresolved-material-alternative": -5
+        },
+        "failures_delta": {
+          "F4-ctc-final-disagreement": -2,
+          "insufficient-minimum-proof": 7,
+          "no-strict-opening-proof": 7,
+          "previous-tail-ownership-unknown": 5,
+          "tail-conflict-without-independent-current-opening": 5,
+          "unresolved-material-alternative": -5
+        },
+        "review_reasons_delta": {
+          "final-self-check": -2,
+          "unresolved-material-alternative": -5
+        }
+      },
+      {
+        "song": "01.エガクミライ",
+        "rows": 27,
+        "A7_marked": 7,
+        "N2_marked": 1,
+        "lost_lines": [
+          1,
+          2,
+          4,
+          10,
+          19,
+          24
+        ],
+        "gained_lines": [],
+        "flags_delta": {
+          "unresolved-material-alternative": -7
+        },
+        "failures_delta": {
+          "unresolved-material-alternative": -7
+        },
+        "review_reasons_delta": {
+          "unresolved-material-alternative": -7
+        }
+      },
+      {
+        "song": "01.感情グラス",
+        "rows": 40,
+        "A7_marked": 12,
+        "N2_marked": 6,
+        "lost_lines": [
+          3,
+          5,
+          18,
+          19,
+          28,
+          33,
+          37,
+          39
+        ],
+        "gained_lines": [
+          11,
+          30
+        ],
+        "flags_delta": {
+          "insufficient-minimum-proof": 2,
+          "no-strict-opening-proof": 1,
+          "previous-tail-ownership-unknown": 2,
+          "tail-conflict-without-independent-current-opening": 2,
+          "unresolved-material-alternative": -9
+        },
+        "failures_delta": {
+          "insufficient-minimum-proof": 2,
+          "no-strict-opening-proof": 1,
+          "previous-tail-ownership-unknown": 2,
+          "tail-conflict-without-independent-current-opening": 2,
+          "unresolved-material-alternative": -9
+        },
+        "review_reasons_delta": {
+          "actionable-suspicious-conflict": -3,
+          "unresolved-material-alternative": -9
+        }
+      },
+      {
+        "song": "03. Choir ‘S’ Choir",
+        "rows": 44,
+        "A7_marked": 35,
+        "N2_marked": 38,
+        "lost_lines": [],
+        "gained_lines": [
+          13,
+          14,
+          27
+        ],
+        "flags_delta": {
+          "insufficient-minimum-proof": 5,
+          "no-strict-opening-proof": 3,
+          "previous-tail-ownership-unknown": 4,
+          "tail-conflict-without-independent-current-opening": 4
+        },
+        "failures_delta": {
+          "insufficient-minimum-proof": 5,
+          "no-strict-opening-proof": 3,
+          "previous-tail-ownership-unknown": 4,
+          "tail-conflict-without-independent-current-opening": 4
+        },
+        "review_reasons_delta": {}
+      },
+      {
+        "song": "03. 過去に囚われている",
+        "rows": 68,
+        "A7_marked": 16,
+        "N2_marked": 8,
+        "lost_lines": [
+          5,
+          21,
+          25,
+          39,
+          40,
+          42,
+          45,
+          62
+        ],
+        "gained_lines": [],
+        "flags_delta": {
+          "unresolved-material-alternative": -10
+        },
+        "failures_delta": {
+          "unresolved-material-alternative": -10
+        },
+        "review_reasons_delta": {
+          "actionable-suspicious-conflict": -1,
+          "unresolved-material-alternative": -10
+        }
+      },
+      {
+        "song": "04 影色舞",
+        "rows": 52,
+        "A7_marked": 39,
+        "N2_marked": 35,
+        "lost_lines": [
+          5,
+          6,
+          13,
+          29,
+          36
+        ],
+        "gained_lines": [
+          1
+        ],
+        "flags_delta": {
+          "F2-repeated-content-identity": -2,
+          "duplicate_occurrence_offset_mismatch": -1,
+          "insufficient-minimum-proof": 4,
+          "no-strict-opening-proof": 3,
+          "previous-tail-overlap": 1,
+          "previous-tail-ownership-unknown": 2,
+          "tail-conflict-without-independent-current-opening": 3,
+          "unresolved-material-alternative": -14
+        },
+        "failures_delta": {
+          "F2-repeated-content-identity": -2,
+          "insufficient-minimum-proof": 4,
+          "no-strict-opening-proof": 3,
+          "previous-tail-overlap": 1,
+          "previous-tail-ownership-unknown": 2,
+          "tail-conflict-without-independent-current-opening": 3,
+          "unresolved-material-alternative": -14
+        },
+        "review_reasons_delta": {
+          "actionable-suspicious-conflict": 1,
+          "actionable-timing-failure": 1,
+          "final-self-check": -1,
+          "unresolved-material-alternative": -14
+        }
+      },
+      {
+        "song": "06.ビビッド",
+        "rows": 55,
+        "A7_marked": 35,
+        "N2_marked": 27,
+        "lost_lines": [
+          1,
+          5,
+          9,
+          10,
+          16,
+          17,
+          18,
+          39,
+          40,
+          42,
+          55
+        ],
+        "gained_lines": [
+          21,
+          35,
+          38
+        ],
+        "flags_delta": {
+          "F2-repeated-content-identity": -6,
+          "F4-ctc-final-disagreement": -2,
+          "duplicate_occurrence_offset_mismatch": -1,
+          "insufficient-minimum-proof": 14,
+          "no-strict-opening-proof": 12,
+          "previous-tail-ownership-unknown": 13,
+          "tail-conflict-without-independent-current-opening": 13,
+          "unresolved-material-alternative": -18
+        },
+        "failures_delta": {
+          "F2-repeated-content-identity": -6,
+          "F4-ctc-final-disagreement": -2,
+          "insufficient-minimum-proof": 14,
+          "no-strict-opening-proof": 12,
+          "previous-tail-ownership-unknown": 13,
+          "tail-conflict-without-independent-current-opening": 13,
+          "unresolved-material-alternative": -18
+        },
+        "review_reasons_delta": {
+          "actionable-suspicious-conflict": -4,
+          "final-self-check": -8,
+          "unresolved-material-alternative": -18
+        }
+      },
+      {
+        "song": "10.方舟",
+        "rows": 37,
+        "A7_marked": 5,
+        "N2_marked": 3,
+        "lost_lines": [
+          12,
+          17,
+          28
+        ],
+        "gained_lines": [
+          27
+        ],
+        "flags_delta": {
+          "insufficient-minimum-proof": 1,
+          "no-strict-opening-proof": 1,
+          "previous-tail-ownership-unknown": 1,
+          "tail-conflict-without-independent-current-opening": 1,
+          "unresolved-material-alternative": -4
+        },
+        "failures_delta": {
+          "insufficient-minimum-proof": 1,
+          "no-strict-opening-proof": 1,
+          "previous-tail-ownership-unknown": 1,
+          "tail-conflict-without-independent-current-opening": 1,
+          "unresolved-material-alternative": -4
+        },
+        "review_reasons_delta": {
+          "unresolved-material-alternative": -4
+        }
+      },
+      {
+        "song": "11.ユートピア",
+        "rows": 32,
+        "A7_marked": 7,
+        "N2_marked": 0,
+        "lost_lines": [
+          7,
+          14,
+          18,
+          20,
+          21,
+          22,
+          29
+        ],
+        "gained_lines": [],
+        "flags_delta": {
+          "unresolved-material-alternative": -7
+        },
+        "failures_delta": {
+          "unresolved-material-alternative": -7
+        },
+        "review_reasons_delta": {
+          "actionable-suspicious-conflict": -3,
+          "unresolved-material-alternative": -7
+        }
+      },
+      {
+        "song": "Ever be my love",
+        "rows": 24,
+        "A7_marked": 15,
+        "N2_marked": 9,
+        "lost_lines": [
+          1,
+          3,
+          6,
+          7,
+          9,
+          14,
+          17,
+          20
+        ],
+        "gained_lines": [
+          19,
+          23
+        ],
+        "flags_delta": {
+          "F2-repeated-content-identity": -1,
+          "F4-ctc-final-disagreement": -1,
+          "duplicate_occurrence_offset_mismatch": -1,
+          "insufficient-minimum-proof": 4,
+          "no-strict-opening-proof": 3,
+          "previous-tail-ownership-unknown": 4,
+          "tail-conflict-without-independent-current-opening": 4,
+          "temporal-incoherence": 2,
+          "unresolved-material-alternative": -11
+        },
+        "failures_delta": {
+          "F2-repeated-content-identity": -1,
+          "F4-ctc-final-disagreement": -1,
+          "insufficient-minimum-proof": 4,
+          "no-strict-opening-proof": 3,
+          "previous-tail-ownership-unknown": 4,
+          "tail-conflict-without-independent-current-opening": 4,
+          "temporal-incoherence": 2,
+          "unresolved-material-alternative": -11
+        },
+        "review_reasons_delta": {
+          "actionable-suspicious-conflict": -2,
+          "actionable-timing-failure": 2,
+          "final-self-check": -2,
+          "unresolved-material-alternative": -11
+        }
+      },
+      {
+        "song": "01 - フロム",
+        "rows": 35,
+        "A7_marked": 8,
+        "N2_marked": 5,
+        "lost_lines": [
+          3,
+          11,
+          28
+        ],
+        "gained_lines": [],
+        "flags_delta": {
+          "F2-repeated-content-identity": -1,
+          "insufficient-minimum-proof": 1,
+          "no-strict-opening-proof": 1,
+          "previous-tail-ownership-unknown": 1,
+          "tail-conflict-without-independent-current-opening": 1,
+          "unresolved-material-alternative": -3
+        },
+        "failures_delta": {
+          "F2-repeated-content-identity": -1,
+          "insufficient-minimum-proof": 1,
+          "no-strict-opening-proof": 1,
+          "previous-tail-ownership-unknown": 1,
+          "tail-conflict-without-independent-current-opening": 1,
+          "unresolved-material-alternative": -3
+        },
+        "review_reasons_delta": {
+          "final-self-check": -1,
+          "unresolved-material-alternative": -3
+        }
+      },
+      {
+        "song": "01. Elegy Dedicated With Love",
+        "rows": 37,
+        "A7_marked": 11,
+        "N2_marked": 4,
+        "lost_lines": [
+          1,
+          2,
+          5,
+          11,
+          15,
+          22,
+          24,
+          33
+        ],
+        "gained_lines": [
+          32
+        ],
+        "flags_delta": {
+          "F4-ctc-final-disagreement": 1,
+          "duplicate_occurrence_offset_mismatch": 1,
+          "insufficient-minimum-proof": -1,
+          "previous-tail-ownership-unknown": -1,
+          "tail-conflict-without-independent-current-opening": -1,
+          "unresolved-material-alternative": -9
+        },
+        "failures_delta": {
+          "F4-ctc-final-disagreement": 1,
+          "insufficient-minimum-proof": -1,
+          "previous-tail-ownership-unknown": -1,
+          "tail-conflict-without-independent-current-opening": -1,
+          "unresolved-material-alternative": -9
+        },
+        "review_reasons_delta": {
+          "final-self-check": 1,
+          "unresolved-material-alternative": -9
+        }
+      },
+      {
+        "song": "01.おやすみモノクローム",
+        "rows": 40,
+        "A7_marked": 19,
+        "N2_marked": 5,
+        "lost_lines": [
+          2,
+          5,
+          6,
+          8,
+          12,
+          13,
+          19,
+          24,
+          28,
+          31,
+          33,
+          34,
+          37,
+          39,
+          40
+        ],
+        "gained_lines": [
+          36
+        ],
+        "flags_delta": {
+          "F2-repeated-content-identity": -1,
+          "F4-ctc-final-disagreement": -2,
+          "insufficient-minimum-proof": 3,
+          "no-strict-opening-proof": 3,
+          "unresolved-material-alternative": -17
+        },
+        "failures_delta": {
+          "F2-repeated-content-identity": -1,
+          "F4-ctc-final-disagreement": -2,
+          "insufficient-minimum-proof": 3,
+          "no-strict-opening-proof": 3,
+          "unresolved-material-alternative": -17
+        },
+        "review_reasons_delta": {
+          "actionable-suspicious-conflict": -5,
+          "final-self-check": -2,
+          "unresolved-material-alternative": -17
+        }
+      },
+      {
+        "song": "01. それでも雨は降るんだね",
+        "rows": 55,
+        "A7_marked": 30,
+        "N2_marked": 19,
+        "lost_lines": [
+          2,
+          6,
+          11,
+          12,
+          15,
+          23,
+          25,
+          26,
+          28,
+          42,
+          47,
+          54
+        ],
+        "gained_lines": [
+          8
+        ],
+        "flags_delta": {
+          "insufficient-minimum-proof": 2,
+          "no-strict-opening-proof": 1,
+          "previous-tail-ownership-unknown": 2,
+          "tail-conflict-without-independent-current-opening": 2,
+          "unresolved-material-alternative": -18
+        },
+        "failures_delta": {
+          "insufficient-minimum-proof": 2,
+          "no-strict-opening-proof": 1,
+          "previous-tail-ownership-unknown": 2,
+          "tail-conflict-without-independent-current-opening": 2,
+          "unresolved-material-alternative": -18
+        },
+        "review_reasons_delta": {
+          "actionable-suspicious-conflict": 1,
+          "unresolved-material-alternative": -18
+        }
+      },
+      {
+        "song": "01. ふり",
+        "rows": 57,
+        "A7_marked": 25,
+        "N2_marked": 22,
+        "lost_lines": [
+          2,
+          11,
+          12,
+          35
+        ],
+        "gained_lines": [
+          57
+        ],
+        "flags_delta": {
+          "insufficient-minimum-proof": 4,
+          "no-strict-opening-proof": 2,
+          "previous-tail-ownership-unknown": 4,
+          "tail-conflict-without-independent-current-opening": 4,
+          "unresolved-material-alternative": -8
+        },
+        "failures_delta": {
+          "insufficient-minimum-proof": 4,
+          "no-strict-opening-proof": 2,
+          "previous-tail-ownership-unknown": 4,
+          "tail-conflict-without-independent-current-opening": 4,
+          "unresolved-material-alternative": -8
+        },
+        "review_reasons_delta": {
+          "unresolved-material-alternative": -8
+        }
+      },
+      {
+        "song": "01. やっぱり雨は降るんだね",
+        "rows": 67,
+        "A7_marked": 22,
+        "N2_marked": 10,
+        "lost_lines": [
+          2,
+          21,
+          23,
+          24,
+          28,
+          43,
+          46,
+          48,
+          50,
+          53,
+          55,
+          56,
+          57,
+          60,
+          66
+        ],
+        "gained_lines": [
+          1,
+          22,
+          45
+        ],
+        "flags_delta": {
+          "insufficient-minimum-proof": 4,
+          "no-strict-opening-proof": 2,
+          "previous-tail-ownership-unknown": 1,
+          "tail-conflict-without-independent-current-opening": 1,
+          "unresolved-material-alternative": -19
+        },
+        "failures_delta": {
+          "insufficient-minimum-proof": 4,
+          "no-strict-opening-proof": 2,
+          "previous-tail-ownership-unknown": 1,
+          "tail-conflict-without-independent-current-opening": 1,
+          "unresolved-material-alternative": -19
+        },
+        "review_reasons_delta": {
+          "unresolved-material-alternative": -19
+        }
+      },
+      {
+        "song": "01.ミレニアの水槽",
+        "rows": 45,
+        "A7_marked": 28,
+        "N2_marked": 26,
+        "lost_lines": [
+          2,
+          5,
+          10,
+          11,
+          12,
+          13,
+          22,
+          29,
+          42
+        ],
+        "gained_lines": [
+          23,
+          27,
+          28,
+          30,
+          31,
+          36,
+          37
+        ],
+        "flags_delta": {
+          "F1-vocal-absent": 1,
+          "F2-repeated-content-identity": -3,
+          "F3-nonmonotonic": -2,
+          "F4-ctc-final-disagreement": -8,
+          "duplicate_occurrence_offset_mismatch": 2,
+          "insufficient-minimum-proof": 12,
+          "no-strict-opening-proof": 11,
+          "nonmonotonic-line-start": -1,
+          "previous-tail-ownership-unknown": 10,
+          "tail-conflict-without-independent-current-opening": 10,
+          "temporal-incoherence": 1,
+          "unresolved-material-alternative": -16
+        },
+        "failures_delta": {
+          "F1-vocal-absent": 1,
+          "F2-repeated-content-identity": -3,
+          "F3-nonmonotonic": -2,
+          "F4-ctc-final-disagreement": -8,
+          "insufficient-minimum-proof": 12,
+          "no-strict-opening-proof": 11,
+          "nonmonotonic-line-start": -1,
+          "previous-tail-ownership-unknown": 10,
+          "tail-conflict-without-independent-current-opening": 10,
+          "temporal-incoherence": 1,
+          "unresolved-material-alternative": -16
+        },
+        "review_reasons_delta": {
+          "actionable-suspicious-conflict": 1,
+          "final-self-check": -6,
+          "unresolved-material-alternative": -16
+        }
+      },
+      {
+        "song": "01.最大幸福度",
+        "rows": 45,
+        "A7_marked": 22,
+        "N2_marked": 11,
+        "lost_lines": [
+          5,
+          6,
+          12,
+          13,
+          14,
+          18,
+          20,
+          22,
+          32,
+          34,
+          36,
+          37,
+          38,
+          39,
+          40
+        ],
+        "gained_lines": [
+          25,
+          27,
+          31,
+          44
+        ],
+        "flags_delta": {
+          "F4-ctc-final-disagreement": -1,
+          "insufficient-minimum-proof": 5,
+          "no-strict-opening-proof": 4,
+          "previous-tail-ownership-unknown": 4,
+          "tail-conflict-without-independent-current-opening": 4,
+          "unresolved-material-alternative": -16
+        },
+        "failures_delta": {
+          "F4-ctc-final-disagreement": -1,
+          "insufficient-minimum-proof": 5,
+          "no-strict-opening-proof": 4,
+          "previous-tail-ownership-unknown": 4,
+          "tail-conflict-without-independent-current-opening": 4,
+          "unresolved-material-alternative": -16
+        },
+        "review_reasons_delta": {
+          "actionable-suspicious-conflict": -2,
+          "final-self-check": -1,
+          "unresolved-material-alternative": -16
+        }
+      },
+      {
+        "song": "01. 芽吹くとき",
+        "rows": 25,
+        "A7_marked": 9,
+        "N2_marked": 6,
+        "lost_lines": [
+          9,
+          14,
+          15
+        ],
+        "gained_lines": [],
+        "flags_delta": {
+          "F2-repeated-content-identity": -2,
+          "insufficient-minimum-proof": 2,
+          "no-strict-opening-proof": 2,
+          "previous-tail-ownership-unknown": 2,
+          "tail-conflict-without-independent-current-opening": 2,
+          "unresolved-material-alternative": -2
+        },
+        "failures_delta": {
+          "F2-repeated-content-identity": -2,
+          "insufficient-minimum-proof": 2,
+          "no-strict-opening-proof": 2,
+          "previous-tail-ownership-unknown": 2,
+          "tail-conflict-without-independent-current-opening": 2,
+          "unresolved-material-alternative": -2
+        },
+        "review_reasons_delta": {
+          "actionable-suspicious-conflict": -3,
+          "final-self-check": -2,
+          "unresolved-material-alternative": -2
+        }
+      },
+      {
+        "song": "01. 雨模様",
+        "rows": 49,
+        "A7_marked": 19,
+        "N2_marked": 10,
+        "lost_lines": [
+          3,
+          8,
+          12,
+          17,
+          25,
+          26,
+          28,
+          30,
+          37
+        ],
+        "gained_lines": [],
+        "flags_delta": {
+          "F2-repeated-content-identity": -1,
+          "F4-ctc-final-disagreement": -1,
+          "insufficient-minimum-proof": 2,
+          "no-strict-opening-proof": 1,
+          "previous-tail-ownership-unknown": 1,
+          "tail-conflict-without-independent-current-opening": 1,
+          "unresolved-material-alternative": -10
+        },
+        "failures_delta": {
+          "F2-repeated-content-identity": -1,
+          "F4-ctc-final-disagreement": -1,
+          "insufficient-minimum-proof": 2,
+          "no-strict-opening-proof": 1,
+          "previous-tail-ownership-unknown": 1,
+          "tail-conflict-without-independent-current-opening": 1,
+          "unresolved-material-alternative": -10
+        },
+        "review_reasons_delta": {
+          "final-self-check": -1,
+          "unresolved-material-alternative": -10
+        }
+      },
+      {
+        "song": "02. Georgette Me, Georgette You",
+        "rows": 18,
+        "A7_marked": 10,
+        "N2_marked": 9,
+        "lost_lines": [
+          4
+        ],
+        "gained_lines": [],
+        "flags_delta": {
+          "F4-ctc-final-disagreement": -1,
+          "insufficient-minimum-proof": 1,
+          "no-strict-opening-proof": 1,
+          "previous-tail-overlap": 1,
+          "tail-conflict-without-independent-current-opening": 1,
+          "temporal-incoherence": 1,
+          "unresolved-material-alternative": -2
+        },
+        "failures_delta": {
+          "F4-ctc-final-disagreement": -1,
+          "insufficient-minimum-proof": 1,
+          "no-strict-opening-proof": 1,
+          "previous-tail-overlap": 1,
+          "tail-conflict-without-independent-current-opening": 1,
+          "temporal-incoherence": 1,
+          "unresolved-material-alternative": -2
+        },
+        "review_reasons_delta": {
+          "actionable-suspicious-conflict": -1,
+          "actionable-timing-failure": 1,
+          "final-self-check": -1,
+          "unresolved-material-alternative": -2
+        }
+      },
+      {
+        "song": "02. JANE DOE",
+        "rows": 24,
+        "A7_marked": 13,
+        "N2_marked": 3,
+        "lost_lines": [
+          2,
+          5,
+          6,
+          7,
+          8,
+          13,
+          17,
+          18,
+          19,
+          21
+        ],
+        "gained_lines": [],
+        "flags_delta": {
+          "insufficient-minimum-proof": 1,
+          "no-strict-opening-proof": 1,
+          "previous-tail-ownership-unknown": 1,
+          "tail-conflict-without-independent-current-opening": 1,
+          "unresolved-material-alternative": -10
+        },
+        "failures_delta": {
+          "insufficient-minimum-proof": 1,
+          "no-strict-opening-proof": 1,
+          "previous-tail-ownership-unknown": 1,
+          "tail-conflict-without-independent-current-opening": 1,
+          "unresolved-material-alternative": -10
+        },
+        "review_reasons_delta": {
+          "actionable-suspicious-conflict": -2,
+          "unresolved-material-alternative": -10
+        }
+      },
+      {
+        "song": "03.春を待つ (feat. 倚水)",
+        "rows": 39,
+        "A7_marked": 6,
+        "N2_marked": 3,
+        "lost_lines": [
+          25,
+          29,
+          30
+        ],
+        "gained_lines": [],
+        "flags_delta": {
+          "unresolved-material-alternative": -3
+        },
+        "failures_delta": {
+          "unresolved-material-alternative": -3
+        },
+        "review_reasons_delta": {
+          "actionable-suspicious-conflict": -1,
+          "unresolved-material-alternative": -3
+        }
+      },
+      {
+        "song": "04. Scarborough Fair",
+        "rows": 14,
+        "A7_marked": 4,
+        "N2_marked": 5,
+        "lost_lines": [
+          8
+        ],
+        "gained_lines": [
+          11,
+          12
+        ],
+        "flags_delta": {
+          "F4-ctc-final-disagreement": -1,
+          "insufficient-minimum-proof": 3,
+          "no-strict-opening-proof": 3,
+          "previous-tail-ownership-unknown": 3,
+          "tail-conflict-without-independent-current-opening": 3,
+          "unresolved-material-alternative": -1
+        },
+        "failures_delta": {
+          "F4-ctc-final-disagreement": -1,
+          "insufficient-minimum-proof": 3,
+          "no-strict-opening-proof": 3,
+          "previous-tail-ownership-unknown": 3,
+          "tail-conflict-without-independent-current-opening": 3,
+          "unresolved-material-alternative": -1
+        },
+        "review_reasons_delta": {
+          "final-self-check": -1,
+          "unresolved-material-alternative": -1
+        }
+      },
+      {
+        "song": "04.可惜夜",
+        "rows": 24,
+        "A7_marked": 4,
+        "N2_marked": 1,
+        "lost_lines": [
+          5,
+          12,
+          16
+        ],
+        "gained_lines": [],
+        "flags_delta": {
+          "unresolved-material-alternative": -3
+        },
+        "failures_delta": {
+          "unresolved-material-alternative": -3
+        },
+        "review_reasons_delta": {
+          "actionable-suspicious-conflict": -1,
+          "unresolved-material-alternative": -3
+        }
+      },
+      {
+        "song": "05.遠雷",
+        "rows": 28,
+        "A7_marked": 8,
+        "N2_marked": 4,
+        "lost_lines": [
+          4,
+          17,
+          19,
+          23,
+          26
+        ],
+        "gained_lines": [
+          28
+        ],
+        "flags_delta": {
+          "no-strict-opening-proof": 1,
+          "previous-tail-ownership-unknown": -1,
+          "tail-conflict-without-independent-current-opening": -1,
+          "unresolved-material-alternative": -3
+        },
+        "failures_delta": {
+          "no-strict-opening-proof": 1,
+          "previous-tail-ownership-unknown": -1,
+          "tail-conflict-without-independent-current-opening": -1,
+          "unresolved-material-alternative": -3
+        },
+        "review_reasons_delta": {
+          "actionable-suspicious-conflict": -4,
+          "unresolved-material-alternative": -3
+        }
+      },
+      {
+        "song": "06. あの世行きのバスに乗ってさらば。",
+        "rows": 40,
+        "A7_marked": 17,
+        "N2_marked": 8,
+        "lost_lines": [
+          3,
+          5,
+          7,
+          8,
+          9,
+          10,
+          18,
+          25,
+          27,
+          29
+        ],
+        "gained_lines": [
+          37
+        ],
+        "flags_delta": {
+          "F4-ctc-final-disagreement": -1,
+          "insufficient-minimum-proof": 2,
+          "no-strict-opening-proof": 2,
+          "previous-tail-ownership-unknown": 1,
+          "tail-conflict-without-independent-current-opening": 1,
+          "unresolved-material-alternative": -13
+        },
+        "failures_delta": {
+          "F4-ctc-final-disagreement": -1,
+          "insufficient-minimum-proof": 2,
+          "no-strict-opening-proof": 2,
+          "previous-tail-ownership-unknown": 1,
+          "tail-conflict-without-independent-current-opening": 1,
+          "unresolved-material-alternative": -13
+        },
+        "review_reasons_delta": {
+          "actionable-suspicious-conflict": -1,
+          "final-self-check": -1,
+          "unresolved-material-alternative": -13
+        }
+      },
+      {
+        "song": "08.月の唄",
+        "rows": 38,
+        "A7_marked": 16,
+        "N2_marked": 10,
+        "lost_lines": [
+          12,
+          17,
+          18,
+          19,
+          24,
+          32,
+          35
+        ],
+        "gained_lines": [
+          27
+        ],
+        "flags_delta": {
+          "F4-ctc-final-disagreement": -1,
+          "insufficient-minimum-proof": 3,
+          "no-strict-opening-proof": 2,
+          "previous-tail-ownership-unknown": 2,
+          "tail-conflict-without-independent-current-opening": 2,
+          "unresolved-material-alternative": -11
+        },
+        "failures_delta": {
+          "F4-ctc-final-disagreement": -1,
+          "insufficient-minimum-proof": 3,
+          "no-strict-opening-proof": 2,
+          "previous-tail-ownership-unknown": 2,
+          "tail-conflict-without-independent-current-opening": 2,
+          "unresolved-material-alternative": -11
+        },
+        "review_reasons_delta": {
+          "final-self-check": -1,
+          "unresolved-material-alternative": -11
+        }
+      },
+      {
+        "song": "08 春日影 (MyGO!!!!! Ver.)",
+        "rows": 39,
+        "A7_marked": 12,
+        "N2_marked": 3,
+        "lost_lines": [
+          4,
+          7,
+          8,
+          10,
+          13,
+          16,
+          18,
+          27,
+          28,
+          30
+        ],
+        "gained_lines": [
+          20
+        ],
+        "flags_delta": {
+          "F4-ctc-final-disagreement": -1,
+          "insufficient-minimum-proof": 3,
+          "no-strict-opening-proof": 1,
+          "previous-tail-ownership-unknown": 2,
+          "tail-conflict-without-independent-current-opening": 2,
+          "unresolved-material-alternative": -12
+        },
+        "failures_delta": {
+          "F4-ctc-final-disagreement": -1,
+          "insufficient-minimum-proof": 3,
+          "no-strict-opening-proof": 1,
+          "previous-tail-ownership-unknown": 2,
+          "tail-conflict-without-independent-current-opening": 2,
+          "unresolved-material-alternative": -12
+        },
+        "review_reasons_delta": {
+          "final-self-check": -1,
+          "unresolved-material-alternative": -12
+        }
+      },
+      {
+        "song": "09. ツユ - レインフォール",
+        "rows": 74,
+        "A7_marked": 29,
+        "N2_marked": 17,
+        "lost_lines": [
+          14,
+          19,
+          22,
+          24,
+          34,
+          38,
+          45,
+          47,
+          56,
+          61,
+          64,
+          68,
+          74
+        ],
+        "gained_lines": [
+          25
+        ],
+        "flags_delta": {
+          "F4-ctc-final-disagreement": -1,
+          "insufficient-minimum-proof": 2,
+          "no-strict-opening-proof": 3,
+          "previous-tail-overlap": 1,
+          "previous-tail-ownership-unknown": 3,
+          "tail-conflict-without-independent-current-opening": 4,
+          "unresolved-material-alternative": -15
+        },
+        "failures_delta": {
+          "F4-ctc-final-disagreement": -1,
+          "insufficient-minimum-proof": 2,
+          "no-strict-opening-proof": 3,
+          "previous-tail-overlap": 1,
+          "previous-tail-ownership-unknown": 3,
+          "tail-conflict-without-independent-current-opening": 4,
+          "unresolved-material-alternative": -15
+        },
+        "review_reasons_delta": {
+          "actionable-timing-failure": 1,
+          "final-self-check": -1,
+          "unresolved-material-alternative": -15
+        }
+      },
+      {
+        "song": "10.深夜特急",
+        "rows": 41,
+        "A7_marked": 3,
+        "N2_marked": 0,
+        "lost_lines": [
+          5,
+          15,
+          27
+        ],
+        "gained_lines": [],
+        "flags_delta": {
+          "unresolved-material-alternative": -3
+        },
+        "failures_delta": {
+          "unresolved-material-alternative": -3
+        },
+        "review_reasons_delta": {
+          "unresolved-material-alternative": -3
+        }
+      },
+      {
+        "song": "12. ツユ - 朧月夜物語",
+        "rows": 23,
+        "A7_marked": 11,
+        "N2_marked": 7,
+        "lost_lines": [
+          3,
+          6,
+          7,
+          11
+        ],
+        "gained_lines": [],
+        "flags_delta": {
+          "F1-vocal-absent": 1,
+          "F3-nonmonotonic": 2,
+          "F4-ctc-final-disagreement": -1,
+          "insufficient-minimum-proof": 1,
+          "no-strict-opening-proof": 1,
+          "nonmonotonic-line-start": 1,
+          "previous-tail-overlap": 1,
+          "tail-conflict-without-independent-current-opening": 1,
+          "temporal-incoherence": 1,
+          "unresolved-material-alternative": -4
+        },
+        "failures_delta": {
+          "F1-vocal-absent": 1,
+          "F3-nonmonotonic": 2,
+          "F4-ctc-final-disagreement": -1,
+          "insufficient-minimum-proof": 1,
+          "no-strict-opening-proof": 1,
+          "nonmonotonic-line-start": 1,
+          "previous-tail-overlap": 1,
+          "tail-conflict-without-independent-current-opening": 1,
+          "temporal-incoherence": 1,
+          "unresolved-material-alternative": -4
+        },
+        "review_reasons_delta": {
+          "actionable-suspicious-conflict": -1,
+          "unresolved-material-alternative": -4
+        }
+      },
+      {
+        "song": "12.琥珀の国",
+        "rows": 32,
+        "A7_marked": 12,
+        "N2_marked": 3,
+        "lost_lines": [
+          7,
+          10,
+          11,
+          13,
+          17,
+          19,
+          24,
+          29,
+          32
+        ],
+        "gained_lines": [],
+        "flags_delta": {
+          "unresolved-material-alternative": -9
+        },
+        "failures_delta": {
+          "unresolved-material-alternative": -9
+        },
+        "review_reasons_delta": {
+          "actionable-suspicious-conflict": -5,
+          "unresolved-material-alternative": -9
+        }
+      },
+      {
+        "song": "12. 終点の先が在るとするならば。",
+        "rows": 32,
+        "A7_marked": 15,
+        "N2_marked": 12,
+        "lost_lines": [
+          4,
+          10,
+          12,
+          17,
+          18,
+          29,
+          31
+        ],
+        "gained_lines": [
+          6,
+          7,
+          19,
+          28
+        ],
+        "flags_delta": {
+          "F4-ctc-final-disagreement": 1,
+          "insufficient-minimum-proof": 4,
+          "no-strict-opening-proof": 4,
+          "previous-tail-ownership-unknown": 4,
+          "tail-conflict-without-independent-current-opening": 4,
+          "unresolved-material-alternative": -6
+        },
+        "failures_delta": {
+          "F4-ctc-final-disagreement": 1,
+          "insufficient-minimum-proof": 4,
+          "no-strict-opening-proof": 4,
+          "previous-tail-ownership-unknown": 4,
+          "tail-conflict-without-independent-current-opening": 4,
+          "unresolved-material-alternative": -6
+        },
+        "review_reasons_delta": {
+          "final-self-check": 1,
+          "unresolved-material-alternative": -6
+        }
+      },
+      {
+        "song": "13.薔薇の下で",
+        "rows": 30,
+        "A7_marked": 12,
+        "N2_marked": 3,
+        "lost_lines": [
+          6,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          22,
+          25
+        ],
+        "gained_lines": [],
+        "flags_delta": {
+          "insufficient-minimum-proof": -1,
+          "previous-tail-ownership-unknown": -1,
+          "tail-conflict-without-independent-current-opening": -1,
+          "unresolved-material-alternative": -9
+        },
+        "failures_delta": {
+          "insufficient-minimum-proof": -1,
+          "previous-tail-ownership-unknown": -1,
+          "tail-conflict-without-independent-current-opening": -1,
+          "unresolved-material-alternative": -9
+        },
+        "review_reasons_delta": {
+          "actionable-suspicious-conflict": -3,
+          "unresolved-material-alternative": -9
+        }
+      },
+      {
+        "song": "持续瞬间的永恒 - 鸣潮先约电台,jixwang,markmilian",
+        "rows": 27,
+        "A7_marked": 8,
+        "N2_marked": 9,
+        "lost_lines": [],
+        "gained_lines": [
+          27
+        ],
+        "flags_delta": {
+          "insufficient-minimum-proof": 1,
+          "no-strict-opening-proof": 1,
+          "previous-tail-ownership-unknown": -1,
+          "tail-conflict-without-independent-current-opening": -1
+        },
+        "failures_delta": {
+          "insufficient-minimum-proof": 1,
+          "no-strict-opening-proof": 1,
+          "previous-tail-ownership-unknown": -1,
+          "tail-conflict-without-independent-current-opening": -1
+        },
+        "review_reasons_delta": {}
+      },
+      {
+        "song": "远航星的告别 - 鸣潮先约电台,jixwang,Tarokiki",
+        "rows": 33,
+        "A7_marked": 19,
+        "N2_marked": 15,
+        "lost_lines": [
+          4,
+          7,
+          9,
+          11,
+          14,
+          22,
+          24,
+          25
+        ],
+        "gained_lines": [
+          3,
+          27,
+          29,
+          32
+        ],
+        "flags_delta": {
+          "F2-repeated-content-identity": -2,
+          "insufficient-minimum-proof": 7,
+          "no-strict-opening-proof": 5,
+          "previous-tail-ownership-unknown": 7,
+          "tail-conflict-without-independent-current-opening": 7,
+          "unresolved-material-alternative": -12
+        },
+        "failures_delta": {
+          "F2-repeated-content-identity": -2,
+          "insufficient-minimum-proof": 7,
+          "no-strict-opening-proof": 5,
+          "previous-tail-ownership-unknown": 7,
+          "tail-conflict-without-independent-current-opening": 7,
+          "unresolved-material-alternative": -12
+        },
+        "review_reasons_delta": {
+          "actionable-suspicious-conflict": 1,
+          "final-self-check": -2,
+          "unresolved-material-alternative": -12
+        }
+      },
+      {
+        "song": "09.夢遊",
+        "rows": 30,
+        "A7_marked": 12,
+        "N2_marked": 12,
+        "lost_lines": [
+          11,
+          19,
+          20,
+          25
+        ],
+        "gained_lines": [
+          4,
+          8,
+          18,
+          23
+        ],
+        "flags_delta": {
+          "insufficient-minimum-proof": 3,
+          "no-strict-opening-proof": 4,
+          "previous-tail-overlap": 1,
+          "previous-tail-ownership-unknown": -1,
+          "unresolved-material-alternative": -6
+        },
+        "failures_delta": {
+          "insufficient-minimum-proof": 3,
+          "no-strict-opening-proof": 4,
+          "previous-tail-overlap": 1,
+          "previous-tail-ownership-unknown": -1,
+          "unresolved-material-alternative": -6
+        },
+        "review_reasons_delta": {
+          "actionable-suspicious-conflict": -2,
+          "actionable-timing-failure": 1,
+          "unresolved-material-alternative": -6
+        }
+      },
+      {
+        "song": "01 My Dearest",
+        "rows": 43,
+        "A7_marked": 30,
+        "N2_marked": 31,
+        "lost_lines": [
+          10,
+          12
+        ],
+        "gained_lines": [
+          4,
+          18,
+          28
+        ],
+        "flags_delta": {
+          "F4-ctc-final-disagreement": -5,
+          "insufficient-minimum-proof": 9,
+          "no-strict-opening-proof": 8,
+          "previous-tail-ownership-unknown": 9,
+          "tail-conflict-without-independent-current-opening": 9,
+          "temporal-incoherence": 2,
+          "unresolved-material-alternative": -8
+        },
+        "failures_delta": {
+          "F4-ctc-final-disagreement": -5,
+          "insufficient-minimum-proof": 9,
+          "no-strict-opening-proof": 8,
+          "previous-tail-ownership-unknown": 9,
+          "tail-conflict-without-independent-current-opening": 9,
+          "temporal-incoherence": 2,
+          "unresolved-material-alternative": -8
+        },
+        "review_reasons_delta": {
+          "actionable-timing-failure": 2,
+          "final-self-check": -3,
+          "unresolved-material-alternative": -8
+        }
+      }
+    ],
+    "new_gt1_vs_A7": [
+      {
+        "song": "06.ビビッド",
+        "line": 47,
+        "BK": 174.8,
+        "old": 174.16,
+        "new": 172.63
+      },
+      {
+        "song": "01. Elegy Dedicated With Love",
+        "line": 32,
+        "BK": 228.81,
+        "old": 228.8,
+        "new": 227.02
+      },
+      {
+        "song": "01.ミレニアの水槽",
+        "line": 15,
+        "BK": 89.52,
+        "old": 89.08,
+        "new": 83.44
+      },
+      {
+        "song": "01.ミレニアの水槽",
+        "line": 16,
+        "BK": 93.94,
+        "old": 93.9,
+        "new": 90.5
+      },
+      {
+        "song": "01.ミレニアの水槽",
+        "line": 32,
+        "BK": 177.01,
+        "old": 176.99,
+        "new": 173.21
+      },
+      {
+        "song": "01. 雨模様",
+        "line": 24,
+        "BK": 72.79,
+        "old": 72.78,
+        "new": 74.57
+      },
+      {
+        "song": "09. ツユ - レインフォール",
+        "line": 70,
+        "BK": 201.61,
+        "old": 201.68,
+        "new": 199.2
+      },
+      {
+        "song": "12. ツユ - 朧月夜物語",
+        "line": 9,
+        "BK": 86.62,
+        "old": 86.64,
+        "new": 72.21
+      },
+      {
+        "song": "12. 終点の先が在るとするならば。",
+        "line": 6,
+        "BK": 18.59,
+        "old": 18.71,
+        "new": 17.4
+      },
+      {
+        "song": "12. 終点の先が在るとするならば。",
+        "line": 19,
+        "BK": 72.82,
+        "old": 72.96,
+        "new": 71.58
+      },
+      {
+        "song": "12. 終点の先が在るとするならば。",
+        "line": 27,
+        "BK": 123.24,
+        "old": 123.24,
+        "new": 126.07
+      },
+      {
+        "song": "01 My Dearest",
+        "line": 19,
+        "BK": 132.94,
+        "old": 132.94,
+        "new": 150.08
+      },
+      {
+        "song": "01 My Dearest",
+        "line": 20,
+        "BK": 139.02,
+        "old": 139.02,
+        "new": 161.46
+      },
+      {
+        "song": "01 My Dearest",
+        "line": 26,
+        "BK": 175.56,
+        "old": 175.56,
+        "new": 176.6
+      },
+      {
+        "song": "01 My Dearest",
+        "line": 37,
+        "BK": 270.0,
+        "old": 269.96,
+        "new": 268.89
+      }
+    ],
+    "new_gt1_vs_skeleton": [
+      {
+        "song": "01. Elegy Dedicated With Love",
+        "line": 32,
+        "BK": 228.81,
+        "old": 229.278,
+        "new": 227.02
+      },
+      {
+        "song": "05.遠雷",
+        "line": 20,
+        "BK": 135.46,
+        "old": 135.515,
+        "new": 132.68
+      },
+      {
+        "song": "09. ツユ - レインフォール",
+        "line": 70,
+        "BK": 201.61,
+        "old": 201.701,
+        "new": 199.2
+      },
+      {
+        "song": "12. 終点の先が在るとするならば。",
+        "line": 6,
+        "BK": 18.59,
+        "old": 18.721,
+        "new": 17.4
+      },
+      {
+        "song": "12. 終点の先が在るとするならば。",
+        "line": 19,
+        "BK": 72.82,
+        "old": 72.764,
+        "new": 71.58
+      },
+      {
+        "song": "持续瞬间的永恒 - 鸣潮先约电台,jixwang,markmilian",
+        "line": 24,
+        "BK": 156.63,
+        "old": 157.055,
+        "new": 157.89
+      }
+    ],
+    "new_backtracks_vs_skeleton": [
+      {
+        "song": "12. ツユ - 朧月夜物語",
+        "line": 8
+      }
+    ],
+    "silent_gt1_skeleton_A7": [
+      {
+        "song": "01. Elegy Dedicated With Love",
+        "line": 36,
+        "BK": 258.94,
+        "time": 261.701,
+        "err": 2.761,
+        "A7_flags": [],
+        "N2_flags": [],
+        "A7_review_reasons": [],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "12. 終点の先が在るとするならば。",
+        "line": 22,
+        "BK": 81.65,
+        "time": 82.825,
+        "err": 1.175,
+        "A7_flags": [],
+        "N2_flags": [],
+        "A7_review_reasons": [],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01 My Dearest",
+        "line": 4,
+        "BK": 35.9,
+        "time": 37.861,
+        "err": 1.961,
+        "A7_flags": [],
+        "N2_flags": [
+          "insufficient-minimum-proof",
+          "no-strict-opening-proof",
+          "previous-tail-ownership-unknown",
+          "tail-conflict-without-independent-current-opening"
+        ],
+        "A7_review_reasons": [],
+        "N2_review_reasons": []
+      }
+    ],
+    "silent_gt1_N2_N2": [
+      {
+        "song": "01. The Day the Starlight Arrived 星辉抵达之日",
+        "line": 1,
+        "BK": 1.0,
+        "time": 2.26,
+        "err": 1.26,
+        "A7_flags": [
+          "candidate_disagreement",
+          "long_line_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "candidate_disagreement",
+          "long_line_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. Elegy Dedicated With Love",
+        "line": 36,
+        "BK": 258.94,
+        "time": 261.7,
+        "err": 2.76,
+        "A7_flags": [],
+        "N2_flags": [],
+        "A7_review_reasons": [],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "12. 終点の先が在るとするならば。",
+        "line": 22,
+        "BK": 81.65,
+        "time": 82.83,
+        "err": 1.18,
+        "A7_flags": [],
+        "N2_flags": [],
+        "A7_review_reasons": [],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "持续瞬间的永恒 - 鸣潮先约电台,jixwang,markmilian",
+        "line": 24,
+        "BK": 156.63,
+        "time": 157.89,
+        "err": 1.26,
+        "A7_flags": [],
+        "N2_flags": [],
+        "A7_review_reasons": [],
+        "N2_review_reasons": []
+      }
+    ],
+    "silent_gt05_N2_N2": [
+      {
+        "song": "01. The Day the Starlight Arrived 星辉抵达之日",
+        "line": 1,
+        "BK": 1.0,
+        "time": 2.26,
+        "err": 1.26,
+        "A7_flags": [
+          "candidate_disagreement",
+          "long_line_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "candidate_disagreement",
+          "long_line_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "04 影色舞",
+        "line": 9,
+        "BK": 43.7,
+        "time": 44.41,
+        "err": 0.71,
+        "A7_flags": [],
+        "N2_flags": [],
+        "A7_review_reasons": [],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "04 影色舞",
+        "line": 37,
+        "BK": 132.21,
+        "time": 133.0,
+        "err": 0.79,
+        "A7_flags": [],
+        "N2_flags": [],
+        "A7_review_reasons": [],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "10.方舟",
+        "line": 36,
+        "BK": 208.8,
+        "time": 208.25,
+        "err": -0.55,
+        "A7_flags": [],
+        "N2_flags": [],
+        "A7_review_reasons": [],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01. Elegy Dedicated With Love",
+        "line": 36,
+        "BK": 258.94,
+        "time": 261.7,
+        "err": 2.76,
+        "A7_flags": [],
+        "N2_flags": [],
+        "A7_review_reasons": [],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "01.おやすみモノクローム",
+        "line": 20,
+        "BK": 107.99,
+        "time": 108.69,
+        "err": 0.7,
+        "A7_flags": [],
+        "N2_flags": [],
+        "A7_review_reasons": [],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "02. JANE DOE",
+        "line": 16,
+        "BK": 119.39,
+        "time": 118.84,
+        "err": -0.55,
+        "A7_flags": [],
+        "N2_flags": [],
+        "A7_review_reasons": [],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "05.遠雷",
+        "line": 14,
+        "BK": 110.46,
+        "time": 109.82,
+        "err": -0.64,
+        "A7_flags": [],
+        "N2_flags": [],
+        "A7_review_reasons": [],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "06. あの世行きのバスに乗ってさらば。",
+        "line": 9,
+        "BK": 38.6,
+        "time": 37.62,
+        "err": -0.98,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "08 春日影 (MyGO!!!!! Ver.)",
+        "line": 27,
+        "BK": 152.61,
+        "time": 152.0,
+        "err": -0.61,
+        "A7_flags": [
+          "candidate_disagreement",
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [
+          "candidate_disagreement"
+        ],
+        "A7_review_reasons": [
+          "actionable-suspicious-conflict",
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "08 春日影 (MyGO!!!!! Ver.)",
+        "line": 39,
+        "BK": 244.8,
+        "time": 243.85,
+        "err": -0.95,
+        "A7_flags": [],
+        "N2_flags": [],
+        "A7_review_reasons": [],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "12. 終点の先が在るとするならば。",
+        "line": 22,
+        "BK": 81.65,
+        "time": 82.83,
+        "err": 1.18,
+        "A7_flags": [],
+        "N2_flags": [],
+        "A7_review_reasons": [],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "12. 終点の先が在るとするならば。",
+        "line": 29,
+        "BK": 133.36,
+        "time": 132.69,
+        "err": -0.67,
+        "A7_flags": [
+          "unresolved-material-alternative"
+        ],
+        "N2_flags": [],
+        "A7_review_reasons": [
+          "unresolved-material-alternative"
+        ],
+        "N2_review_reasons": []
+      },
+      {
+        "song": "持续瞬间的永恒 - 鸣潮先约电台,jixwang,markmilian",
+        "line": 24,
+        "BK": 156.63,
+        "time": 157.89,
+        "err": 1.26,
+        "A7_flags": [],
+        "N2_flags": [],
+        "A7_review_reasons": [],
+        "N2_review_reasons": []
+      }
+    ],
+    "source_net_effect": {
+      "CTC/local": {
+        "changed": 48,
+        "improved": 39,
+        "repaired_gt1": 36,
+        "worsened": 5,
+        "new_gt1": 1,
+        "net_improved": 34,
+        "net_gt1_repairs": 35
+      },
+      "global-acoustic-recurrence": {
+        "changed": 3,
+        "improved": 1,
+        "repaired_gt1": 1,
+        "worsened": 1,
+        "new_gt1": 1,
+        "net_improved": 0,
+        "net_gt1_repairs": 0
+      },
+      "mutual-acoustic-recurrence": {
+        "changed": 8,
+        "worsened": 5,
+        "new_gt1": 4,
+        "improved": 3,
+        "repaired_gt1": 2,
+        "net_improved": -2,
+        "net_gt1_repairs": -2
+      }
+    },
+    "source_names": {
+      "CTC/local": {
+        "ctc-current": 1343,
+        "ctc-vocal-activity-reentry": 52,
+        "ctc-opening-local-retry": 6,
+        "ctc-local-window": 32,
+        "ctc-vocal-onset-confirmed": 12,
+        "ctc-joint-boundary-consensus": 17
+      },
+      "global-acoustic-recurrence": {
+        "global-acoustic-recurrence": 11
+      },
+      "mutual-acoustic-recurrence": {
+        "mutual-acoustic-recurrence": 10
+      },
+      "audio-validated-current": {
+        "audio-validated-current": 4
+      }
+    },
+    "notes": [
+      "1.3 A7 flags same definition as Opus: cts timing_trusted false OR assignment review_required true.",
+      "Code: scripts/auto_lrc.py 26158/26185 removes Whisper/RAW before build_final_timing_state (4198), select_timing_decision (3875).",
+      "_final_post_central_material_conflict_entries at 24032 uses rejected candidate decision graph; commit_final_timing_state at 24801 flags unresolved-material-alternative.",
+      "Some precentral candidate_disagreement may persist from add_alignment_diagnostics or earlier report flags; absence of alternatives removes Central-specific evidence.",
+      "Proposal only, NOT IMPLEMENTED: keep full candidate_sets and restrict winner eligibility within select_timing_decision, preserving ineligible candidates in rejected alternatives for material conflict analysis; propagate policy through full evaluation/re-evaluation and test default identity, CTC final restriction and review flag preservation.",
+      "B11 source layering and >.05s change / >.2s benefit thresholds reproduced from lrc13_anchor_B11_offline_20261011.py."
+    ]
+  }
 }
