@@ -4105,6 +4105,35 @@ def select_timing_decision(
     )
 
 
+def global_recurrence_has_independent_corroboration(
+    decision: TimingDecision,
+    occurrence_entries: list[LyricEntry] | tuple[LyricEntry, ...] | None = None,
+) -> bool:
+    """Require a nearby, valid, different evidence lineage for recurrence trust.
+
+    Similarity and onset from the same recurrence search are one observation.
+    Rejected candidates are retained as diagnostics even under ctc-first.
+    """
+    if decision.candidate.source != "global-acoustic-recurrence":
+        return True
+    for evaluation in decision.rejected_candidates:
+        witness = evaluation.candidate
+        families = _candidate_support_families(witness)
+        if (
+            evaluation.valid
+            and "recurrence" not in families
+            and bool(families & {"ctc", "whisper-family", "hubert-ja-known-lyric"})
+            and witness.identity_support == "supported"
+            and witness.sequence_support == "supported"
+            and candidate_has_bound_acoustic_evidence(witness)
+            and candidate_has_bound_direct_onset_evidence(witness, occurrence_entries)
+            and abs(witness.written_time.seconds - decision.written_time.seconds)
+            <= RAW_CTC_CONSENSUS_MAX_DELTA_SECONDS
+        ):
+            return True
+    return False
+
+
 def audit_final_timing_decisions(
     decisions: tuple[TimingDecision, ...],
     unresolved_historical_codes: tuple[tuple[str, ...], ...] | None = None,
@@ -4190,6 +4219,11 @@ def audit_final_timing_decisions(
         if not decision.evidence.minimum_proof_satisfied and not reviewer_relaxation:
             trusted[index] = False
             failures[index].append("insufficient-minimum-proof")
+        if not global_recurrence_has_independent_corroboration(
+            decision, occurrence_entries
+        ):
+            trusted[index] = False
+            failures[index].append("recurrence-uncorroborated")
         if unresolved_historical_codes[index]:
             trusted[index] = False
             failures[index].extend(unresolved_historical_codes[index])
@@ -23362,6 +23396,7 @@ def evaluate_final_timing_state_for_report(
 
 
 ACTIONABLE_TIMING_FAILURES = frozenset({
+    "recurrence-uncorroborated",
     "right-edge-pileup",
     "window-truncated",
     "nonmonotonic-line-start",
