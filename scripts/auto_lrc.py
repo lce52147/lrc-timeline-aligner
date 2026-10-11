@@ -40,6 +40,7 @@ import numpy as np
 
 from ctc_confidence import ctc_alignment_confidence
 import arbiter as timing_arbiter
+import lrc_timestamp_pairs
 from export_alignment_audit import build_rows as build_audit_rows
 from export_alignment_audit import write_anchor_template
 from export_alignment_audit import write_markdown as write_audit_markdown
@@ -4764,6 +4765,8 @@ def load_lyrics(path: Path, skip_comments: bool = False) -> LyricDocument:
             "or --timing-source lyrics.",
             file=sys.stderr,
         )
+    if saw_timestamps:
+        entries = lrc_timestamp_pairs.merge_timestamped_pairs(entries)
     return LyricDocument(entries=entries, metadata_lines=metadata_lines, saw_timestamps=saw_timestamps)
 
 
