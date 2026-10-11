@@ -25713,6 +25713,75 @@ def report_has_verified_central_commit(report: dict[str, object]) -> bool:
     return True
 
 
+# A single, declarative authority for final-line defect classification.
+# Unknown diagnostics are INFO until an owner explicitly classifies them.
+FINAL_LINE_TRUST_CLASSIFICATION: dict[str, str] = {
+    **{code: "INFO" for code in {
+        "manual_anchor_resolved", "central-selected", "central-provisional",
+        "ctc_final_guard_recovered", "ctc_low_path_confidence",
+        "raw_candidate_rejected_by_sequence", "raw_asr_systematic_drift",
+        "long_line_disagreement", "skeleton_global_ctc_disagreement",
+        "short_line_onset_uncertain",
+    }},
+    **{code: "UNTRUSTED" for code in NON_ACTIONABLE_VERIFICATION_FAILURES | {
+        "timing-evidence-unverified", "insufficient-minimum-proof",
+    }},
+    **{code: "REVIEW" for code in ACTIONABLE_TIMING_FAILURES
+       | ACTIONABLE_SUSPICIOUS_FLAGS
+       | {"recurrence-uncorroborated", "recovery-moved",
+          "unresolved-material-alternative", "F1-vocal-absent",
+          "F3-compressed-or-nonmonotonic", "F3-nonmonotonic",
+          "F4-ctc-final-disagreement"}},
+}
+
+
+@dataclass(frozen=True)
+class FinalLineTrustDecision:
+    timing_trusted: bool
+    review_required: bool
+    reason_codes: tuple[str, ...]
+
+
+def final_line_trust(
+    assignment: dict[str, object],
+    suspicious_rows: list[dict[str, object]],
+    *,
+    central_committed: bool,
+) -> FinalLineTrustDecision:
+    """Compute timing trust and review once from final evidence and classified codes."""
+    codes: list[str] = []
+    flags = assignment.get("flags")
+    if isinstance(flags, list):
+        codes.extend(str(code) for code in flags if str(code) not in ACTIONABLE_SUSPICIOUS_FLAGS or str(code) in ACTIONABLE_TIMING_FAILURES)
+    self_check = assignment.get("self_check_flags")
+    if isinstance(self_check, list):
+        codes.extend(str(code) for code in self_check)
+    evidence = assignment.get("normalized_timing_evidence")
+    if isinstance(evidence, dict):
+        failures = evidence.get("structural_failures")
+        if isinstance(failures, (list, tuple)):
+            codes.extend(str(code) for code in failures)
+        if not evidence.get("minimum_proof_satisfied"):
+            codes.append("insufficient-minimum-proof")
+    for row in suspicious_rows:
+        if _suspicious_row_requires_review(row):
+            row_flags = row.get("flags")
+            if isinstance(row_flags, list):
+                codes.extend(str(code) for code in row_flags)
+    reasons = list(dict.fromkeys(
+        code for code in codes
+        if FINAL_LINE_TRUST_CLASSIFICATION.get(code, "INFO") != "INFO"
+    ))
+    review = bool(
+        (central_committed and assignment.get("review_required"))
+        or any(FINAL_LINE_TRUST_CLASSIFICATION.get(code) == "REVIEW" for code in reasons)
+    )
+    trusted = bool(assignment_timing_is_trusted(assignment) and not review)
+    if not trusted and not reasons:
+        reasons.append("timing-evidence-unverified")
+    return FinalLineTrustDecision(trusted, review, tuple(reasons))
+
+
 def update_report_confidence_metrics(report: dict[str, object]) -> None:
     assignments = report.get("assignments")
     if not isinstance(assignments, list):
@@ -25763,28 +25832,36 @@ def update_report_confidence_metrics(report: dict[str, object]) -> None:
     def timing_flag(item: object) -> bool:
         if not isinstance(item, dict):
             return False
-        return assignment_timing_is_trusted(item)
+        return bool(item.get("timing_audit_trusted")) if central_committed else assignment_timing_is_trusted(item)
 
+    central_rows = report.get("central_timing_state")
     for index, item in enumerate(assignments):
         if not isinstance(item, dict):
             continue
+        related_suspicious = [
+            row for row in suspicious_rows if row.get("entry") == index + 1
+        ]
+        decision = final_line_trust(
+            item, related_suspicious, central_committed=central_committed
+        )
         content_trusted = content_flag(item)
-        timing_trusted = timing_flag(item)
-        flags = item.get("flags")
-        flag_list = [str(flag) for flag in flags] if isinstance(flags, list) else []
-        actionable_assignment = any(_timing_failure_requires_review(flag) for flag in flag_list)
-        suspicious_review = _suspicious_entry_requires_review(report, index + 1)
-        if central_committed:
-            review_required = bool(item.get("review_required") or actionable_assignment or suspicious_review)
-        else:
-            # Pre-central legacy booleans are not authority.  Reconstruct review
-            # from positive defect evidence so an untrusted row is not silently
-            # promoted into the user review queue.
-            review_required = bool(actionable_assignment or suspicious_review)
+        timing_trusted = decision.timing_trusted
+        review_required = decision.review_required
         item["content_trusted"] = content_trusted
         item["timing_audit_trusted"] = timing_trusted
+        item["final_trust_reason_codes"] = list(decision.reason_codes)
         if central_committed:
+            if not isinstance(central_rows, list) or not isinstance(central_rows[index], dict):
+                raise LrcError("Verified Central report lost its timing row")
+            central_row = central_rows[index]
+            central_row["timing_trusted"] = timing_trusted
             item["timing_trusted"] = timing_trusted
+            status = "selected_valid" if timing_trusted else "provisional_unresolved"
+            item["timestamp_status"] = status
+            central_row["timestamp_status"] = status
+            candidate_id = central_row["candidate_id"]
+            item["selected_candidate_id"] = candidate_id if timing_trusted else None
+            item["provisional_candidate_id"] = None if timing_trusted else candidate_id
         item["review_required"] = review_required
         item["overall_trusted"] = bool(content_trusted and timing_trusted and not review_required)
         item["verification_status"] = (
@@ -25794,6 +25871,8 @@ def update_report_confidence_metrics(report: dict[str, object]) -> None:
             if item["overall_trusted"]
             else "unverified"
         )
+    if central_committed and not report_has_verified_central_commit(report):
+        raise LrcError("Unified final trust broke verified Central commit")
 
     content_trusted_entries = sum(1 for item in assignments if content_flag(item))
     timing_trusted_entries = sum(1 for item in assignments if timing_flag(item))
@@ -25879,9 +25958,10 @@ def update_report_confidence_metrics(report: dict[str, object]) -> None:
         "unverified": unverified_count,
         "review_required": review_required_count,
     }
+    report["final_line_trust_classification"] = dict(sorted(FINAL_LINE_TRUST_CLASSIFICATION.items()))
     report["trust_metric_semantics"] = {
-        "schema_version": 1,
-        "timing_trusted_percent": "selected timestamp passes Central timing audit",
+        "schema_version": 2,
+        "timing_trusted_percent": "final line evidence and review classification",
         "authority_trusted_percent": (
             "content and timing are trusted and no actionable review remains"
         ),
@@ -34011,9 +34091,10 @@ def apply_central_summary_to_report(
     report["review_required_count"] = summary.review_required_count
     report["review_required_percent"] = summary.review_required_percent
     report["review_required"] = summary.review_required
+    report["final_line_trust_classification"] = dict(sorted(FINAL_LINE_TRUST_CLASSIFICATION.items()))
     report["trust_metric_semantics"] = {
-        "schema_version": 1,
-        "timing_trusted_percent": "selected timestamp passes Central timing audit",
+        "schema_version": 2,
+        "timing_trusted_percent": "final line evidence and review classification",
         "authority_trusted_percent": (
             "content and timing are trusted and no actionable review remains"
         ),
