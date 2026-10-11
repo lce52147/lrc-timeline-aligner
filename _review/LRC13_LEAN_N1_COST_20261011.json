@@ -1,0 +1,944 @@
+{
+  "status": "N1_POSTHOC_39",
+  "stats": {
+    "skeleton": {
+      "wrong_gt1": 83,
+      "wrong_gt05": 105,
+      "flagged": 757,
+      "listen_ratio": 0.5090786819098857,
+      "silent_wrong_gt1": [
+        {
+          "song": "01. The Day the Starlight Arrived 星辉抵达之日",
+          "line": 1,
+          "err": 1.26,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 2.26,
+          "BK": 1.0
+        },
+        {
+          "song": "06.ビビッド",
+          "line": 1,
+          "err": 1.062,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 17.362,
+          "BK": 16.3
+        },
+        {
+          "song": "06.ビビッド",
+          "line": 30,
+          "err": 2.689,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 117.611,
+          "BK": 120.3
+        },
+        {
+          "song": "01. Elegy Dedicated With Love",
+          "line": 36,
+          "err": 2.761,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 261.701,
+          "BK": 258.94
+        },
+        {
+          "song": "02. JANE DOE",
+          "line": 14,
+          "err": 2.245,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 111.245,
+          "BK": 113.49
+        },
+        {
+          "song": "12. ツユ - 朧月夜物語",
+          "line": 17,
+          "err": 1.714,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 141.716,
+          "BK": 143.43
+        }
+      ],
+      "silent_wrong_gt05": [
+        {
+          "song": "01. The Day the Starlight Arrived 星辉抵达之日",
+          "line": 1,
+          "err": 1.26,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 2.26,
+          "BK": 1.0
+        },
+        {
+          "song": "06.ビビッド",
+          "line": 1,
+          "err": 1.062,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 17.362,
+          "BK": 16.3
+        },
+        {
+          "song": "06.ビビッド",
+          "line": 30,
+          "err": 2.689,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 117.611,
+          "BK": 120.3
+        },
+        {
+          "song": "01. Elegy Dedicated With Love",
+          "line": 36,
+          "err": 2.761,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 261.701,
+          "BK": 258.94
+        },
+        {
+          "song": "01.おやすみモノクローム",
+          "line": 20,
+          "err": 0.698,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 108.688,
+          "BK": 107.99
+        },
+        {
+          "song": "01. ふり",
+          "line": 10,
+          "err": 0.578,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 36.422,
+          "BK": 37.0
+        },
+        {
+          "song": "01. ふり",
+          "line": 55,
+          "err": 0.668,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 151.968,
+          "BK": 151.3
+        },
+        {
+          "song": "02. JANE DOE",
+          "line": 14,
+          "err": 2.245,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 111.245,
+          "BK": 113.49
+        },
+        {
+          "song": "02. JANE DOE",
+          "line": 16,
+          "err": 0.545,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 118.845,
+          "BK": 119.39
+        },
+        {
+          "song": "05.遠雷",
+          "line": 14,
+          "err": 0.638,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 109.822,
+          "BK": 110.46
+        },
+        {
+          "song": "08 春日影 (MyGO!!!!! Ver.)",
+          "line": 39,
+          "err": 0.948,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 243.852,
+          "BK": 244.8
+        },
+        {
+          "song": "12. ツユ - 朧月夜物語",
+          "line": 17,
+          "err": 1.714,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 141.716,
+          "BK": 143.43
+        },
+        {
+          "song": "远航星的告别 - 鸣潮先约电台,jixwang,Tarokiki",
+          "line": 3,
+          "err": 0.584,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 35.584,
+          "BK": 35.0
+        }
+      ],
+      "per_flag": {
+        "CTC_score_lt_008": {
+          "flagged_count": 374,
+          "recall_wrong_gt1": 67,
+          "recall_wrong_gt05": 79
+        },
+        "repeated_lyric": {
+          "flagged_count": 412,
+          "recall_wrong_gt1": 33,
+          "recall_wrong_gt05": 38
+        },
+        "compression_pair": {
+          "flagged_count": 43,
+          "recall_wrong_gt1": 28,
+          "recall_wrong_gt05": 30
+        },
+        "CTC_low_run": {
+          "flagged_count": 84,
+          "recall_wrong_gt1": 22,
+          "recall_wrong_gt05": 26
+        },
+        "F5_repeat_global_diff": {
+          "flagged_count": 11,
+          "recall_wrong_gt1": 0,
+          "recall_wrong_gt05": 0
+        },
+        "whole_song_speed_flag": {
+          "flagged_count": 282,
+          "recall_wrong_gt1": 56,
+          "recall_wrong_gt05": 65
+        }
+      }
+    },
+    "full_lrc13": {
+      "wrong_gt1": 84,
+      "wrong_gt05": 119,
+      "flagged": 757,
+      "listen_ratio": 0.5090786819098857,
+      "silent_wrong_gt1": [
+        {
+          "song": "01. The Day the Starlight Arrived 星辉抵达之日",
+          "line": 1,
+          "err": 1.26,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 2.26,
+          "BK": 1.0
+        },
+        {
+          "song": "01. The Day the Starlight Arrived 星辉抵达之日",
+          "line": 15,
+          "err": 1.04,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 139.46,
+          "BK": 140.5
+        },
+        {
+          "song": "01. The Day the Starlight Arrived 星辉抵达之日",
+          "line": 16,
+          "err": 1.42,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 146.08,
+          "BK": 147.5
+        },
+        {
+          "song": "01. Elegy Dedicated With Love",
+          "line": 36,
+          "err": 2.76,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 261.7,
+          "BK": 258.94
+        },
+        {
+          "song": "02. JANE DOE",
+          "line": 14,
+          "err": 2.65,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 110.84,
+          "BK": 113.49
+        },
+        {
+          "song": "04. Scarborough Fair",
+          "line": 3,
+          "err": 1.65,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 28.12,
+          "BK": 29.77
+        },
+        {
+          "song": "05.遠雷",
+          "line": 20,
+          "err": 2.78,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 132.68,
+          "BK": 135.46
+        },
+        {
+          "song": "06. あの世行きのバスに乗ってさらば。",
+          "line": 32,
+          "err": 4.95,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 147.0,
+          "BK": 151.95
+        },
+        {
+          "song": "08 春日影 (MyGO!!!!! Ver.)",
+          "line": 22,
+          "err": 1.43,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 128.76,
+          "BK": 127.33
+        },
+        {
+          "song": "12. ツユ - 朧月夜物語",
+          "line": 17,
+          "err": 1.71,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 141.72,
+          "BK": 143.43
+        }
+      ],
+      "silent_wrong_gt05": [
+        {
+          "song": "01. The Day the Starlight Arrived 星辉抵达之日",
+          "line": 1,
+          "err": 1.26,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 2.26,
+          "BK": 1.0
+        },
+        {
+          "song": "01. The Day the Starlight Arrived 星辉抵达之日",
+          "line": 4,
+          "err": 0.78,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 25.72,
+          "BK": 26.5
+        },
+        {
+          "song": "01. The Day the Starlight Arrived 星辉抵达之日",
+          "line": 15,
+          "err": 1.04,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 139.46,
+          "BK": 140.5
+        },
+        {
+          "song": "01. The Day the Starlight Arrived 星辉抵达之日",
+          "line": 16,
+          "err": 1.42,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 146.08,
+          "BK": 147.5
+        },
+        {
+          "song": "06.ビビッド",
+          "line": 5,
+          "err": 0.94,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 29.36,
+          "BK": 30.3
+        },
+        {
+          "song": "10.方舟",
+          "line": 27,
+          "err": 0.79,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 156.02,
+          "BK": 156.81
+        },
+        {
+          "song": "01. Elegy Dedicated With Love",
+          "line": 36,
+          "err": 2.76,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 261.7,
+          "BK": 258.94
+        },
+        {
+          "song": "01.おやすみモノクローム",
+          "line": 20,
+          "err": 0.7,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 108.69,
+          "BK": 107.99
+        },
+        {
+          "song": "01.おやすみモノクローム",
+          "line": 22,
+          "err": 0.64,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 117.55,
+          "BK": 116.91
+        },
+        {
+          "song": "01. それでも雨は降るんだね",
+          "line": 3,
+          "err": 0.62,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 10.08,
+          "BK": 10.7
+        },
+        {
+          "song": "01. ふり",
+          "line": 57,
+          "err": 0.76,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 157.56,
+          "BK": 156.8
+        },
+        {
+          "song": "01.最大幸福度",
+          "line": 22,
+          "err": 0.9,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 107.5,
+          "BK": 106.6
+        },
+        {
+          "song": "02. JANE DOE",
+          "line": 14,
+          "err": 2.65,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 110.84,
+          "BK": 113.49
+        },
+        {
+          "song": "02. JANE DOE",
+          "line": 16,
+          "err": 0.55,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 118.84,
+          "BK": 119.39
+        },
+        {
+          "song": "04. Scarborough Fair",
+          "line": 3,
+          "err": 1.65,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 28.12,
+          "BK": 29.77
+        },
+        {
+          "song": "05.遠雷",
+          "line": 14,
+          "err": 0.64,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 109.82,
+          "BK": 110.46
+        },
+        {
+          "song": "05.遠雷",
+          "line": 20,
+          "err": 2.78,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 132.68,
+          "BK": 135.46
+        },
+        {
+          "song": "06. あの世行きのバスに乗ってさらば。",
+          "line": 32,
+          "err": 4.95,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 147.0,
+          "BK": 151.95
+        },
+        {
+          "song": "08 春日影 (MyGO!!!!! Ver.)",
+          "line": 22,
+          "err": 1.43,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 128.76,
+          "BK": 127.33
+        },
+        {
+          "song": "08 春日影 (MyGO!!!!! Ver.)",
+          "line": 27,
+          "err": 0.61,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 152.0,
+          "BK": 152.61
+        },
+        {
+          "song": "08 春日影 (MyGO!!!!! Ver.)",
+          "line": 39,
+          "err": 0.95,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 243.85,
+          "BK": 244.8
+        },
+        {
+          "song": "12. ツユ - 朧月夜物語",
+          "line": 17,
+          "err": 1.71,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 141.72,
+          "BK": 143.43
+        },
+        {
+          "song": "远航星的告别 - 鸣潮先约电台,jixwang,Tarokiki",
+          "line": 3,
+          "err": 0.58,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 35.58,
+          "BK": 35.0
+        },
+        {
+          "song": "远航星的告别 - 鸣潮先约电台,jixwang,Tarokiki",
+          "line": 8,
+          "err": 0.9,
+          "flagged": false,
+          "flags": {
+            "CTC_score_lt_008": false,
+            "repeated_lyric": false,
+            "compression_pair": false,
+            "CTC_low_run": false,
+            "F5_repeat_global_diff": false,
+            "whole_song_speed_flag": false
+          },
+          "source_time": 58.9,
+          "BK": 58.0
+        }
+      ],
+      "per_flag": {
+        "CTC_score_lt_008": {
+          "flagged_count": 374,
+          "recall_wrong_gt1": 59,
+          "recall_wrong_gt05": 76
+        },
+        "repeated_lyric": {
+          "flagged_count": 412,
+          "recall_wrong_gt1": 36,
+          "recall_wrong_gt05": 44
+        },
+        "compression_pair": {
+          "flagged_count": 43,
+          "recall_wrong_gt1": 27,
+          "recall_wrong_gt05": 29
+        },
+        "CTC_low_run": {
+          "flagged_count": 84,
+          "recall_wrong_gt1": 18,
+          "recall_wrong_gt05": 24
+        },
+        "F5_repeat_global_diff": {
+          "flagged_count": 11,
+          "recall_wrong_gt1": 0,
+          "recall_wrong_gt05": 0
+        },
+        "whole_song_speed_flag": {
+          "flagged_count": 282,
+          "recall_wrong_gt1": 57,
+          "recall_wrong_gt05": 68
+        }
+      }
+    },
+    "full_1_3_original_flag_baseline": {
+      "wrong_gt1": 84,
+      "flagged_review": 583,
+      "untrusted": 548,
+      "flag_caught_gt1": 80,
+      "note": "Original full-pipeline F4 etc; compare separately from N1 fixed flag definition"
+    }
+  }
+}
