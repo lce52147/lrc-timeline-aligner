@@ -62,6 +62,18 @@ class LyricParserRegressionTests(unittest.TestCase):
         self.assertEqual(kept, [sung])
         self.assertEqual([row["text"] for row in removed], markers)
 
+    def test_millisecond_timestamps_round_half_up_and_carry(self):
+        cases = {
+            "[00:01.124]": 112,
+            "[00:01.125]": 113,
+            "[00:01.005]": 101,
+            "[00:59.995]": 6000,
+            "[01:00.999]": 6100,
+        }
+        for tag, expected in cases.items():
+            with self.subTest(tag=tag):
+                self.assertEqual(auto_lrc.lrc_time_key(tag), expected)
+
 
 if __name__ == "__main__":
     unittest.main()

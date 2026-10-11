@@ -4652,7 +4652,8 @@ def lrc_time_key(tag_block: str) -> int | None:
     minutes = int(match.group(1))
     seconds = int(match.group(2))
     fraction = match.group(3) or "0"
-    centiseconds = int((fraction + "00")[:2])
+    milliseconds = int(fraction.ljust(3, "0"))
+    centiseconds = (milliseconds + 5) // 10
     return ((minutes * 60) + seconds) * 100 + centiseconds
 
 
