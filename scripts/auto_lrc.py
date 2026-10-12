@@ -22010,6 +22010,8 @@ def collect_central_timing_candidates(
     assignments = report.get("assignments")
     if not isinstance(assignments, list) or len(assignments) != len(entries):
         raise LrcError("Central timing finalizer requires one assignment per lyric entry")
+    if len(scratch_timestamps) != len(entries):
+        raise LrcError("Central timing scratch clock length does not match lyric entries")
     # Runtime-only immutable lyric objects are retained so content identity can
     # be validated independently from timing provenance during central summary
     # and commit.  This key is explicitly excluded from serialized reports.
@@ -22027,7 +22029,7 @@ def collect_central_timing_candidates(
         except (OSError, LrcError):
             fusion_audio_revision = None
     candidate_sets: list[tuple[TimingCandidate, ...]] = []
-    for index, (entry, raw_assignment) in enumerate(zip(entries, assignments)):
+    for index, (entry, raw_assignment) in enumerate(zip(entries, assignments, strict=True)):
         if not isinstance(raw_assignment, dict):
             raise LrcError(f"Central timing finalizer received invalid assignment {index + 1}")
         # Re-bind the immutable backend baseline instead of trusting a scratch
