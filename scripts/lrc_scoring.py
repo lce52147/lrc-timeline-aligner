@@ -122,8 +122,10 @@ def count_metrics(rows):
     status = Counter(r["status"] for r in rows)
     if set(status) - set(CLASSES):
         raise ScoringError("UNEXPECTED_STATUS")
-    errors = lambda r: abs(r["time"] - r["bk"])
-    subset = lambda pred: [r for r in rows if pred(r)]
+    def errors(r):
+        return abs(r["time"] - r["bk"])
+    def subset(pred):
+        return [r for r in rows if pred(r)]
     def buckets(data):
         return {
             "rows": len(data),
