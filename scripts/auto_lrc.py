@@ -34892,8 +34892,13 @@ def add_alignment_diagnostics(
                 }
             )
 
+    propagation_seed_indexes = set(suspicious_indexes)
     for index, entry in enumerate(entries):
-        if index == 0 or index in suspicious_indexes or index - 1 not in suspicious_indexes:
+        if (
+            index == 0
+            or index in suspicious_indexes
+            or index - 1 not in propagation_seed_indexes
+        ):
             continue
         previous_time = timestamps[index - 1] if index > 0 else 0.0
         timestamp = timestamps[index] if index < len(timestamps) else previous_time
