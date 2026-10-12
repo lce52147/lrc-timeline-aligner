@@ -34247,8 +34247,14 @@ def _finalize_backend_provenance_projection(
     trusted_rows: list[dict[str, object]] = []
     assignments = report.get("assignments")
     central_state = report.get("central_timing_state")
+    if (
+        not isinstance(assignments, list)
+        or not isinstance(central_state, list)
+        or len(assignments) != len(central_state)
+    ):
+        raise LrcError("Backend provenance row count does not match assignments")
     if isinstance(assignments, list) and isinstance(central_state, list):
-        for assignment, state in zip(assignments, central_state):
+        for assignment, state in zip(assignments, central_state, strict=True):
             if not isinstance(assignment, dict) or not isinstance(state, dict):
                 continue
             if not bool(assignment.get("overall_trusted")):
