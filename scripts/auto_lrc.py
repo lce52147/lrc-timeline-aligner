@@ -30243,6 +30243,17 @@ def _postcentral_plan_known_lyric_hubert_requests(
     ))
 
 
+def _hubert_neutral_probe_window_start(
+    earliest_hypothesis_centiseconds: int,
+) -> float:
+    """Give full-line CTC fixed leading context independent of any winner."""
+    return max(
+        0.0,
+        earliest_hypothesis_centiseconds / 100.0
+        - LOCAL_WHISPER_CONTEXT_MARGIN_SECONDS,
+    )
+
+
 def _hubert_probe_window_covers_hypotheses(
     window_start: float,
     window_end: float,
@@ -30285,6 +30296,9 @@ def _hubert_probe_window_covers_request_hypotheses(
         if not isinstance(selected, int) or selected not in times:
             return False
         if min(times) != request["hypothesis_min_centiseconds"] or max(times) != request["hypothesis_max_centiseconds"]:
+            return False
+        expected_start = _hubert_neutral_probe_window_start(min(times))
+        if abs(start - expected_start) > 1e-6:
             return False
         return _hubert_probe_window_covers_hypotheses(start, end, times, direct_tolerance_centiseconds)
     except (KeyError, TypeError, ValueError, OverflowError):
@@ -30429,9 +30443,8 @@ def _postcentral_plan_known_lyric_hubert_current_probe_requests(
         ):
             continue
 
-        window_start = max(
-            0.0,
-            earliest_seconds - PREFIX_ACOUSTIC_ASSOCIATION_SECONDS,
+        window_start = _hubert_neutral_probe_window_start(
+            hypothesis_centiseconds[0]
         )
         window_end = min(
             duration,
@@ -30615,9 +30628,8 @@ def _postcentral_plan_known_lyric_hubert_timing_failure_diagnostic_requests(
             if index + 1 < len(entries)
             else duration
         )
-        window_start = max(
-            0.0,
-            earliest_seconds - PREFIX_ACOUSTIC_ASSOCIATION_SECONDS,
+        window_start = _hubert_neutral_probe_window_start(
+            hypothesis_centiseconds[0]
         )
         window_end = min(
             duration,
