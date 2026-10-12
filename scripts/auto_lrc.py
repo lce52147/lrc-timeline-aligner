@@ -112,6 +112,7 @@ _RUNTIME_RAW_TIMING_DRIFT_FALSIFICATIONS_KEY = (
 )
 RAW_CTC_CONSENSUS_MIN_SCORE = 0.85
 RAW_CTC_CONSENSUS_MAX_DELTA_SECONDS = 0.18
+RAW_TIMING_DRIFT_MAX_MEDIAN_DELTA_SECONDS = 2.0
 CROSSLINE_RETRY_FORWARD_OVERLAP_SECONDS = 0.75
 CROSSLINE_RETRY_MAX_WINDOW_EXPANSIONS = 3
 VOCAL_SEPARATOR_PROTOCOL_REVISION = "demucs-two-stems-vocals-mp3-v3-shifts0"
@@ -23740,6 +23741,16 @@ def _raw_timing_drift_falsification_details(
             cursor += 1
 
         if len(run) >= 3:
+            run_deltas = [
+                float(raw_observations[item]["raw_time"]) - float(ctc_clocks[item])  # type: ignore[index]
+                for item in run
+            ]
+            if (
+                abs(float(statistics.median(run_deltas)))
+                > RAW_TIMING_DRIFT_MAX_MEDIAN_DELTA_SECONDS
+            ):
+                index = max(index + 1, cursor)
+                continue
             anchors = [
                 {
                     "entry": item + 1,
@@ -23839,7 +23850,9 @@ def _raw_timing_drift_falsification_details(
                 continue
             deltas = [float(item["delta_seconds"]) for item in anchors]
             if not (
-                (all(value > 0.0 for value in deltas) or all(value < 0.0 for value in deltas))
+                abs(float(statistics.median(deltas)))
+                <= RAW_TIMING_DRIFT_MAX_MEDIAN_DELTA_SECONDS
+                and (all(value > 0.0 for value in deltas) or all(value < 0.0 for value in deltas))
                 and all(
                     abs(
                         int(item["raw_centiseconds"])
@@ -23990,6 +24003,7 @@ def _install_runtime_raw_timing_drift_falsifications(
         "minimum_raw_alignment_score": TRUSTED_ALIGNMENT_SCORE,
         "contiguous_min_entries": 3,
         "contiguous_max_adjacent_offset_change_seconds": 0.65,
+        "max_abs_median_delta_seconds": RAW_TIMING_DRIFT_MAX_MEDIAN_DELTA_SECONDS,
         "entry_count": len(frozen),
         "falsification_count": len(details),
         "entries": list(details),
