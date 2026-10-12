@@ -3983,11 +3983,15 @@ def select_timing_decision(
             if evaluation.candidate.candidate_id != current_evaluation.candidate.candidate_id
             and candidate_dominates(evaluation, current_evaluation)
         )
-        if len(challengers) == 1 and all(
-            challenger is challengers[0] or candidate_dominates(challengers[0], challenger)
-            for challenger in challengers
-        ):
-            winner = challengers[0]
+        dominant_challengers = tuple(
+            challenger for challenger in challengers
+            if all(
+                other is challenger or candidate_dominates(challenger, other)
+                for other in challengers
+            )
+        )
+        if len(dominant_challengers) == 1:
+            winner = dominant_challengers[0]
         else:
             winner = current_evaluation
     elif valid:
