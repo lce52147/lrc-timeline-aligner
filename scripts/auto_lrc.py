@@ -11650,15 +11650,34 @@ def apply_ctc_local_fusion_to_whisperx(
                 except (TypeError, ValueError):
                     raw_time = None
                     raw_score = None
-            votes: list[tuple[str, float]] = []
-            if whisperx_score >= 0.45 and abs(whisperx_time - selected_time) <= 0.75:
-                votes.append(("whisperx", whisperx_time))
+            family_votes: dict[str, tuple[str, float, float]] = {}
+            if (
+                whisperx_score >= TRUSTED_ALIGNMENT_SCORE
+                and abs(whisperx_time - selected_time) <= 0.75
+            ):
+                family_votes["whisper-family"] = (
+                    "whisperx", whisperx_time, whisperx_score
+                )
             if ctc_score >= 0.02 and abs(ctc_time - selected_time) <= 0.75:
-                votes.append(("ctc", ctc_time))
-            if raw_time is not None and raw_score is not None and raw_score >= 0.45 and abs(raw_time - selected_time) <= 0.75:
-                votes.append(("raw", raw_time))
+                family_votes["ctc"] = ("ctc", ctc_time, ctc_score)
+            if (
+                raw_time is not None
+                and raw_score is not None
+                and raw_score >= TRUSTED_ALIGNMENT_SCORE
+                and abs(raw_time - selected_time) <= 0.75
+            ):
+                existing_whisper = family_votes.get("whisper-family")
+                if existing_whisper is None or raw_score > existing_whisper[2]:
+                    family_votes["whisper-family"] = ("raw", raw_time, raw_score)
+            votes = [
+                (source, time)
+                for source, time, _score in family_votes.values()
+            ]
             vote_times = [time for _, time in votes]
-            consensus = len(votes) >= 2 and (max(vote_times) - min(vote_times) <= 0.75 if vote_times else False)
+            consensus = len(family_votes) >= 2 and (
+                max(vote_times) - min(vote_times) <= 0.75
+                if vote_times else False
+            )
             change = changes_by_entry.get(index + 1)
             raw_high_confidence_anchor = (
                 change is not None
