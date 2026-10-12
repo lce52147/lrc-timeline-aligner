@@ -5554,6 +5554,38 @@ class BackendPeerSimulationTests(unittest.TestCase):
         self.assertTrue(current.current)
         self.assertFalse(neutral.current)
 
+    def test_peer_unresolved_fallback_keeps_current_clock_independent_of_candidate_id(self) -> None:
+        current = self.candidate(0, 10.0, current=True, source="ctc-current")
+        alternative = self.candidate(0, 11.0, current=False, source="ctc-current")
+        first = auto_lrc.select_timing_decision(
+            entry_index=0,
+            candidates=(
+                replace(current, candidate_id="aaa"),
+                replace(alternative, candidate_id="zzz"),
+            ),
+            previous_candidate=None,
+            selection_revision=1,
+            peer_graph=auto_lrc._peer_policy(),
+            timing_source_policy="ctc-first",
+        )
+        second = auto_lrc.select_timing_decision(
+            entry_index=0,
+            candidates=(
+                replace(current, candidate_id="zzz"),
+                replace(alternative, candidate_id="aaa"),
+            ),
+            previous_candidate=None,
+            selection_revision=1,
+            peer_graph=auto_lrc._peer_policy(),
+            timing_source_policy="ctc-first",
+        )
+        self.assertEqual(first.status, "provisional_unresolved")
+        self.assertEqual(second.status, "provisional_unresolved")
+        self.assertEqual(first.written_time.seconds, 10.0)
+        self.assertEqual(second.written_time.seconds, 10.0)
+        self.assertTrue(first.candidate.current)
+        self.assertTrue(second.candidate.current)
+
     def test_peer_dominance_and_consensus_use_existing_evidence_only(self) -> None:
         weak_current = self.candidate(0, 1.0, current=True, confidence=0.20)
         strong = self.candidate(

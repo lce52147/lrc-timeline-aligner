@@ -3908,16 +3908,19 @@ def select_timing_decision(
     }
     if not eligible_ids:
         raise LrcError(f"ctc-first: no eligible time candidate at line {entry_index + 1}")
+    fallback_current_evaluation = next(
+        (
+            evaluation for evaluation in evaluations
+            if evaluation.candidate.current
+            and evaluation.candidate.candidate_id in eligible_ids
+        ),
+        None,
+    )
     current_evaluation = (
         None
         if peer_graph is not None
         and peer_graph.mode == "cross_backend_neutral"
-        else next(
-            (evaluation for evaluation in evaluations
-             if evaluation.candidate.current
-             and evaluation.candidate.candidate_id in eligible_ids),
-            None,
-        )
+        else fallback_current_evaluation
     )
     reviewer_endorsed_current = False
     reviewer_current_support: int | None = None
@@ -4048,7 +4051,7 @@ def select_timing_decision(
             winner = current_evaluation
 
     if winner is None:
-        provisional = current_evaluation or next(
+        provisional = current_evaluation or fallback_current_evaluation or next(
             evaluation for evaluation in evaluations
             if evaluation.candidate.candidate_id in eligible_ids
         )
