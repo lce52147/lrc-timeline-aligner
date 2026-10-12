@@ -28154,6 +28154,11 @@ def _resolve_final_peer_predecessor_tail(
         previous_candidate
     )
     intrinsic = derive_reliable_tail(previous_candidate)
+    # The immutable final predecessor candidate owns its intrinsic tail when
+    # available. External observations may only fill a missing tail; they
+    # must not replace a valid final tail merely because they end later.
+    if intrinsic.validity == "valid" and intrinsic.reliable_tail_end is not None:
+        return intrinsic
     if not strict_families or not _tail_contexts_are_valid(contexts or None):
         tail = intrinsic
     else:
@@ -28175,27 +28180,17 @@ def _resolve_final_peer_predecessor_tail(
             if tail_family is None or tail_family in strict_families:
                 continue
             selected.append(observation)
-        selected.sort(key=lambda item: (
-            -(item.tail_end + max(0.0, item.uncertainty_seconds)),
-            -item.tail_end,
-            item.provenance.observation_revision if item.provenance else item.source_revision,
-        ))
         if not selected:
             tail = intrinsic
-        else:
-            external = _bind_independent_tail_to_candidate(
+        elif len(selected) == 1:
+            tail = _bind_independent_tail_to_candidate(
                 previous_candidate, selected[0]
             )
-            if intrinsic.validity != "valid" or intrinsic.reliable_tail_end is None:
-                tail = external
-            else:
-                intrinsic_upper = intrinsic.reliable_tail_end + (
-                    intrinsic.uncertainty_seconds or 0.0
-                )
-                external_upper = external.reliable_tail_end + (
-                    external.uncertainty_seconds or 0.0
-                )
-                tail = intrinsic if intrinsic_upper >= external_upper else external
+        else:
+            # Multiple opposite-lineage external tails are ambiguous when the
+            # final predecessor itself has no valid tail. Fail closed instead
+            # of choosing whichever observation happens to end latest.
+            return None
     if tail.validity != "valid" or tail.reliable_tail_end is None:
         return None
     return tail
@@ -28392,6 +28387,20 @@ def _postcentral_hubert_cluster_is_falsified(
     return True
 
 
+def _final_candidate_valid_under_predecessor_tail(
+    final_candidate: TimingCandidate,
+    previous_candidate: TimingCandidate,
+    previous_tail: TailRegionEvidence,
+) -> bool:
+    """Only clear final ownership permits review-only peer suppression."""
+    if previous_tail.validity != "valid":
+        return False
+    evaluation = evaluate_timing_candidate(
+        final_candidate, previous_candidate, previous_tail=previous_tail
+    )
+    return evaluation.evidence.ownership.status == "clear"
+
+
 def _postcentral_rebind_existing_peer_conflicts(
     projection_seed: dict[str, object],
     state: FinalTimingState,
@@ -28462,6 +28471,19 @@ def _postcentral_rebind_existing_peer_conflicts(
             if index and previous_candidate is not None
             else None
         )
+        if (
+            previous_candidate is not None
+            and previous_tail is not None
+            and not _final_candidate_valid_under_predecessor_tail(
+                final_decision.candidate, previous_candidate, previous_tail
+            )
+        ):
+            row = copy.deepcopy(raw_row)
+            row["postcentral_replay_status"] = "BLOCKED"
+            row["postcentral_replay_reason"] = "final-selection-invalid-under-final-predecessor-tail"
+            retained_rows.append(row)
+            semantic_blocked_entries.append({"entry": entry_number, "reason": "final-selection-invalid-under-final-predecessor-tail"})
+            continue
         # Without a valid predecessor tail, preserve the existing row unless an
         # occurrence-bound HuBERT onset independently contradicts *every* member
         # of one or more existing distant clusters.  No candidate is re-evaluated
@@ -30294,6 +30316,54 @@ def _postcentral_plan_known_lyric_hubert_requests(
     ))
 
 
+def _hubert_probe_window_covers_hypotheses(
+    window_start: float,
+    window_end: float,
+    hypothesis_centiseconds: tuple[int, ...],
+    direct_tolerance_centiseconds: int,
+) -> bool:
+    """Require the entire direct-onset neighborhood of each hypothesis."""
+    if not hypothesis_centiseconds or direct_tolerance_centiseconds < 0:
+        return False
+    if not all(math.isfinite(value) for value in (window_start, window_end)):
+        return False
+    margin = direct_tolerance_centiseconds / 100.0
+    return all(
+        window_start <= centiseconds / 100.0 - margin + 1e-9
+        and window_end >= centiseconds / 100.0 + margin - 1e-9
+        for centiseconds in hypothesis_centiseconds
+    )
+
+
+def _hubert_probe_window_covers_request_hypotheses(
+    request: dict[str, object],
+    direct_tolerance_centiseconds: int,
+) -> bool:
+    """Fail closed on malformed/rebound requests at evidence consumption."""
+    try:
+        start = float(request["window_start"])
+        end = float(request["window_end"])
+        bindings = request["hypothesis_bindings"]
+        if not isinstance(bindings, list) or not bindings:
+            return False
+        times = tuple(
+            item[2] for item in bindings
+            if isinstance(item, (list, tuple))
+            and len(item) == 3
+            and type(item[2]) is int
+        )
+        if len(times) != len(bindings):
+            return False
+        selected = request["final_selected_centiseconds"]
+        if not isinstance(selected, int) or selected not in times:
+            return False
+        if min(times) != request["hypothesis_min_centiseconds"] or max(times) != request["hypothesis_max_centiseconds"]:
+            return False
+        return _hubert_probe_window_covers_hypotheses(start, end, times, direct_tolerance_centiseconds)
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return False
+
+
 def _postcentral_plan_known_lyric_hubert_current_probe_requests(
     conflict_entries: tuple[int, ...],
     report: dict[str, object],
@@ -30444,6 +30514,11 @@ def _postcentral_plan_known_lyric_hubert_current_probe_requests(
         if not 0.5 <= window_end - window_start <= 14.0:
             continue
 
+        if not _hubert_probe_window_covers_hypotheses(
+            window_start, window_end, hypothesis_centiseconds,
+            direct_tolerance_centiseconds,
+        ):
+            continue
         conflict_row_revision = _timing_content_digest(row)
         transcript_revision = _timing_content_digest({
             "current_text": entry_sung_text(entries[index]),
@@ -31557,6 +31632,12 @@ def _postcentral_acquire_known_lyric_hubert_tails(
             != decision.written_time.centiseconds
         ):
             diagnostic["current_onset_status"] = "final-binding-mismatch"
+            diagnostics.append(diagnostic)
+            continue
+        if not _hubert_probe_window_covers_request_hypotheses(
+            request, direct_tolerance_centiseconds
+        ):
+            diagnostic["current_onset_status"] = "probe-window-coverage-invalid"
             diagnostics.append(diagnostic)
             continue
         current_probe_revision = (
