@@ -28308,6 +28308,36 @@ def _final_candidate_valid_under_predecessor_tail(
     return evaluation.evidence.ownership.status == "clear"
 
 
+def _postcentral_recovery_changed_entries(
+    projection_seed: dict[str, object],
+) -> frozenset[int] | None:
+    """Return one-based rows whose final candidate changed after tail capture.
+
+    Tail observations in backend bundles are captured before the HuBERT/peer
+    recovery passes. Reusing them after a predecessor row changes candidate
+    would bind pre-recovery geometry to a new final occurrence. Malformed
+    recovery metadata therefore fails closed by returning None.
+    """
+    changed: set[int] = set()
+    for key in (
+        _HUBERT_EXISTING_CANDIDATE_RECOVERY_KEY,
+        _PEER_EXISTING_CANDIDATE_RECOVERY_KEY,
+    ):
+        payload = projection_seed.get(key)
+        if payload is None:
+            continue
+        if not isinstance(payload, dict):
+            return None
+        entries = payload.get("applied_trigger_entries", [])
+        if (
+            not isinstance(entries, list)
+            or any(type(item) is not int or item <= 0 for item in entries)
+        ):
+            return None
+        changed.update(entries)
+    return frozenset(changed)
+
+
 def _postcentral_rebind_existing_peer_conflicts(
     projection_seed: dict[str, object],
     state: FinalTimingState,
@@ -28343,6 +28373,9 @@ def _postcentral_rebind_existing_peer_conflicts(
         return rebound
     tail_rows, tail_contexts = _peer_final_context_tail_runtime(bundles)
     onset_rows = _postcentral_hubert_current_onset_map(current_onsets)
+    recovery_changed_entries = _postcentral_recovery_changed_entries(
+        projection_seed
+    )
 
     input_entries = {
         int(item["entry"])
@@ -28372,7 +28405,12 @@ def _postcentral_rebind_existing_peer_conflicts(
         previous_tail = (
             _resolve_final_peer_predecessor_tail(
                 previous_candidate,
-                tail_rows.get(index - 1),
+                (
+                    tail_rows.get(index - 1)
+                    if recovery_changed_entries is not None
+                    and index not in recovery_changed_entries
+                    else None
+                ),
                 tail_contexts,
             )
             if index and previous_candidate is not None
