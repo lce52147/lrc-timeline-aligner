@@ -14943,9 +14943,11 @@ def repair_tail_hallucination(
         if entry_index < len(assignments) and isinstance(assignments[entry_index], dict):
             assignment = assignments[entry_index]
             assignment["timestamp"] = round(repaired[entry_index], 3)
+            _invalidate_timing_trust_after_timestamp_mutation(
+                assignment, "tail-hallucination-acoustic"
+            )
             assignment["timing_repair"] = "tail-hallucination-acoustic"
             assignment["timing_repair_source"] = "sustained-onset-weighted-tail"
-            assignment["score"] = max(assignment_score(assignment), 0.70)
         changes.append(
             {
                 "entry": entry_index + 1,
