@@ -3469,6 +3469,7 @@ def _lineage_families_from_labels(
     if (
         "local-whisper" in normalized
         or "whisperx" in normalized
+        or "whispercpp" in normalized
         or "raw-asr" in normalized
         or (isinstance(source, str) and source.lower().startswith("raw-"))
     ):
