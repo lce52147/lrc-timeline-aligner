@@ -26359,6 +26359,8 @@ def _central_summary_row_flags(
     assignments = report.get("assignments")
     if not isinstance(assignments, list) or len(assignments) != len(state.audits):
         raise LrcError("Central timing row flags do not match report assignments")
+    if len(state.decisions) != len(state.audits) or len(state.written_times) != len(state.audits):
+        raise LrcError("Central timing decision/written-time/audit length mismatch")
     material_conflict_entries = (
         _final_post_central_material_conflict_entries(state, report)
         | _runtime_peer_review_only_conflicts(report)
@@ -26388,7 +26390,7 @@ def _central_summary_row_flags(
         )
         or bool(runtime_independent_content_identity_sources_for_entry(report, index))
         or index in content_observation_entries
-        for index, (item, decision) in enumerate(zip(assignments, state.decisions))
+        for index, (item, decision) in enumerate(zip(assignments, state.decisions, strict=True))
     )
     timing_flags = tuple(audit.timing_trusted for audit in state.audits)
     review_flags = tuple(
