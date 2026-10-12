@@ -1,7 +1,7 @@
 """Focused scorer regression gates (no GPU, no BK modification)."""
 from __future__ import annotations
 import unittest
-from lrc_scoring import ScoringError, align_gold, count_metrics, compare_phases, reorder_assignments_by_timestamp
+from lrc_scoring import ScoringError, align_gold, count_metrics, compare_phases, reorder_assignments_by_timestamp, parsed_rows
 
 
 def row(t, bk, status, **kw):
@@ -62,6 +62,26 @@ class LrcScoringTests(unittest.TestCase):
         lyrics = [SimpleNamespace(source_time_cs=x) for x in (100, 200)]
         with self.assertRaisesRegex(ScoringError, "REPORT_TIME_MULTISET_MISMATCH"):
             reorder_assignments_by_timestamp(lyrics, [{"timestamp": 1}, {"timestamp": 3}], "fixture")
+
+    def test_title_only_and_legacy_provenance_are_sung_rows(self):
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        with TemporaryDirectory() as folder:
+            lyric = Path(folder) / "Song.lrc"
+            lyric.write_text("[re:LRC tools]\\n[00:00.00]Song\\n[00:01.00]sing\\n".replace("\\n", "\n"), encoding="utf-8")
+            rows = parsed_rows(lyric, Path(folder) / "Song.flac")
+            self.assertEqual(len(rows), 2)
+            self.assertEqual([int(x[1]*100) for x in rows], [0, 100])
+
+    def test_unicode_instrumental_marker_not_scored(self):
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        with TemporaryDirectory() as folder:
+            lyric = Path(folder) / "Song.lrc"
+            lyric.write_text("[00:01.00]（間奏）\\n[00:02.00]歌詞\\n".replace("\\n", "\n"), encoding="utf-8")
+            rows = parsed_rows(lyric, Path(folder) / "Song.flac")
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0][1], 2.0)
 
     def test_empty_corpus_fails_closed(self):
         with self.assertRaisesRegex(ScoringError, "EMPTY_CORPUS"):
