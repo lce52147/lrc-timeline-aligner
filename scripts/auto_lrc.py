@@ -4948,13 +4948,6 @@ def find_lyrics(audio_path: Path, *, include_checked: bool = False) -> Path:
     raise LrcError(f"No lyric text found for {audio_path.name}. Expected one of: {pretty}")
 
 
-def anchor_hint_candidates(audio_path: Path) -> list[Path]:
-    return [
-        audio_path.with_suffix(".anchors.lrc"),
-        audio_path.with_suffix(".anchors.txt"),
-        audio_path.with_suffix(".anchor.lrc"),
-        audio_path.with_suffix(".anchor.txt"),
-    ]
 
 
 def find_anchor_hints(audio_path: Path, args: argparse.Namespace) -> Path | None:
@@ -8422,8 +8415,6 @@ def default_ctc_ready() -> bool:
     return default_ctc_python().exists() and (Path(__file__).resolve().parent / "ctc_align.py").exists()
 
 
-def default_japanese_ctc_ready() -> bool:
-    return default_ctc_python().exists() and (Path(__file__).resolve().parent / "japanese_ctc_align.py").exists()
 
 
 def decode_temp_wav(audio_path: Path) -> Path:
@@ -10213,57 +10204,6 @@ def choose_onset_consensus_time(
     return None, None
 
 
-def apply_japanese_onset_consensus_to_ctc(
-    timestamps: list[float],
-    ctc_report: dict[str, object],
-    whisper_timestamps: list[float],
-    whisper_report: dict[str, object],
-    japanese_timestamps: list[float],
-    duration: float,
-) -> tuple[list[float], dict[str, object], list[dict[str, object]]]:
-    assignments = ctc_report.get("assignments")
-    whisper_assignments = whisper_report.get("assignments")
-    if not isinstance(assignments, list) or not isinstance(whisper_assignments, list):
-        return timestamps, ctc_report, []
-    refined = list(timestamps)
-    changes: list[dict[str, object]] = []
-    for index, assignment in enumerate(assignments):
-        if index >= len(whisper_assignments) or index >= len(whisper_timestamps) or index >= len(japanese_timestamps):
-            continue
-        whisper_assignment = whisper_assignments[index]
-        if not isinstance(assignment, dict) or not isinstance(whisper_assignment, dict):
-            continue
-        spans = assignment.get("ctc_token_spans")
-        if not isinstance(spans, list) or not spans:
-            continue
-        try:
-            ctc_first_score = float(spans[0].get("score", 0.0) or 0.0)
-            whisper_score = float(whisper_assignment.get("score", 0.0) or 0.0)
-            ctc_time = float(refined[index])
-            whisper_time = float(whisper_timestamps[index])
-            japanese_time = float(japanese_timestamps[index])
-        except (AttributeError, TypeError, ValueError):
-            continue
-        candidate, reason = choose_onset_consensus_time(
-            ctc_time, ctc_first_score, whisper_time, whisper_score, japanese_time
-        )
-        if candidate is None or reason is None:
-            continue
-        previous_time = refined[index - 1] if index else 0.0
-        next_time = refined[index + 1] if index + 1 < len(refined) else duration
-        if not previous_time + 0.05 < candidate < next_time - 0.05:
-            continue
-        refined[index] = candidate
-        assignment["timestamp"] = round(candidate, 3)
-        assignment["ctc_onset_consensus"] = True
-        assignment["ctc_onset_consensus_reason"] = reason
-        assignment["ctc_onset_consensus_candidates"] = {
-            "ctc": round(ctc_time, 3), "whisperx": round(whisper_time, 3), "japanese_ctc": round(japanese_time, 3),
-        }
-        changes.append({"entry": index + 1, "from": round(ctc_time, 3), "to": round(candidate, 3), "reason": reason})
-    if changes:
-        ctc_report["ctc_onset_consensus"] = changes
-    return refined, ctc_report, changes
 
 
 def candidate_summary(report: dict[str, object], error: str | None = None) -> dict[str, object]:
@@ -10685,44 +10625,6 @@ def choose_alignment_candidate(
     return best
 
 
-def candidate_selection_reason(selected: dict[str, object], candidates: list[dict[str, object]]) -> str:
-    selected_backend = str(selected.get("backend", "unknown"))
-    selected_quality = float(selected.get("quality", -100.0) or -100.0)
-    parts = [f"selected {selected_backend} quality={selected_quality:.1f}"]
-    for candidate in candidates:
-        backend = candidate.get("backend", "unknown")
-        if candidate.get("error"):
-            parts.append(f"{backend} error={candidate.get('error')}")
-            continue
-        report = candidate.get("report")
-        if isinstance(report, dict):
-            quality = candidate_selection_quality(report)
-            if backend == "ctc":
-                parts.append(
-                    "ctc "
-                    f"quality={quality:.1f}, "
-                    f"low={report.get('ctc_low_score_count')}, "
-                    f"very_low={report.get('ctc_very_low_score_count')}, "
-                    f"missing={report.get('ctc_missing_count')}"
-                )
-            elif backend == "whisperx":
-                parts.append(
-                    "whisperx "
-                    f"quality={quality:.1f}, "
-                    f"trusted={report.get('trusted_percent', report.get('matched_percent'))}, "
-                    f"review={report.get('review_required_percent')}, "
-                    f"collapse={report.get('collapse_detected')}"
-                )
-            elif backend == "whispercpp":
-                parts.append(
-                    "whispercpp "
-                    f"quality={quality:.1f}, "
-                    f"trusted={report.get('trusted_percent', report.get('matched_percent'))}, "
-                    f"review={report.get('review_required_percent')}"
-                )
-    if selected_backend == "ctc":
-        parts.append("ctc is preferred on near-ties because it is forced to the known lyric order")
-    return "; ".join(parts)
 
 
 def raw_asr_is_fallback_eligible(report: dict[str, object]) -> bool:
@@ -25559,29 +25461,6 @@ def commit_final_timing_state(
     return effective_state
 
 
-def finalize_production_timing(
-    audio_path: Path,
-    entries: list[LyricEntry],
-    scratch_timestamps: list[float],
-    report: dict[str, object],
-    duration: float,
-    args: argparse.Namespace,
-) -> FinalTimingState:
-    candidate_sets, diagnostics = collect_central_timing_candidates(
-        audio_path, entries, scratch_timestamps, report, duration, args
-    )
-    diagnostics = bind_reviewer_validity_diagnostics(
-        diagnostics, args, len(candidate_sets)
-    )
-    evaluated = evaluate_backend_timing(
-        str(report.get("backend") or "unknown"),
-        candidate_sets,
-        report,
-        diagnostics,
-        arbiter_mode=str(getattr(args, "arbiter", "off")),
-        timing_source_policy=str(getattr(args, "timing_source_policy", "default")),
-    )
-    return commit_evaluated_backend(select_evaluated_backend((evaluated,)), report)
 
 
 def prepare_backend_timing_preview(
@@ -25903,9 +25782,6 @@ def assignment_timing_is_trusted(item: object) -> bool:
     return not bool(item.get("review_required"))
 
 
-def assignment_is_trusted(item: object) -> bool:
-    """End-to-end trust: both lyric/path content and the LRC onset must pass."""
-    return assignment_content_is_trusted(item) and assignment_timing_is_trusted(item)
 
 
 def report_has_verified_central_commit(report: dict[str, object]) -> bool:
