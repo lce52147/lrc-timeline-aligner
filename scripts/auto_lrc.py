@@ -12761,7 +12761,10 @@ def flag_unresolved_ctc_disagreements(
         existing = by_entry.get(entry_number)
         if existing is not None:
             existing["review_required"] = True
-            existing["severity"] = _ctc_disagreement_severity(disagreement)
+            existing["severity"] = _merge_suspicious_severity(
+                existing.get("severity"),
+                _ctc_disagreement_severity(disagreement),
+            )
             flags = existing.get("flags")
             if not isinstance(flags, list):
                 flags = []
@@ -13008,7 +13011,9 @@ def flag_unresolved_raw_ctc_disagreements(
             suspicious.append(existing)
             by_entry[entry_number] = existing
         existing["review_required"] = True
-        existing["severity"] = severity
+        existing["severity"] = _merge_suspicious_severity(
+            existing.get("severity"), severity
+        )
         flags = existing.get("flags")
         if not isinstance(flags, list):
             flags = []
@@ -13041,8 +13046,6 @@ def flag_unresolved_raw_ctc_disagreements(
             }
             suspicious.append(existing)
             by_entry[entry_number] = existing
-        existing["review_required"] = False
-        existing["severity"] = "medium"
         flags = existing.get("flags")
         if not isinstance(flags, list):
             flags = []
@@ -35201,6 +35204,18 @@ AUDIO_ADVISORY_REVIEW_FLAGS = {
 def _raw_disagreement_severity(raw_score: float, disagreement: float) -> str:
     """Apply the existing raw/CTC diagnostic severity rule."""
     return "high" if raw_score >= 0.90 or disagreement >= 1.50 else "medium"
+
+
+def _merge_suspicious_severity(existing: object, incoming: str) -> str:
+    """Never let a later diagnostic downgrade an existing defect severity."""
+    rank = {"resolved": -1, "low": 0, "medium": 1, "high": 2}
+    current = str(existing or "low").lower()
+    incoming_text = str(incoming or "low").lower()
+    if current not in rank:
+        current = "low"
+    if incoming_text not in rank:
+        incoming_text = "low"
+    return current if rank[current] >= rank[incoming_text] else incoming_text
 
 
 def _ctc_disagreement_severity(disagreement: float) -> str:
