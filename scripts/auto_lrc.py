@@ -35954,6 +35954,10 @@ def score_line_timing_candidates(
         safe_to_replace = False
         chosen = next(candidate for candidate in candidates if candidate.get("source") == "selected_path")
         chosen_time = current_time
+        confidence = max(
+            0.0,
+            min(1.0, float(chosen["score"]) - total_penalty),
+        )
         isolated_low_ctc_path = (
             ctc_score < 0.03
             and not flags

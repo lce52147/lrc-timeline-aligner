@@ -731,6 +731,14 @@ class TimingTrustTests(unittest.TestCase):
         self.assertFalse(recommendation["authoritative"])
         self.assertTrue(assignment["candidates"])
         self.assertTrue(any(item["source"] == "raw_asr" for item in assignment["candidates"]))
+        selected_path = next(
+            item for item in assignment["candidates"]
+            if item["source"] == "selected_path"
+        )
+        self.assertEqual(assignment["penalties"], [])
+        self.assertAlmostEqual(
+            assignment["confidence"], float(selected_path["score"]), places=3
+        )
 
     def test_candidate_scoring_marks_long_line_disagreement_with_split_suggestion(self) -> None:
         entries = [LyricEntry(["before"]), LyricEntry(["abcdefghijklmnopqrst"]), LyricEntry(["after"])]
