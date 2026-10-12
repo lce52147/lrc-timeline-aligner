@@ -17614,6 +17614,10 @@ def _precommit_neutral_boundary_arbitration(
     shadow_state = _apply_evaluated_backend_projection(selection, shadow)
     assert_report_timestamp_equality(shadow, shadow_state)
     update_report_confidence_metrics(shadow)
+    seed = shadow.get(_RUNTIME_BACKEND_PROVENANCE_PROJECTION_SEED_KEY)
+    if isinstance(seed, dict):
+        shadow[_BACKEND_PROVENANCE_PROJECTION_KEY] = _finalize_backend_provenance_projection(shadow, seed, selection)
+        _validate_backend_provenance_projection(shadow)
     shadow[_UNRESOLVED_EVIDENCE_REQUIREMENTS_KEY] = (
         _build_unresolved_evidence_requirements_projection(shadow, shadow_state)
     )
