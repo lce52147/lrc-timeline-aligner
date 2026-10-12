@@ -25828,7 +25828,7 @@ def report_has_verified_central_commit(report: dict[str, object]) -> bool:
         return False
     try:
         source_sha = validated_loaded_source_sha256()
-    except OSError:
+    except (OSError, LrcError):
         return False
     if report.get("algorithm_source_sha256") != source_sha:
         return False
