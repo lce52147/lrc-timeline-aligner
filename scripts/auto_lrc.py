@@ -12231,6 +12231,20 @@ def apply_whisperx_acoustic_boundary_refinement(
     return refined, report, changes
 
 
+def _invalidate_timing_trust_after_timestamp_mutation(
+    assignment: dict[str, object],
+    reason: str,
+) -> None:
+    """Discard timing authority computed for a superseded clock."""
+    assignment["timing_trusted"] = False
+    assignment["timing_audit_trusted"] = False
+    assignment["overall_trusted"] = False
+    assignment["verification_status"] = "unverified"
+    assignment["timing_trust_invalidated_reason"] = reason
+    for key in ("timing_trusted_reason", "timing_trusted_sources", "timing_trusted_candidate_times"):
+        assignment.pop(key, None)
+
+
 def apply_hybrid_ctc_opening_onset_backtrack(
     audio_path: Path,
     timestamps: list[float],
@@ -12311,6 +12325,7 @@ def apply_hybrid_ctc_opening_onset_backtrack(
 
         refined[index] = candidate
         assignment["timestamp"] = round(candidate, 3)
+        _invalidate_timing_trust_after_timestamp_mutation(assignment, "ctc-opening-onset-backtrack")
         assignment["ctc_opening_onset_backtrack"] = True
         assignment["ctc_opening_onset_backtrack_from"] = round(current_time, 3)
         assignment["timing_repair_source"] = "ctc-local-fusion+acoustic-opening-onset"
@@ -12352,6 +12367,7 @@ def apply_hybrid_ctc_opening_onset_backtrack(
             flags = []
         item["flags"] = list(dict.fromkeys([*flags, "ctc_opening_onset_backtrack"]))
         item["chosen_time"] = change["to"]
+    update_report_confidence_metrics(report)
     return refined, report, changes
 
 
@@ -12679,6 +12695,7 @@ def apply_vocal_onset_tiebreak(
             continue
         refined[index] = ctc_peak
         assignment["timestamp"] = round(ctc_peak, 3)
+        _invalidate_timing_trust_after_timestamp_mutation(assignment, "demucs-vocal-onset-tiebreak")
         assignment["vocal_onset_tiebreak"] = True
         assignment["timing_repair_source"] = "ctc+demucs-vocal-onset"
         changes.append(
@@ -12698,6 +12715,8 @@ def apply_vocal_onset_tiebreak(
         "change_count": len(changes),
         "changes": changes,
     }
+    if changes:
+        update_report_confidence_metrics(report)
     return refined, report, changes
 
 
