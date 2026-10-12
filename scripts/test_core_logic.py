@@ -12370,7 +12370,7 @@ class V152BoundaryContentConvergenceRegressionTests(unittest.TestCase):
         self.assertEqual(len(matches), 2)
         self.assertNotEqual(matches[0]["match_revision"], matches[1]["match_revision"])
 
-    def test_occurrence_only_local_whisper_can_fuse_with_independent_vocal_onset(self):
+    def test_occurrence_only_local_whisper_vocal_peak_is_not_independent_onset(self):
         entries = [LyricEntry(["left"]), LyricEntry(["target"]), LyricEntry(["right"])]
         assignments = [
             {"timestamp": 1.0, "score": .95, "segment": 1, "borrowed": False},
@@ -12407,8 +12407,12 @@ class V152BoundaryContentConvergenceRegressionTests(unittest.TestCase):
         self.assertIsNotNone(candidate)
         assert candidate is not None
         self.assertEqual(candidate.source, "local-whisper-vocal-independent-fusion")
-        self.assertTrue(auto_lrc.candidate_has_bound_direct_onset_evidence(candidate))
-        self.assertTrue(auto_lrc.candidate_has_boundary_grade_direct_onset_evidence(candidate))
+        self.assertIsNotNone(candidate.direct_onset_evidence)
+        assert candidate.direct_onset_evidence is not None
+        self.assertEqual(candidate.direct_onset_evidence.kind, "vocal-onset")
+        self.assertFalse(candidate.direct_onset_evidence.independent)
+        self.assertFalse(auto_lrc.candidate_has_bound_direct_onset_evidence(candidate))
+        self.assertFalse(auto_lrc.candidate_has_boundary_grade_direct_onset_evidence(candidate))
         self.assertTrue(candidate.independent_content_identity)
         self.assertAlmostEqual(candidate.written_time.seconds, 2.1, places=6)
 
