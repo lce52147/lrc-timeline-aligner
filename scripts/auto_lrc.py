@@ -12816,8 +12816,13 @@ def flag_unresolved_raw_ctc_disagreements(
             not current_run
             or abs(float(current_run[-1]["delta"]) - delta) <= 0.65
         )
+        run_deltas = [float(item["delta"]) for item in current_run]
+        bounded_offset_range = (
+            not current_run
+            or max([*run_deltas, delta]) - min([*run_deltas, delta]) <= 0.65
+        )
         consecutive = not current_run or int(observation["index"]) == int(current_run[-1]["index"]) + 1
-        if eligible and same_direction and close_offset and consecutive:
+        if eligible and same_direction and close_offset and bounded_offset_range and consecutive:
             current_run.append(observation)
             continue
         if len(current_run) >= 3:
