@@ -26566,24 +26566,29 @@ def apply_central_timing_source_policy(
     candidate_sets: tuple[tuple[TimingCandidate, ...], ...],
     policy: Literal["default", "ctc-first"] = "default",
 ) -> tuple[tuple[TimingCandidate, ...], ...]:
-    """Validate eligibility while retaining Whisper/RAW evidence.
+    """Return the candidates allowed to participate in Central timing choice.
 
-    The candidates are still collected as diagnostics and review evidence.
-    Default path is strictly identity-preserving (no copy, sort or mutation).
-    Matches B11 classification: source contains "whisper" or "raw".
+    Full generation diagnostics remain available outside the Central decision
+    graph. Under ctc-first, Whisper/RAW timings are evidence-only: they may
+    contribute bound row/tail diagnostics, but they cannot become timing
+    alternatives, rejected material hypotheses, or REVIEW owners.
     """
     if policy == "default":
         return candidate_sets
     if policy != "ctc-first":
         raise ValueError(f"unsupported timing-source policy: {policy}")
+    filtered: list[tuple[TimingCandidate, ...]] = []
     for line, candidates in enumerate(candidate_sets, 1):
-        if not any(
-            "whisper" not in candidate.source.lower()
+        eligible = tuple(
+            candidate for candidate in candidates
+            if candidate.source != "mutual-acoustic-recurrence"
+            and "whisper" not in candidate.source.lower()
             and "raw" not in candidate.source.lower()
-            for candidate in candidates
-        ):
+        )
+        if not eligible:
             raise LrcError(f"ctc-first: no eligible time candidate at line {line}")
-    return candidate_sets
+        filtered.append(eligible)
+    return tuple(filtered)
 
 
 def evaluate_backend_timing(

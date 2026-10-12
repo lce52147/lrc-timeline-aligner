@@ -92,7 +92,7 @@ class TimingPolicyRegressionTests(unittest.TestCase):
             consensus.assert_called_once_with(report, entries, [3.0], evidence)
             tail.assert_called_once_with(report, entries)
 
-    def test_ctc_first_retains_whisper_candidates_for_disagreement_evidence(self) -> None:
+    def test_ctc_first_excludes_whisper_raw_from_central_timing_graph(self) -> None:
         ctc = auto_lrc.make_timing_candidate(
             entry_index=0, entry_text="hello", source="ctc-current",
             raw_time=3.0, current=True,
@@ -101,22 +101,42 @@ class TimingPolicyRegressionTests(unittest.TestCase):
             entry_index=0, entry_text="hello", source="whisperx-forced",
             raw_time=1.0,
         )
+        raw = auto_lrc.make_timing_candidate(
+            entry_index=0, entry_text="hello", source="raw-asr",
+            raw_time=5.0,
+        )
+        candidate_sets = ((ctc, whisper, raw),)
+        filtered = auto_lrc.apply_central_timing_source_policy(
+            candidate_sets, "ctc-first"
+        )
+        self.assertEqual(filtered, ((ctc,),))
+        self.assertEqual(candidate_sets, ((ctc, whisper, raw),))
+
+    def test_ctc_first_keeps_whisper_diagnostics_outside_material_decision_graph(self) -> None:
+        from test_core_logic import CentralTimingStateTests
+        fixture = CentralTimingStateTests()
+        ctc = fixture.candidate(
+            3.0, fixture.coherent_spans(3.0), source="ctc-full",
+            current=True, direct=True, direct_independent=True,
+        )
+        whisper = fixture.candidate(
+            1.0, fixture.coherent_spans(1.0), source="whisperx-forced",
+            direct=True, direct_independent=True,
+        )
         candidate_sets = ((ctc, whisper),)
-        self.assertIs(
-            auto_lrc.apply_central_timing_source_policy(candidate_sets, "ctc-first"),
-            candidate_sets,
+        state = auto_lrc.build_final_timing_state(
+            candidate_sets, timing_source_policy="ctc-first"
         )
-        decision = auto_lrc.select_timing_decision(
-            entry_index=0,
-            candidates=candidate_sets[0],
-            previous_candidate=None,
-            selection_revision=1,
-            timing_source_policy="ctc-first",
-        )
+        decision = state.decisions[0]
         self.assertEqual(decision.written_time.centiseconds, 300)
-        self.assertIn(
+        self.assertNotIn(
             whisper.candidate_id,
             {item.candidate.candidate_id for item in decision.rejected_candidates},
+        )
+        self.assertFalse(
+            auto_lrc._decision_has_material_distant_timing_hypothesis(
+                decision, decision.written_time.seconds
+            )
         )
 
     def test_evaluator_does_not_drop_whisper_evidence_before_central(self) -> None:
@@ -133,7 +153,7 @@ class TimingPolicyRegressionTests(unittest.TestCase):
             for node in ast.walk(evaluator)
         ))
 
-    def test_ctc_first_evaluator_retains_all_candidates_but_commits_ctc(self) -> None:
+    def test_ctc_first_evaluator_retains_diagnostics_but_filters_central_graph(self) -> None:
         from test_core_logic import CentralTimingStateTests
         fixture = CentralTimingStateTests()
         ctc = fixture.candidate(
@@ -148,7 +168,7 @@ class TimingPolicyRegressionTests(unittest.TestCase):
         )
         self.assertEqual(evaluated.candidate_sets[0], (ctc, whisper))
         self.assertEqual(evaluated.state.decisions[0].written_time.centiseconds, 300)
-        self.assertIn(
+        self.assertNotIn(
             whisper.candidate_id,
             {item.candidate.candidate_id
              for item in evaluated.state.decisions[0].rejected_candidates},
