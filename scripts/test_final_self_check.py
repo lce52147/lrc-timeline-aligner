@@ -77,10 +77,23 @@ class H2Tests(unittest.TestCase):
         data=l.compute_final_timing_self_check({'assignments':[{},{}]},state,entries)
         self.assertIn('F3-nonmonotonic',data['flags_by_entry']['1'])
         self.assertIn('F3-nonmonotonic',data['flags_by_entry']['2'])
-    def test_no_stem_skip_log(self):
+    def test_missing_required_vocal_stem_fails_closed(self):
+        state,entries=self.make([2,4],['a','b'])
+        x=l.compute_final_timing_self_check({
+            'assignments':[{},{}],
+            'ctc_audio_source':'vocal-stem',
+            'ctc_audio_path':'missing-vocals.mp3',
+        },state,entries)
+        self.assertEqual(x['vocal_status'],'skipped-no-stem')
+        self.assertIn('F1-vocal-check-unavailable',x['flags_by_entry']['1'])
+        self.assertIn('F1-vocal-check-unavailable',x['flags_by_entry']['2'])
+
+    def test_f1_is_not_applicable_without_vocal_stem_authority(self):
         state,entries=self.make([2,4],['a','b'])
         x=l.compute_final_timing_self_check({'assignments':[{},{}]},state,entries)
         self.assertEqual(x['vocal_status'],'skipped-no-stem')
+        self.assertNotIn('1',x['flags_by_entry'])
+        self.assertNotIn('2',x['flags_by_entry'])
     def test_no_time_mutation(self):
         state,entries=self.make([2,4,6],['a','a','c'],['raw-vocal-independent-fusion']*3)
         before=[x.written_time.seconds for x in state.decisions]

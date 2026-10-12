@@ -24953,6 +24953,10 @@ def compute_final_timing_self_check(
         except (LrcError, OSError, ValueError, subprocess.SubprocessError) as exc:
             diagnostics["vocal_status"] = "skipped-decoding-error"
             diagnostics["vocal_error"] = str(exc)
+    vocal_check_required = report.get("ctc_audio_source") == "vocal-stem"
+    if vocal_check_required and diagnostics["vocal_status"] != "checked":
+        for i in range(1, len(times) + 1):
+            flagged[i].append("F1-vocal-check-unavailable")
     counts = collections.Counter(
         normalize_match_text(entry_sung_text(entry))
         for entry in entries
@@ -25899,6 +25903,7 @@ FINAL_LINE_TRUST_CLASSIFICATION: dict[str, str] = {
        | ACTIONABLE_SUSPICIOUS_FLAGS
        | {"recurrence-uncorroborated", "recovery-moved",
           "unresolved-material-alternative", "F1-vocal-absent",
+          "F1-vocal-check-unavailable",
           "F3-compressed-or-nonmonotonic", "F3-nonmonotonic",
           "F4-ctc-final-disagreement"}},
 }
