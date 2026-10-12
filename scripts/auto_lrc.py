@@ -34423,11 +34423,30 @@ def _apply_evaluated_backend_projection(
         bool(row.get("review_required"))
         for row in committed_assignments if isinstance(row, dict)
     )
-    report["review_required_count"] = final_review_count
-    report["review_required_percent"] = ratio_percent(
-        final_review_count, len(committed_assignments)
+    final_trusted_count = sum(
+        row.get("verification_status") == "trusted"
+        for row in committed_assignments if isinstance(row, dict)
     )
+    final_unverified_count = sum(
+        row.get("verification_status") == "unverified"
+        for row in committed_assignments if isinstance(row, dict)
+    )
+    total = len(committed_assignments)
+    report["review_required_count"] = final_review_count
+    report["review_required_percent"] = ratio_percent(final_review_count, total)
     report["review_required"] = final_review_count > 0
+    report["unverified_count"] = final_unverified_count
+    report["unverified_percent"] = ratio_percent(final_unverified_count, total)
+    report["low_confidence_count"] = total - final_trusted_count
+    report["low_confidence_percent"] = ratio_percent(total - final_trusted_count, total)
+    for key in ("trusted", "overall_trusted", "authority_trusted", "matched"):
+        report[key + "_entries"] = final_trusted_count
+        report[key + "_percent"] = ratio_percent(final_trusted_count, total)
+    report["verification_counts"] = {
+        "trusted": final_trusted_count,
+        "unverified": final_unverified_count,
+        "review_required": final_review_count,
+    }
     if isinstance(projection_seed, dict):
         report[_BACKEND_PROVENANCE_PROJECTION_KEY] = _finalize_backend_provenance_projection(
             report,
