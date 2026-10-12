@@ -27511,6 +27511,8 @@ def _peer_review_only_conflict_projection(
             continue
         entries.append({
             "entry": row["entry"],
+            "peer_selected_candidate_id": row.get("candidate_id"),
+            "peer_selected_centiseconds": row.get("hypothetical_centiseconds"),
             "material_revision": row.get("material_revision"),
             "cluster_revision": row.get("cluster_revision"),
             "cluster_count": row.get("cluster_count"),
@@ -28754,6 +28756,16 @@ def _rebind_peer_review_only_conflicts_to_final_selection(
             return copy.deepcopy(projection_seed)
         selected = state.decisions[index]
         selected_centiseconds = selected.written_time.centiseconds
+        peer_selected_centiseconds = raw_row.get("peer_selected_centiseconds")
+        peer_selected_delta_centiseconds: int | None = None
+        peer_selected_baseline_conflict = False
+        if isinstance(peer_selected_centiseconds, int):
+            peer_selected_delta_centiseconds = abs(
+                peer_selected_centiseconds - selected_centiseconds
+            )
+            peer_selected_baseline_conflict = (
+                peer_selected_delta_centiseconds > tolerance_centiseconds
+            )
         raw_clusters = raw_row.get("clusters")
         if not isinstance(raw_clusters, list) or not raw_clusters:
             return copy.deepcopy(projection_seed)
@@ -28785,7 +28797,15 @@ def _rebind_peer_review_only_conflicts_to_final_selection(
             projected["final_relation"] = (
                 "distant" if delta_centiseconds > tolerance_centiseconds else "baseline"
             )
-            if delta_centiseconds > tolerance_centiseconds:
+            if (
+                delta_centiseconds > tolerance_centiseconds
+                or peer_selected_baseline_conflict
+            ):
+                if peer_selected_baseline_conflict:
+                    projected["peer_selected_baseline_conflict"] = True
+                    projected["peer_selected_delta_centiseconds"] = (
+                        peer_selected_delta_centiseconds
+                    )
                 retained_clusters.append(projected)
             else:
                 suppressed_clusters.append(projected)
@@ -28799,6 +28819,8 @@ def _rebind_peer_review_only_conflicts_to_final_selection(
         row["upstream_cluster_revision"] = raw_row.get("cluster_revision")
         row["final_selected_candidate_id"] = selected.candidate.candidate_id
         row["final_selected_centiseconds"] = selected_centiseconds
+        row["peer_selected_delta_centiseconds"] = peer_selected_delta_centiseconds
+        row["peer_selected_baseline_conflict"] = peer_selected_baseline_conflict
         row["suppressed_nonmaterial_clusters"] = suppressed_clusters
         row["clusters"] = retained_clusters
         row["cluster_count"] = 1 + len(retained_clusters)
