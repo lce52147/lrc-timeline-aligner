@@ -3396,11 +3396,17 @@ def candidate_dominates(left: CandidateEvaluation, right: CandidateEvaluation) -
     # backend erase an otherwise structurally-equivalent candidate from a
     # disjoint backend.  Preserve confidence ranking everywhere else and let
     # the existing bounded-consensus owner arbitrate this cross-lineage case.
+    left_has_extra_authority = (
+        candidate_has_boundary_grade_direct_onset_evidence(left.candidate)
+        and not candidate_has_boundary_grade_direct_onset_evidence(right.candidate)
+    ) or (
+        left.candidate.independent_content_identity
+        and not right.candidate.independent_content_identity
+    )
     if (
         left_vector[:-1] == right_vector[:-1]
         and left_vector[-1] > right_vector[-1]
-        and candidate_has_boundary_grade_direct_onset_evidence(left.candidate)
-        and candidate_has_boundary_grade_direct_onset_evidence(right.candidate)
+        and not left_has_extra_authority
     ):
         left_families = _lineage_families_from_labels(
             left.candidate.source,
