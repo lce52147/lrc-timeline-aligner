@@ -5979,18 +5979,6 @@ def _project_recurrence_spans_from_geometry(
     return projected
 
 
-def _project_recurrence_spans(
-    reference: TimingCandidate,
-    candidate_start: float,
-    recurrence_score: float,
-) -> list[dict[str, object]]:
-    return _project_recurrence_spans_from_geometry(
-        reference.spans, reference.written_time.seconds, candidate_start, recurrence_score
-    )
-
-
-
-
 def acoustic_pitchclass_recurrence_features(audio_path: Path) -> np.ndarray:
     """Return a dependency-free pitch-class recurrence representation.
 
@@ -6086,26 +6074,6 @@ def _local_onset_candidates(
         if all(abs(item["time"] - kept["time"]) >= min_separation for kept in selected):
             selected.append(item)
     return sorted(selected, key=lambda item: item["time"])
-
-
-def _strongest_local_onset(
-    features: AudioFeatures,
-    start: float,
-    end: float,
-    *,
-    min_strength: float,
-    min_prominence: float,
-) -> dict[str, float] | None:
-    candidates = _local_onset_candidates(
-        features,
-        start,
-        end,
-        min_strength=min_strength,
-        min_prominence=min_prominence,
-    )
-    if not candidates:
-        return None
-    return max(candidates, key=lambda item: (item["prominence"], item["strength"], -item["time"]))
 
 
 def _first_post_tail_cluster_onset(
@@ -30925,17 +30893,6 @@ def _known_lyric_hubert_opening_evidence(
     ):
         return None
     return dummy, regions
-
-
-def _known_lyric_hubert_opening_is_supported(
-    current_index: int,
-    spans_payload: object,
-    request_revision: str,
-) -> bool:
-    """Compatibility wrapper for the frozen current-opening contract."""
-    return _known_lyric_hubert_opening_evidence(
-        current_index, spans_payload, request_revision
-    ) is not None
 
 
 def _known_lyric_hubert_predecessor_occurrence_status(
