@@ -20234,13 +20234,10 @@ def _sparse_unique_sequence_anchor_set(
     ]
     left_observed = [item for item in observed if item < index]
     right_observed = [item for item in observed if item > index]
-    # A sparse immutable lyric fingerprint does not intrinsically require one
-    # anchor on each side.  Two trusted non-target anchors on the same side can
-    # still prove exactly one target occurrence in the song.  Keep two-sided
-    # fingerprints preferred when available, but do not discard a globally
-    # unique one-sided proof merely because unrelated rows on the other side
-    # were weak.
-    if len([item for item in observed if item != index]) < 2:
+    # A strong sparse bracket must independently bound the target occurrence
+    # from both sides.  One-sided fingerprints may be unique as lyric strings,
+    # but they cannot prove a timing bracket around the selected occurrence.
+    if not left_observed or not right_observed:
         return None
 
     lyrics = [normalize_match_text(entry_sung_text(entry)) for entry in entries]
@@ -20249,7 +20246,7 @@ def _sparse_unique_sequence_anchor_set(
         return None
     target_occurrences = [item for item, text in enumerate(lyrics) if text == target]
     anchors = [item for item in observed if item != index]
-    ranked: list[tuple[int, int, int, int, tuple[int, ...]]] = []
+    ranked: list[tuple[int, int, int, tuple[int, ...]]] = []
     for count in range(2, len(anchors) + 1):
         for subset in itertools.combinations(anchors, count):
             selected = tuple(sorted((index, *subset)))
@@ -20280,14 +20277,14 @@ def _sparse_unique_sequence_anchor_set(
             span = selected[-1] - selected[0]
             distance = sum(abs(item - index) for item in selected if item != index)
             two_sided = any(item < index for item in selected) and any(item > index for item in selected)
-            # Same evidence count: prefer a two-sided bracket, then the tightest
-            # immutable fingerprint.  One-sided proof is only a fallback.
-            ranked.append((count, int(not two_sided), span, distance, selected))
+            if not two_sided:
+                continue
+            ranked.append((count, span, distance, selected))
         if ranked:
             break
     if not ranked:
         return None
-    _, _, _, _, selected = min(ranked)
+    _, _, _, selected = min(ranked)
     return selected[0], selected[-1], selected
 
 
@@ -20317,9 +20314,25 @@ def _sparse_sequence_fingerprint_is_unique(
 
 
 def _occurrence_binding_has_strong_context(binding: object) -> bool:
-    return bool(
-        isinstance(binding, dict)
-        and binding.get("mode") in {"sequence-bracket", "sparse-sequence-bracket"}
+    if not isinstance(binding, dict):
+        return False
+    mode = binding.get("mode")
+    if mode == "sequence-bracket":
+        return True
+    if mode != "sparse-sequence-bracket":
+        return False
+    entry_index = binding.get("entry_index")
+    indexes = binding.get("anchor_entry_indexes")
+    if type(entry_index) is not int or not isinstance(indexes, list):
+        return False
+    try:
+        typed = [int(item) for item in indexes]
+    except (TypeError, ValueError):
+        return False
+    return (
+        entry_index in typed
+        and any(item < entry_index for item in typed)
+        and any(item > entry_index for item in typed)
     )
 
 
@@ -20599,6 +20612,8 @@ def _runtime_occurrence_binding_is_valid(
         or context_right - context_left + 1 > 9
         or any(item < context_left or item > context_right for item in indexes)
         or len(set(indexes) - {index}) < 2
+        or not any(item < index for item in indexes)
+        or not any(item > index for item in indexes)
         or any(not math.isfinite(value) for value in timestamps + scores)
         or any(score < TRUSTED_ALIGNMENT_SCORE for score in scores)
         or any(left > right for left, right in zip(segments, segments[1:]))

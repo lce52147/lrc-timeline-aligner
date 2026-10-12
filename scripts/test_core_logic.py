@@ -12309,7 +12309,7 @@ class V151MonotonicLocalProbingRegressionTests(unittest.TestCase):
 
 
 class V152BoundaryContentConvergenceRegressionTests(unittest.TestCase):
-    def test_one_sided_sparse_fingerprint_can_prove_unique_occurrence(self):
+    def test_one_sided_sparse_fingerprint_cannot_claim_bracket_authority(self):
         entries = [
             LyricEntry(["anchor alpha"]), LyricEntry(["branch beta"]), LyricEntry(["repeat target"]),
             LyricEntry(["weak after"]), LyricEntry(["separator"]),
@@ -12323,11 +12323,7 @@ class V152BoundaryContentConvergenceRegressionTests(unittest.TestCase):
         binding = auto_lrc._entry_occurrence_binding(
             entries, assignments, 2, require_context=True
         )
-        self.assertIsNotNone(binding)
-        assert binding is not None
-        self.assertEqual(binding["mode"], "sparse-sequence-bracket")
-        self.assertEqual(binding["anchor_entry_indexes"], [0, 1, 2])
-        self.assertTrue(auto_lrc._runtime_occurrence_binding_is_valid(entries, 2, binding))
+        self.assertIsNone(binding)
 
     def test_exact_phonetic_identity_recovers_content_without_inventing_onset(self):
         entries = [LyricEntry(["left anchor"]), LyricEntry(["東京"]), LyricEntry(["right anchor"])]
