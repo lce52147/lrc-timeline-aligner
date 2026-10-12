@@ -94,7 +94,7 @@ class OptionADPTests(unittest.TestCase):
 
 
 class OptionAProductionTests(unittest.TestCase):
-    def case(self,folder,runner=None,fail=False,repeat_conflict=False):
+    def case(self,folder,runner=None,fail=False,repeat_conflict=False,legacy_repair=False):
         stem=folder/'vocals.mp3';stem.write_bytes(b'fake-stem')
         python=folder/'python.exe';python.write_bytes(b'exe')
         helper=folder/'ctc_align.py';helper.write_bytes(b'ctc')
@@ -107,6 +107,18 @@ class OptionAProductionTests(unittest.TestCase):
                    'ctc_first_token_start':t,
                    'ctc_token_spans':[{'start':t,'end':t+.1,'score':.5,'char':'a'}]}
                    for i,t in enumerate(times)],'ctc_acoustic_backtracks':[{'row':1}]}
+        if legacy_repair:
+            report['assignments'][0].update({
+                'ctc_crossline_initial_recovery':True,
+                'ctc_crossline_initial_recovery_trusted':True,
+                'ctc_forward_supported_prefix_recovery':True,
+                'ctc_forward_supported_prefix_recovery_trusted':True,
+                'ctc_final_timing_recovery':True,
+                'ctc_final_timing_recovery_trusted':True,
+                'ctc_effective_token_start_index':2,
+                'ctc_boundary_evidence':{'realign_required':True},
+                'ctc_boundary_realign_required':True,
+            })
         def fake_runner(cmd,timeout):
             start=float(cmd[cmd.index('--start')+1]);out=Path(cmd[cmd.index('--output')+1])
             lyrics=json.loads(Path(cmd[cmd.index('--transcript')+1]).read_text(encoding='utf8'))
@@ -143,6 +155,28 @@ class OptionAProductionTests(unittest.TestCase):
                              for z in r['assignments']))
             self.assertTrue(all(z['timing_repair']=='segment-skeleton-local-ctc'
                                for z in r['assignments']))
+    def test_segment_local_ctc_clears_active_global_repair_state(self):
+        with tempfile.TemporaryDirectory() as d:
+            _t,r,x=self.case(Path(d),legacy_repair=True)
+            self.assertEqual(x['status'],'SEGMENT_CURRENT')
+            row=r['assignments'][0]
+            for key in (
+                'ctc_crossline_initial_recovery',
+                'ctc_crossline_initial_recovery_trusted',
+                'ctc_forward_supported_prefix_recovery',
+                'ctc_forward_supported_prefix_recovery_trusted',
+                'ctc_final_timing_recovery',
+                'ctc_final_timing_recovery_trusted',
+                'ctc_effective_token_start_index',
+                'ctc_boundary_evidence',
+                'ctc_boundary_realign_required',
+            ):
+                self.assertNotIn(key,row)
+            archived=row['global_ctc_assignment_diagnostics']
+            self.assertTrue(archived['ctc_crossline_initial_recovery_trusted'])
+            self.assertEqual(archived['ctc_effective_token_start_index'],2)
+            self.assertTrue(archived['ctc_boundary_evidence']['realign_required'])
+
     def test_repeated_global_ctc_conflict_rolls_back_atomically(self):
         with tempfile.TemporaryDirectory() as d:
             times=[1.2,2.2,8.2,8.8]

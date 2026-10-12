@@ -25,6 +25,47 @@ HIGH_DISPLACEMENT_MIN_GAIN=.28
 DISPLACEMENT_SECONDS=3.
 _RUNTIME_CACHE:dict[tuple[object,...],tuple[list[dict[str,object]],dict[str,object]]]={}
 
+_GLOBAL_CTC_ASSIGNMENT_RECOVERY_PREFIXES=(
+    'ctc_weak_prefix_recovery',
+    'ctc_crossline_initial_recovery',
+    'ctc_forward_supported_prefix_recovery',
+    'ctc_final_timing_recovery',
+    'ctc_prefix_probe_recovery',
+)
+_GLOBAL_CTC_ASSIGNMENT_BOUNDARY_KEYS=frozenset({
+    'ctc_effective_token_start_index',
+    'ctc_first_token_score',
+    'ctc_boundary_start',
+    'ctc_previous_token_end',
+    'ctc_previous_token_score',
+    'ctc_boundary_gap_seconds',
+    'ctc_clear_boundary',
+    'ctc_boundary_evidence',
+    'ctc_zero_boundary_gap',
+    'ctc_unclear_boundary',
+    'ctc_low_confidence_prefix',
+    'ctc_prefix_compressed',
+    'ctc_ghost_weak_prefix',
+    'ctc_borrowed_tail_prefix',
+    'ctc_near_gap_weak_prefix',
+    'ctc_prior_line_truncation_contamination',
+    'ctc_boundary_realign_required',
+    'ctc_right_edge_evidence',
+    'ctc_right_edge_pileup',
+})
+
+
+def _archive_global_ctc_assignment_state(assignment:dict[str,object])->None:
+    archived={}
+    for key in list(assignment):
+        if (
+            key in _GLOBAL_CTC_ASSIGNMENT_BOUNDARY_KEYS
+            or any(key.startswith(prefix) for prefix in _GLOBAL_CTC_ASSIGNMENT_RECOVERY_PREFIXES)
+        ):
+            archived[key]=copy.deepcopy(assignment.pop(key))
+    if archived:
+        assignment['global_ctc_assignment_diagnostics']=archived
+
 
 def run_segment_skeleton(
     *,
@@ -262,6 +303,7 @@ def run_segment_skeleton(
                             comparison_threshold_seconds=3.0)
         for i,(old,row,actual) in enumerate(zip(assignments,rows,output_times)):
             if not isinstance(old,dict):return fallback('ASSIGNMENT_INVALID')
+            _archive_global_ctc_assignment_state(old)
             # Preserve whole-song CTC as independent evidence before replacing
             # the active, passage-local clocks and acoustic confidence.
             old['global_ctc_first_token_start']=copy.deepcopy(old.get('ctc_first_token_start'))
