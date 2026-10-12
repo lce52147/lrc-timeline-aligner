@@ -1193,6 +1193,61 @@ class TimingTrustTests(unittest.TestCase):
         self.assertFalse(suspicious[0]["review_required"])  # type: ignore[index]
 
 
+    def test_ctc_micro_refinement_preserves_actionable_review(self) -> None:
+        whisperx_report: dict[str, object] = {
+            "backend": "whisperx",
+            "strategy": "unit-test",
+            "timing_entries": 3,
+            "assignments": [
+                {"entry": 1, "segment": 1, "score": 0.96, "timestamp": 10.0},
+                {"entry": 2, "segment": 2, "score": 0.96, "timestamp": 20.4},
+                {"entry": 3, "segment": 3, "score": 0.96, "timestamp": 25.0},
+            ],
+            "suspicious_alignments": [
+                {
+                    "entry": 2,
+                    "flags": ["candidate_disagreement"],
+                    "severity": "high",
+                    "review_required": True,
+                    "candidate_timestamps": {"output": 20.4},
+                }
+            ],
+            "review_required_count": 1,
+            "review_required": True,
+        }
+        ctc_report: dict[str, object] = {
+            "backend": "ctc",
+            "assignments": [
+                {"entry": 1, "timestamp": 10.0, "ctc_score": 0.4},
+                {
+                    "entry": 2,
+                    "timestamp": 20.05,
+                    "ctc_score": 0.12,
+                    "ctc_token_spans": [
+                        {"char": "a", "start": 20.05, "end": 20.07, "score": 0.2}
+                    ],
+                },
+                {"entry": 3, "timestamp": 25.0, "ctc_score": 0.4},
+            ],
+        }
+
+        timestamps, report, changes = apply_ctc_micro_refinement_to_whisperx(
+            [10.0, 20.4, 25.0],
+            whisperx_report,
+            ctc_report,
+            duration=30.0,
+        )
+
+        self.assertEqual(timestamps, [10.0, 20.05, 25.0])
+        self.assertEqual(len(changes), 1)
+        assignments = report["assignments"]  # type: ignore[assignment]
+        self.assertFalse(assignments[1]["timing_trusted"])  # type: ignore[index]
+        suspicious = report["suspicious_alignments"]  # type: ignore[assignment]
+        self.assertEqual(suspicious[0]["severity"], "high")  # type: ignore[index]
+        self.assertTrue(suspicious[0]["review_required"])  # type: ignore[index]
+        self.assertEqual(report["review_required_count"], 1)
+
+
 class CtcAcousticBacktrackTests(unittest.TestCase):
     def test_crossline_initial_recovery_rejects_a_prior_line_tail_token(self) -> None:
         timestamps = [39.46, 43.74, 52.91]
@@ -2042,10 +2097,10 @@ class WhisperxAcousticBoundaryTests(unittest.TestCase):
             self.assertEqual(len(changes), 1)
             self.assertAlmostEqual(timestamps[1], 19.5, places=3)
             assignments = refined_report["assignments"]  # type: ignore[assignment]
-            self.assertTrue(assignments[1]["timing_trusted"])  # type: ignore[index]
+            self.assertFalse(assignments[1]["timing_trusted"])  # type: ignore[index]
             suspicious = refined_report["suspicious_alignments"]  # type: ignore[assignment]
-            self.assertEqual(suspicious[0]["severity"], "resolved")  # type: ignore[index]
-            self.assertFalse(suspicious[0]["review_required"])  # type: ignore[index]
+            self.assertEqual(suspicious[0]["severity"], "low")  # type: ignore[index]
+            self.assertTrue(suspicious[0]["review_required"])  # type: ignore[index]
         finally:
             auto_lrc.analyze_audio = original_analyze_audio  # type: ignore[assignment]
 
@@ -2094,6 +2149,8 @@ class WhisperxAcousticBoundaryTests(unittest.TestCase):
             self.assertAlmostEqual(timestamps[1], 20.5, places=3)
             self.assertEqual(changes[0]["reason"], "lead-in-acoustic-forward-onset")
             self.assertEqual(refined_report["review_required_count"], 0)
+            assignments = refined_report["assignments"]  # type: ignore[assignment]
+            self.assertFalse(assignments[1]["timing_trusted"])  # type: ignore[index]
         finally:
             auto_lrc.analyze_audio = original_analyze_audio  # type: ignore[assignment]
 

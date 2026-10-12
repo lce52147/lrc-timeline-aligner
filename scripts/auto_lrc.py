@@ -11909,6 +11909,19 @@ def apply_ctc_local_fusion_to_whisperx(
     return fused, report, changes
 
 
+def _legacy_refinement_row_has_actionable_flags(row: object) -> bool:
+    if not isinstance(row, dict):
+        return False
+    flags = row.get("flags")
+    if not isinstance(flags, list):
+        return False
+    return any(
+        str(flag) in ACTIONABLE_SUSPICIOUS_FLAGS
+        or str(flag) in ACTIONABLE_TIMING_FAILURES
+        for flag in flags
+    )
+
+
 def apply_ctc_micro_refinement_to_whisperx(
     whisperx_timestamps: list[float],
     whisperx_report: dict[str, object],
@@ -11925,10 +11938,16 @@ def apply_ctc_micro_refinement_to_whisperx(
     changes: list[dict[str, object]] = []
     raw_assignments = raw_report.get("assignments") if isinstance(raw_report, dict) else None
     max_items = min(len(refined), len(whisperx_assignments), len(ctc_assignments))
-    suspicious_entries = {
-        int(item.get("entry"))
+    suspicious_rows = [
+        item
         for item in whisperx_report.get("suspicious_alignments", [])
         if isinstance(item, dict) and isinstance(item.get("entry"), int)
+    ]
+    suspicious_entries = {int(item["entry"]) for item in suspicious_rows}
+    actionable_suspicious_entries = {
+        int(item["entry"])
+        for item in suspicious_rows
+        if _legacy_refinement_row_has_actionable_flags(item)
     }
     for index in range(max_items):
         entry_number = index + 1
@@ -12049,8 +12068,13 @@ def apply_ctc_micro_refinement_to_whisperx(
             assignments[index]["ctc_boundary_realign_evidence"] = change.get(
                 "ctc_boundary_realign_evidence"
             )
-            assignments[index]["timing_trusted"] = True
-            assignments[index]["timing_trusted_reason"] = "small-ctc-whisperx-consensus"
+            refinement_actionable = (index + 1) in actionable_suspicious_entries
+            assignments[index]["timing_trusted"] = not refinement_actionable
+            assignments[index]["timing_trusted_reason"] = (
+                "actionable-suspicious-review-preserved"
+                if refinement_actionable
+                else "small-ctc-whisperx-consensus"
+            )
             assignments[index]["timing_trusted_sources"] = ["whisperx", "ctc"]
             assignments[index]["timing_trusted_candidate_times"] = {
                 "selected": round(timestamp, 3),
@@ -12071,9 +12095,17 @@ def apply_ctc_micro_refinement_to_whisperx(
         flags = item.get("flags")
         if not isinstance(flags, list):
             flags = []
-        item["flags"] = list(dict.fromkeys([*flags, "ctc_micro_refinement", "timing_trusted"]))
-        item["severity"] = "resolved"
-        item["review_required"] = False
+        refinement_actionable = entry in actionable_suspicious_entries
+        item["flags"] = list(dict.fromkeys([
+            *flags,
+            "ctc_micro_refinement",
+            *(([]) if refinement_actionable else ["timing_trusted"]),
+        ]))
+        if refinement_actionable:
+            item["review_required"] = True
+        else:
+            item["severity"] = "resolved"
+            item["review_required"] = False
         candidates = item.get("candidate_timestamps")
         if not isinstance(candidates, dict):
             candidates = {}
@@ -12242,8 +12274,10 @@ def apply_whisperx_acoustic_boundary_refinement(
         assignment["timestamp"] = round(candidate, 3)
         assignment["acoustic_boundary_refinement"] = True
         assignment["acoustic_boundary_refinement_reason"] = reason
-        assignment["timing_trusted"] = True
-        assignment["timing_trusted_reason"] = reason
+        assignment["timing_trusted"] = False
+        assignment["timing_trusted_reason"] = (
+            "acoustic-boundary-refinement-diagnostic-only"
+        )
         assignment["timing_trusted_sources"] = ["acoustic"]
         assignment["timing_trusted_candidate_times"] = {
             "selected": round(candidate, 3),
@@ -12265,9 +12299,12 @@ def apply_whisperx_acoustic_boundary_refinement(
             risk_flags = risk.get("flags")
             if not isinstance(risk_flags, list):
                 risk_flags = []
-            risk["flags"] = list(dict.fromkeys([*risk_flags, "acoustic_boundary_refinement", "timing_trusted"]))
-            risk["severity"] = "resolved"
-            risk["review_required"] = False
+            original_actionable = _legacy_refinement_row_has_actionable_flags(risk)
+            risk["flags"] = list(dict.fromkeys([
+                *risk_flags,
+                "acoustic_boundary_refinement",
+            ]))
+            risk["review_required"] = bool(risk.get("review_required")) or original_actionable
             candidates = risk.get("candidate_timestamps")
             if not isinstance(candidates, dict):
                 candidates = {}
