@@ -16503,6 +16503,15 @@ def plan_local_whisper_requests(
             if option_window_end <= option_right_start + 0.5:
                 option_window_end = min(duration, option_right_start + 4.0)
             option_length = option_window_end - option_window_start
+            if (
+                option_left == 0
+                and option_length > LOCAL_WHISPER_MAX_WINDOW_SECONDS
+            ):
+                option_window_start = max(
+                    0.0,
+                    option_left_start - LOCAL_WHISPER_CONTEXT_MARGIN_SECONDS,
+                )
+                option_length = option_window_end - option_window_start
             if not 2.0 <= option_length <= LOCAL_WHISPER_MAX_WINDOW_SECONDS:
                 continue
 
