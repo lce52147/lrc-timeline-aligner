@@ -4965,8 +4965,6 @@ def find_anchor_hints(audio_path: Path, args: argparse.Namespace) -> Path | None
                 "Review it manually, then copy checked rows to a .anchors.lrc file."
             )
         return path
-    if getattr(args, "no_anchor_hints", False):
-        return None
     # Anchor files are assisted evidence. Their presence beside an input must
     # never alter independent auto inference; only an explicit positive CLI
     # path can opt into them.
@@ -37226,40 +37224,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run primary CTC forced alignment on a cached Demucs vocal stem; use --no-vocal-ctc for full-mix fallback.",
     )
     parser.add_argument(
-        "--no-checked-lrc-hint",
-        action="store_true",
-        help=(
-            "Compatibility flag: independent auto never reads checked LRC hints; "
-            "use --timing-source checked for explicit assisted checked timing."
-        ),
-    )
-    parser.add_argument(
-        "--ignore-lyric-timestamps",
-        action="store_true",
-        help=(
-            "Compatibility flag: independent auto always strips source timestamps; "
-            "explicit lyrics/checked modes retain their selected timing authority."
-        ),
-    )
-    parser.add_argument(
         "--anchor-hints",
         help=(
             "Optional timestamped LRC subset with manually checked line anchors. "
             "Only an explicit path enables assisted anchor evidence; omission never auto-discovers anchors."
-        ),
-    )
-    parser.add_argument(
-        "--no-anchor-hints",
-        action="store_true",
-        help="Compatibility flag: independent auto never auto-discovers same-folder anchor hint files.",
-    )
-    parser.add_argument(
-        "--allow-untrusted-draft",
-        action="store_true",
-        help=(
-            "Deprecated compatibility flag. Normal mode already writes the best current LRC even when "
-            "the report contains review-required lines; use --strict-review or --fail-on-review-required "
-            "only when an explicit CI/QA gate is desired."
         ),
     )
     parser.add_argument(

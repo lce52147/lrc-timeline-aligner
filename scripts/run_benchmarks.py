@@ -35,8 +35,6 @@ class BenchmarkCase:
     audio: Path | None = None
     lyrics: Path | None = None
     timing_source: str = "auto"
-    no_checked_lrc_hint: bool = False
-    no_anchor_hints: bool = False
     ignore_markers: bool = False
     require_within_25cs: float | None = None
     require_within_50cs: float = 100.0
@@ -52,7 +50,6 @@ class BenchmarkCase:
     require_review_required_entries: tuple[int, ...] | None = None
     require_ctc_local_fusion_count: int | None = None
     strict_review: bool = False
-    ignore_lyric_timestamps: bool = False
 
 
 def report_path(lrc_path: Path) -> Path:
@@ -163,7 +160,6 @@ def benchmark_cases() -> list[BenchmarkCase]:
             audio=rain_audio,
             lyrics=scripts / "rain_untimed.lyrics.txt",
             timing_source="auto",
-            no_checked_lrc_hint=True,
             require_within_25cs=100.0,
             require_backend="hybrid",
             require_selected_backend="hybrid",
@@ -176,7 +172,6 @@ def benchmark_cases() -> list[BenchmarkCase]:
             audio=utopia_audio,
             lyrics=scripts / "utopia_untimed.lyrics.txt",
             timing_source="auto",
-            no_checked_lrc_hint=True,
             ignore_markers=True,
             require_within_25cs=100.0,
             require_backend="ctc",
@@ -190,7 +185,6 @@ def benchmark_cases() -> list[BenchmarkCase]:
             audio=oyasumi_audio,
             lyrics=scripts / "oyasumi_monochrome_untimed.lyrics.txt",
             timing_source="auto",
-            no_checked_lrc_hint=True,
             ignore_markers=True,
             require_within_25cs=100.0,
             require_backend="ctc",
@@ -281,8 +275,6 @@ def local_regression_cases() -> list[BenchmarkCase]:
             audio=magic / "10.方舟.flac",
             lyrics=magic / "10.方舟.txt",
             timing_source="auto",
-            no_checked_lrc_hint=True,
-            no_anchor_hints=True,
             require_within_25cs=90.0,
             require_within_50cs=95.0,
             require_max_abs_delta_cs_at_most=60,
@@ -305,9 +297,6 @@ def local_regression_cases() -> list[BenchmarkCase]:
                 audio=rainfall_dir / "09. ツユ - レインフォール.flac",
                 lyrics=rainfall_checked,
                 timing_source="auto",
-                no_checked_lrc_hint=True,
-                no_anchor_hints=True,
-                ignore_lyric_timestamps=True,
                 require_within_25cs=100.0,
                 require_max_abs_delta_cs=0,
                 require_backend="ctc",
@@ -331,8 +320,6 @@ def local_regression_cases() -> list[BenchmarkCase]:
                 audio=magic / "04.可惜夜.flac",
                 lyrics=magic / "04.可惜夜.txt",
                 timing_source="auto",
-                no_checked_lrc_hint=True,
-                no_anchor_hints=True,
                 require_within_25cs=100.0,
                 require_max_abs_delta_cs=0,
                 require_backend="hybrid",
@@ -375,8 +362,6 @@ def private_audit_cases() -> list[BenchmarkCase]:
             audio=required_env_path("LRC_TOOLS_PRIVATE_AUDIT_AUDIO"),
             lyrics=required_env_path("LRC_TOOLS_PRIVATE_AUDIT_LYRICS"),
             timing_source="auto",
-            no_checked_lrc_hint=True,
-            no_anchor_hints=True,
             require_backend=os.environ.get("LRC_TOOLS_PRIVATE_AUDIT_BACKEND", "hybrid"),
             require_selected_backend=os.environ.get("LRC_TOOLS_PRIVATE_AUDIT_SELECTED_BACKEND", "hybrid"),
             require_report_device=os.environ.get("LRC_TOOLS_PRIVATE_AUDIT_DEVICE", "cuda"),
@@ -404,12 +389,6 @@ def regenerate_case(case: BenchmarkCase) -> None:
         str(case.generated),
         "--overwrite",
     ]
-    if case.no_checked_lrc_hint:
-        command.append("--no-checked-lrc-hint")
-    if case.no_anchor_hints:
-        command.append("--no-anchor-hints")
-    if case.ignore_lyric_timestamps:
-        command.append("--ignore-lyric-timestamps")
     if case.strict_review:
         command.append("--strict-review")
     print(f"GENERATE {case.name}: {case.generated.name}")

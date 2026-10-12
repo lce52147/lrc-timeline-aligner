@@ -170,11 +170,7 @@ def regenerate_case(case: MatchedCase, output_dir: Path, reports_dir: Path) -> t
         "--output",
         str(generated),
         "--overwrite",
-        "--no-checked-lrc-hint",
-        "--no-anchor-hints",
     ]
-    if lyrics.suffix.lower() == ".lrc":
-        command.append("--ignore-lyric-timestamps")
     proc = subprocess.run(command, cwd=PROJECT, text=True, encoding="utf-8", errors="replace")
     if proc.returncode != 0:
         return generated, None, {}, f"regenerate failed: exit {proc.returncode}"

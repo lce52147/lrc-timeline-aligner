@@ -4525,10 +4525,6 @@ class CentralTimingStateTests(unittest.TestCase):
         self.assertNotIn("Refusing to write untrusted LRC", source)
         self.assertNotIn("blocking untrusted LRC", source)
 
-    def test_allow_untrusted_draft_flag_remains_cli_compatible_but_is_not_required(self) -> None:
-        args = auto_lrc.build_parser().parse_args(["song.flac", "--allow-untrusted-draft"])
-        self.assertTrue(args.allow_untrusted_draft)
-
     def test_production_source_contains_no_song_specific_alignment_literals(self) -> None:
         source = Path(auto_lrc.__file__).read_text(encoding="utf-8")
         for forbidden in ("Georgette", "エガクミライ", "\\u79c1"):
@@ -5041,7 +5037,6 @@ class CentralTimingStateTests(unittest.TestCase):
                         "--timing-source", timing_source,
                         "--whisper-language", "en",
                         "--overwrite",
-                        "--no-checked-lrc-hint",
                     ])
                     try:
                         result = auto_lrc.process_audio(audio, args)
