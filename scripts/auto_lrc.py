@@ -33271,6 +33271,106 @@ def _precommit_independent_peer_existing_candidate_recovery(
     return revised_selection, payload
 
 
+RECOVERY_REVIEW_MOVE_THRESHOLD_CENTISECONDS = 30
+
+
+def _mark_material_recovery_moves_for_review(
+    report: dict[str, object],
+) -> list[dict[str, object]]:
+    """Mark applied postcentral recovery moves over 0.30 s as REVIEW evidence."""
+    assignments = report.get("assignments")
+    if not isinstance(assignments, list):
+        report["recovery_moved_entries"] = []
+        report["recovery_moved_count"] = 0
+        return []
+
+    sources = (
+        (_HUBERT_EXISTING_CANDIDATE_RECOVERY_KEY, "hubert-existing-candidate"),
+        (_PEER_EXISTING_CANDIDATE_RECOVERY_KEY, "peer-existing-candidate"),
+    )
+    by_entry: dict[int, dict[str, object]] = {}
+    for payload_key, source_name in sources:
+        payload = report.get(payload_key)
+        if not isinstance(payload, dict) or payload.get("status") != "APPLIED":
+            continue
+        rows = payload.get("entries")
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if (
+                not isinstance(row, dict)
+                or row.get("recovery_disposition") != "applied"
+                or not isinstance(row.get("entry"), int)
+            ):
+                continue
+            entry = int(row["entry"])
+            try:
+                old_cs = int(row.get("old_selected_centiseconds"))
+                new_cs = int(row.get("new_selected_centiseconds"))
+            except (TypeError, ValueError):
+                continue
+            delta_cs = new_cs - old_cs
+            if abs(delta_cs) <= RECOVERY_REVIEW_MOVE_THRESHOLD_CENTISECONDS:
+                continue
+            record = by_entry.setdefault(
+                entry,
+                {
+                    "entry": entry,
+                    "recovery_sources": [],
+                    "moves": [],
+                },
+            )
+            recovery_sources = record["recovery_sources"]
+            moves = record["moves"]
+            assert isinstance(recovery_sources, list)
+            assert isinstance(moves, list)
+            if source_name not in recovery_sources:
+                recovery_sources.append(source_name)
+            moves.append({
+                "source": source_name,
+                "old_selected_centiseconds": old_cs,
+                "new_selected_centiseconds": new_cs,
+                "delta_centiseconds": delta_cs,
+            })
+
+    marked: list[dict[str, object]] = []
+    for entry in sorted(by_entry):
+        index = entry - 1
+        if not 0 <= index < len(assignments):
+            continue
+        assignment = assignments[index]
+        if not isinstance(assignment, dict):
+            continue
+        record = by_entry[entry]
+        moves = record["moves"]
+        assert isinstance(moves, list) and moves
+        largest = max(
+            moves,
+            key=lambda item: abs(int(item["delta_centiseconds"])),
+        )
+        record["old_selected_centiseconds"] = int(
+            largest["old_selected_centiseconds"]
+        )
+        record["new_selected_centiseconds"] = int(
+            largest["new_selected_centiseconds"]
+        )
+        record["delta_centiseconds"] = int(largest["delta_centiseconds"])
+        record["threshold_centiseconds"] = (
+            RECOVERY_REVIEW_MOVE_THRESHOLD_CENTISECONDS
+        )
+        flags = assignment.get("flags")
+        assignment["flags"] = list(dict.fromkeys([
+            *(flags if isinstance(flags, list) else []),
+            "recovery-moved",
+        ]))
+        assignment["recovery_moved"] = copy.deepcopy(record)
+        marked.append(copy.deepcopy(record))
+
+    report["recovery_moved_entries"] = marked
+    report["recovery_moved_count"] = len(marked)
+    return marked
+
+
 def _hubert_recovery_project_selection(
     report: dict[str, object],
     selection: BackendSelection,
@@ -36748,6 +36848,7 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
         report["final_self_check"] = compute_final_timing_self_check(
             report, final_timing_state, entries
         )
+        _mark_material_recovery_moves_for_review(report)
         final_timing_state = commit_final_timing_state(
             final_timing_state,
             report,
