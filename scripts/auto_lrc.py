@@ -34411,6 +34411,19 @@ def _apply_evaluated_backend_projection(
         report,
         summarize_central_timing_state(report, committed),
     )
+    # The evaluated summary may predate final suspicious-row REVIEW changes.
+    # Sync only aggregate review fields here: private replays must preserve
+    # their immutable Central row timing decisions until the final-output audit.
+    committed_assignments = report.get("assignments", [])
+    final_review_count = sum(
+        bool(row.get("review_required"))
+        for row in committed_assignments if isinstance(row, dict)
+    )
+    report["review_required_count"] = final_review_count
+    report["review_required_percent"] = ratio_percent(
+        final_review_count, len(committed_assignments)
+    )
+    report["review_required"] = final_review_count > 0
     if isinstance(projection_seed, dict):
         report[_BACKEND_PROVENANCE_PROJECTION_KEY] = _finalize_backend_provenance_projection(
             report,
