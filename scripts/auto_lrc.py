@@ -8768,6 +8768,8 @@ def run_ctc_alignment(
     rows = payload.get("entries")
     if not isinstance(rows, list) or len(rows) != len(entries):
         raise LrcError("CTC helper returned an invalid entry list")
+    if any(not isinstance(row, dict) for row in rows):
+        raise LrcError("CTC helper returned a non-object entry")
     timestamps: list[float] = []
     assignments: list[dict[str, object]] = []
     missing: list[int] = []
@@ -8776,10 +8778,6 @@ def run_ctc_alignment(
     very_low_score_entries: list[dict[str, object]] = []
     low_score_entry_numbers: set[int] = set()
     for index, row in enumerate(rows):
-        if not isinstance(row, dict):
-            missing.append(index + 1)
-            timestamps.append(timestamps[-1] + 0.10 if timestamps else 0.0)
-            continue
         start = row.get("start")
         if start is None:
             missing.append(index + 1)
