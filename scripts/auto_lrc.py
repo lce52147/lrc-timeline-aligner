@@ -34869,7 +34869,7 @@ def add_alignment_diagnostics(
             severity = "low"
             if "possible_midline_anchor" in flags or "forced_time_overlaps_previous_line" in flags:
                 severity = "high"
-            if "possible_instrumental_intro_hallucination" in flags:
+            elif "possible_instrumental_intro_hallucination" in flags:
                 severity = "high"
             elif "long_line_close_to_next_entry" in flags or "close_neighbor_onset_uncertain" in flags:
                 severity = "medium"
