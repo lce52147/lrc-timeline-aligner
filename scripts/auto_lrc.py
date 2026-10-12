@@ -3631,18 +3631,25 @@ def _bounded_independent_consensus_winner(
     if not clusters:
         return None
 
-    def cluster_rank(cluster: tuple[CandidateEvaluation, ...]) -> tuple[int, int, int, int, float]:
+    def cluster_rank(cluster: tuple[CandidateEvaluation, ...]) -> tuple[int, int, int, float]:
         families = set().union(*(_candidate_support_families(item.candidate) for item in cluster))
-        boundary_grade = sum(
+        boundary_families = set().union(*(
+            _candidate_support_families(item.candidate)
+            for item in cluster
+            if candidate_has_boundary_grade_direct_onset_evidence(item.candidate)
+        )) if any(
             candidate_has_boundary_grade_direct_onset_evidence(item.candidate)
             for item in cluster
-        )
-        independent_identity = sum(item.candidate.independent_content_identity for item in cluster)
+        ) else set()
+        identity_families = set().union(*(
+            _candidate_support_families(item.candidate)
+            for item in cluster
+            if item.candidate.independent_content_identity
+        )) if any(item.candidate.independent_content_identity for item in cluster) else set()
         return (
             len(families),
-            len(cluster),
-            boundary_grade,
-            independent_identity,
+            len(boundary_families),
+            len(identity_families),
             max(item.candidate.confidence for item in cluster),
         )
 
