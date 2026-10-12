@@ -6545,7 +6545,7 @@ def apply_phonetic_onset_fusion_hypotheses(
             identity_support="supported",
             sequence_support="supported",
             acoustic_support="supported",
-            direct_onset_support="unavailable",
+            direct_onset_support="supported",
             acoustic_strength=onset_strength,
             acoustic_onset_time=onset_time,
             acoustic_evidence_producer="phonetic-onset-fusion",
@@ -22470,12 +22470,11 @@ def collect_central_timing_candidates(
                         index,
                     ):
                         continue
-                    # A post-tail energy cluster is useful evidence, but it is not
-                    # phonetic proof of the next lyric's first mora.  It may rank
-                    # candidates, never bypass unknown ownership.
-                    independent_acoustic_bound = True
-                    acoustic_producer = "tail-release-acoustic-search"
-                    acoustic_kind = "generic-acoustic"
+                    # trusted-tail-release-diagnostic-only: a post-tail energy
+                    # cluster is not phonetic proof of the next lyric's first
+                    # mora. Preserve the serialized hypothesis for diagnostics,
+                    # but do not manufacture an always-invalid Central candidate.
+                    continue
                 spans_value = _timing_spans_from_value(hypothesis.get("spans"))
                 acoustic_strength = hypothesis.get("acoustic_strength")
                 acoustic_onset_time = hypothesis.get("acoustic_onset_time")
