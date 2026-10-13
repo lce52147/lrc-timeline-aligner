@@ -7883,6 +7883,20 @@ def lyric_anchor_profile(entry: LyricEntry) -> dict[str, object]:
     return profile
 
 
+def _is_single_cjk_or_kana_term(term: str) -> bool:
+    """Whether a one-codepoint visible term can be a Japanese/CJK word."""
+    if len(term) != 1:
+        return False
+    codepoint = ord(term)
+    return bool(
+        0x3400 <= codepoint <= 0x4DBF
+        or 0x4E00 <= codepoint <= 0x9FFF
+        or 0xF900 <= codepoint <= 0xFAFF
+        or 0x3040 <= codepoint <= 0x309F
+        or 0x30A0 <= codepoint <= 0x30FF
+    )
+
+
 def repeated_leading_term(text: str) -> tuple[str, int]:
     """Return a visibly repeated opening term, without guessing word breaks."""
     terms = [
@@ -7890,9 +7904,11 @@ def repeated_leading_term(text: str) -> tuple[str, int]:
         for term in re.split(r"[\s\u3000,、，。！？!?・]+", unicodedata.normalize("NFKC", text).strip())
     ]
     terms = [term for term in terms if term]
-    if len(terms) < 2 or len(terms[0]) < 2:
+    if len(terms) < 2:
         return "", 0
     first = terms[0]
+    if len(first) < 2 and not _is_single_cjk_or_kana_term(first):
+        return "", 0
     repeated = 1
     for term in terms[1:]:
         if term.startswith(first):
@@ -36000,13 +36016,13 @@ def score_line_timing_candidates(
         except (TypeError, ValueError):
             ctc_score = 1.0
         repeated_onset_candidate: dict[str, object] | None = None
+        single_cjk_repeat = _is_single_cjk_or_kana_term(leading_term)
+        weak_repeated_path = bool(
+            ctc_score <= 0.18 and first_ctc_token_score <= 0.05
+        )
         if (
             leading_term_count >= 2
-            and ctc_score <= 0.18
-            # A repeated word alone is insufficient. If the forced path has a
-            # usable first-token posterior, an earlier same-syllable peak is
-            # commonly a preceding ad-lib rather than the lyric onset.
-            and first_ctc_token_score <= 0.05
+            and (weak_repeated_path or single_cjk_repeat)
             and isinstance(peaks, list)
         ):
             earlier_peaks: list[dict[str, float]] = []
@@ -36039,9 +36055,18 @@ def score_line_timing_candidates(
                     "time": round(peak["time"], 3),
                     # This is a deliberately narrow override: repeated visible
                     # text plus a strong earlier same-token posterior.
-                    "score": 0.97,
+                    "score": (
+                        0.60
+                        if single_cjk_repeat and not weak_repeated_path
+                        else 0.97
+                    ),
                     "reasons": [
                         "repeated-leading-term-earlier-ctc-onset",
+                        *(
+                            ["single-cjk-repeat-review-only"]
+                            if single_cjk_repeat and not weak_repeated_path
+                            else []
+                        ),
                         f"term={leading_term}",
                         f"repetitions={leading_term_count}",
                     ],

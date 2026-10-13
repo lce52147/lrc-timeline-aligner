@@ -817,6 +817,55 @@ class TimingTrustTests(unittest.TestCase):
         self.assertAlmostEqual(recommendation["time"], 172.770, places=3)
         self.assertIn("ctc_repeated_leading_term_onset", [item["source"] for item in assignment["candidates"]])  # type: ignore[index]
 
+    def test_repeated_single_cjk_term_with_earlier_peak_requires_review(self) -> None:
+        entries = [LyricEntry(["前の行"]), LyricEntry(["雨 雨"]), LyricEntry(["次の行"])]
+        report: dict[str, object] = {
+            "assignments": [
+                {
+                    "entry": 1,
+                    "timestamp": 254.94,
+                    "score": 0.9,
+                    "ctc_token_spans": [
+                        {"char": "x", "start": 255.0, "end": 256.46, "score": 0.66},
+                    ],
+                },
+                {
+                    "entry": 2,
+                    "timestamp": 261.701,
+                    "score": 0.9,
+                    "ctc_score": 0.462238,
+                    "ctc_token_spans": [
+                        {"char": "a", "start": 261.701, "end": 261.721, "score": 0.714446},
+                        {"char": "m", "start": 262.021, "end": 262.041, "score": 0.572837},
+                        {"char": "e", "start": 262.181, "end": 262.201, "score": 0.556741},
+                        {"char": "u", "start": 263.521, "end": 263.541, "score": 0.004929},
+                    ],
+                    "ctc_first_token_candidates": [
+                        {"time": 259.421, "score": 0.033324},
+                    ],
+                },
+                {"entry": 3, "timestamp": 265.861, "score": 0.9},
+            ],
+            "suspicious_alignments": [],
+        }
+
+        result = score_line_timing_candidates(
+            entries, [254.94, 261.701, 265.861], report, 286.0
+        )
+
+        self.assertAlmostEqual(result[1], 261.701, places=3)
+        assignment = report["assignments"][1]  # type: ignore[index]
+        self.assertAlmostEqual(assignment["timestamp"], 261.701, places=3)  # type: ignore[arg-type]
+        self.assertTrue(assignment["review_required"])
+        self.assertIn("candidate_disagreement", assignment["flags"])  # type: ignore[operator]
+        repeated = [
+            item for item in assignment["candidates"]  # type: ignore[index]
+            if item["source"] == "ctc_repeated_leading_term_onset"
+        ]
+        self.assertEqual(len(repeated), 1)
+        self.assertAlmostEqual(repeated[0]["time"], 259.421, places=3)
+        self.assertNotIn("precentral_candidate_recommendation", assignment)
+
     def test_repeated_leading_term_recovery_rejects_prior_ctc_tail_peak(self) -> None:
         entries = [LyricEntry(["before"]), LyricEntry(["again again target"]), LyricEntry(["after"])]
         report: dict[str, object] = {
