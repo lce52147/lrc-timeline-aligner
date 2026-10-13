@@ -157,6 +157,18 @@ def format_penalties(value: object) -> str:
     return ";".join(parts)
 
 
+def central_decision_fields(assignment: dict[str, Any]) -> tuple[str, str]:
+    source = assignment.get("candidate_source")
+    if isinstance(source, str) and source:
+        status = str(assignment.get("timestamp_status") or "selected_valid")
+        disposition = "selected" if status == "selected_valid" else "provisional"
+        return f"central-{disposition}:{source}", ""
+    return (
+        joined_list(assignment.get("reasons")),
+        format_penalties(assignment.get("penalties")),
+    )
+
+
 def row_for_entry(
     index: int,
     entry: Entry,
@@ -181,6 +193,7 @@ def row_for_entry(
     confidence = assignment.get("confidence")
     split_suggestion = assignment.get("split_suggestion")
     flags = joined_flags(risk)
+    decision_reasons, decision_penalties = central_decision_fields(assignment)
     if timing_trusted:
         flags = ";".join(part for part in [flags, "timing_trusted"] if part)
     return {
@@ -198,8 +211,8 @@ def row_for_entry(
         "forced_first": candidate_value(candidates, "whisperx_forced_first"),
         "chosen_time": format_time(chosen_time) if isinstance(chosen_time, (int, float)) else entry_time(entry),
         "confidence": f"{float(confidence):.3f}" if isinstance(confidence, (int, float)) else "",
-        "decision_reasons": joined_list(assignment.get("reasons")),
-        "decision_penalties": format_penalties(assignment.get("penalties")),
+        "decision_reasons": decision_reasons,
+        "decision_penalties": decision_penalties,
         "split_suggestion": str(split_suggestion.get("suggested_after_text", "")) if isinstance(split_suggestion, dict) else "",
         "timing_trusted": "yes" if timing_trusted else "no",
         "timing_trust_reason": trust_reason,

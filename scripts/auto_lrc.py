@@ -1031,6 +1031,12 @@ class FinalTimingState:
     written_times: tuple[CanonicalWrittenTime, ...]
     audits: tuple[TimingInvariantAudit, ...]
 
+    def __post_init__(self) -> None:
+        if not (
+            len(self.decisions) == len(self.written_times) == len(self.audits)
+        ):
+            raise LrcError("Final timing state cardinality mismatch")
+
 
 @dataclass(frozen=True)
 class TimingFinding:
@@ -25163,6 +25169,14 @@ def commit_final_timing_state(
     ):
         if not isinstance(raw_assignment, dict):
             raise LrcError("Final timing commit encountered an invalid assignment")
+        if "reasons" in raw_assignment:
+            raw_assignment["precentral_reasons"] = copy.deepcopy(
+                raw_assignment.pop("reasons")
+            )
+        if "penalties" in raw_assignment:
+            raw_assignment["precentral_penalties"] = copy.deepcopy(
+                raw_assignment.pop("penalties")
+            )
         legacy_flags = raw_assignment.get("flags")
         flag_list = list(legacy_flags) if isinstance(legacy_flags, list) else []
         non_timing_flags = [flag for flag in flag_list if flag not in CTC_BOUNDARY_REVIEW_FLAGS]

@@ -2220,6 +2220,25 @@ class AuditExportTests(unittest.TestCase):
         self.assertEqual(rows[1]["split_suggestion"], "second")
         self.assertIn("timing_trusted", content)
 
+    def test_audit_rows_do_not_label_precentral_scoring_as_central_decision_reason(self) -> None:
+        with TemporaryDirectory() as tmp:
+            lrc_path = Path(tmp) / "song.lrc"
+            lrc_path.write_text("[00:10.00]line\n", encoding="utf-8")
+            report: dict[str, object] = {
+                "assignments": [{
+                    "entry": 1,
+                    "timestamp": 10.0,
+                    "chosen_time": 10.0,
+                    "candidate_source": "ctc-current",
+                    "reasons": ["legacy-precentral-score"],
+                    "penalties": [{"kind": "legacy-penalty", "value": 0.4}],
+                }],
+                "suspicious_alignments": [],
+            }
+            rows = build_rows(lrc_path, report)
+        self.assertEqual(rows[0]["decision_reasons"], "central-selected:ctc-current")
+        self.assertEqual(rows[0]["decision_penalties"], "")
+
 
     def test_forward_supported_prefix_candidate_accepts_strong_second_token_with_broad_support(self) -> None:
         candidate = ctc_forward_supported_prefix_candidate(
@@ -3907,6 +3926,37 @@ class CentralTimingStateTests(unittest.TestCase):
         report["assignments"][0]["canonical_written_centiseconds"] = 1201
         with self.assertRaises(LrcError):
             auto_lrc.assert_report_timestamp_equality(report, state)
+
+    def test_final_timing_state_rejects_internal_cardinality_mismatch(self) -> None:
+        candidate = self.candidate(12.0, self.coherent_spans(12.0), current=True)
+        state = auto_lrc.build_final_timing_state(((candidate,),))
+        with self.assertRaises(LrcError):
+            auto_lrc.FinalTimingState(
+                decisions=state.decisions,
+                written_times=state.written_times,
+                audits=(),
+            )
+
+    def test_final_commit_relabels_precentral_scoring_provenance(self) -> None:
+        candidate = self.candidate(12.0, self.coherent_spans(12.0), current=True)
+        state = auto_lrc.build_final_timing_state(((candidate,),))
+        report: dict[str, object] = {
+            "assignments": [{
+                "timing_repair": "ctc-forced-align",
+                "score": 0.9,
+                "reasons": ["legacy-precentral-score"],
+                "penalties": [{"kind": "legacy-penalty", "value": 0.4}],
+            }]
+        }
+        auto_lrc.commit_final_timing_state(state, report, {})
+        assignment = report["assignments"][0]
+        self.assertNotIn("reasons", assignment)
+        self.assertNotIn("penalties", assignment)
+        self.assertEqual(assignment["precentral_reasons"], ["legacy-precentral-score"])
+        self.assertEqual(
+            assignment["precentral_penalties"],
+            [{"kind": "legacy-penalty", "value": 0.4}],
+        )
 
     def test_predecessor_onset_failure_does_not_cascade_across_clear_lines(self) -> None:
         candidates = tuple(
