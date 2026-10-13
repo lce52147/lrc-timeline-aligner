@@ -3943,6 +3943,9 @@ CTC_COLLAPSED_LINE_MAX_SECONDS = 12.0
 CTC_COLLAPSED_LINE_MIN_SECONDS = 0.8
 COLLAPSED_PATH_FALLBACK_SOURCE = "ctc-local-window"
 COLLAPSED_PATH_FALLBACK_MIN_SHIFT_SECONDS = 0.5
+# A collapsed region can only be bounded by sane rows outside it, so its local
+# window may exceed the ordinary 45 s split limit.
+COLLAPSED_REGION_WINDOW_MAX_SECONDS = 90.0
 
 
 def ctc_line_extent_collapsed(first_start: float, last_end: float) -> bool:
@@ -3957,11 +3960,35 @@ def _current_timing_candidate(candidates: tuple[TimingCandidate, ...]) -> Timing
     return next((item for item in candidates if item.current), None)
 
 
+def ctc_spans_collapsed(spans: Sequence[TimingTokenSpan]) -> bool:
+    if not spans:
+        return False
+    return ctc_line_extent_collapsed(spans[0].start, spans[-1].end)
+
+
+def ctc_collapsed_region_flags(row_collapsed: Sequence[bool]) -> tuple[bool, ...]:
+    """A row is inside a collapsed region when it or an adjacent row collapsed.
+
+    Shared by Central's unresolved fallback and the local-window generator so
+    both stages act on exactly the same rows.
+    """
+    flags = [bool(value) for value in row_collapsed]
+    return tuple(any(flags[max(0, row - 1):row + 2]) for row in range(len(flags)))
+
+
+def assignment_ctc_path_collapsed(assignment: object) -> bool:
+    """Same judgment as ``current_ctc_path_collapsed`` on the backend row the
+    ``ctc-current`` candidate is built from."""
+    if not isinstance(assignment, dict):
+        return False
+    return ctc_spans_collapsed(_timing_spans_from_value(assignment.get("ctc_token_spans")))
+
+
 def current_ctc_path_collapsed(candidates: tuple[TimingCandidate, ...]) -> bool:
     current = _current_timing_candidate(candidates)
-    if current is None or not current.spans:
+    if current is None:
         return False
-    return ctc_line_extent_collapsed(current.spans[0].start, current.spans[-1].end)
+    return ctc_spans_collapsed(current.spans)
 
 
 def _collapsed_path_fallback(
@@ -4433,9 +4460,7 @@ def build_final_timing_state(
     # Collapse is a property of the immutable whole-song CTC baseline, so it is
     # computed once here and every replay through this owner sees the same view.
     collapsed_rows = tuple(current_ctc_path_collapsed(items) for items in candidate_sets)
-
-    def collapsed_region(row: int) -> bool:
-        return any(collapsed_rows[max(0, row - 1):row + 2])
+    collapsed_region = ctc_collapsed_region_flags(collapsed_rows)
 
     def next_bound(row: int) -> float | None:
         # A sane next baseline row bounds the fallback so output stays ordered;
@@ -4474,7 +4499,7 @@ def build_final_timing_state(
             arbiter_mode=arbiter_mode,
             reviewer_evidence=reviewer_evidence[index],
             timing_source_policy=timing_source_policy,
-            ctc_path_collapsed=collapsed_region(index),
+            ctc_path_collapsed=collapsed_region[index],
             next_bound_seconds=next_bound(index),
         )
         old_decision = decisions[index]
@@ -9665,12 +9690,22 @@ def apply_ctc_local_window_realign(
             return None
         return timestamp if score >= TRUSTED_ALIGNMENT_SCORE else None
 
+    # Same rows Central treats as a collapsed whole-song path.  Their CTC
+    # timestamps are the broken part, so they are re-aligned even when raw ASR
+    # and the path score raise no alarm, and never serve as window bounds.
+    collapsed_region = ctc_collapsed_region_flags(
+        [assignment_ctc_path_collapsed(item) for item in assignments]
+    )
+
+    def in_collapsed_region(index: int) -> bool:
+        return 0 <= index < len(collapsed_region) and collapsed_region[index]
+
     def local_anchor(index: int) -> float | None:
         """Prefer unique raw anchors, then fall back to neighboring CTC bounds."""
         raw_time = raw_anchor(index)
         if raw_time is not None:
             return raw_time
-        if 0 <= index < len(timestamps):
+        if 0 <= index < len(timestamps) and not in_collapsed_region(index):
             timestamp = float(timestamps[index])
             if math.isfinite(timestamp):
                 return timestamp
@@ -9714,6 +9749,12 @@ def apply_ctc_local_window_realign(
             if entry_number not in covered_entries:
                 window_runs.append([entry_number])
                 covered_entries.add(entry_number)
+
+    for index in range(len(entries)):
+        entry_number = index + 1
+        if in_collapsed_region(index) and entry_number not in covered_entries:
+            window_runs.append([entry_number])
+            covered_entries.add(entry_number)
 
     merged_runs: list[list[int]] = []
     for raw_run in sorted(window_runs, key=lambda item: int(item[0])):
@@ -9788,8 +9829,21 @@ def apply_ctc_local_window_realign(
             if end_index < alignment_start_index or window_duration < 1.0:
                 continue
             if window_duration > 45.0:
-                if len(raw_run) >= 2:
-                    midpoint = len(raw_run) // 2
+                # Split only between two rows that can bound a window: the
+                # halves are bounded by each other's rows, and a collapsed
+                # row's own CTC time is no bound.
+                split_points = [
+                    offset
+                    for offset in range(1, len(raw_run))
+                    if local_anchor(int(raw_run[offset - 1]) - 1) is not None
+                    and local_anchor(int(raw_run[offset]) - 1) is not None
+                ]
+                run_collapsed = any(in_collapsed_region(int(entry) - 1) for entry in raw_run)
+                if split_points:
+                    midpoint = min(
+                        split_points,
+                        key=lambda offset: (abs(offset - len(raw_run) / 2), offset),
+                    )
                     left_run = raw_run[:midpoint]
                     right_run = raw_run[midpoint:]
                     pending_runs.insert(0, right_run)
@@ -9802,10 +9856,13 @@ def apply_ctc_local_window_realign(
                         }
                     )
                     continue
-                errors.append(
-                    f"window-{window_number}: skipped over-wide local CTC window ({window_duration:.1f}s)"
-                )
-                continue
+                # A collapsed region with no internal bound is aligned whole:
+                # its sane outer neighbours are the only trustworthy limits.
+                if not (run_collapsed and window_duration <= COLLAPSED_REGION_WINDOW_MAX_SECONDS):
+                    errors.append(
+                        f"window-{window_number}: skipped over-wide local CTC window ({window_duration:.1f}s)"
+                    )
+                    continue
             transcript_path = temp_dir / f"window-{window_number}.json"
             output_path = temp_dir / f"window-{window_number}.result.json"
             transcript_path.write_text(
