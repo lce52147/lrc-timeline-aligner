@@ -21346,6 +21346,28 @@ def _augment_local_ctc_candidates_with_runtime_backend_consensus(
     return tuple(augmented)
 
 
+def _joint_consensus_spans(
+    parent: TimingCandidate,
+    observation: TimingCandidate,
+) -> tuple[TimingTokenSpan, ...]:
+    """Token spans for a joint-consensus candidate written at the parent time.
+
+    A span-less parent may borrow the joint observation's spans (this gives the
+    row a reliable tail for its successor, case34), but only when those spans
+    describe the same written time: the observation's first token must start
+    within one hop of the parent time, exactly the tolerance that
+    ``normalize_timing_evidence`` enforces ("candidate-span-revision-mismatch").
+    Borrowing spans that start elsewhere made every such joint candidate
+    invalid (43 joint candidates across the 39-song corpus, e.g. ふり #55).
+    """
+    if parent.spans:
+        return parent.spans
+    borrowed = observation.spans
+    if borrowed and abs(borrowed[0].start - parent.written_time.seconds) <= HOP_SECONDS:
+        return borrowed
+    return parent.spans
+
+
 def _augment_candidates_with_joint_boundary_consensus(
     candidate_sets: tuple[tuple[TimingCandidate, ...], ...],
     pair_outcomes: tuple[CrossLineRetryOutcome, ...],
@@ -21425,7 +21447,7 @@ def _augment_candidates_with_joint_boundary_consensus(
                             entry_text=entry_sung_text(entries[index]),
                             source="ctc-joint-boundary-consensus",
                             raw_time=parent.written_time.seconds,
-                            spans=parent.spans or observation.spans,
+                            spans=_joint_consensus_spans(parent, observation),
                             confidence=min(parent.confidence, observation.confidence),
                             identity_support="supported",
                             sequence_support="supported",

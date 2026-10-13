@@ -9901,6 +9901,37 @@ class V144JointBoundaryGraphRegressionTests(unittest.TestCase):
         )
         self.assertEqual(decision.evidence.ownership.status, "clear")
 
+    def test_joint_consensus_does_not_borrow_spans_that_start_elsewhere(self) -> None:
+        # Regression (17fd62e5): a span-less parent borrowed observation spans
+        # starting 0.06 s away, so the joint candidate failed its own
+        # candidate-span-revision-mismatch check (43 joints lost, ふり #55).
+        entries, candidate_sets, _report, cap, _epoch, request = self.joint_request()
+        outcome = auto_lrc.parse_crossline_retry_output(
+            request, cap, entries,
+            self.joint_payload(request, entries, current_start=10.06),
+        )
+        assert outcome.candidate is not None
+        self.assertGreater(
+            abs(outcome.candidate.spans[0].start - 10.00), auto_lrc.HOP_SECONDS
+        )
+        geometryless = self.candidate(
+            1, 10.00, source="ctc-current", current=False, spans=()
+        )
+        modified = (candidate_sets[0], (geometryless,), candidate_sets[2])
+        augmented = auto_lrc._augment_candidates_with_joint_boundary_consensus(
+            modified, (outcome,), entries
+        )
+        composite = next(
+            candidate for candidate in augmented[1]
+            if candidate.source == "ctc-joint-boundary-consensus"
+        )
+        self.assertEqual(composite.written_time, geometryless.written_time)
+        self.assertEqual(composite.spans, ())
+        evaluation = auto_lrc.evaluate_timing_candidate(
+            composite, candidate_sets[0][0]
+        )
+        self.assertNotIn("candidate-span-revision-mismatch", evaluation.rejection_reasons)
+
     def test_joint_observation_does_not_fuse_distant_parent(self) -> None:
         entries, candidate_sets, _report, cap, _epoch, request = self.joint_request()
         outcome = auto_lrc.parse_crossline_retry_output(
