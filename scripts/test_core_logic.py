@@ -247,6 +247,21 @@ class AnchorHintTests(unittest.TestCase):
         finally:
             auto_lrc.audio_track_labels = original_labels  # type: ignore[assignment]
 
+    def test_generated_title_card_match_is_ascii_case_insensitive(self) -> None:
+        original_labels = auto_lrc.audio_track_labels
+        auto_lrc.audio_track_labels = lambda _path: ("MyGO!!!!!", "影色舞")  # type: ignore[assignment]
+        try:
+            entries = [
+                LyricEntry(["Mygo!!!!! - 影色舞"], 0),
+                LyricEntry(["synthetic lyric line"], 1890),
+            ]
+
+            kept = remove_generated_title_cards(entries, Path("dummy.flac"))
+
+            self.assertEqual([entry.lines[0] for entry in kept], ["synthetic lyric line"])
+        finally:
+            auto_lrc.audio_track_labels = original_labels  # type: ignore[assignment]
+
     def test_untimed_source_title_is_preserved_as_potential_sung_lyric(self) -> None:
         original_labels = auto_lrc.audio_track_labels
         auto_lrc.audio_track_labels = lambda _path: ("", "Song Title")  # type: ignore[assignment]
@@ -4030,6 +4045,60 @@ class CentralTimingStateTests(unittest.TestCase):
             auto_lrc.audio_track_labels = original_labels  # type: ignore[assignment]
         self.assertIs(state.written_times, before)
         self.assertIn(f"[{state.written_times[0].lrc_tag}]generic line", written)
+
+    def test_audio_track_labels_preserve_artist_case(self) -> None:
+        payload = json.dumps({"format": {"tags": {"ARTIST": "AC/DC feat. eVe", "TITLE": "Song"}}})
+        completed = subprocess.CompletedProcess(["ffprobe"], 0, payload, "")
+        with mock.patch.object(auto_lrc, "run_command", return_value=completed):
+            artist, title = auto_lrc.audio_track_labels(Path("dummy.flac"))
+        self.assertEqual(artist, "AC/DC feat. eVe")
+        self.assertEqual(title, "Song")
+
+    def test_process_audio_round_trips_metadata_and_offset_once(self) -> None:
+        with TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            audio = root / "song.flac"
+            lyrics = root / "song.txt"
+            output = root / "song.lrc"
+            reports = root / "reports"
+            audio.write_bytes(b"audio")
+            lyrics.write_text(
+                "[ar:MiXeD ARTIST]\n[al:Album Name]\n[offset:+500]\n[00:01.00]line\n",
+                encoding="utf-8",
+            )
+            args = build_parser().parse_args([
+                str(audio),
+                "--lyrics", str(lyrics),
+                "--output", str(output),
+                "--timing-source", "lyrics",
+                "--report-dir", str(reports),
+                "--overwrite",
+            ])
+            with (
+                mock.patch.object(auto_lrc, "probe_duration", return_value=2.0),
+                mock.patch.object(auto_lrc, "audio_track_labels", return_value=("MiXeD ARTIST", "Song")),
+            ):
+                auto_lrc.process_audio(audio, args)
+            written = output.read_text(encoding="utf-8-sig")
+        self.assertEqual(written.count("[ar:MiXeD ARTIST]"), 1)
+        self.assertEqual(written.count("[al:Album Name]"), 1)
+        self.assertEqual(written.count("[offset:+500]"), 1)
+        self.assertIn("[00:01.00]line", written)
+        self.assertNotIn("[00:01.50]line", written)
+
+    def test_segment_review_count_deduplicates_same_entry(self) -> None:
+        import segment_skeleton_production
+
+        suspicious = [
+            {"entry": 2, "review_required": True, "flags": ["a"]},
+            {"entry": 2, "review_required": True, "flags": ["b"]},
+            {"entry": 3, "review_required": True, "flags": ["c"]},
+            {"entry": 4, "review_required": False, "flags": ["d"]},
+        ]
+        self.assertEqual(
+            segment_skeleton_production._review_required_row_count(suspicious),
+            2,
+        )
 
     def test_sol_r1_late_supported_pair_cannot_prove_opening(self) -> None:
         spans = (

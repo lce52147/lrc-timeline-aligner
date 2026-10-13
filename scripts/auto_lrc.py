@@ -4508,16 +4508,14 @@ def audio_track_labels(audio_path: Path) -> tuple[str, str]:
         tags = {}
     artist = str(tags.get("ARTIST") or tags.get("artist") or "").strip()
     title = str(tags.get("TITLE") or tags.get("title") or audio_path.stem).strip()
-    if artist and artist.isascii():
-        artist = artist.title()
     return artist, title or audio_path.stem
 
 
 def remove_generated_title_cards(entries: list[LyricEntry], audio_path: Path) -> list[LyricEntry]:
     """Remove only a matching zero-time generated Artist - Title card."""
     artist, title = audio_track_labels(audio_path)
-    normalized_title = normalize_match_text(title)
-    normalized_artist = normalize_match_text(artist)
+    normalized_title = normalize_match_text(title).casefold()
+    normalized_artist = normalize_match_text(artist).casefold()
     kept: list[LyricEntry] = []
     for entry in entries:
         text = entry_sung_text(entry).strip()
@@ -4527,10 +4525,10 @@ def remove_generated_title_cards(entries: list[LyricEntry], audio_path: Path) ->
             and len(entry.lines) == 1
             and card is not None
             and bool(normalized_title)
-            and normalize_match_text(card.group(2)) == normalized_title
+            and normalize_match_text(card.group(2)).casefold() == normalized_title
             and (
                 not normalized_artist
-                or normalize_match_text(card.group(1)) == normalized_artist
+                or normalize_match_text(card.group(1)).casefold() == normalized_artist
             )
         )
         if not is_title_card:
@@ -36623,13 +36621,22 @@ def write_lrc(
     artist, title = audio_track_labels(audio_path)
     title_label = " ".join(value for value in (artist, title) if value).strip()
     title_card = f"{artist} - {title}" if artist else title
-    body = [
-        f"[ti:{title_label or audio_path.stem}]",
-        f"[re:{generator}]",
-        f"[length:{format_lrc_time(duration)}]",
-        "[by:LRC tools]",
-        f"[00:00.00]{title_card}",
-    ]
+    source_metadata = list(metadata_lines or [])
+    source_metadata_keys: set[str] = set()
+    for line in source_metadata:
+        match = re.match(r"^\s*\[([A-Za-z][A-Za-z0-9_-]*):", line)
+        if match is not None:
+            source_metadata_keys.add(match.group(1).casefold())
+    generated_metadata = []
+    if "ti" not in source_metadata_keys:
+        generated_metadata.append(f"[ti:{title_label or audio_path.stem}]")
+    if "re" not in source_metadata_keys:
+        generated_metadata.append(f"[re:{generator}]")
+    if "length" not in source_metadata_keys:
+        generated_metadata.append(f"[length:{format_lrc_time(duration)}]")
+    if "by" not in source_metadata_keys:
+        generated_metadata.append("[by:LRC tools]")
+    body = [*source_metadata, *generated_metadata, f"[00:00.00]{title_card}"]
     if len(written_times) != len(entries):
         raise LrcError("Immutable written-time count does not match lyric entries")
     for written_time, entry in zip(written_times, entries):
@@ -37044,7 +37051,7 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
         DEFAULT_PROBE_DIR.mkdir(parents=True, exist_ok=True)
     report_dir = Path(args.report_dir).expanduser().resolve() if args.report_dir else DEFAULT_REPORT_DIR
     report_path, audit_path, template_path = report_artifact_paths(audio_path, output_path, report_dir)
-    metadata_lines = None
+    metadata_lines = list(lyrics.metadata_lines)
     report.setdefault("backend", timing_source)
     if getattr(args, "option_a_rollback_reason", None):
         report["segment_skeleton_status"] = {

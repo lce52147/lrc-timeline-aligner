@@ -55,6 +55,17 @@ _GLOBAL_CTC_ASSIGNMENT_BOUNDARY_KEYS=frozenset({
 })
 
 
+def _review_required_row_count(items:Sequence[object])->int:
+    entries={
+        item.get('entry')
+        for item in items
+        if isinstance(item,dict)
+        and item.get('review_required')
+        and isinstance(item.get('entry'),int)
+    }
+    return len(entries)
+
+
 def _archive_global_ctc_assignment_state(assignment:dict[str,object])->None:
     archived={}
     for key in list(assignment):
@@ -387,8 +398,8 @@ def run_segment_skeleton(
                     'entry':index+1,'text':lyric_texts[index],
                     'flags':marks,'severity':'high','review_required':True})
         cloned['suspicious_alignment_count']=len(cloned['suspicious_alignments'])
-        cloned['review_required_count']=len(cloned['suspicious_alignments'])
-        cloned['review_required']=bool(cloned['suspicious_alignments'])
+        cloned['review_required_count']=_review_required_row_count(cloned['suspicious_alignments'])
+        cloned['review_required']=bool(cloned['review_required_count'])
         status={
           'status':'SEGMENT_CURRENT','reason':'VALID_LOCAL_CTC',
           'whole_song':True,'BK_used':False,
