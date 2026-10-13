@@ -7977,6 +7977,32 @@ class FixedPointPhaseCZeroTrustTests(unittest.TestCase):
                     hypothesis, fractured, audio
                 ))
 
+    def test_phonetic_onset_fusion_remains_diagnostic_only_in_central_collector(self) -> None:
+        with TemporaryDirectory() as temp_name:
+            audio = Path(temp_name) / "isolated-vocal.wav"
+            audio.write_bytes(b"isolated-vocal-runtime-artifact")
+            features, assignment, hypothesis = self._phonetic_runtime_fixture(audio)
+            assignment["alignment_hypotheses"] = [hypothesis]
+            entries = [LyricEntry(["provenance-check"])]
+            report: dict[str, object] = {
+                "backend": "ctc",
+                "assignments": [assignment],
+            }
+            with mock.patch.object(auto_lrc, "analyze_vocal_onsets", return_value=features):
+                sets, _diagnostics = auto_lrc.collect_central_timing_candidates(
+                    audio,
+                    entries,
+                    [10.003],
+                    report,
+                    20.0,
+                    type("Args", (), {})(),
+                    independent_evidence_audio_path=audio,
+                )
+        self.assertNotIn(
+            "ctc-phonetic-onset-fusion",
+            {candidate.source for candidate in sets[0]},
+        )
+
     def test_bound_local_occurrence_identity_rejects_mutated_hypothesis_record(self) -> None:
         assignment: dict[str, object] = {"entry": 1, "timestamp": 10.0, "score": 0.5}
         auto_lrc.record_alignment_hypothesis(

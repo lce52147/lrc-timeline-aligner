@@ -22427,10 +22427,10 @@ def collect_central_timing_candidates(
                         hypothesis, raw_assignment, evidence_audio_path
                     ):
                         continue
-                    independent_acoustic_bound = True
-                    independent_direct_bound = True
-                    acoustic_producer = direct_producer = "phonetic-onset-fusion"
-                    acoustic_kind = direct_kind = "phonetic-onset"
+                    # Stage-4 R1-2 resolution: keep the validated hypothesis as
+                    # diagnostics, but remove this formerly-dead producer from
+                    # Central timing authority so cleanup cannot move timestamps.
+                    continue
                 elif source == "ctc-vocal-onset-confirmed":
                     if not vocal_onset_confirmation_provenance_is_valid(
                         hypothesis, raw_assignment, evidence_audio_path,
