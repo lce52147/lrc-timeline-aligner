@@ -13790,6 +13790,24 @@ def fused_candidate_report(
                 item["timestamp"] = round(timestamps[index], 3)
             fused_assignments.append(item)
         report["assignments"] = fused_assignments
+    normal_forced_rows = normal_report.get("whisperx_forced_rows", [])
+    sns_forced_rows = sns_report.get("whisperx_forced_rows", [])
+    if isinstance(normal_forced_rows, list) and isinstance(sns_forced_rows, list):
+        fused_forced_rows: list[object] = []
+        for index in range(max(len(normal_forced_rows), len(sns_forced_rows), len(timestamps))):
+            use_sns = index >= collapse_start or index in adopted_sns_entries
+            source = sns_forced_rows if use_sns else normal_forced_rows
+            fused_forced_rows.append(copy.deepcopy(source[index]) if index < len(source) else {})
+        report["whisperx_forced_rows"] = fused_forced_rows
+    normal_forced_times = normal_report.get("whisperx_forced_first_times", [])
+    sns_forced_times = sns_report.get("whisperx_forced_first_times", [])
+    if isinstance(normal_forced_times, list) and isinstance(sns_forced_times, list):
+        fused_forced_times: list[object] = []
+        for index in range(max(len(normal_forced_times), len(sns_forced_times), len(timestamps))):
+            use_sns = index >= collapse_start or index in adopted_sns_entries
+            source = sns_forced_times if use_sns else normal_forced_times
+            fused_forced_times.append(copy.deepcopy(source[index]) if index < len(source) else None)
+        report["whisperx_forced_first_times"] = fused_forced_times
     report["candidate_fusion"] = {
         "normal_until_entry": collapse_start,
         "sns_from_entry": collapse_start + 1,

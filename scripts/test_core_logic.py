@@ -2125,6 +2125,43 @@ class VocalOnsetTiebreakTests(unittest.TestCase):
             auto_lrc.analyze_audio = original_analyze_audio  # type: ignore[assignment]
 
 
+class WhisperxCandidateFusionTests(unittest.TestCase):
+    def test_fused_report_keeps_forced_rows_from_same_decode_as_assignment(self) -> None:
+        normal_report = {
+            "assignments": [
+                {"entry": 1, "timestamp": 10.0, "score": 0.9},
+                {"entry": 2, "timestamp": 20.0, "score": 0.9},
+            ],
+            "whisperx_forced_rows": [
+                {"entry": 1, "first_char_time": 10.1, "decode": "normal"},
+                {"entry": 2, "first_char_time": 20.1, "decode": "normal"},
+            ],
+        }
+        sns_report = {
+            "assignments": [
+                {"entry": 1, "timestamp": 11.0, "score": 0.9},
+                {"entry": 2, "timestamp": 21.0, "score": 0.9},
+            ],
+            "whisperx_forced_rows": [
+                {"entry": 1, "first_char_time": 11.1, "decode": "sns"},
+                {"entry": 2, "first_char_time": 21.1, "decode": "sns"},
+            ],
+        }
+
+        fused = auto_lrc.fused_candidate_report(
+            normal_report,
+            sns_report,
+            [10.0, 21.0],
+            collapse_start=1,
+            adopted_sns_entries=[],
+        )
+
+        self.assertEqual(
+            [row["decode"] for row in fused["whisperx_forced_rows"]],
+            ["normal", "sns"],
+        )
+
+
 class WhisperxAcousticBoundaryTests(unittest.TestCase):
     def test_candidate_disagreement_backtracks_to_local_onset(self) -> None:
         frame_times = np.round(np.arange(0.0, 30.0, 0.1), 3).astype(np.float32)
