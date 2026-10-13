@@ -8592,6 +8592,23 @@ class V142CentralConsensusRegressionTests(unittest.TestCase):
         self.assertEqual(decision.status, "provisional_unresolved")
         self.assertEqual(decision.candidate.candidate_id, current.candidate_id)
 
+    def test_precentral_diagnostic_distant_candidate_blocks_review_supersede(self) -> None:
+        row = {
+            "entry": 1,
+            "flags": ["candidate_disagreement"],
+            "candidate_timestamps": {"output": 261.70},
+            "precentral_diagnostic": {
+                "candidates": [
+                    {"source": "selected_path", "time": 261.70},
+                    {"source": "ctc_repeated_leading_term_onset", "time": 259.42},
+                ]
+            },
+        }
+
+        self.assertTrue(
+            auto_lrc._precentral_candidate_gap_exceeds_half_second(row, 261.70)
+        )
+
     def test_postcentral_projection_replaces_stale_output_and_resolves_superseded_review(self) -> None:
         current = self.candidate("ctc-current", 11.00, current=True, independent=False)
         selected = self.candidate("raw-vocal-independent-fusion", 10.00)

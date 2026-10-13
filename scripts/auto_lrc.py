@@ -24424,6 +24424,26 @@ def _precentral_candidate_gap_exceeds_half_second(
             observed = True
             if abs(timestamp - selected_time) > 0.5:
                 return True
+    precentral = row.get("precentral_diagnostic")
+    precentral_candidates = (
+        precentral.get("candidates") if isinstance(precentral, dict) else None
+    )
+    if isinstance(precentral_candidates, list):
+        for candidate in precentral_candidates:
+            if not isinstance(candidate, dict):
+                continue
+            value = candidate.get("time")
+            if isinstance(value, bool):
+                continue
+            try:
+                timestamp = float(value)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(timestamp):
+                continue
+            observed = True
+            if abs(timestamp - selected_time) > 0.5:
+                return True
     if not observed:
         try:
             spread = float(row.get("candidate_disagreement_seconds"))
