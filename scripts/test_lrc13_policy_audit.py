@@ -33,7 +33,11 @@ class TimingPolicyRegressionTests(unittest.TestCase):
             if isinstance(call, ast.Call)
             and isinstance(call.func, ast.Name)
             and call.func.id == "evaluate_backend_timing"
-            and (17000 <= call.lineno <= 18000 or 32000 <= call.lineno <= 34000)
+            and call.args
+            and isinstance(call.args[0], ast.Attribute)
+            and isinstance(call.args[0].value, ast.Name)
+            and call.args[0].value.id == "selected_eval"
+            and call.args[0].attr == "backend"
         ]
         self.assertEqual(len(replay_calls), 5, "New replay calls must be reviewed")
         for call in replay_calls:
