@@ -8699,7 +8699,8 @@ def _run_whispercpp_wav(
     command.append(str(wav_path))
     json_path = output_base.with_suffix(".json")
     _remove_stale_output(json_path)
-    proc = run_command(command)
+    with whispercpp_gpu_lock():
+        proc = run_command(command)
     if proc.returncode != 0:
         raise LrcError(f"whisper.cpp failed: {proc.stderr.strip() or proc.stdout.strip()}")
 
@@ -8802,7 +8803,8 @@ def _run_whispercpp_wav_batch(
             f"local Whisper raw batch: chunk={chunk_number}/{len(chunks)} files={len(chunk)}"
         )
         try:
-            proc = run_command(command)
+            with whispercpp_gpu_lock():
+                proc = run_command(command)
         except (LrcError, OSError, subprocess.SubprocessError):
             proc = None
         chunk_ok = proc is not None and proc.returncode == 0
@@ -12865,20 +12867,20 @@ def _demucs_write_error(cache_dir: Path, detail: str) -> str:
 
 
 @contextlib.contextmanager
-def demucs_cache_key_lock(cache_dir: Path, *, timeout_seconds: float = 300.0):
-    """Serialize Demucs cache writers across *processes*, including Windows.
+def _exclusive_file_lock(path: Path, *, timeout_seconds: float | None, busy_message: str):
+    """Exclusive lock across *processes*, including Windows.
 
     The lock file persists, but OS byte-range locks are automatically released
     on process termination, even after a hard crash. Never delete a live lock
-    file: replacing an inode could permit simultaneous publishers.
+    file: replacing an inode could permit simultaneous holders.
+    ``timeout_seconds=None`` waits indefinitely.
     """
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    path = cache_dir / ".demucs_writer.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a+b", buffering=0) as handle:
         if handle.tell() == 0:
             handle.write(b"0")
         handle.seek(0)
-        deadline = time.monotonic() + timeout_seconds
+        deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
         if os.name == "nt":
             import msvcrt
             while True:
@@ -12887,8 +12889,8 @@ def demucs_cache_key_lock(cache_dir: Path, *, timeout_seconds: float = 300.0):
                     msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
                     break
                 except OSError as exc:
-                    if time.monotonic() >= deadline:
-                        raise TimeoutError(f"Demucs cache lock busy: {path}") from exc
+                    if deadline is not None and time.monotonic() >= deadline:
+                        raise TimeoutError(f"{busy_message}: {path}") from exc
                     time.sleep(0.1)
             try:
                 yield
@@ -12902,13 +12904,53 @@ def demucs_cache_key_lock(cache_dir: Path, *, timeout_seconds: float = 300.0):
                     fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                     break
                 except BlockingIOError as exc:
-                    if time.monotonic() >= deadline:
-                        raise TimeoutError(f"Demucs cache lock busy: {path}") from exc
+                    if deadline is not None and time.monotonic() >= deadline:
+                        raise TimeoutError(f"{busy_message}: {path}") from exc
                     time.sleep(0.1)
             try:
                 yield
             finally:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+@contextlib.contextmanager
+def demucs_cache_key_lock(cache_dir: Path, *, timeout_seconds: float = 300.0):
+    """Serialize Demucs cache writers across processes."""
+    with _exclusive_file_lock(
+        cache_dir / ".demucs_writer.lock",
+        timeout_seconds=timeout_seconds,
+        busy_message="Demucs cache lock busy",
+    ):
+        yield
+
+
+WHISPERCPP_GPU_LOCK_PATH = PROJECT_ROOT / "outputs" / "cache" / ".whispercpp_gpu.lock"
+
+
+@contextlib.contextmanager
+def whispercpp_gpu_lock():
+    """GPU phase for one whisper.cpp run: nothing else resident, one song at a time.
+
+    whisper.cpp large-v3 is the largest model (~4.1 GB sampled).  The global
+    WhisperX phase used to start it while the WhisperX model was still resident
+    (~2.5 GB), giving the 8.5 GB per-song peak.  So this song's CTC/WhisperX
+    helpers are parked first (weights move to CPU and return unchanged on their
+    next request), and a cross-process lock lets only one song run whisper.cpp
+    at a time, so two songs can share a 12 GB GPU.  Scheduling only: inputs,
+    outputs and evidence are unchanged.  ``LRC_WHISPERCPP_GPU_LOCK=0`` disables
+    the cross-process lock (parking stays).
+    """
+    _park_persistent_helper_mode("whisperx", reason="before-whispercpp")
+    _park_persistent_helper_mode("ctc", reason="before-whispercpp")
+    if os.environ.get("LRC_WHISPERCPP_GPU_LOCK", "1").strip() == "0":
+        yield
+        return
+    with _exclusive_file_lock(
+        WHISPERCPP_GPU_LOCK_PATH,
+        timeout_seconds=None,
+        busy_message="whisper.cpp GPU lock busy",
+    ):
+        yield
 
 
 def prepare_vocal_ctc_audio(audio_path: Path, args: argparse.Namespace) -> tuple[Path, str, str | None]:
