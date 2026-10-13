@@ -10654,6 +10654,118 @@ class ContractATailLineageTests(unittest.TestCase):
                 places=3,
             )
 
+    def test_cross_backend_tail_cannot_clear_inside_supported_predecessor_continuation(self) -> None:
+        predecessor = self.candidate(
+            0,
+            9.0,
+            spans=(
+                auto_lrc.TimingTokenSpan(9.00, 9.08, 0.80, "a"),
+                auto_lrc.TimingTokenSpan(9.10, 9.18, 0.80, "b"),
+                auto_lrc.TimingTokenSpan(9.80, 9.88, 0.90, "c"),
+                auto_lrc.TimingTokenSpan(9.92, 10.00, 0.90, "d"),
+                auto_lrc.TimingTokenSpan(10.04, 10.12, 0.90, "e"),
+                auto_lrc.TimingTokenSpan(10.14, 10.22, 0.01, "f"),
+            ),
+        )
+        cross_backend = self.observation(
+            producer="whisperx-forced-row",
+            backend_lineage="whisper-family",
+            tail_end=9.50,
+            uncertainty=0.05,
+        )
+        current = self.candidate(1, 9.92, source="ctc-opening-local-retry")
+        state = self.state(predecessor, (cross_backend,), current=current)
+        decision = state.decisions[1]
+        self.assertEqual(decision.evidence.ownership.status, "unknown")
+        self.assertFalse(state.audits[1].timing_trusted)
+
+    def test_single_attached_weak_terminal_token_keeps_local_window_tail_usable(self) -> None:
+        predecessor = self.candidate(
+            0,
+            1.24,
+            source="ctc-local-window",
+            spans=(
+                auto_lrc.TimingTokenSpan(1.241, 1.261, 0.796901, "s"),
+                auto_lrc.TimingTokenSpan(1.321, 1.341, 0.473394, "o"),
+                auto_lrc.TimingTokenSpan(1.761, 1.781, 0.843175, "e"),
+                auto_lrc.TimingTokenSpan(1.921, 1.941, 0.406651, "v"),
+                auto_lrc.TimingTokenSpan(1.941, 1.961, 0.007228, "e"),
+                auto_lrc.TimingTokenSpan(1.961, 1.981, 0.924431, "r"),
+                auto_lrc.TimingTokenSpan(2.001, 2.021, 0.377052, "y"),
+                auto_lrc.TimingTokenSpan(2.081, 2.101, 0.041817, "t"),
+                auto_lrc.TimingTokenSpan(2.101, 2.121, 0.029486, "h"),
+                auto_lrc.TimingTokenSpan(2.181, 2.201, 0.856136, "i"),
+                auto_lrc.TimingTokenSpan(2.321, 2.341, 0.909203, "n"),
+                auto_lrc.TimingTokenSpan(2.361, 2.381, 0.480541, "g"),
+                auto_lrc.TimingTokenSpan(2.441, 2.461, 0.045536, "t"),
+                auto_lrc.TimingTokenSpan(2.481, 2.501, 0.021416, "h"),
+                auto_lrc.TimingTokenSpan(2.541, 2.561, 0.944563, "a"),
+                auto_lrc.TimingTokenSpan(2.741, 2.761, 0.876551, "t"),
+                auto_lrc.TimingTokenSpan(2.821, 2.841, 0.920501, "m"),
+                auto_lrc.TimingTokenSpan(2.901, 2.921, 0.909942, "a"),
+                auto_lrc.TimingTokenSpan(3.041, 3.061, 0.822256, "k"),
+                auto_lrc.TimingTokenSpan(3.082, 3.102, 0.853498, "e"),
+                auto_lrc.TimingTokenSpan(3.122, 3.142, 0.831668, "s"),
+                auto_lrc.TimingTokenSpan(3.182, 3.202, 0.926002, "m"),
+                auto_lrc.TimingTokenSpan(3.262, 3.282, 0.482192, "e"),
+                auto_lrc.TimingTokenSpan(3.522, 3.542, 0.012802, "w"),
+                auto_lrc.TimingTokenSpan(3.542, 3.562, 0.049645, "h"),
+                auto_lrc.TimingTokenSpan(3.662, 3.682, 0.548348, "o"),
+                auto_lrc.TimingTokenSpan(3.962, 3.982, 0.900118, "l"),
+                auto_lrc.TimingTokenSpan(4.002, 4.022, 0.008684, "e"),
+            ),
+        )
+        tail = auto_lrc.derive_reliable_tail(predecessor)
+        self.assertEqual(tail.validity, "valid")
+        self.assertLessEqual(
+            (tail.reliable_tail_end or 99.0) + (tail.uncertainty_seconds or 0.0),
+            4.10,
+        )
+        current = self.candidate(1, 4.16, source="ctc-local-window")
+        evaluation = auto_lrc.evaluate_timing_candidate(
+            current,
+            predecessor,
+            previous_tail=tail,
+        )
+        self.assertEqual(evaluation.evidence.ownership.status, "clear")
+
+    def test_detached_low_reliability_local_window_terminal_ghost_does_not_poison_tail(self) -> None:
+        predecessor = self.candidate(
+            0,
+            4.16,
+            source="ctc-local-window",
+            spans=(
+                auto_lrc.TimingTokenSpan(4.162, 4.182, 0.705, "i"),
+                auto_lrc.TimingTokenSpan(4.422, 4.442, 0.911, "m"),
+                auto_lrc.TimingTokenSpan(4.522, 4.542, 0.904, "a"),
+                auto_lrc.TimingTokenSpan(4.762, 4.782, 0.514, "k"),
+                auto_lrc.TimingTokenSpan(4.782, 4.802, 0.015, "u"),
+                auto_lrc.TimingTokenSpan(4.942, 4.963, 0.010, "n"),
+                auto_lrc.TimingTokenSpan(5.323, 5.343, 0.283, "n"),
+                auto_lrc.TimingTokenSpan(5.423, 5.443, 0.584, "i"),
+                auto_lrc.TimingTokenSpan(5.643, 5.663, 0.614, "s"),
+                auto_lrc.TimingTokenSpan(5.763, 5.783, 0.931, "a"),
+                auto_lrc.TimingTokenSpan(5.983, 6.003, 0.837, "s"),
+                auto_lrc.TimingTokenSpan(6.083, 6.103, 0.858, "a"),
+                auto_lrc.TimingTokenSpan(6.203, 6.223, 0.697, "g"),
+                auto_lrc.TimingTokenSpan(6.303, 6.323, 0.428, "e"),
+                auto_lrc.TimingTokenSpan(6.723, 6.743, 0.064, "y"),
+                auto_lrc.TimingTokenSpan(6.864, 6.884, 0.210, "o"),
+                auto_lrc.TimingTokenSpan(12.046, 12.066, 0.064, "o"),
+            ),
+        )
+        tail = auto_lrc.derive_reliable_tail(predecessor)
+        self.assertEqual(tail.validity, "valid")
+        self.assertLess(tail.reliable_tail_end or 99.0, 7.0)
+
+        current = self.candidate(1, 12.17, source="ctc-local-window")
+        evaluation = auto_lrc.evaluate_timing_candidate(
+            current,
+            predecessor,
+            previous_tail=tail,
+        )
+        self.assertEqual(evaluation.evidence.ownership.status, "clear")
+
     def test_candidate_lineage_switch_recomputes_authority(self) -> None:
         observation = self.observation()
         report = self.report((observation,))

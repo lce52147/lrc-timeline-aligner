@@ -2852,7 +2852,30 @@ def derive_reliable_tail(
     if candidate.identity_support != "supported" or candidate.sequence_support != "supported":
         return _tail_region_result(candidate, regions, "unknown", "tail-identity-or-sequence-unavailable")
     spans = candidate.spans
-    if len(spans) < 2 or spans[-1].score < 0.05:
+    attached_weak_terminal = False
+    detached_low_reliability_terminal = False
+    if (
+        candidate.source == "ctc-local-window"
+        and len(spans) >= 3
+        and regions.onset_proof_end is not None
+    ):
+        terminal_gap = max(0.0, spans[-1].start - spans[-2].end)
+        reliable_prefix_count = sum(span.score >= 0.08 for span in spans[:-1])
+        if reliable_prefix_count >= 2 and spans[-2].score >= 0.08:
+            if (
+                spans[-1].score < 0.08
+                and terminal_gap >= CTC_SEVERE_INTERNAL_GAP_SECONDS
+            ):
+                spans = spans[:-1]
+                detached_low_reliability_terminal = True
+            elif (
+                spans[-1].score < 0.05
+                and not regions.severe_gap_indexes
+                and regions.p95_internal_gap is not None
+                and terminal_gap <= max(HOP_SECONDS, float(regions.p95_internal_gap))
+            ):
+                attached_weak_terminal = True
+    if len(spans) < 2 or (spans[-1].score < 0.05 and not attached_weak_terminal):
         return _tail_region_result(candidate, regions, "unknown", "no-terminal-supported-run")
     gaps = tuple(max(0.0, right.start - left.end) for left, right in zip(spans, spans[1:]))
     separating_gap_index = len(spans) - 2
@@ -2922,14 +2945,21 @@ def derive_reliable_tail(
         return _tail_region_result(candidate, regions, "unknown", "terminal-run-not-reliable")
     if any(index == start_index - 1 for index in regions.severe_gap_indexes):
         return _tail_region_result(candidate, regions, "invalid", "tail-fracture-invalid")
+    tail_uncertainty = contiguous_limit
+    tail_reason = "reliable-terminal-run"
+    if attached_weak_terminal:
+        tail_uncertainty = max(HOP_SECONDS, spans[-1].end - spans[-2].end)
+        tail_reason = "local-window-attached-weak-terminal"
+    elif detached_low_reliability_terminal:
+        tail_reason = "local-window-detached-low-reliability-terminal-ignored"
     return _tail_region_result(
         candidate,
         regions,
         "valid",
-        "reliable-terminal-run",
+        tail_reason,
         tail[0].start,
         tail[-1].end,
-        contiguous_limit,
+        tail_uncertainty,
         statistics.mean(span.score for span in tail),
         tuple(range(start_index, len(spans))),
         local_gap_references,
@@ -3089,10 +3119,18 @@ def resolve_reliable_tail(
     if not observations:
         return intrinsic
     external = _bind_independent_tail_to_candidate(candidate, observations[0])
+    external_upper = external.reliable_tail_end + (external.uncertainty_seconds or 0.0)
     if intrinsic.validity != "valid" or intrinsic.reliable_tail_end is None:
+        # A disjoint backend may resolve an unknown predecessor tail, but it
+        # cannot erase reliable support that the selected predecessor itself
+        # still carries beyond that backend's claimed release boundary.
+        if any(
+            span.score >= 0.08 and span.start > external_upper
+            for span in candidate.spans
+        ):
+            return intrinsic
         return external
     intrinsic_upper = intrinsic.reliable_tail_end + (intrinsic.uncertainty_seconds or 0.0)
-    external_upper = external.reliable_tail_end + (external.uncertainty_seconds or 0.0)
     if intrinsic_upper >= external_upper:
         return intrinsic
     return external
