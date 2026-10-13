@@ -14,7 +14,9 @@ class SegmentPeerOutlierTests(unittest.TestCase):
         r=candidate("raw-vocal-independent-fusion",46.1)
         w=candidate("whisperx-vocal-independent-fusion",45.32)
         kept,discarded=choose([c,r,w])
-        self.assertEqual(kept,(c,r))
+        # Diagnostic-only contract: the outlier is reported but never removed
+        # from the candidate set (ctc-first already denies it final authority).
+        self.assertEqual(kept,(c,r,w))
         self.assertEqual(discarded,(w,))
     def test_no_raw_evidence_means_no_exclusion(self):
         c=candidate("ctc-vocal-onset-confirmed",46.41)

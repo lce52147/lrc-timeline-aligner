@@ -23,10 +23,8 @@ def exclude_uncorroborated_whisperx_fusion(candidates):
                 corroborated.append((c,r))
     if not corroborated:return tuple(candidates),()
     excluded=[]
-    kept=[]
     for x in candidates:
         if x.source!="whisperx-vocal-independent-fusion":
-            kept.append(x)
             continue
         timestamp=x.written_time.seconds
         is_outlier=any(
@@ -34,5 +32,4 @@ def exclude_uncorroborated_whisperx_fusion(candidates):
             or timestamp>max(c.written_time.seconds,r.written_time.seconds)+DISTANT_WINDOW_SECONDS
             for c,r in corroborated)
         if is_outlier:excluded.append(x)
-        else:kept.append(x)
-    return tuple(kept),tuple(excluded)
+    return tuple(candidates),tuple(excluded)
