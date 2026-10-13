@@ -5767,6 +5767,78 @@ class BackendPeerSimulationTests(unittest.TestCase):
         self.assertTrue(current.current)
         self.assertFalse(neutral.current)
 
+    def test_peer_simulation_respects_ctc_first_timing_policy(self) -> None:
+        with TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            ctc_report, _entries = self.report_with_entries(1, "ctc")
+            whisper_report, _entries = self.report_with_entries(1, "whispercpp")
+            ctc = self.candidate(0, 1.0, current=True, source="ctc-current", direct=True)
+            raw = self.candidate(
+                0,
+                2.0,
+                current=True,
+                source="raw-vocal-independent-fusion",
+                direct=True,
+                independent=True,
+            )
+            first = self.evaluated_bundle(root, ((ctc,),), backend="ctc", report=ctc_report)
+            second = self.evaluated_bundle(
+                root, ((raw,),), backend="whispercpp", report=whisper_report
+            )
+            default = auto_lrc._simulate_cross_backend_peer_graph(
+                (first, second), selected_backend="ctc"
+            )
+            ctc_first = auto_lrc._simulate_cross_backend_peer_graph(
+                (first, second),
+                selected_backend="ctc",
+                timing_source_policy="ctc-first",
+            )
+        self.assertEqual(default["rows"][0]["status"], "provisional_unresolved")
+        self.assertEqual(ctc_first["rows"][0]["status"], "selected_valid")
+        self.assertEqual(ctc_first["rows"][0]["candidate_source"], "ctc-current")
+        self.assertEqual(ctc_first["rows"][0]["hypothetical_centiseconds"], 100)
+
+    def test_backend_projection_passes_selected_timing_policy_to_peer_simulation(self) -> None:
+        with TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            audio = root / "projection-policy.flac"
+            audio.write_bytes(b"projection-policy-audio")
+            args = build_parser().parse_args([str(audio)])
+            report, _entries = self.report_with_entries(1, "ctc")
+            candidate = self.candidate(
+                0, 1.0, current=True, source="ctc-current", direct=True
+            )
+            evaluated = auto_lrc.evaluate_backend_timing(
+                "ctc",
+                ((candidate,),),
+                report,
+                {},
+                timing_source_policy="ctc-first",
+            )
+            selection = auto_lrc.select_evaluated_backend((evaluated,))
+            generation = [
+                {
+                    "backend": "ctc",
+                    "report": report,
+                    "timestamps": [1.0],
+                    "error": None,
+                }
+            ]
+            preview = [
+                {"timestamps": [1.0], "report": report, "evaluated": evaluated}
+            ]
+            with mock.patch.object(
+                auto_lrc,
+                "_simulate_cross_backend_peer_graph",
+                wraps=auto_lrc._simulate_cross_backend_peer_graph,
+            ) as simulated:
+                auto_lrc._build_backend_provenance_projection_seed(
+                    audio, args, generation, preview, selection
+                )
+        self.assertEqual(
+            simulated.call_args.kwargs["timing_source_policy"], "ctc-first"
+        )
+
     def test_peer_unresolved_fallback_keeps_current_clock_independent_of_candidate_id(self) -> None:
         current = self.candidate(0, 10.0, current=True, source="ctc-current")
         alternative = self.candidate(0, 11.0, current=False, source="ctc-current")
@@ -9517,6 +9589,101 @@ class V144JointBoundaryGraphRegressionTests(unittest.TestCase):
                 context,
             )
         )
+
+    def test_retry_planners_respect_ctc_first_when_whisper_would_transiently_win(self) -> None:
+        entries, base_candidate_sets, report, cap, _epoch = self.fixture()
+        whisper = auto_lrc.make_timing_candidate(
+            entry_index=1,
+            entry_text="generic line 1",
+            source="whisper-policy-probe",
+            raw_time=10.70,
+            confidence=0.95,
+            identity_support="supported",
+            sequence_support="supported",
+            direct_onset_support="supported",
+            direct_onset_time=10.70,
+            direct_onset_source_artifact={"kind": "policy-probe"},
+            direct_onset_evidence_producer="phonetic-onset-fusion",
+            direct_onset_evidence_kind="phonetic-onset",
+            direct_onset_evidence_independent=True,
+            current=False,
+            source_artifact={"kind": "policy-probe"},
+        )
+        candidate_sets = (
+            base_candidate_sets[0],
+            (*base_candidate_sets[1], whisper),
+            base_candidate_sets[2],
+        )
+        epoch = auto_lrc.freeze_base_retry_epoch(
+            "ctc",
+            report,
+            candidate_sets,
+            auto_lrc.inactive_legacy_timing_diagnostics(),
+            cap,
+        )
+        context = report[auto_lrc._RUNTIME_TAIL_EVIDENCE_CONTEXT_KEY]
+
+        default_state = auto_lrc.build_final_timing_state(candidate_sets)
+        self.assertEqual(default_state.decisions[1].status, "selected_valid")
+        self.assertEqual(default_state.decisions[1].candidate.source, "whisper-policy-probe")
+        ctc_first_state = auto_lrc.build_final_timing_state(
+            candidate_sets,
+            timing_source_policy="ctc-first",
+        )
+        self.assertEqual(ctc_first_state.decisions[1].status, "provisional_unresolved")
+
+        joint_requests = auto_lrc.plan_joint_boundary_retry_requests(
+            epoch,
+            cap,
+            entries,
+            candidate_sets,
+            20.0,
+            None,
+            context,
+            timing_source_policy="ctc-first",
+        )
+        regular_requests = auto_lrc.plan_crossline_retry_requests(
+            epoch,
+            cap,
+            entries,
+            candidate_sets,
+            20.0,
+            None,
+            context,
+            timing_source_policy="ctc-first",
+        )
+        self.assertEqual([request.entry_index for request in joint_requests], [1])
+        self.assertEqual([request.entry_index for request in regular_requests], [1])
+
+    def test_retry_executor_passes_ctc_first_policy_to_production_planner(self) -> None:
+        entries, candidate_sets, report, cap, epoch = self.fixture()
+        context = report[auto_lrc._RUNTIME_TAIL_EVIDENCE_CONTEXT_KEY]
+        requests = auto_lrc.plan_crossline_retry_requests(
+            epoch,
+            cap,
+            entries,
+            candidate_sets,
+            20.0,
+            None,
+            context,
+            timing_source_policy="ctc-first",
+        )
+        self.assertTrue(requests)
+        with mock.patch.object(
+            auto_lrc, "plan_crossline_retry_requests", return_value=()
+        ) as planner:
+            result = auto_lrc.execute_crossline_retry_epoch(
+                epoch,
+                cap,
+                entries,
+                candidate_sets,
+                20.0,
+                (requests[0],),
+                tail_evidence_context=context,
+                timing_source_policy="ctc-first",
+            )
+        self.assertEqual(result, ())
+        self.assertEqual(planner.call_args.args[-1], "ctc-first")
 
     def test_complete_joint_pair_is_observation_only(self) -> None:
         entries, candidate_sets, _report, cap, _epoch, request = self.joint_request()

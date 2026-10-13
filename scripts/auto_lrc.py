@@ -16083,6 +16083,7 @@ def plan_crossline_retry_requests(
     duration: float,
     independent_tail_evidence: RuntimeTailEvidence | None = None,
     tail_evidence_context: TailEvidenceContext | None = None,
+    timing_source_policy: Literal["default", "ctc-first"] = "default",
 ) -> tuple[CrossLineRetryRequest, ...]:
     """Plan bounded *current-line opening* recovery.
 
@@ -16100,6 +16101,7 @@ def plan_crossline_retry_requests(
         candidate_sets,
         independent_tail_evidence=independent_tail_evidence,
         tail_evidence_context=tail_evidence_context,
+        timing_source_policy=timing_source_policy,
     )
     requests: list[CrossLineRetryRequest] = []
     duration_revision = _timing_content_digest({"duration": round(duration, 6)})
@@ -16265,6 +16267,7 @@ def plan_joint_boundary_retry_requests(
     duration: float,
     independent_tail_evidence: RuntimeTailEvidence | None = None,
     tail_evidence_context: TailEvidenceContext | None = None,
+    timing_source_policy: Literal["default", "ctc-first"] = "default",
 ) -> tuple[CrossLineRetryRequest, ...]:
     """Plan bounded *previous+current lyric* joint boundary observations.
 
@@ -16287,6 +16290,7 @@ def plan_joint_boundary_retry_requests(
         candidate_sets,
         independent_tail_evidence=independent_tail_evidence,
         tail_evidence_context=tail_evidence_context,
+        timing_source_policy=timing_source_policy,
     )
     requests: list[CrossLineRetryRequest] = []
     duration_revision = _timing_content_digest({"duration": round(duration, 6)})
@@ -16425,6 +16429,7 @@ def crossline_retry_request_is_current(
     duration: float,
     independent_tail_evidence: RuntimeTailEvidence | None = None,
     tail_evidence_context: TailEvidenceContext | None = None,
+    timing_source_policy: Literal["default", "ctc-first"] = "default",
 ) -> bool:
     planner = (
         plan_joint_boundary_retry_requests
@@ -16439,6 +16444,7 @@ def crossline_retry_request_is_current(
         duration,
         independent_tail_evidence,
         tail_evidence_context,
+        timing_source_policy,
     )
 
 
@@ -16451,6 +16457,7 @@ def plan_local_whisper_requests(
     duration: float,
     independent_tail_evidence: RuntimeTailEvidence | None = None,
     tail_evidence_context: TailEvidenceContext | None = None,
+    timing_source_policy: Literal["default", "ctc-first"] = "default",
 ) -> tuple[LocalWhisperRequest, ...]:
     """Plan independent Whisper-family observations only where central evidence is incomplete."""
     if capability is None or len(entries) != len(candidate_sets):
@@ -16464,6 +16471,7 @@ def plan_local_whisper_requests(
         candidate_sets,
         independent_tail_evidence=independent_tail_evidence,
         tail_evidence_context=tail_evidence_context,
+        timing_source_policy=timing_source_policy,
     )
     requests: list[LocalWhisperRequest] = []
     audio_revision = capability.audio_sha256
@@ -19936,6 +19944,7 @@ def execute_crossline_retry_epoch(
     runtime_stats: dict[str, int] | None = None,
     independent_tail_evidence: RuntimeTailEvidence | None = None,
     tail_evidence_context: TailEvidenceContext | None = None,
+    timing_source_policy: Literal["default", "ctc-first"] = "default",
     worker_count: int = 1,
 ) -> tuple[CrossLineRetryOutcome, ...]:
     """Execute one frozen retry epoch.
@@ -19963,12 +19972,14 @@ def execute_crossline_retry_epoch(
         plan_joint_boundary_retry_requests(
             epoch, capability, entries, candidate_sets, duration,
             independent_tail_evidence, tail_evidence_context,
+            timing_source_policy,
         )
     ) if needs_joint else set()
     current_regular = set(
         plan_crossline_retry_requests(
             epoch, capability, entries, candidate_sets, duration,
             independent_tail_evidence, tail_evidence_context,
+            timing_source_policy,
         )
     ) if needs_regular else set()
 
@@ -21711,6 +21722,7 @@ def _authoritative_tail_semantic_revision(
     candidate_sets: tuple[tuple[TimingCandidate, ...], ...],
     independent_tail_evidence: RuntimeTailEvidence,
     tail_evidence_context: TailEvidenceContext | tuple[TailEvidenceContext, ...] | None = None,
+    timing_source_policy: Literal["default", "ctc-first"] = "default",
 ) -> str:
     if len(candidate_sets) != len(independent_tail_evidence):
         return _timing_content_digest({"invalid_length": True})
@@ -21719,6 +21731,7 @@ def _authoritative_tail_semantic_revision(
             candidate_sets,
             independent_tail_evidence=independent_tail_evidence,
             tail_evidence_context=tail_evidence_context,
+            timing_source_policy=timing_source_policy,
         )
     except (TypeError, ValueError):
         return _timing_content_digest({"invalid_state": True})
@@ -21740,11 +21753,15 @@ def _retry_semantic_state_revision(
     candidate_sets: tuple[tuple[TimingCandidate, ...], ...],
     independent_tail_evidence: RuntimeTailEvidence,
     tail_evidence_context: TailEvidenceContext | tuple[TailEvidenceContext, ...] | None = None,
+    timing_source_policy: Literal["default", "ctc-first"] = "default",
 ) -> tuple[str, str]:
     return (
         _candidate_set_semantic_revision(candidate_sets),
         _authoritative_tail_semantic_revision(
-            candidate_sets, independent_tail_evidence, tail_evidence_context
+            candidate_sets,
+            independent_tail_evidence,
+            tail_evidence_context,
+            timing_source_policy,
         ),
     )
 
@@ -21753,6 +21770,7 @@ def _tail_authority_diagnostics(
     candidate_sets: tuple[tuple[TimingCandidate, ...], ...],
     independent_tail_evidence: RuntimeTailEvidence,
     tail_evidence_context: TailEvidenceContext | tuple[TailEvidenceContext, ...] | None = None,
+    timing_source_policy: Literal["default", "ctc-first"] = "default",
 ) -> list[dict[str, object]]:
     """Explain Contract-A acceptance/rejection without adding trust logic."""
     if len(candidate_sets) != len(independent_tail_evidence):
@@ -21762,6 +21780,7 @@ def _tail_authority_diagnostics(
             candidate_sets,
             independent_tail_evidence=independent_tail_evidence,
             tail_evidence_context=tail_evidence_context,
+            timing_source_policy=timing_source_policy,
         )
     except (TypeError, ValueError):
         return []
@@ -22755,6 +22774,9 @@ def collect_central_timing_candidates(
         retry_timeout_seconds = 180.0
     if not math.isfinite(retry_timeout_seconds) or retry_timeout_seconds <= 0.0:
         retry_timeout_seconds = 180.0
+    retry_timing_source_policy = str(
+        getattr(args, "timing_source_policy", "default") or "default"
+    )
     retry_runtime_stats: dict[str, int] = {
         "cache_hits": 0,
         "cache_misses": 0,
@@ -22774,7 +22796,10 @@ def collect_central_timing_candidates(
     tail_evidence_changes = 0
     for pass_index in range(1, max_retry_passes + 1):
         before_candidate_revision, before_tail_revision = _retry_semantic_state_revision(
-            candidate_sets, independent_tail_evidence, tail_evidence_context
+            candidate_sets,
+            independent_tail_evidence,
+            tail_evidence_context,
+            retry_timing_source_policy,
         )
         epoch = freeze_base_retry_epoch(
             str(report.get("backend") or "unknown"),
@@ -22792,6 +22817,7 @@ def collect_central_timing_candidates(
             duration,
             independent_tail_evidence,
             tail_evidence_context,
+            retry_timing_source_policy,
         )
         if capability is None:
             novel_requests: tuple[CrossLineRetryRequest, ...] = ()
@@ -22840,6 +22866,7 @@ def collect_central_timing_candidates(
             runtime_stats=retry_runtime_stats,
             independent_tail_evidence=independent_tail_evidence,
             tail_evidence_context=tail_evidence_context,
+            timing_source_policy=retry_timing_source_policy,
             worker_count=DEFAULT_EVIDENCE_WORKERS,
         )
         processed_retry_semantics.update(novel_semantics)
@@ -22877,7 +22904,10 @@ def collect_central_timing_candidates(
             candidate_sets, report, entries
         )
         after_candidate_revision, after_tail_revision = _retry_semantic_state_revision(
-            candidate_sets, independent_tail_evidence, tail_evidence_context
+            candidate_sets,
+            independent_tail_evidence,
+            tail_evidence_context,
+            retry_timing_source_policy,
         )
         semantic_state_changed = bool(
             before_candidate_revision != after_candidate_revision
@@ -22920,6 +22950,7 @@ def collect_central_timing_candidates(
             joint_epoch, capability, entries, candidate_sets, duration,
             independent_tail_evidence,
             tail_evidence_context,
+            retry_timing_source_policy,
         )
         progress_log(
             f"joint boundary retry: requests={len(joint_boundary_requests)} "
@@ -22935,6 +22966,7 @@ def collect_central_timing_candidates(
                 runtime_stats=retry_runtime_stats,
                 independent_tail_evidence=independent_tail_evidence,
                 tail_evidence_context=tail_evidence_context,
+                timing_source_policy=retry_timing_source_policy,
                 worker_count=DEFAULT_EVIDENCE_WORKERS,
             )
             joint_tail_evidence_changes = sum(
@@ -22989,6 +23021,7 @@ def collect_central_timing_candidates(
             report, local_whisper_capability, entries, candidate_sets, duration,
             independent_tail_evidence,
             tail_evidence_context,
+            retry_timing_source_policy,
         )
         # Fixed-point recollection may change upstream candidate IDs and
         # generate hundreds of distinct optional Whisper context windows.
@@ -23154,6 +23187,7 @@ def collect_central_timing_candidates(
             candidate_sets,
             runtime_independent_tail_evidence(report, len(entries)),
             tail_evidence_context,
+            retry_timing_source_policy,
         ),
         "crossline_retry": {
             "retry_epoch_revision": last_epoch_revision,
@@ -29075,6 +29109,7 @@ def _simulate_cross_backend_peer_graph(
     bundles: tuple[EvaluatedBackendBundle, ...],
     *,
     selected_backend: str | None = None,
+    timing_source_policy: Literal["default", "ctc-first"] = "default",
 ) -> dict[str, object]:
     """Run one in-memory Central peer simulation, never commit its state.
 
@@ -29248,6 +29283,7 @@ def _simulate_cross_backend_peer_graph(
             independent_tail_evidence=independent_tails,
             tail_evidence_context=context_input,
             peer_graph=policy,
+            timing_source_policy=timing_source_policy,
         )
         state, _finding_states = evaluate_final_timing_state_for_report(
             state,
@@ -34363,6 +34399,7 @@ def _build_backend_provenance_projection_seed(
     peer_simulation = _simulate_cross_backend_peer_graph(
         bundles,
         selected_backend=selection.selected.backend,
+        timing_source_policy=selection.selected.timing_source_policy,
     )
     evaluated_reports = {
         id(record.get("evaluated")): record.get("report")
