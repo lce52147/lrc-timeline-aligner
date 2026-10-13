@@ -3966,14 +3966,20 @@ def ctc_spans_collapsed(spans: Sequence[TimingTokenSpan]) -> bool:
     return ctc_line_extent_collapsed(spans[0].start, spans[-1].end)
 
 
-def ctc_collapsed_region_flags(row_collapsed: Sequence[bool]) -> tuple[bool, ...]:
-    """A row is inside a collapsed region when it or an adjacent row collapsed.
+def ctc_collapsed_region_flags(
+    row_collapsed: Sequence[bool], radius: int = 1
+) -> tuple[bool, ...]:
+    """A row is inside a collapsed region when it or a row within ``radius``
+    collapsed (radius 1: itself or an adjacent row).
 
     Shared by Central's unresolved fallback and the local-window generator so
-    both stages act on exactly the same rows.
+    both stages act on exactly the same rows.  Wider radii are used only by the
+    posthoc local-window shadow.
     """
     flags = [bool(value) for value in row_collapsed]
-    return tuple(any(flags[max(0, row - 1):row + 2]) for row in range(len(flags)))
+    return tuple(
+        any(flags[max(0, row - radius):row + radius + 1]) for row in range(len(flags))
+    )
 
 
 def assignment_ctc_path_collapsed(assignment: object) -> bool:
@@ -9666,8 +9672,19 @@ def apply_ctc_local_window_realign(
     raw_report: dict[str, object],
     duration: float,
     args: argparse.Namespace,
+    *,
+    region_radius: int = 1,
+    shadow: bool = False,
+    window_cache: dict[tuple[int, int, str, str], list[object]] | None = None,
 ) -> tuple[list[float], dict[str, object], list[dict[str, object]]]:
-    """Re-run collapsed CTC ranges inside raw-ASR-bounded audio windows."""
+    """Re-run collapsed CTC ranges inside raw-ASR-bounded audio windows.
+
+    ``shadow`` replays the same planner with a wider collapsed region
+    (``region_radius``) for posthoc comparison only: its rows are recorded under
+    ``ctc_local_window_shadow`` and never become Central candidates.
+    ``window_cache`` lets a shadow pass reuse helper output for windows the
+    primary pass already aligned.
+    """
     raw_assignments = raw_report.get("assignments")
     runs = ctc_report.get("ctc_low_score_runs")
     low_score_entries = ctc_report.get("ctc_low_score_entries")
@@ -9694,8 +9711,10 @@ def apply_ctc_local_window_realign(
     # timestamps are the broken part, so they are re-aligned even when raw ASR
     # and the path score raise no alarm, and never serve as window bounds.
     collapsed_region = ctc_collapsed_region_flags(
-        [assignment_ctc_path_collapsed(item) for item in assignments]
+        [assignment_ctc_path_collapsed(item) for item in assignments],
+        radius=region_radius,
     )
+    shadow_rows: dict[str, dict[str, object]] = {}
 
     def in_collapsed_region(index: int) -> bool:
         return 0 <= index < len(collapsed_region) and collapsed_region[index]
@@ -9863,22 +9882,27 @@ def apply_ctc_local_window_realign(
                         f"window-{window_number}: skipped over-wide local CTC window ({window_duration:.1f}s)"
                     )
                     continue
-            transcript_path = temp_dir / f"window-{window_number}.json"
-            output_path = temp_dir / f"window-{window_number}.result.json"
-            transcript_path.write_text(
-                json.dumps([entry_sung_text(entry) for entry in entries[alignment_start_index : end_index + 1]], ensure_ascii=False),
-                encoding="utf-8",
-            )
-            command = [
-                str(python_exe), str(helper), "--audio", str(audio_path), "--transcript", str(transcript_path),
-                "--output", str(output_path), "--device", args.whisperx_device,
-                "--start", f"{start_time:.3f}", "--end", f"{end_time:.3f}",
-            ]
-            proc = _run_model_helper_command(command, mode="ctc")
-            if proc.returncode != 0 or not output_path.exists():
-                errors.append((proc.stderr or proc.stdout).strip()[:240])
-                continue
-            rows = json.loads(output_path.read_text(encoding="utf-8")).get("entries")
+            cache_key = (alignment_start_index, end_index, f"{start_time:.3f}", f"{end_time:.3f}")
+            rows = window_cache.get(cache_key) if window_cache is not None else None
+            if rows is None:
+                transcript_path = temp_dir / f"window-{window_number}.json"
+                output_path = temp_dir / f"window-{window_number}.result.json"
+                transcript_path.write_text(
+                    json.dumps([entry_sung_text(entry) for entry in entries[alignment_start_index : end_index + 1]], ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                command = [
+                    str(python_exe), str(helper), "--audio", str(audio_path), "--transcript", str(transcript_path),
+                    "--output", str(output_path), "--device", args.whisperx_device,
+                    "--start", f"{start_time:.3f}", "--end", f"{end_time:.3f}",
+                ]
+                proc = _run_model_helper_command(command, mode="ctc")
+                if proc.returncode != 0 or not output_path.exists():
+                    errors.append((proc.stderr or proc.stdout).strip()[:240])
+                    continue
+                rows = json.loads(output_path.read_text(encoding="utf-8")).get("entries")
+                if window_cache is not None and isinstance(rows, list):
+                    window_cache[cache_key] = rows
             if not isinstance(rows, list) or len(rows) != end_index - alignment_start_index + 1:
                 errors.append(f"window-{window_number}: invalid helper output")
                 continue
@@ -9922,7 +9946,13 @@ def apply_ctc_local_window_realign(
                     # lyric boundary.
                     continue
                 assignment = assignments[index]
-                if isinstance(assignment, dict):
+                if shadow:
+                    shadow_rows[str(index + 1)] = {
+                        "time": round(timestamp, 3),
+                        "ctc_score": row.get("ctc_score"),
+                        "window": {"start": round(start_time, 3), "end": round(end_time, 3)},
+                    }
+                elif isinstance(assignment, dict):
                     try:
                         local_score = float(row.get("ctc_score", 0.0) or 0.0)
                     except (TypeError, ValueError):
@@ -9953,6 +9983,21 @@ def apply_ctc_local_window_realign(
                         "end": round(end_time, 3),
                     }
                 )
+    if shadow:
+        shadow_report = ctc_report.get("ctc_local_window_shadow")
+        if not isinstance(shadow_report, dict):
+            shadow_report = {}
+            ctc_report["ctc_local_window_shadow"] = shadow_report
+        shadow_report[f"region-radius-{region_radius}"] = {
+            "authoritative": False,
+            "central_candidate": False,
+            "windows": changes,
+            "split_windows": split_windows,
+            "errors": errors,
+            "rejected_rows": rejected_rows,
+            "rows": shadow_rows,
+        }
+        return list(timestamps), ctc_report, changes
     ctc_report["ctc_local_window_realign"] = {
         "status": "candidate-generated" if changes else "skipped",
         "authoritative": False,
@@ -9965,6 +10010,49 @@ def apply_ctc_local_window_realign(
     # The global MMS timestamp/spans remain the backend baseline. Local-window
     # rows are immutable alternatives consumed only by the central evaluator.
     return list(timestamps), ctc_report, changes
+
+
+CTC_LOCAL_WINDOW_SHADOW_RADII = (2, 3)
+
+
+def run_ctc_local_window_shadows(
+    audio_path: Path,
+    entries: list[LyricEntry],
+    timestamps: list[float],
+    ctc_report: dict[str, object],
+    raw_report: dict[str, object],
+    duration: float,
+    args: argparse.Namespace,
+    window_cache: dict[tuple[int, int, str, str], list[object]],
+) -> None:
+    """Posthoc-only replays of the local-window planner with wider collapsed
+    regions, so one validation run can compare region sizes.  Never feeds
+    Central; a failure is recorded, not raised."""
+    assignments = ctc_report.get("assignments")
+    if not isinstance(assignments, list) or not any(
+        assignment_ctc_path_collapsed(item) for item in assignments
+    ):
+        return
+    for radius in CTC_LOCAL_WINDOW_SHADOW_RADII:
+        try:
+            apply_ctc_local_window_realign(
+                audio_path,
+                entries,
+                list(timestamps),
+                ctc_report,
+                raw_report,
+                duration,
+                args,
+                region_radius=radius,
+                shadow=True,
+                window_cache=window_cache,
+            )
+        except Exception as exc:  # diagnostics must never break production
+            shadow_report = ctc_report.get("ctc_local_window_shadow")
+            if not isinstance(shadow_report, dict):
+                shadow_report = {}
+                ctc_report["ctc_local_window_shadow"] = shadow_report
+            shadow_report[f"region-radius-{radius}"] = {"error": repr(exc)[:240]}
 
 
 def apply_ctc_hybrid_window_realign(
@@ -13461,6 +13549,7 @@ def run_auto_backend_competition(
                     list(ctc_candidate["timestamps"]), ctc_candidate["report"], []
                 )
             else:
+                local_window_cache: dict[tuple[int, int, str, str], list[object]] = {}
                 window_timestamps, window_report, local_window_changes = apply_ctc_local_window_realign(
                 ctc_alignment_audio_path(ctc_candidate["report"], audio_path),
                 entries,
@@ -13469,7 +13558,18 @@ def run_auto_backend_competition(
                 raw_diagnostic_report,
                 duration,
                 args,
+                window_cache=local_window_cache,
             )
+                run_ctc_local_window_shadows(
+                    ctc_alignment_audio_path(ctc_candidate["report"], audio_path),
+                    entries,
+                    list(ctc_candidate["timestamps"]),
+                    window_report,
+                    raw_diagnostic_report,
+                    duration,
+                    args,
+                    local_window_cache,
+                )
             progress_change_log("CTC local window candidate generated", local_window_changes)
             window_report.update(inactive_legacy_timing_diagnostics())
             ctc_candidate["timestamps"] = window_timestamps

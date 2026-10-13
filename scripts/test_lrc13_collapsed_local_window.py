@@ -267,5 +267,124 @@ class CollapsedRegionSplitTests(unittest.TestCase):
         self.assertTrue(any("over-wide" in str(item) for item in errors))
 
 
+def run_with_shadows(
+    times: list[float],
+    report: dict[str, object],
+    duration: float,
+    helper: FakeHelper,
+) -> None:
+    entries = [LyricEntry([f"line {index + 1}"]) for index in range(len(times))]
+    cache: dict[tuple[int, int, str, str], list[object]] = {}
+    args = type("Args", (), {"whisperx_device": "cpu"})()
+    original_run = auto_lrc.subprocess.run
+    original_python = auto_lrc.default_ctc_python
+    auto_lrc.subprocess.run = helper  # type: ignore[assignment]
+    auto_lrc.default_ctc_python = lambda: Path("python")  # type: ignore[assignment]
+    try:
+        auto_lrc.apply_ctc_local_window_realign(
+            Path("dummy.flac"), entries, list(times), report, silent_raw(times), duration, args,
+            window_cache=cache,
+        )
+        auto_lrc.run_ctc_local_window_shadows(
+            Path("dummy.flac"), entries, list(times), report, silent_raw(times), duration, args, cache,
+        )
+    finally:
+        auto_lrc.subprocess.run = original_run  # type: ignore[assignment]
+        auto_lrc.default_ctc_python = original_python  # type: ignore[assignment]
+
+
+class LocalWindowShadowTests(unittest.TestCase):
+    # Row 4 collapsed.  Radius 1 covers rows 3-5, radius 2 rows 2-6, radius 3
+    # every row; each radius plans a different window.
+    TIMES = [10.0, 18.0, 26.0, 34.0, 50.0, 58.0, 66.0]
+    EXTENTS = [2.0, 2.0, 2.0, 20.0, 2.0, 2.0, 2.0]
+
+    def test_radius_widens_the_region(self) -> None:
+        flags = [False, False, False, True, False, False, False]
+        self.assertEqual(
+            auto_lrc.ctc_collapsed_region_flags(flags, radius=2),
+            (False, True, True, True, True, True, False),
+        )
+
+    def test_shadow_rows_are_recorded_but_never_reach_central(self) -> None:
+        report = ctc_report(self.TIMES, self.EXTENTS)
+        helper = FakeHelper()
+        run_with_shadows(self.TIMES, report, 80.0, helper)
+
+        self.assertEqual(len(helper.calls), 3)
+        self.assertEqual(sorted(local_window_times(report)), [3, 4, 5])
+        shadow = report["ctc_local_window_shadow"]  # type: ignore[index]
+        self.assertEqual(sorted(shadow), ["region-radius-2", "region-radius-3"])
+        self.assertEqual(sorted(shadow["region-radius-2"]["rows"]), ["2", "3", "4", "5", "6"])
+        self.assertEqual(
+            sorted(shadow["region-radius-3"]["rows"], key=int),
+            ["1", "2", "3", "4", "5", "6", "7"],
+        )
+        self.assertFalse(shadow["region-radius-2"]["central_candidate"])
+        # The primary record is the radius-1 pass only.
+        primary = report["ctc_local_window_realign"]  # type: ignore[index]
+        self.assertEqual([item["entries"] for item in primary["windows"]], [[3, 4, 5]])
+
+        entries = [LyricEntry([f"line {index + 1}"]) for index in range(len(self.TIMES))]
+        candidate_sets, _ = auto_lrc.collect_central_timing_candidates(
+            Path("dummy.flac"), entries, list(self.TIMES), report, 80.0, type("Args", (), {})(),
+        )
+        local_rows = {
+            row + 1
+            for row, items in enumerate(candidate_sets)
+            if any(item.source == "ctc-local-window" for item in items)
+        }
+        self.assertEqual(local_rows, {3, 4, 5})
+
+    def test_shadow_reuses_windows_the_primary_pass_aligned(self) -> None:
+        report = ctc_report(self.TIMES, self.EXTENTS)
+        helper = FakeHelper()
+        entries = [LyricEntry([f"line {index + 1}"]) for index in range(len(self.TIMES))]
+        cache: dict[tuple[int, int, str, str], list[object]] = {}
+        args = type("Args", (), {"whisperx_device": "cpu"})()
+        original_run = auto_lrc.subprocess.run
+        original_python = auto_lrc.default_ctc_python
+        auto_lrc.subprocess.run = helper  # type: ignore[assignment]
+        auto_lrc.default_ctc_python = lambda: Path("python")  # type: ignore[assignment]
+        try:
+            for shadow in (False, True):
+                auto_lrc.apply_ctc_local_window_realign(
+                    Path("dummy.flac"), entries, list(self.TIMES), report,
+                    silent_raw(self.TIMES), 80.0, args,
+                    region_radius=1, shadow=shadow, window_cache=cache,
+                )
+        finally:
+            auto_lrc.subprocess.run = original_run  # type: ignore[assignment]
+            auto_lrc.default_ctc_python = original_python  # type: ignore[assignment]
+        self.assertEqual(len(helper.calls), 1)
+        self.assertEqual(
+            sorted(report["ctc_local_window_shadow"]["region-radius-1"]["rows"]),  # type: ignore[index]
+            ["3", "4", "5"],
+        )
+
+    def test_song_without_collapse_runs_no_shadow(self) -> None:
+        report = ctc_report(self.TIMES, [2.0] * len(self.TIMES))
+        helper = FakeHelper()
+        run_with_shadows(self.TIMES, report, 80.0, helper)
+        self.assertEqual(helper.calls, [])
+        self.assertNotIn("ctc_local_window_shadow", report)
+
+    def test_shadow_failure_is_recorded_not_raised(self) -> None:
+        report = ctc_report(self.TIMES, self.EXTENTS)
+        good = FakeHelper()
+        calls = {"count": 0}
+
+        def flaky(command, **kwargs):  # type: ignore[no-untyped-def]
+            calls["count"] += 1
+            if calls["count"] > 1:
+                raise RuntimeError("helper died")
+            return good(command, **kwargs)
+
+        run_with_shadows(self.TIMES, report, 80.0, flaky)  # type: ignore[arg-type]
+        shadow = report["ctc_local_window_shadow"]  # type: ignore[index]
+        self.assertIn("helper died", shadow["region-radius-2"]["error"])
+        self.assertEqual(sorted(local_window_times(report)), [3, 4, 5])
+
+
 if __name__ == "__main__":
     unittest.main()
