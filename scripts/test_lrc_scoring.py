@@ -1,7 +1,8 @@
 """Focused scorer regression gates (no GPU, no BK modification)."""
 from __future__ import annotations
+import json
 import unittest
-from lrc_scoring import ScoringError, align_gold, count_metrics, compare_phases, reorder_assignments_by_timestamp, parsed_rows
+from lrc_scoring import ScoringError, align_gold, count_metrics, compare_phases, load_manifest, reorder_assignments_by_timestamp, parsed_rows
 
 
 def row(t, bk, status, **kw):
@@ -12,6 +13,44 @@ def row(t, bk, status, **kw):
 
 
 class LrcScoringTests(unittest.TestCase):
+    def test_manifest_can_pin_uncommitted_candidate_source_hash(self):
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            cases = [
+                {"index": index, "status": "PRODUCED", "exit": 0}
+                for index in range(1, 40)
+            ]
+            (root / "MANIFEST.json").write_text(json.dumps({
+                "phase": "CURRENT39_39_PRODUCED",
+                "count": 39,
+                "total": 39,
+                "validation_of_commit": "base-head",
+                "auto_lrc_sha256": "working-source",
+                "cases": cases,
+            }), encoding="utf-8")
+            loaded = load_manifest(
+                root,
+                "CURRENT39_39_PRODUCED",
+                "base-head",
+                expected_source_sha256="working-source",
+            )
+            self.assertEqual(len(loaded), 39)
+            with self.assertRaisesRegex(ScoringError, "MANIFEST_WRONG_SOURCE"):
+                load_manifest(
+                    root,
+                    "CURRENT39_39_PRODUCED",
+                    "base-head",
+                    expected_source_sha256="different-source",
+                )
+            with self.assertRaisesRegex(ScoringError, "MANIFEST_SOURCE_PIN_REQUIRED"):
+                load_manifest(
+                    root,
+                    "CURRENT39_39_PRODUCED",
+                    "base-head",
+                )
+
     def test_review_not_conflated_with_unverified(self):
         rows = [row(1, 1, "trusted"), row(2, 3.2, "review-required"),
                 row(3, 4.2, "unverified")]

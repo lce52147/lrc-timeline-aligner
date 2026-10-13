@@ -158,12 +158,25 @@ def small_row(r):
     return {k: r.get(k) for k in ("song", "case", "line", "text", "time", "bk", "status", "trusted", "source", "reasons")}
 
 
-def load_manifest(folder: Path, expected_phase: str, expected_commit: str):
+def load_manifest(
+    folder: Path,
+    expected_phase: str,
+    expected_commit: str,
+    *,
+    expected_source_sha256: str | None = None,
+):
     m = read_json(folder / "MANIFEST.json")
     if m.get("phase") != expected_phase or m.get("count") != 39 or m.get("total") != 39:
         raise ScoringError(f"MANIFEST_NOT_COMPLETE {folder}")
     if m.get("validation_of_commit") != expected_commit:
         raise ScoringError(f"MANIFEST_WRONG_COMMIT {folder}")
+    if m.get("auto_lrc_sha256") and expected_source_sha256 is None:
+        raise ScoringError(f"MANIFEST_SOURCE_PIN_REQUIRED {folder}")
+    if (
+        expected_source_sha256 is not None
+        and m.get("auto_lrc_sha256") != expected_source_sha256
+    ):
+        raise ScoringError(f"MANIFEST_WRONG_SOURCE {folder}")
     entries = m.get("cases")
     if not isinstance(entries, list) or len(entries) != 39:
         raise ScoringError(f"MANIFEST_WRONG_COUNT {folder}")
@@ -173,8 +186,21 @@ def load_manifest(folder: Path, expected_phase: str, expected_commit: str):
     return by_index
 
 
-def score_phase(folder: Path, corpus: list, *, name: str, expected_phase: str, expected_commit: str):
-    cases = load_manifest(folder, expected_phase, expected_commit)
+def score_phase(
+    folder: Path,
+    corpus: list,
+    *,
+    name: str,
+    expected_phase: str,
+    expected_commit: str,
+    expected_source_sha256: str | None = None,
+):
+    cases = load_manifest(
+        folder,
+        expected_phase,
+        expected_commit,
+        expected_source_sha256=expected_source_sha256,
+    )
     rows = []
     remaps = []
     for index, item in enumerate(corpus, 1):
@@ -204,7 +230,14 @@ def score_phase(folder: Path, corpus: list, *, name: str, expected_phase: str, e
             rows.append({**row, "bk": gt_time, "song": info["song"], "case": index, "line": lineno})
     if len(rows) != 1489:
         raise ScoringError(f"DENOMINATOR_CHANGED {name}: {len(rows)} != 1489")
-    return {"label": name, "commit": expected_commit, "metrics": count_metrics(rows), "bk_order_remaps": remaps, "rows": rows}
+    return {
+        "label": name,
+        "commit": expected_commit,
+        "auto_lrc_sha256": expected_source_sha256,
+        "metrics": count_metrics(rows),
+        "bk_order_remaps": remaps,
+        "rows": rows,
+    }
 
 
 def compare_phases(old, new):
@@ -244,6 +277,9 @@ def main(argv=None):
     parser.add_argument("--corpus", type=Path, default=base / "LRC13_S5_39_CORPUS_PREFLIGHT_20261010.json")
     parser.add_argument("--p3r", type=Path, default=base / "LRC13_FULL_AUDIT_P3R_CTC_POLICY_39_20261012")
     parser.add_argument("--p4", type=Path, default=base / "LRC13_FULL_AUDIT_P4_39_20261012")
+    parser.add_argument("--p4-phase", default="P4_39_PRODUCED")
+    parser.add_argument("--p4-commit", default="f4c9c2cdb333e5ab8601ea6e4774db8e71df8fbb")
+    parser.add_argument("--p4-source-sha256")
     parser.add_argument("--native-n2", type=Path, default=base / "LRC13_LEAN_N2_SCORE_20261011.json")
     parser.add_argument("--output", type=Path, default=base / "LRC13_P5_OFFICIAL_SCORE_20261013.json")
     args = parser.parse_args(argv)
@@ -251,8 +287,14 @@ def main(argv=None):
     if len(corpus) != 39:
         raise ScoringError("EXPECTED_39_SONGS")
     a = score_phase(args.p3r, corpus, name="P3R", expected_phase="P3_39_PRODUCED", expected_commit="5e36f09c")
-    b = score_phase(args.p4, corpus, name="P4", expected_phase="P4_39_PRODUCED",
-                    expected_commit="f4c9c2cdb333e5ab8601ea6e4774db8e71df8fbb")
+    b = score_phase(
+        args.p4,
+        corpus,
+        name="P4",
+        expected_phase=args.p4_phase,
+        expected_commit=args.p4_commit,
+        expected_source_sha256=args.p4_source_sha256,
+    )
     n2 = read_json(args.native_n2)
     historic = n2["counts"]["N2"]
     transition = compare_phases(a, b)
@@ -262,8 +304,18 @@ def main(argv=None):
         "status": "P5_SCORER_COMPLETE_P4_ACCEPTANCE_BLOCKED" if transition["timestamp_changes"] else "P5_SCORER_COMPLETE",
         "input_BK_timing_used_for_inference": False,
         "phase_counts": {"P3R": 39, "P4": 39, "rows_each": len(a["rows"])},
-        "P3R": {"commit": a["commit"], "metrics": old, "bk_order_remaps": a["bk_order_remaps"]},
-        "P4": {"commit": b["commit"], "metrics": now, "bk_order_remaps": b["bk_order_remaps"]},
+        "P3R": {
+            "commit": a["commit"],
+            "auto_lrc_sha256": a["auto_lrc_sha256"],
+            "metrics": old,
+            "bk_order_remaps": a["bk_order_remaps"],
+        },
+        "P4": {
+            "commit": b["commit"],
+            "auto_lrc_sha256": b["auto_lrc_sha256"],
+            "metrics": now,
+            "bk_order_remaps": b["bk_order_remaps"],
+        },
         "N2_native_historical": historic,
         "N2_same_semantics_recomputed": None,
         "N2_comparability": "N2 1487-row legacy/native trust semantics; P3R/P4 1489 rows with two title-card rows and final_line_trust. No same-denominator trust comparison is claimed.",
