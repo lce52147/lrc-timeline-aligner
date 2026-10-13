@@ -36754,6 +36754,33 @@ def format_lrc_time(seconds: float) -> str:
     return canonicalize_lrc_time(seconds).lrc_tag
 
 
+SOURCE_CLOCK_METADATA_KEYS = frozenset({"offset", "length"})
+SOURCE_GENERATOR_METADATA_KEYS = frozenset({"re", "by", "ve", "tool"})
+SOURCE_TIME_PRESERVING_TIMING_SOURCES = frozenset({"lyrics", "checked"})
+
+
+def output_metadata_lines(metadata_lines: Sequence[str] | None, timing_source: str) -> list[str]:
+    """Return the source LRC tags that are still true for the written file.
+
+    When the written times are the lyric file's own times (``lyrics`` /
+    ``checked``), every source tag round-trips, including ``[offset:]``.
+    Re-timed output must not inherit the source clock (``[offset:]``,
+    ``[length:]``) or the source generator tags; a player would otherwise
+    shift freshly aligned lines by the old file's offset.
+    """
+    lines = [str(line) for line in (metadata_lines or [])]
+    if str(timing_source) in SOURCE_TIME_PRESERVING_TIMING_SOURCES:
+        return lines
+    kept: list[str] = []
+    for line in lines:
+        match = re.match(r"^\s*\[([A-Za-z][A-Za-z0-9_-]*):", line)
+        key = match.group(1).casefold() if match is not None else None
+        if key in SOURCE_CLOCK_METADATA_KEYS or key in SOURCE_GENERATOR_METADATA_KEYS:
+            continue
+        kept.append(line)
+    return kept
+
+
 def write_lrc(
     output_path: Path,
     audio_path: Path,
@@ -37201,7 +37228,7 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
         DEFAULT_PROBE_DIR.mkdir(parents=True, exist_ok=True)
     report_dir = Path(args.report_dir).expanduser().resolve() if args.report_dir else DEFAULT_REPORT_DIR
     report_path, audit_path, template_path = report_artifact_paths(audio_path, output_path, report_dir)
-    metadata_lines = list(lyrics.metadata_lines)
+    metadata_lines = output_metadata_lines(lyrics.metadata_lines, timing_source)
     report.setdefault("backend", timing_source)
     if getattr(args, "option_a_rollback_reason", None):
         report["segment_skeleton_status"] = {
