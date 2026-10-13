@@ -60,9 +60,24 @@ DEFAULT_PROBE_DIR = PROJECT_ROOT / "outputs" / "probes"
 DEFAULT_VOCAL_CACHE_DIR = PROJECT_ROOT / "outputs" / "cache" / "vocals"
 LRC_ALGORITHM_REVISION = "2026-09-28-lrc-v1.2-hubert-generalized-predecessor-tail"
 
-# 1.1.1 execution policy: evidence acquisition is internally parallelized.
-# This is not a user-facing inference switch; Central semantics remain unchanged.
-DEFAULT_EVIDENCE_WORKERS = 2
+def _evidence_worker_count() -> int:
+    """Parallel evidence workers (resident model copies per model family).
+
+    Each worker is a separate helper process holding its own copy of the CTC or
+    WhisperX model, so two workers double model VRAM/RAM during parallel
+    phases.  Default 1; ``LRC_EVIDENCE_WORKERS`` (1-4) opts into more.
+    Execution policy only: Central semantics and evidence payloads are the same
+    for any worker count.
+    """
+    raw = os.environ.get("LRC_EVIDENCE_WORKERS", "").strip()
+    try:
+        value = int(raw) if raw else 1
+    except ValueError:
+        value = 1
+    return max(1, min(value, 4))
+
+
+DEFAULT_EVIDENCE_WORKERS = _evidence_worker_count()
 WHISPERCPP_LOCAL_BATCH_SIZE = 48
 _BACKEND_PROVENANCE_PROJECTION_KEY = "backend_provenance_projection"
 _UNRESOLVED_EVIDENCE_REQUIREMENTS_KEY = "unresolved_evidence_requirements"
