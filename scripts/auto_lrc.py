@@ -9863,8 +9863,10 @@ def apply_ctc_hybrid_window_realign(
             context_end = min(len(entries) - 1, run_end + 1)
             right_boundary = min(len(entries) - 1, context_end + 1)
             start_time = max(0.0, refined[context_start] - 0.08)
-            end_time = duration if right_boundary == context_end else max(start_time + 1.0, refined[right_boundary] - 0.05)
+            end_time = duration if right_boundary == context_end else refined[right_boundary] - 0.05
             window_duration = end_time - start_time
+            # R2-6: never widen the window across the next untouched line.
+            # A disagreement run squeezed into less than 1 s is skipped instead.
             if window_duration < 1.0 or window_duration > 45.0:
                 continue
             transcript_path = temp_dir / f"window-{number}.json"
@@ -10653,9 +10655,14 @@ def run_whisperx_best_candidate(
                     if left_ok and right_ok:
                         timestamps[entry_index] = sns_timestamps[entry_index]
                         adopted_sns_entries.append(entry_index)
-                report = fused_candidate_report(
-                    normal_report, sns_report, timestamps, collapse_start, adopted_sns_entries
-                )
+                if any(later < earlier for earlier, later in zip(timestamps, timestamps[1:])):
+                    # R2-7: a normal/SNS seam that runs backwards is not a valid
+                    # candidate; use the complete, higher-quality SNS candidate.
+                    timestamps, report = list(sns_timestamps), sns_report
+                else:
+                    report = fused_candidate_report(
+                        normal_report, sns_report, timestamps, collapse_start, adopted_sns_entries
+                    )
             elif report_quality(sns_report) > report_quality(report):
                 timestamps, report = list(sns_timestamps), sns_report
 
@@ -19881,7 +19888,14 @@ def invoke_crossline_retry(
                 except (OSError, json.JSONDecodeError):
                     payload = None
                 result = ("payload", payload)
-        if helper_cache is not None:
+        transient = result in {
+            ("error", "helper-timeout"),
+            ("error", "helper-invocation-error"),
+            ("payload", None),
+        }
+        if helper_cache is not None and not transient:
+            # R3-6: transient helper failures must not suppress this evidence
+            # for every later recollection in the same run.
             helper_cache[cache_key] = result
         result_kind, result_value = result
         if result_kind == "error":
