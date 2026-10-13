@@ -150,36 +150,86 @@ def token_peak_candidates(
     ]
 
 
-def configure_cuda_cpu_feature_extractor(model: torch.nn.Module) -> None:
-    """Keep the full-song convolution frontend on CPU and transformer on CUDA.
+# Frontend frames per bounded pass (20 ms each): 1000 frames = 20 s of audio.
+FEATURE_CHUNK_FRAMES = 1000
 
-    Wav2Vec2's early convolutions create very large intermediate tensors for
-    multi-minute waveforms. The encoder still processes all frames on CUDA,
-    without acoustic windowing or changed alignment/token semantics.
+
+def conv_output_frames(conv_layers: list[torch.nn.Module], samples: int) -> int:
+    """Frame count of the unpadded conv stack, exactly as torchaudio computes it."""
+    frames = int(samples)
+    for layer in conv_layers:
+        frames = (frames - int(layer.kernel_size)) // int(layer.stride) + 1
+        if frames <= 0:
+            return 0
+    return frames
+
+
+def conv_stride_and_field(conv_layers: list[torch.nn.Module]) -> tuple[int, int]:
+    """Total stride and receptive field (in samples) of one output frame."""
+    stride, field = 1, 1
+    for layer in conv_layers:
+        field += (int(layer.kernel_size) - 1) * stride
+        stride *= int(layer.stride)
+    return stride, field
+
+
+def _without_cudnn_tf32(function, *args):
+    """Keep the frontend at full fp32, as when it ran on CPU."""
+    previous = torch.backends.cudnn.allow_tf32
+    torch.backends.cudnn.allow_tf32 = False
+    try:
+        return function(*args)
+    finally:
+        torch.backends.cudnn.allow_tf32 = previous
+
+
+def configure_chunked_feature_extractor(
+    model: torch.nn.Module, chunk_frames: int = FEATURE_CHUNK_FRAMES
+) -> None:
+    """Run the convolution frontend in bounded chunks on the model's own device.
+
+    MMS_FA uses ``extractor_mode="layer_norm"``: every block is Conv1d ->
+    per-frame LayerNorm -> GELU, so an output frame depends only on its
+    receptive field (400 samples, stride 320).  Each chunk starts on the total
+    stride and carries the receptive-field overlap, so it yields exactly the
+    frames the full-length pass would, without that pass's multi-GB
+    intermediates (which forced the frontend onto CPU at ~15-18 GB RSS).  The
+    whole-waveform normalization runs before the frontend, and the encoder
+    still sees every frame of the song at once.
     """
     from types import MethodType
 
-    extractor = model.model.feature_extractor.cpu()
-    target_device = next(model.model.encoder.parameters()).device
+    extractor = model.model.feature_extractor
     # The persistent CTC worker reuses the same model across requests.
     # Always wrap the original forward, never the wrapper from an earlier run.
     if not hasattr(extractor, "_lrc_ctc_original_forward"):
         extractor._lrc_ctc_original_forward = extractor.forward
     original_forward = extractor._lrc_ctc_original_forward
+    conv_layers = list(extractor.conv_layers)
+    stride, field = conv_stride_and_field(conv_layers)
 
-    def cpu_feature_forward(self, waveform, length):
-        # Preserve full-length group normalization and convolution context.
-        features, lengths = original_forward(
-            waveform.to("cpu"),
-            length.to("cpu") if length is not None else None,
-        )
-        return (
-            features.to(target_device),
-            lengths.to(target_device) if lengths is not None else None,
-        )
+    def chunked_feature_forward(self, waveform, length):
+        if length is not None or waveform.ndim != 2:
+            return original_forward(waveform, length)
+        device = next(self.parameters()).device
+        total = conv_output_frames(conv_layers, waveform.shape[-1])
+        if total <= chunk_frames:
+            return _without_cudnn_tf32(original_forward, waveform.to(device), None)
+        pieces = []
+        for first in range(0, total, chunk_frames):
+            last = min(total, first + chunk_frames)
+            piece = waveform[:, first * stride : (last - 1) * stride + field].to(device)
+            features, _ = _without_cudnn_tf32(original_forward, piece, None)
+            if features.shape[1] != last - first:
+                raise RuntimeError(
+                    f"chunked CTC frontend produced {features.shape[1]} frames "
+                    f"for frames {first}-{last}"
+                )
+            pieces.append(features)
+        return torch.cat(pieces, dim=1), None
 
-    extractor.forward = MethodType(cpu_feature_forward, extractor)
-    print("CTC CUDA hybrid: full-song feature extractor=cpu, encoder=cuda",
+    extractor.forward = MethodType(chunked_feature_forward, extractor)
+    print(f"CTC frontend: chunked {chunk_frames} frames on {next(extractor.parameters()).device}",
           file=sys.stderr, flush=True)
 
 
@@ -220,8 +270,7 @@ def main() -> int:
     waveform = decode_audio(audio_path, args.start, args.end)
     duration = waveform.shape[1] / SAMPLE_RATE
     model = bundle.get_model(with_star=False).to(device).eval()
-    if str(device).startswith("cuda"):
-        configure_cuda_cpu_feature_extractor(model)
+    configure_chunked_feature_extractor(model)
     tokenizer = bundle.get_tokenizer()
     aligner = bundle.get_aligner()
     # FP32 memory-efficient SDPA keeps full-song context while avoiding the
