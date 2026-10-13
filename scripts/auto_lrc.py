@@ -19888,11 +19888,12 @@ def invoke_crossline_retry(
                 except (OSError, json.JSONDecodeError):
                     payload = None
                 result = ("payload", payload)
-        transient = result in {
-            ("error", "helper-timeout"),
-            ("error", "helper-invocation-error"),
-            ("payload", None),
-        }
+        # Compare kind/value separately: a successful payload is a dict and
+        # therefore unhashable, so tuple-in-set membership would raise.
+        transient = (
+            result[0] == "error"
+            and result[1] in {"helper-timeout", "helper-invocation-error"}
+        ) or (result[0] == "payload" and result[1] is None)
         if helper_cache is not None and not transient:
             # R3-6: transient helper failures must not suppress this evidence
             # for every later recollection in the same run.

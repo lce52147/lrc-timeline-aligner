@@ -112,6 +112,30 @@ class CrosslineTransientCacheRegressionTests(unittest.TestCase):
         self.assertEqual(outcome.reason, "helper-timeout")
         self.assertEqual(helper_cache, {})
 
+    def test_successful_dict_payload_is_cached_without_hashing_payload(self) -> None:
+        # Regression: the first R3-6 fix tested ``result in {tuples}``, which
+        # hashes the payload dict and crashed every real crossline retry.
+        fixture = V144JointBoundaryGraphRegressionTests()
+        entries, _candidate_sets, _report, capability, _epoch, request = fixture.joint_request()
+        helper_cache: dict[str, tuple[str, object]] = {}
+
+        def fake_helper(command, **_kwargs):
+            output = Path(command[command.index("--output") + 1])
+            output.write_text('{"entries": []}', encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with mock.patch.object(auto_lrc, "_run_model_helper_command", side_effect=fake_helper):
+            outcome = auto_lrc.invoke_crossline_retry(
+                request,
+                capability,
+                entries,
+                helper_cache=helper_cache,
+                timeout_seconds=0.01,
+            )
+
+        self.assertEqual(outcome.status, "invalid")
+        self.assertEqual(list(helper_cache.values()), [("payload", {"entries": []})])
+
 
 if __name__ == "__main__":
     unittest.main()
