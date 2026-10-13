@@ -9871,6 +9871,36 @@ class V144JointBoundaryGraphRegressionTests(unittest.TestCase):
         self.assertTrue(evaluation.evidence.minimum_proof_satisfied)
         self.assertEqual(evaluation.evidence.structural_failures, ())
 
+    def test_joint_consensus_preserves_joint_row_tail_when_parent_has_no_spans(self) -> None:
+        entries, candidate_sets, _report, cap, _epoch, request = self.joint_request()
+        outcome = auto_lrc.parse_crossline_retry_output(
+            request, cap, entries, self.joint_payload(request, entries)
+        )
+        assert outcome.candidate is not None
+        geometryless = self.candidate(
+            1, 10.00, source="ctc-current", current=False, spans=()
+        )
+        modified = (candidate_sets[0], (geometryless,), candidate_sets[2])
+        augmented = auto_lrc._augment_candidates_with_joint_boundary_consensus(
+            modified, (outcome,), entries
+        )
+        composite = next(
+            candidate for candidate in augmented[1]
+            if candidate.source == "ctc-joint-boundary-consensus"
+        )
+        self.assertEqual(composite.written_time, geometryless.written_time)
+        self.assertEqual(composite.spans, outcome.candidate.spans)
+        tail = auto_lrc.derive_reliable_tail(composite)
+        self.assertEqual(tail.validity, "valid")
+        decision = auto_lrc.select_timing_decision(
+            entry_index=2,
+            candidates=candidate_sets[2],
+            previous_candidate=composite,
+            previous_tail=tail,
+            selection_revision=1,
+        )
+        self.assertEqual(decision.evidence.ownership.status, "clear")
+
     def test_joint_observation_does_not_fuse_distant_parent(self) -> None:
         entries, candidate_sets, _report, cap, _epoch, request = self.joint_request()
         outcome = auto_lrc.parse_crossline_retry_output(

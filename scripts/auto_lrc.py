@@ -21372,7 +21372,7 @@ def _augment_candidates_with_joint_boundary_consensus(
                             entry_text=entry_sung_text(entries[index]),
                             source="ctc-joint-boundary-consensus",
                             raw_time=parent.written_time.seconds,
-                            spans=parent.spans,
+                            spans=parent.spans or observation.spans,
                             confidence=min(parent.confidence, observation.confidence),
                             identity_support="supported",
                             sequence_support="supported",
