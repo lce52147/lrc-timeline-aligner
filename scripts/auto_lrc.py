@@ -3933,6 +3933,80 @@ def _reviewer_agreement_count(
     return len(agreeing)
 
 
+# Whole-song CTC path collapse.  A forced path that stretches one lyric line
+# over >= 12 s, or squeezes a line into <= 0.8 s, is not a plausible sung
+# line; it is the signature of the path giving up on a passage (seen as a run
+# of compressed lines next to one line absorbing a 16-42 s gap in Choir,
+# My Dearest and ミレニア).  Diagnostic geometry only: it never makes any
+# candidate valid or trusted.
+CTC_COLLAPSED_LINE_MAX_SECONDS = 12.0
+CTC_COLLAPSED_LINE_MIN_SECONDS = 0.8
+COLLAPSED_PATH_FALLBACK_SOURCE = "ctc-local-window"
+COLLAPSED_PATH_FALLBACK_MIN_SHIFT_SECONDS = 0.5
+
+
+def ctc_line_extent_collapsed(first_start: float, last_end: float) -> bool:
+    extent = float(last_end) - float(first_start)
+    return (
+        extent >= CTC_COLLAPSED_LINE_MAX_SECONDS
+        or extent <= CTC_COLLAPSED_LINE_MIN_SECONDS
+    )
+
+
+def _current_timing_candidate(candidates: tuple[TimingCandidate, ...]) -> TimingCandidate | None:
+    return next((item for item in candidates if item.current), None)
+
+
+def current_ctc_path_collapsed(candidates: tuple[TimingCandidate, ...]) -> bool:
+    current = _current_timing_candidate(candidates)
+    if current is None or not current.spans:
+        return False
+    return ctc_line_extent_collapsed(current.spans[0].start, current.spans[-1].end)
+
+
+def _collapsed_path_fallback(
+    evaluations: tuple[CandidateEvaluation, ...],
+    eligible_ids: set[str],
+    current: CandidateEvaluation,
+    previous_candidate: TimingCandidate | None,
+    next_bound_seconds: float | None,
+) -> CandidateEvaluation | None:
+    """Provisional replacement for an unresolved row inside a collapsed CTC path.
+
+    Only used when Central found no valid winner.  The whole-song path is
+    visibly broken around this row, so its timestamp is the least credible
+    unresolved option; a known-lyric CTC re-alignment of the same passage in a
+    bounded window is preferred.  The row stays provisional_unresolved.
+    """
+    lower = (
+        previous_candidate.written_time.seconds + HOP_SECONDS
+        if previous_candidate is not None
+        else float("-inf")
+    )
+    upper = (
+        next_bound_seconds - HOP_SECONDS
+        if next_bound_seconds is not None
+        else float("inf")
+    )
+    current_seconds = current.candidate.written_time.seconds
+    options = [
+        evaluation for evaluation in evaluations
+        if evaluation.candidate.source == COLLAPSED_PATH_FALLBACK_SOURCE
+        and evaluation.candidate.candidate_id in eligible_ids
+        and not evaluation.candidate.window_truncated
+        and not evaluation.candidate.right_edge_pileup
+        and abs(evaluation.candidate.written_time.seconds - current_seconds)
+        > COLLAPSED_PATH_FALLBACK_MIN_SHIFT_SECONDS
+        and lower < evaluation.candidate.written_time.seconds < upper
+    ]
+    if not options:
+        return None
+    return max(
+        options,
+        key=lambda item: (item.candidate.confidence, item.candidate.candidate_id),
+    )
+
+
 def select_timing_decision(
     *,
     entry_index: int,
@@ -3945,6 +4019,8 @@ def select_timing_decision(
     arbiter_mode: Literal["off", "gross-rescue", "reviewer-validity"] = "off",
     reviewer_evidence: dict[str, object] | None = None,
     timing_source_policy: Literal["default", "ctc-first"] = "default",
+    ctc_path_collapsed: bool = False,
+    next_bound_seconds: float | None = None,
 ) -> TimingDecision:
     if arbiter_mode not in {"off", "gross-rescue", "reviewer-validity"}:
         raise ValueError(f"unsupported timing arbiter mode: {arbiter_mode}")
@@ -4113,6 +4189,16 @@ def select_timing_decision(
             evaluation for evaluation in evaluations
             if evaluation.candidate.candidate_id in eligible_ids
         )
+        if ctc_path_collapsed and provisional.candidate.current:
+            collapsed_fallback = _collapsed_path_fallback(
+                evaluations,
+                eligible_ids,
+                provisional,
+                previous_candidate,
+                next_bound_seconds,
+            )
+            if collapsed_fallback is not None:
+                provisional = collapsed_fallback
         status: Literal["selected_valid", "provisional_unresolved"] = "provisional_unresolved"
         selected_id = None
         provisional_id = provisional.candidate.candidate_id
@@ -4344,6 +4430,21 @@ def build_final_timing_state(
     if len(reviewer_evidence) != len(candidate_sets):
         raise ValueError("reviewer evidence does not match candidate sets")
     decisions: list[TimingDecision | None] = [None] * len(candidate_sets)
+    # Collapse is a property of the immutable whole-song CTC baseline, so it is
+    # computed once here and every replay through this owner sees the same view.
+    collapsed_rows = tuple(current_ctc_path_collapsed(items) for items in candidate_sets)
+
+    def collapsed_region(row: int) -> bool:
+        return any(collapsed_rows[max(0, row - 1):row + 2])
+
+    def next_bound(row: int) -> float | None:
+        # A sane next baseline row bounds the fallback so output stays ordered;
+        # a collapsed next row is itself unreliable and is not a bound.
+        if row + 1 >= len(candidate_sets) or collapsed_rows[row + 1]:
+            return None
+        following = _current_timing_candidate(candidate_sets[row + 1])
+        return following.written_time.seconds if following is not None else None
+
     pending = list(range(len(candidate_sets)))
     if worklist_order == "reverse":
         pending.reverse()
@@ -4373,6 +4474,8 @@ def build_final_timing_state(
             arbiter_mode=arbiter_mode,
             reviewer_evidence=reviewer_evidence[index],
             timing_source_policy=timing_source_policy,
+            ctc_path_collapsed=collapsed_region(index),
+            next_bound_seconds=next_bound(index),
         )
         old_decision = decisions[index]
         decisions[index] = new_decision
