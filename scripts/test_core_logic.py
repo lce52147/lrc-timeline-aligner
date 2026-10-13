@@ -11533,6 +11533,153 @@ class V146LocalWhisperEvidenceRegressionTests(unittest.TestCase):
             entry: {**payload, "evidence_revision": auto_lrc._timing_content_digest(payload)}
         }
 
+    def local_capability_request(
+        self,
+        audio: Path,
+        entries: list[LyricEntry],
+    ) -> tuple[auto_lrc.LocalWhisperCapability, auto_lrc.LocalWhisperRequest]:
+        audio_sha = auto_lrc._path_sha256(audio)
+        cap_payload = {
+            "kind": "whispercpp-whisperx-local",
+            "backend_lineage": "whisper-family",
+            "audio_path": str(audio.resolve()),
+            "audio_sha256": audio_sha,
+            "whisper_cli_path": "cli",
+            "whisper_cli_sha256": "cli-sha",
+            "whisper_model_path": "model",
+            "whisper_model_sha256": "model-sha",
+            "whisperx_python_path": "python",
+            "whisperx_helper_path": "helper",
+            "whisperx_helper_sha256": "helper-sha",
+            "language": "ja",
+            "device": "cuda",
+            "protocol_revision": auto_lrc._LOCAL_WHISPER_PROTOCOL_REVISION,
+        }
+        capability = auto_lrc.LocalWhisperCapability(
+            **cap_payload,
+            capability_revision=auto_lrc._canonical_json_digest(
+                auto_lrc._local_whisper_capability_semantic_payload(cap_payload)
+            ),
+        )
+        request_payload = {
+            "entry_index": 0,
+            "capability_revision": capability.capability_revision,
+            "audio_revision": audio_sha,
+            "context_entry_indexes": (0,),
+            "context_candidate_ids": ("candidate",),
+            "transcript_digests": tuple(
+                auto_lrc._timing_content_digest(auto_lrc.entry_sung_text(entry))
+                for entry in entries
+            ),
+            "transcript_digest": auto_lrc._timing_content_digest(
+                tuple(auto_lrc.entry_sung_text(entry) for entry in entries)
+            ),
+            "window_start": 10.0,
+            "window_end": 20.0,
+            "window_definition_revision": "window",
+        }
+        request = auto_lrc.LocalWhisperRequest(
+            **request_payload,
+            request_revision=auto_lrc._timing_content_digest({
+                **request_payload,
+                "context_entry_indexes": [0],
+                "context_candidate_ids": ["candidate"],
+                "transcript_digests": list(request_payload["transcript_digests"]),
+            }),
+        )
+        return capability, request
+
+    def test_segment_peer_whisper_outlier_is_diagnostic_only(self) -> None:
+        from segment_peer_outlier import exclude_uncorroborated_whisperx_fusion
+
+        def candidate(source: str, time_value: float) -> object:
+            return types.SimpleNamespace(
+                source=source,
+                acoustic_evidence=object(),
+                direct_onset_evidence=object(),
+                written_time=types.SimpleNamespace(seconds=time_value),
+            )
+
+        ctc = candidate("ctc-vocal-onset-confirmed", 10.0)
+        raw = candidate("raw-vocal-independent-fusion", 10.1)
+        whisper = candidate("whisperx-vocal-independent-fusion", 12.0)
+        kept, flagged = exclude_uncorroborated_whisperx_fusion((ctc, raw, whisper))
+        self.assertEqual(kept, (ctc, raw, whisper))
+        self.assertEqual(flagged, (whisper,))
+
+    def test_transient_local_whisper_error_is_not_cached(self) -> None:
+        entries = [LyricEntry(["unique retry target"])]
+        with TemporaryDirectory() as temp_name:
+            audio = Path(temp_name) / "audio.wav"
+            audio.write_bytes(b"audio")
+            capability, request = self.local_capability_request(audio, entries)
+            raw = [auto_lrc.AsrSegment(0.0, 3.0, "raw")]
+            aligned = [
+                auto_lrc.AsrSegment(
+                    1.0,
+                    2.0,
+                    "unique retry target",
+                    chars=[
+                        (char, 1.0 + index * 0.03)
+                        for index, char in enumerate("uniqueretrytarget")
+                    ],
+                )
+            ]
+            local_report = {
+                "assignments": [{
+                    "entry": 1,
+                    "segment": 1,
+                    "score": 0.95,
+                    "borrowed": False,
+                    "timestamp": 1.0,
+                }]
+            }
+            cache: dict[str, tuple[str, object]] = {}
+            runtime_stats: dict[str, int] = {}
+            args = auto_lrc.argparse.Namespace(
+                whisper_cli=None,
+                whisper_model=None,
+                whisper_language="ja",
+                whisper_suppress_nst=False,
+                whisperx_python=None,
+                whisperx_device="cpu",
+            )
+            with (
+                mock.patch.object(
+                    auto_lrc,
+                    "decode_temp_wav_window",
+                    side_effect=[LrcError("transient"), audio],
+                ),
+                mock.patch.object(auto_lrc, "_run_whispercpp_wav", return_value=raw),
+                mock.patch.object(auto_lrc, "run_whisperx_alignment", return_value={}),
+                mock.patch.object(auto_lrc, "whisperx_segments", return_value=aligned),
+                mock.patch.object(
+                    auto_lrc,
+                    "match_whisper_segments",
+                    return_value=([1.0], local_report),
+                ),
+            ):
+                first = auto_lrc.execute_local_whisper_request(
+                    request,
+                    capability,
+                    entries,
+                    args,
+                    cache=cache,
+                    runtime_stats=runtime_stats,
+                )
+                second = auto_lrc.execute_local_whisper_request(
+                    request,
+                    capability,
+                    entries,
+                    args,
+                    cache=cache,
+                    runtime_stats=runtime_stats,
+                )
+        self.assertEqual(first.status, "error")
+        self.assertEqual(second.status, "evidence")
+        self.assertEqual(runtime_stats["cache_misses"], 2)
+        self.assertEqual(runtime_stats.get("cache_hits", 0), 0)
+
     def test_local_whisper_consensus_preserves_parent_timestamp(self) -> None:
         entries = [LyricEntry(["unique lyric local alpha"])]
         report = {auto_lrc._RUNTIME_LYRIC_ENTRIES_KEY: tuple(entries)}

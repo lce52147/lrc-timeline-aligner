@@ -18182,7 +18182,6 @@ def execute_local_whisper_request(
         runtime_stats["helper_invocations"] = runtime_stats.get("helper_invocations", 0) + 1
     except (LrcError, OSError, ValueError, json.JSONDecodeError) as exc:
         outcome = finish("error", f"local-whisper-failed:{type(exc).__name__}")
-        cache[cache_key] = (outcome.outcome_revision, outcome)
         return outcome
 
     context_entries = [entries[index] for index in request.context_entry_indexes]
@@ -18193,7 +18192,6 @@ def execute_local_whisper_request(
         )
     except (LrcError, ValueError, IndexError) as exc:
         outcome = finish("error", f"local-match-failed:{type(exc).__name__}")
-        cache[cache_key] = (outcome.outcome_revision, outcome)
         return outcome
     assignments = local_report.get("assignments")
     if not isinstance(assignments, list) or len(assignments) != len(context_entries):
