@@ -4012,6 +4012,16 @@ def current_ctc_path_collapsed(candidates: tuple[TimingCandidate, ...]) -> bool:
     return ctc_spans_collapsed(current.spans)
 
 
+def current_ctc_path_incoherent(candidates: tuple[TimingCandidate, ...]) -> bool:
+    """The ``ctc-current`` row fails Central's own temporal-coherence check
+    (a severe gap inside its opening), the same reading the evaluator rejects
+    it with as ``temporal-incoherence``."""
+    current = _current_timing_candidate(candidates)
+    if current is None or not current.spans:
+        return False
+    return analyze_candidate_regions(current).temporal_coherence == "incoherent"
+
+
 def _collapsed_path_fallback(
     evaluations: tuple[CandidateEvaluation, ...],
     eligible_ids: set[str],
@@ -4019,7 +4029,8 @@ def _collapsed_path_fallback(
     previous_candidate: TimingCandidate | None,
     next_bound_seconds: float | None,
 ) -> CandidateEvaluation | None:
-    """Provisional replacement for an unresolved row inside a collapsed CTC path.
+    """Provisional replacement for an unresolved row inside a collapsed CTC path
+    (or a row whose own whole-song opening is temporally incoherent).
 
     Only used when Central found no valid winner.  The whole-song path is
     visibly broken around this row, so its timestamp is the least credible
@@ -4482,6 +4493,10 @@ def build_final_timing_state(
     # computed once here and every replay through this owner sees the same view.
     collapsed_rows = tuple(current_ctc_path_collapsed(items) for items in candidate_sets)
     collapsed_region = ctc_collapsed_region_flags(collapsed_rows)
+    # A whole-song row whose own opening is fractured is the same broken path
+    # seen through its shape instead of its extent; its unresolved fallback is
+    # the collapsed one.
+    incoherent_rows = tuple(current_ctc_path_incoherent(items) for items in candidate_sets)
 
     def next_bound(row: int) -> float | None:
         # A sane next baseline row bounds the fallback so output stays ordered;
@@ -4520,7 +4535,7 @@ def build_final_timing_state(
             arbiter_mode=arbiter_mode,
             reviewer_evidence=reviewer_evidence[index],
             timing_source_policy=timing_source_policy,
-            ctc_path_collapsed=collapsed_region[index],
+            ctc_path_collapsed=collapsed_region[index] or incoherent_rows[index],
             next_bound_seconds=next_bound(index),
         )
         old_decision = decisions[index]
@@ -9751,6 +9766,7 @@ def apply_ctc_local_window_realign(
     changes: list[dict[str, object]] = []
     errors: list[str] = []
     rejected_rows: list[dict[str, object]] = []
+    vocal_levels: VocalStemLevels | None = None
     window_runs = [run for run in runs if isinstance(run, list) and run]
     covered_entries = {int(entry) for run in window_runs for entry in run if isinstance(entry, int)}
     if isinstance(low_score_entries, list):
@@ -9961,6 +9977,26 @@ def apply_ctc_local_window_realign(
                     # lets the later boundary stage evaluate that candidate
                     # instead of propagating a truncated path into the next
                     # lyric boundary.
+                    continue
+                # A forced path across an instrumental break can start a line
+                # in vocal silence; that is no onset (the final self-check's
+                # F1 judgment, applied before the row becomes a candidate).
+                if vocal_levels is None:
+                    vocal_levels = vocal_stem_levels(ctc_report)
+                if vocal_levels.absent(round(timestamp, 2)):
+                    rejected_rows.append(
+                        {
+                            "entry": index + 1,
+                            "candidate": round(timestamp, 3),
+                            "reason": "local-window-vocal-absent",
+                            "window": {
+                                "start": round(start_time, 3),
+                                "end": round(end_time, 3),
+                            },
+                            "ctc_score": row.get("ctc_score"),
+                            "vocal_threshold_db": round(float(vocal_levels.threshold_db or 0.0), 3),
+                        }
+                    )
                     continue
                 assignment = assignments[index]
                 if shadow:
@@ -25474,6 +25510,67 @@ FINAL_SELF_CHECK_WINDOW_SECONDS = 0.40
 FINAL_SELF_CHECK_BELOW_MEDIAN_DB = 20.0
 
 
+@dataclass(frozen=True)
+class VocalStemLevels:
+    """Whether the singer is audible at a time, measured on the Demucs vocal stem.
+
+    The one judgment behind both the final self-check's F1 flag and the
+    local-window rule that a re-aligned line cannot start in vocal silence.
+    """
+
+    status: str
+    threshold_db: float | None = None
+    active_windows: int = 0
+    error: str | None = None
+    samples: np.ndarray | None = field(default=None, repr=False, compare=False)
+
+    def window_db(self, seconds: float) -> float | None:
+        if self.samples is None:
+            return None
+        window_samples = int(round(SAMPLE_RATE * FINAL_SELF_CHECK_WINDOW_SECONDS))
+        start = int(round(seconds * SAMPLE_RATE))
+        if start < 0 or start + window_samples > len(self.samples):
+            return None
+        x = self.samples[start:start + window_samples].astype(np.float64)
+        return 10.0 * math.log10(max(float(np.mean(x * x)), 1e-20))
+
+    def absent(self, seconds: float) -> bool:
+        if self.status != "checked" or self.threshold_db is None:
+            return False
+        db = self.window_db(seconds)
+        return db is not None and db < self.threshold_db
+
+
+def vocal_stem_levels(report: dict[str, object]) -> VocalStemLevels:
+    vocal_file = report.get("ctc_audio_path")
+    if not (
+        report.get("ctc_audio_source") == "vocal-stem"
+        and isinstance(vocal_file, str)
+        and Path(vocal_file).is_file()
+    ):
+        return VocalStemLevels("skipped-no-stem")
+    try:
+        stem = Path(vocal_file)
+        samples = decode_audio(stem)
+        probe = VocalStemLevels("probing", samples=samples)
+        active = analyze_audio(stem, len(samples) / SAMPLE_RATE).segments
+        levels = [
+            value
+            for seg_start, seg_end in active
+            for t in np.arange(
+                seg_start, seg_end - FINAL_SELF_CHECK_WINDOW_SECONDS + 1e-6, 0.2
+            )
+            for value in (probe.window_db(float(t)),)
+            if value is not None
+        ]
+        if len(levels) < 8:
+            return VocalStemLevels("skipped-insufficient-active-windows")
+        threshold = float(statistics.median(levels)) - FINAL_SELF_CHECK_BELOW_MEDIAN_DB
+        return VocalStemLevels("checked", threshold, len(levels), None, samples)
+    except (LrcError, OSError, ValueError, subprocess.SubprocessError) as exc:
+        return VocalStemLevels("skipped-decoding-error", error=str(exc))
+
+
 def compute_final_timing_self_check(
     report: dict[str, object],
     state: FinalTimingState,
@@ -25495,46 +25592,16 @@ def compute_final_timing_self_check(
         "schema": 1, "timestamp_mutations": 0, "vocal_status": "skipped-no-stem",
         "vocal_threshold_db": None,
     }
-    vocal_file = report.get("ctc_audio_path")
-    if (
-        report.get("ctc_audio_source") == "vocal-stem"
-        and isinstance(vocal_file, str)
-        and Path(vocal_file).is_file()
-    ):
-        try:
-            stem = Path(vocal_file)
-            samples = decode_audio(stem)
-            window_samples = int(round(SAMPLE_RATE * FINAL_SELF_CHECK_WINDOW_SECONDS))
-            def window_db(seconds: float) -> float | None:
-                start = int(round(seconds * SAMPLE_RATE))
-                if start < 0 or start + window_samples > len(samples):
-                    return None
-                x = samples[start:start + window_samples].astype(np.float64)
-                return 10.0 * math.log10(max(float(np.mean(x * x)), 1e-20))
-            active = analyze_audio(stem, len(samples) / SAMPLE_RATE).segments
-            levels = [
-                value
-                for seg_start, seg_end in active
-                for t in np.arange(
-                    seg_start, seg_end - FINAL_SELF_CHECK_WINDOW_SECONDS + 1e-6, 0.2
-                )
-                for value in (window_db(float(t)),)
-                if value is not None
-            ]
-            if len(levels) >= 8:
-                threshold = float(statistics.median(levels)) - FINAL_SELF_CHECK_BELOW_MEDIAN_DB
-                diagnostics["vocal_status"] = "checked"
-                diagnostics["vocal_threshold_db"] = round(threshold, 3)
-                diagnostics["vocal_active_windows"] = len(levels)
-                for i, seconds in enumerate(times, 1):
-                    db = window_db(seconds)
-                    if db is not None and db < threshold:
-                        flagged[i].append("F1-vocal-absent")
-            else:
-                diagnostics["vocal_status"] = "skipped-insufficient-active-windows"
-        except (LrcError, OSError, ValueError, subprocess.SubprocessError) as exc:
-            diagnostics["vocal_status"] = "skipped-decoding-error"
-            diagnostics["vocal_error"] = str(exc)
+    vocal = vocal_stem_levels(report)
+    diagnostics["vocal_status"] = vocal.status
+    if vocal.status == "checked" and vocal.threshold_db is not None:
+        diagnostics["vocal_threshold_db"] = round(vocal.threshold_db, 3)
+        diagnostics["vocal_active_windows"] = vocal.active_windows
+        for i, seconds in enumerate(times, 1):
+            if vocal.absent(seconds):
+                flagged[i].append("F1-vocal-absent")
+    elif vocal.error is not None:
+        diagnostics["vocal_error"] = vocal.error
     vocal_check_required = report.get("ctc_audio_source") == "vocal-stem"
     if vocal_check_required and diagnostics["vocal_status"] != "checked":
         for i in range(1, len(times) + 1):
