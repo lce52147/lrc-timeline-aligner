@@ -8121,28 +8121,40 @@ def repeated_leading_term(text: str) -> tuple[str, int]:
 
 
 def has_ambiguous_lyric_prefix(entries: list[LyricEntry], index: int) -> bool:
-    """Detect long shared prefixes that make raw-ASR line matching ambiguous."""
+    """Detect long shared prefixes or suffixes that make raw-ASR line matching ambiguous.
+
+    A verse variant that changes only the opening words ("I'm living without
+    you" / "I'm dreaming without you") is as easy to match to the wrong line as
+    one that changes only the ending.
+    """
     if not (0 <= index < len(entries)):
         return False
     target = normalize_match_text(entry_sung_text(entries[index]))
     if len(target) < 12:
         return False
+
+    def shared_run(left_text: str, right_text: str) -> int:
+        shared = 0
+        for left, right in zip(left_text, right_text):
+            if left != right:
+                break
+            shared += 1
+        return shared
+
     for other_index, other_entry in enumerate(entries):
         if other_index == index:
             continue
         other = normalize_match_text(entry_sung_text(other_entry))
         if len(other) < 12:
             continue
-        shared = 0
-        for left, right in zip(target, other):
-            if left != right:
-                break
-            shared += 1
         # Twelve shared characters (or most of a shorter long phrase) makes a
         # raw segment match non-unique. It may identify the right *phrase*
         # while still selecting the wrong occurrence in the song.
         required = min(12, max(8, min(len(target), len(other)) // 2))
-        if shared >= required:
+        if (
+            shared_run(target, other) >= required
+            or shared_run(target[::-1], other[::-1]) >= required
+        ):
             return True
     return False
 
