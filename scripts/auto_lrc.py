@@ -5823,6 +5823,64 @@ def _vocal_activity_reentry_for_time(
     )
 
 
+VOCAL_ONSET_RAW_ORDER_TOLERANCE_SECONDS = 1.0
+VOCAL_ONSET_RAW_ORDER_MIN_CONTRADICTIONS = 2
+VOCAL_ONSET_RAW_ORDER_MIN_SCORE = 0.50
+
+
+def _raw_asr_order_anchors(
+    report: dict[str, object],
+    entries: list[LyricEntry],
+) -> dict[int, float]:
+    """Rows whose recorded raw-ASR line onset can witness lyric ORDER.
+
+    Only real (non-borrowed) raw segments recorded by
+    ``flag_unresolved_raw_ctc_disagreements``; drift runs are never recorded
+    there, and lines with an ambiguous lyric prefix may match a sibling line.
+    """
+    anchors: dict[int, float] = {}
+    rows = report.get("suspicious_alignments")
+    if not isinstance(rows, list):
+        return anchors
+    for row in rows:
+        if not isinstance(row, dict) or row.get("raw_asr_borrowed") is not False:
+            continue
+        entry = row.get("entry")
+        stamps = row.get("candidate_timestamps")
+        if isinstance(entry, bool) or not isinstance(entry, int) or not isinstance(stamps, dict):
+            continue
+        try:
+            raw_time = float(stamps.get("raw_asr"))
+            raw_score = float(row.get("raw_asr_score"))
+        except (TypeError, ValueError):
+            continue
+        index = entry - 1
+        if (
+            not math.isfinite(raw_time)
+            or raw_score < VOCAL_ONSET_RAW_ORDER_MIN_SCORE
+            or not 0 <= index < len(entries)
+            or has_ambiguous_lyric_prefix(entries, index)
+        ):
+            continue
+        anchors[index] = raw_time
+    return anchors
+
+
+def _raw_asr_order_contradictions(
+    anchors: dict[int, float],
+    index: int,
+    time_seconds: float,
+) -> list[int]:
+    """Entries whose raw onset says ``index`` cannot start at ``time_seconds``."""
+    tolerance = VOCAL_ONSET_RAW_ORDER_TOLERANCE_SECONDS
+    return sorted(
+        other + 1
+        for other, raw_time in anchors.items()
+        if (other > index and raw_time < time_seconds - tolerance)
+        or (other < index and raw_time > time_seconds + tolerance)
+    )
+
+
 def apply_vocal_onset_confirmation_hypotheses(
     alignment_audio_path: Path,
     entries: list[LyricEntry],
@@ -5849,7 +5907,15 @@ def apply_vocal_onset_confirmation_hypotheses(
         except LrcError:
             return []
     audio_revision = hashlib.sha256(Path(alignment_audio_path).read_bytes()).hexdigest()
+    # A coherent line next to a collapsed path, or a clock that sits after
+    # (before) other rows' raw-ASR line onsets, is a path that has lost its
+    # place; a vocal onset there confirms *a* line start, not this line's.
+    collapsed_region = ctc_collapsed_region_flags(
+        [assignment_ctc_path_collapsed(item) for item in assignments]
+    )
+    raw_order_anchors = _raw_asr_order_anchors(report, entries)
     generated: list[dict[str, object]] = []
+    skipped: list[dict[str, object]] = []
     for index, assignment in enumerate(assignments):
         if not isinstance(assignment, dict):
             continue
@@ -5859,6 +5925,17 @@ def apply_vocal_onset_confirmation_hypotheses(
         try:
             current_time = float(assignment.get("timestamp", timestamps[index]) or timestamps[index])
         except (TypeError, ValueError):
+            continue
+        if collapsed_region[index]:
+            skipped.append({"entry": index + 1, "reason": "collapsed-ctc-region"})
+            continue
+        contradicting = _raw_asr_order_contradictions(raw_order_anchors, index, current_time)
+        if len(contradicting) >= VOCAL_ONSET_RAW_ORDER_MIN_CONTRADICTIONS:
+            skipped.append({
+                "entry": index + 1,
+                "reason": "raw-asr-order-contradiction",
+                "contradicting_entries": contradicting,
+            })
             continue
         current_candidate = make_timing_candidate(
             entry_index=index,
@@ -5939,6 +6016,7 @@ def apply_vocal_onset_confirmation_hypotheses(
         })
     report["vocal_onset_confirmation_hypotheses"] = generated
     report["vocal_onset_confirmation_count"] = len(generated)
+    report["vocal_onset_confirmation_skipped"] = skipped
     report["vocal_onset_confirmation_authoritative"] = False
     report["vocal_onset_confirmation_mutates_baseline"] = False
     return generated
@@ -10769,6 +10847,18 @@ def try_whisperx_candidate(
         return [], {"whisper_suppress_nst": suppress_nst, "error": str(exc)}, str(exc)
 
 
+SEGMENT_GATE_OVERRIDE_ATTR = "_segment_gate_override"
+SEGMENT_GATE_STATUS_ATTR = "_segment_gate_status"
+
+
+def _set_runtime_arg(args: object, name: str, value: object) -> None:
+    # Synthetic caller/test arguments may be immutable objects.
+    try:
+        setattr(args, name, value)
+    except (AttributeError, TypeError):
+        pass
+
+
 def try_ctc_candidate(
     audio_path: Path,
     entries: list[LyricEntry],
@@ -10796,7 +10886,9 @@ def try_ctc_candidate(
                     ),
                     romanizer=japanese_romaji,
                     raw_asr_events=getattr(args,'_skeleton_raw_asr_events',()),
+                    gate_override=getattr(args, SEGMENT_GATE_OVERRIDE_ATTR, None),
                 )
+                _set_runtime_arg(args, SEGMENT_GATE_STATUS_ATTR, skeleton_details)
             else:
                 report["segment_skeleton_status"] = {
                     "status": "FALLBACK_CTC",
@@ -14369,6 +14461,74 @@ def run_auto_backend_competition(
         f"quality={selection.selected.quality:.1f}"
     )
     return selected_timestamps, selected_report, selected_backend, selection
+
+
+def run_backend_competition_over_skeleton_gate(
+    audio_path: Path,
+    entries: list[LyricEntry],
+    duration: float,
+    args: argparse.Namespace,
+    anchor_path: Path | None,
+) -> tuple[list[float], dict[str, object], str, BackendSelection]:
+    """Run the competition; when a segment-skeleton gate verdict was within
+    GPU noise of its cutoff, also run the other path and let Central's own
+    evaluation choose.  A near-edge gate never decides the whole song alone.
+    """
+    _set_runtime_arg(args, SEGMENT_GATE_OVERRIDE_ATTR, None)
+    _set_runtime_arg(args, SEGMENT_GATE_STATUS_ATTR, None)
+    first = run_auto_backend_competition(audio_path, entries, duration, args, anchor_path)
+    first_status = getattr(args, SEGMENT_GATE_STATUS_ATTR, None)
+    if not (isinstance(first_status, dict) and first_status.get("near_edge_gates")):
+        return first
+
+    def branch(status: object) -> str:
+        return (
+            "segment"
+            if isinstance(status, dict) and status.get("status") == "SEGMENT_CURRENT"
+            else "fallback"
+        )
+
+    first_branch = branch(first_status)
+    other_branch = "fallback" if first_branch == "segment" else "segment"
+    progress_log(
+        f"segment gate near-edge ({','.join(first_status['near_edge_gates'])}); "
+        f"also evaluating the {other_branch} path in Central"
+    )
+    _set_runtime_arg(args, SEGMENT_GATE_OVERRIDE_ATTR, other_branch)
+    try:
+        second = run_auto_backend_competition(audio_path, entries, duration, args, anchor_path)
+        second_status = getattr(args, SEGMENT_GATE_STATUS_ATTR, None)
+    finally:
+        _set_runtime_arg(args, SEGMENT_GATE_OVERRIDE_ATTR, None)
+    options = [(first_branch, first), (branch(second_status), second)]
+    # Path label, not run order, breaks an exact tie, so both machines agree.
+    chosen_branch, chosen = min(
+        options,
+        key=lambda item: (
+            -round(float(item[1][3].selected.quality), 3),
+            0 if item[0] == "segment" else 1,
+        ),
+    )
+    chosen[1]["segment_gate_dual_evaluation"] = {
+        "near_edge_gates": list(first_status["near_edge_gates"]),
+        "chosen_path": chosen_branch,
+        "paths": [
+            {
+                "path": label,
+                "backend": result[2],
+                "central_quality": round(float(result[3].selected.quality), 3),
+                "skeleton_reason": (
+                    result[1].get("segment_skeleton_status", {}).get("reason")
+                    if isinstance(result[1].get("segment_skeleton_status"), dict)
+                    else None
+                ),
+            }
+            for label, result in options
+        ],
+        "BK_used": False,
+    }
+    progress_log(f"segment gate near-edge: Central chose the {chosen_branch} path")
+    return chosen
 
 
 def low_confidence_run_start(report: dict[str, object], run_length: int = 4) -> int | None:
@@ -24907,6 +25067,9 @@ def _candidate_is_exact_evidence_subsumed_by_selected(
     return True
 
 
+VALID_ALTERNATIVE_MATERIAL_SECONDS = 1.0
+
+
 def _material_distant_timing_alternatives(
     decision: TimingDecision,
     selected_time: float,
@@ -24962,6 +25125,19 @@ def _material_distant_timing_alternatives(
             and candidate.identity_support == "supported"
             and candidate.sequence_support == "supported"
         ):
+            qualifies = True
+        elif (
+            rejected.valid
+            and abs(candidate.written_time.seconds - selected_time)
+            > VALID_ALTERNATIVE_MATERIAL_SECONDS
+            and "recurrence" not in _candidate_support_families(candidate)
+            and candidate.identity_support == "supported"
+            and candidate.sequence_support == "supported"
+            and not _candidate_has_revision_bound_ownership_violation(rejected)
+        ):
+            # Central found this lyric-bound alternative fully valid; it lost
+            # only by not dominating.  Two valid clocks over a second apart
+            # mean the row's timing is not established, whatever else agrees.
             qualifies = True
         else:
             if not rejected.evidence.minimum_proof_satisfied:
@@ -37723,7 +37899,7 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
         features = None
         strategy = "whisperx-hybrid-experimental"
     elif timing_source == "backend_competition":
-        timestamps, report, selected_backend, timing_selection = run_auto_backend_competition(
+        timestamps, report, selected_backend, timing_selection = run_backend_competition_over_skeleton_gate(
             audio_path, entries, duration, args, anchor_path
         )
         features = None

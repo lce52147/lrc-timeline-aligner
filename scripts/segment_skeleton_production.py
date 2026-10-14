@@ -92,11 +92,18 @@ def run_segment_skeleton(
     helper_runner:Callable[...,object],
     romanizer:Callable[[str],str|None]|None=None,
     raw_asr_events:Sequence[tuple[float,float,str]]=(),
+    gate_override:str|None=None,
 )->tuple[list[float],dict[str,object],dict[str,object]]:
+    """``gate_override`` ('segment'/'fallback') only resolves gates whose own
+    verdict is near-edge (their diagnostics carry ``near_edge``). Clear
+    verdicts are unchanged. The caller evaluates both near-edge paths in
+    Central and keeps the better one."""
     original=list(timestamps)
+    near_edge:list[str]=[]
     def fallback(reason:str,**kw:object):
         details={'status':'FALLBACK_CTC','reason':reason,'whole_song':True,
-          'current_source':'whole-song-ctc','BK_used':False,**kw}
+          'current_source':'whole-song-ctc','BK_used':False,
+          'near_edge_gates':list(near_edge),'gate_override':gate_override,**kw}
         report['segment_skeleton_status']=details
         return original,report,details
     if report.get('ctc_audio_source')!='vocal-stem' or not vocal_stem.is_file():
@@ -238,7 +245,10 @@ def run_segment_skeleton(
             lyric_texts=lyric_texts,global_times=original,
             skeleton_times=output_times,raw_asr_events=raw_asr_events,
             romanizer=romanizer)
-        if asr_corroboration.get('fallback'):
+        if asr_corroboration.get('near_edge'):
+            near_edge.append('ASR_CORROBORATION')
+        if asr_corroboration.get('fallback') and not (
+                asr_corroboration.get('near_edge') and gate_override=='segment'):
             return fallback('ASR_UNCORROBORATED_STRUCTURE',
                             raw_asr_corroboration=asr_corroboration)
         # A local path in the selected passage alone cannot establish
@@ -253,8 +263,15 @@ def run_segment_skeleton(
         if placement_diag.get('status')!='OK':
             return fallback('GROUP_PLACEMENT_EVIDENCE_FAILED',
                             group_placement=placement_diag)
-        if placement_diag.get('fallback'):
+        if placement_diag.get('near_edge'):
+            near_edge.append('GROUP_PLACEMENT')
+        if placement_diag.get('fallback') and not (
+                placement_diag.get('near_edge') and gate_override=='segment'):
             return fallback('GROUP_PLACEMENT_UNSUPPORTED',
+                            group_placement=placement_diag)
+        if near_edge and gate_override=='fallback':
+            return fallback('NEAR_EDGE_ALTERNATIVE',
+                            raw_asr_corroboration=asr_corroboration,
                             group_placement=placement_diag)
         # Same MMS CTC model on the same isolated stem: a wholesale
         # structural move must improve genuine acoustic fit over the global
@@ -417,6 +434,8 @@ def run_segment_skeleton(
           'raw_asr_corroboration':asr_corroboration,
           'legacy_global_gain_diagnostics':legacy_gain_diagnostics,
           'repeated_global_ctc_conflicts':repeat_conflicts,
+          'near_edge_gates':list(near_edge),
+          'gate_override':gate_override,
           'runtime_cache_hit':cached is not None,
           'passage_energies':[
              {"start":round(p.start,3),"end":round(p.end,3),

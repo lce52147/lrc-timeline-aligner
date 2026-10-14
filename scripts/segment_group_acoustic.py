@@ -6,6 +6,12 @@ from typing import Callable,Sequence
 
 MIN_PLACEMENT_MARGIN=.02
 MAX_UNSUPPORTED_LINE_FRACTION=.15
+# Same song, same model, different GPU: group scores differ by ~1e-5.  A
+# group whose margin is within this band of the cutoff has no stable verdict;
+# when flipping those groups alone flips the all-song rollback, the gate is
+# reported as near-edge so the caller evaluates BOTH paths instead of letting
+# GPU rounding pick one.
+PLACEMENT_EDGE_TOLERANCE=.005
 
 def placement_decision(assigned_score:float, competitor_scores:Sequence[float],
                        margin:float=MIN_PLACEMENT_MARGIN)->bool:
@@ -13,6 +19,31 @@ def placement_decision(assigned_score:float, competitor_scores:Sequence[float],
     if not (math.isfinite(assigned_score) and all(
             math.isfinite(float(x)) for x in competitor_scores)):return False
     return assigned_score>=max(competitor_scores)+margin
+
+def placement_margin(assigned_score:float, competitor_scores:Sequence[float],
+                     margin:float=MIN_PLACEMENT_MARGIN)->float|None:
+    """Signed distance from the placement cutoff (None: no competitor)."""
+    if not competitor_scores:return None
+    if not (math.isfinite(assigned_score) and all(
+            math.isfinite(float(x)) for x in competitor_scores)):return None
+    return assigned_score-(max(competitor_scores)+margin)
+
+def placement_fallback_near_edge(groups:Sequence[dict], row_count:int,
+                                 tolerance:float=PLACEMENT_EDGE_TOLERANCE)->bool:
+    """Whether marginal groups alone decide the all-song rollback."""
+    sure=0
+    marginal=0
+    for group in groups:
+        first,last=group['rows']
+        size=int(last)-int(first)+1
+        value=group.get('decision_margin')
+        if value is not None and abs(float(value))<=tolerance:
+            marginal+=size
+        elif not group.get('supported'):
+            sure+=size
+    total=max(1,int(row_count))
+    return ((sure/total>MAX_UNSUPPORTED_LINE_FRACTION)
+            !=((sure+marginal)/total>MAX_UNSUPPORTED_LINE_FRACTION))
 
 def contiguous_passage_groups(passages:Sequence[int])->list[tuple[int,int,int]]:
     if not passages:return []
@@ -87,13 +118,17 @@ def check_group_placement(*,rows:list[dict], passage_ids:Sequence[int],
                                     'ctc_score':round(sum(scores)/len(scores),6),
                                     'window':[round(start,3),round(stop,3)]})
             passes=placement_decision(assigned,[c['ctc_score'] for c in competitors])
+            signed=placement_margin(assigned,[c['ctc_score'] for c in competitors])
             diagnostic={'group':k,'rows':[begin+1,end],'passage':j,
                         'assigned_ctc_score':round(assigned,6),
-                        'neighbors':competitors,'supported':passes}
+                        'neighbors':competitors,'supported':passes,
+                        'decision_margin':None if signed is None else round(signed,6)}
             evidence.append(diagnostic)
             if not passes:
                 invalid.extend(range(begin+1,end+1))
     fraction=len(invalid)/max(1,len(rows))
     return {'status':'OK','groups':evidence,'unsupported_rows':invalid,
             'unsupported_fraction':round(fraction,6),
-            'fallback':fraction>MAX_UNSUPPORTED_LINE_FRACTION}
+            'fallback':fraction>MAX_UNSUPPORTED_LINE_FRACTION,
+            'near_edge':placement_fallback_near_edge(evidence,len(rows)),
+            'edge_tolerance':PLACEMENT_EDGE_TOLERANCE}
