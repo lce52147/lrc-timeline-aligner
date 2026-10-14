@@ -13296,7 +13296,24 @@ def gpu_compute_phase():
     try:
         yield
     finally:
-        _leave_gpu_compute()
+        try:
+            _park_before_whispercpp_handoff()
+        finally:
+            _leave_gpu_compute()
+
+
+def _park_before_whispercpp_handoff() -> None:
+    """A whisper.cpp run of another song waits on this process's marker; it may
+    start the moment the marker is released.  The helpers still hold this
+    request's working memory then, and the watcher parks them only up to
+    ~0.5 s later, so both briefly share the GPU.  The last in-flight request
+    parks them before releasing the marker instead."""
+    with _GPU_COMPUTE_STATE_LOCK:
+        last = int(_GPU_COMPUTE_STATE["depth"]) == 1
+    if not last or not _other_process_runs_whispercpp_confirmed():
+        return
+    _park_persistent_helper_mode("whisperx", reason="other-song-whispercpp-handoff")
+    _park_persistent_helper_mode("ctc", reason="other-song-whispercpp-handoff")
 
 
 def prepare_vocal_ctc_audio(audio_path: Path, args: argparse.Namespace) -> tuple[Path, str, str | None]:

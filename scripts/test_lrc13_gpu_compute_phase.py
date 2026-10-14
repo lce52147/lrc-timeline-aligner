@@ -114,6 +114,49 @@ class GpuComputePhaseTests(unittest.TestCase):
         self.assertGreater(waited, 0.8)
         self.assertEqual(self.parks, ["whisperx:other-song-whispercpp", "ctc:other-song-whispercpp"])
 
+    def test_last_request_parks_before_releasing_marker_to_waiting_whispercpp(self) -> None:
+        # The other song took the whisper.cpp lock while this request ran and now
+        # waits on this process's marker: the helpers must be parked before the
+        # marker is released, not by the watcher up to 0.5 s after its run started.
+        marker = self.compute_dir / f"{os.getpid()}.lock"
+        marker_held_at_park: list[bool] = []
+
+        def park(mode, *, reason):
+            self.parks.append(f"{mode}:{reason}")
+            marker_held_at_park.append(lock_is_held(marker))
+            return 1
+
+        with mock.patch.object(auto_lrc, "_park_persistent_helper_mode", park), \
+                mock.patch.object(auto_lrc, "_ensure_whispercpp_park_watcher", lambda: None):
+            with auto_lrc.gpu_compute_phase():
+                child = hold_lock(self.whisper_lock, 1.0)
+            self.assertFalse(lock_is_held(marker))
+            finish(child)
+        self.assertEqual(
+            self.parks,
+            ["whisperx:other-song-whispercpp-handoff", "ctc:other-song-whispercpp-handoff"],
+        )
+        self.assertEqual(marker_held_at_park, [True, True])
+
+    def test_nested_request_end_does_not_park_while_outer_request_runs(self) -> None:
+        with mock.patch.object(auto_lrc, "_ensure_whispercpp_park_watcher", lambda: None):
+            with auto_lrc.gpu_compute_phase():
+                child = None
+                try:
+                    with auto_lrc.gpu_compute_phase():
+                        child = hold_lock(self.whisper_lock, 1.0)
+                    parked_after_inner = list(self.parks)
+                finally:
+                    if child is not None:
+                        finish(child)
+        self.assertEqual(parked_after_inner, [])
+
+    def test_request_end_without_waiting_whispercpp_keeps_helpers_resident(self) -> None:
+        with mock.patch.object(auto_lrc, "_ensure_whispercpp_park_watcher", lambda: None):
+            with auto_lrc.gpu_compute_phase():
+                pass
+        self.assertEqual(self.parks, [])
+
     def test_whispercpp_waits_for_another_songs_gpu_work(self) -> None:
         child = hold_lock(self.compute_dir / "999999.lock", 1.5)
         started = time.monotonic()
