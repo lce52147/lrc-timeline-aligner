@@ -55,15 +55,18 @@ class PlacementNearEdgeTests(unittest.TestCase):
             {"rows": [11, 11], "supported": True, "decision_margin": .001},
             {"rows": [12, 40], "supported": True, "decision_margin": .3},
         ]
-        # 10/40 rows clearly unsupported already exceeds 15%.
-        self.assertFalse(placement_fallback_near_edge(groups, 40))
-        groups[0]["rows"] = [1, 5]
-        groups[1]["rows"] = [6, 6]
-        # 5/40 vs 6/40: still both under 15%.
-        self.assertFalse(placement_fallback_near_edge(groups, 40))
-        groups[1]["rows"] = [6, 7]
-        # 5/40 (12.5%) vs 7/40 (17.5%): the marginal group decides.
-        self.assertTrue(placement_fallback_near_edge(groups, 40))
+        # A clearly supported group keeps the skeleton whatever the marginal
+        # group does: only that group's own rows can change clock.
+        self.assertFalse(placement_fallback_near_edge(groups))
+        groups[2].update(supported=False, decision_margin=-.3)
+        # Every other group clearly unsupported: the marginal group alone
+        # decides between the skeleton and the all-song rollback.
+        self.assertTrue(placement_fallback_near_edge(groups))
+
+    def test_rollback_only_when_no_group_is_supported(self) -> None:
+        # Sister c06: 11 of 52 rows misplaced used to discard all 52.
+        self.assertFalse(self.invoke(.10)["fallback"])
+        self.assertTrue(self.invoke(.60)["fallback"])
 
 
 class AsrCorroborationNearEdgeTests(unittest.TestCase):
@@ -134,6 +137,125 @@ class SkeletonGateOverrideTests(unittest.TestCase):
         _times, _report, status = self.run_case(
             self.placement(fallback=False, near_edge=False), "fallback")
         self.assertEqual(status["status"], "SEGMENT_CURRENT")
+
+
+GLOBAL_TIMES = [1.2, 2.2, 4.2, 5.2]  # option_a.OptionAProductionTests.case
+
+
+def _skeleton_runner(unsupported_group: int | None):
+    """option_a's fake local CTC; neighbour windows of *unsupported_group* fit
+    its lyrics better than its own passage (c37 row 1, sister c06 tail)."""
+    def run(cmd, timeout):
+        import json
+        start = float(cmd[cmd.index("--start") + 1])
+        out = Path(cmd[cmd.index("--output") + 1])
+        lyrics = json.loads(Path(cmd[cmd.index("--transcript") + 1]).read_text(encoding="utf8"))
+        if "_neighbor" in out.name:
+            own = unsupported_group is not None and out.name.startswith(f"g{unsupported_group:03d}_")
+            score = .9 if own else .10
+        else:
+            score = .5
+        entries = [{"start": round(start + .45 + .6 * j, 3), "ctc_score": score,
+                    "token_spans": [{"start": round(start + .45 + .6 * j, 3),
+                                     "end": round(start + .55 + .6 * j, 3),
+                                     "score": .8, "char": "a"}],
+                    "romaji": word} for j, word in enumerate(lyrics)]
+        out.write_text(json.dumps({"entries": entries}), encoding="utf8")
+        return SimpleNamespace(returncode=0, stderr="")
+    return run
+
+
+class GroupRevertTests(unittest.TestCase):
+    """An unsupported group's rows go back to the global CTC clock; the other
+    groups keep the skeleton (production path, real group-placement check)."""
+
+    def run_case(self, unsupported_group: int | None):
+        segment_skeleton_production._RUNTIME_CACHE.clear()
+        with tempfile.TemporaryDirectory() as name:
+            return option_a.OptionAProductionTests.case(
+                None, Path(name), runner=_skeleton_runner(unsupported_group))
+
+    def test_unsupported_group_rows_take_the_global_clock_back(self) -> None:
+        base_times, _base, base_status = self.run_case(None)
+        self.assertEqual(base_status["status"], "SEGMENT_CURRENT")
+        self.assertNotEqual(base_times, GLOBAL_TIMES)
+        times, report, status = self.run_case(1)
+        self.assertEqual(status["status"], "SEGMENT_CURRENT")
+        group = status["group_placement_acoustic"]["groups"][1]
+        self.assertFalse(group["supported"])
+        reverted = list(range(group["rows"][0], group["rows"][1] + 1))
+        self.assertEqual(status["group_placement_reverted_rows"], reverted)
+        for entry in range(1, 5):
+            row = report["assignments"][entry - 1]
+            if entry in reverted:
+                self.assertEqual(times[entry - 1], GLOBAL_TIMES[entry - 1])
+                self.assertEqual(row["timestamp"], GLOBAL_TIMES[entry - 1])
+                self.assertEqual(row["ctc_score"], .03)
+                self.assertNotIn("timing_repair", row)
+                self.assertTrue(row["group_placement_reverted"])
+                self.assertTrue(row["group_placement_unsupported"])
+                self.assertFalse(auto_lrc.assignment_timing_is_trusted(row))
+            else:
+                self.assertEqual(times[entry - 1], base_times[entry - 1])
+                self.assertEqual(row["timing_repair"], "segment-skeleton-local-ctc")
+        self.assertTrue(all(b >= a for a, b in zip(times, times[1:])))
+
+    def test_runtime_cache_keeps_the_skeleton_rows(self) -> None:
+        self.run_case(1)
+        (rows, _diag), = segment_skeleton_production._RUNTIME_CACHE.values()
+        self.assertTrue(all(row["ctc_score"] == .5 for row in rows))
+        self.assertFalse(any(row.get("group_placement_reverted") for row in rows))
+
+    def test_no_supported_group_rolls_back_the_whole_song(self) -> None:
+        segment_skeleton_production._RUNTIME_CACHE.clear()
+        with tempfile.TemporaryDirectory() as name:
+            runner = _skeleton_runner(None)
+
+            def all_neighbours_better(cmd, timeout):
+                result = runner(cmd, timeout)
+                out = Path(cmd[cmd.index("--output") + 1])
+                if "_neighbor" in out.name:
+                    import json
+                    data = json.loads(out.read_text(encoding="utf8"))
+                    for entry in data["entries"]:
+                        entry["ctc_score"] = .9
+                    out.write_text(json.dumps(data), encoding="utf8")
+                return result
+            times, _report, status = option_a.OptionAProductionTests.case(
+                None, Path(name), runner=all_neighbours_better)
+        self.assertEqual(status["reason"], "GROUP_PLACEMENT_UNSUPPORTED")
+        self.assertEqual(times, GLOBAL_TIMES)
+
+    def test_mixed_order_rolls_back_the_whole_song(self) -> None:
+        rows = [{"start": 1.0}, {"start": 5.0}, {"start": 6.0}]
+        assignments = [{"ctc_score": .1}] * 3
+        self.assertIsNone(segment_skeleton_production._revert_unsupported_groups(
+            rows, [2], [1.0, 7.0, 6.5], assignments))
+        rows = [{"start": 1.0}, {"start": 5.0}, {"start": 6.0}]
+        self.assertEqual(segment_skeleton_production._revert_unsupported_groups(
+            rows, [2], [1.0, 3.0, 6.5], assignments), [2])
+        self.assertEqual([row["start"] for row in rows], [1.0, 3.0, 6.0])
+        with mock.patch.object(segment_skeleton_production, "_revert_unsupported_groups",
+                               return_value=None):
+            times, _report, status = self.run_case(1)
+        self.assertEqual(status["reason"], "GROUP_PLACEMENT_MIXED_ORDER")
+        self.assertEqual(times, GLOBAL_TIMES)
+
+    def test_near_edge_segment_override_keeps_the_skeleton_clock(self) -> None:
+        placement = {"status": "OK", "groups": [], "unsupported_rows": [3, 4],
+                     "unsupported_fraction": .5, "fallback": False, "near_edge": True}
+        real = segment_skeleton_production.run_segment_skeleton
+        base_times, _r, _s = self.run_case(None)
+        segment_skeleton_production._RUNTIME_CACHE.clear()
+        with tempfile.TemporaryDirectory() as name, \
+                mock.patch.object(segment_group_acoustic, "check_group_placement",
+                                  return_value=placement), \
+                mock.patch.object(option_a, "run_segment_skeleton",
+                                  functools.partial(real, gate_override="segment")):
+            times, report, status = option_a.OptionAProductionTests.case(None, Path(name))
+        self.assertEqual(status["group_placement_reverted_rows"], [])
+        self.assertEqual(times, base_times)
+        self.assertTrue(report["assignments"][2]["group_placement_unsupported"])
 
 
 class DualPathCompetitionTests(unittest.TestCase):

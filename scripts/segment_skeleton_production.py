@@ -1,7 +1,10 @@
 """Option A current skeleton producer: all-song transactional local MMS CTC.
 
 It never writes the LRC or reads checked/BK timestamps.  Failure returns the
-ENTIRE unchanged global CTC current report.  No mixture of row clocks.
+ENTIRE unchanged global CTC current report.  The one mixture of row clocks:
+rows of a group whose own passage is not acoustically supported keep their
+unchanged global CTC row (``_revert_unsupported_groups``), provided the mixed
+sequence stays in order; otherwise the whole song rolls back.
 """
 from __future__ import annotations
 import copy
@@ -76,6 +79,46 @@ def _archive_global_ctc_assignment_state(assignment:dict[str,object])->None:
             archived[key]=copy.deepcopy(assignment.pop(key))
     if archived:
         assignment['global_ctc_assignment_diagnostics']=archived
+
+
+def _revert_unsupported_groups(
+    rows:list[dict[str,object]],
+    unsupported_entries:Sequence[object],
+    original:Sequence[float],
+    assignments:Sequence[object],
+)->list[int]|None:
+    """Give the rows of unsupported groups their whole-song CTC clock back.
+
+    Group placement found a neighbouring passage that fits those lyrics better
+    than the passage the skeleton gave them, so their skeleton clock is the
+    claim that failed; the global CTC row is what the song falls back to
+    anyway.  Returns the reverted entries, or None when a kept/reverted
+    boundary would run backwards (the caller then rolls back the whole song).
+    """
+    entries=sorted({int(x) for x in unsupported_entries if 1<=int(x)<=len(rows)})
+    for entry in entries:
+        index=entry-1
+        old=assignments[index]
+        if not isinstance(old,dict):
+            return None
+        try:
+            score=float(old['ctc_score'])
+        except (TypeError,ValueError,KeyError):
+            return None
+        rows[index]={
+            **rows[index],
+            'start':float(original[index]),
+            'ctc_score':score,
+            'token_spans':old.get('ctc_token_spans'),
+            'first_token_candidates':old.get('ctc_first_token_candidates'),
+            'group_placement_reverted':True,
+        }
+    reverted=set(entries)
+    times=[float(row['start']) for row in rows]
+    for i in range(1,len(rows)):
+        if ((i in reverted)!=(i+1 in reverted)) and times[i]<times[i-1]:
+            return None
+    return entries
 
 
 def run_segment_skeleton(
@@ -269,6 +312,36 @@ def run_segment_skeleton(
                 placement_diag.get('near_edge') and gate_override=='segment'):
             return fallback('GROUP_PLACEMENT_UNSUPPORTED',
                             group_placement=placement_diag)
+        original_assignments=report.get("assignments")
+        if not isinstance(original_assignments,list) or len(original_assignments)!=len(rows):
+            return fallback("MISSING_GLOBAL_CTC_EVIDENCE")
+        # The runtime cache keeps the skeleton's own rows: a reverted row's
+        # global score must never be re-tested as its group's placement.
+        skeleton_rows=copy.deepcopy(rows)
+        reverted_rows:list[int]=[]
+        if not (placement_diag.get('near_edge') and gate_override=='segment'):
+            reverted=_revert_unsupported_groups(
+                rows,placement_diag.get('unsupported_rows',()),original,
+                original_assignments)
+            if reverted is None:
+                return fallback('GROUP_PLACEMENT_MIXED_ORDER',
+                                group_placement=placement_diag)
+            reverted_rows=reverted
+        if reverted_rows:
+            # Corroboration must hold for the moves that remain.
+            rechecked=check_asr_corroboration(
+                lyric_texts=lyric_texts,global_times=original,
+                skeleton_times=[float(row['start']) for row in rows],
+                raw_asr_events=raw_asr_events,romanizer=romanizer)
+            rechecked['before_group_revert']=asr_corroboration
+            asr_corroboration=rechecked
+            if rechecked.get('near_edge') and 'ASR_CORROBORATION' not in near_edge:
+                near_edge.append('ASR_CORROBORATION')
+            if rechecked.get('fallback') and not (
+                    rechecked.get('near_edge') and gate_override=='segment'):
+                return fallback('ASR_UNCORROBORATED_STRUCTURE',
+                                raw_asr_corroboration=asr_corroboration,
+                                group_placement=placement_diag)
         if near_edge and gate_override=='fallback':
             return fallback('NEAR_EDGE_ALTERNATIVE',
                             raw_asr_corroboration=asr_corroboration,
@@ -277,9 +350,6 @@ def run_segment_skeleton(
         # structural move must improve genuine acoustic fit over the global
         # weakly aligned path. High-volume changes require stronger evidence.
         # No lyric reference/BK time, reviewer offset or per-song threshold.
-        original_assignments=report.get("assignments")
-        if not isinstance(original_assignments,list) or len(original_assignments)!=len(rows):
-            return fallback("MISSING_GLOBAL_CTC_EVIDENCE")
         try:
             old_scores=[float(x["ctc_score"]) for x in original_assignments]
             new_scores=[float(x["ctc_score"]) for x in rows]
@@ -305,7 +375,7 @@ def run_segment_skeleton(
         }
         if cached is None:
             _RUNTIME_CACHE.clear()  # at most one all-song GPU result
-            _RUNTIME_CACHE[cache_key]=(copy.deepcopy(rows),{
+            _RUNTIME_CACHE[cache_key]=(copy.deepcopy(skeleton_rows),{
                 "boundary_competition":copy.deepcopy(boundary_diag),
                 "two_dp_acoustic":copy.deepcopy(dual_diag),
                 "row_to_passage":list(row_to_passage),
@@ -331,6 +401,10 @@ def run_segment_skeleton(
                             comparison_threshold_seconds=3.0)
         for i,(old,row,actual) in enumerate(zip(assignments,rows,output_times)):
             if not isinstance(old,dict):return fallback('ASSIGNMENT_INVALID')
+            if row.get('group_placement_reverted'):
+                # Unchanged global CTC row; see _revert_unsupported_groups.
+                old['group_placement_reverted']=True
+                continue
             _archive_global_ctc_assignment_state(old)
             # Preserve whole-song CTC as independent evidence before replacing
             # the active, passage-local clocks and acoustic confidence.
@@ -379,8 +453,8 @@ def run_segment_skeleton(
             {'entry':i+1,'text':lyric_texts[i],
              'flags':['ctc_low_path_confidence'],'severity':'medium','review_required':True}
             for i,a in enumerate(assignments) if a['ctc_score']<.03]
-        # Unsupported groups still below the all-song rollback threshold
-        # must remain review-required and untrusted without changing clocks.
+        # Rows of unsupported groups (back on the global CTC clock, or kept by
+        # a near-edge 'segment' override) stay review-required and untrusted.
         for entry in placement_diag.get('unsupported_rows',[]):
             index=int(entry)-1
             assignment=assignments[index]
@@ -431,6 +505,7 @@ def run_segment_skeleton(
           'boundary_competition':boundary_diag,
           'two_dp_acoustic':dual_diag,
           'group_placement_acoustic':placement_diag,
+          'group_placement_reverted_rows':reverted_rows,
           'raw_asr_corroboration':asr_corroboration,
           'legacy_global_gain_diagnostics':legacy_gain_diagnostics,
           'repeated_global_ctc_conflicts':repeat_conflicts,

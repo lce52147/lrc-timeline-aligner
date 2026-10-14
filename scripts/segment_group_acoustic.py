@@ -5,7 +5,10 @@ from pathlib import Path
 from typing import Callable,Sequence
 
 MIN_PLACEMENT_MARGIN=.02
-MAX_UNSUPPORTED_LINE_FRACTION=.15
+# An unsupported group's rows take the whole-song CTC clock back on their own
+# (segment_skeleton_production); the whole song rolls back only when no group
+# is supported.  A share-of-rows cutoff let one misplaced tail section (sister
+# c06: 11 of 52 rows) discard every correctly placed group with it.
 # Same song, same model, different GPU: group scores differ by ~1e-5.  A
 # group whose margin is within this band of the cutoff has no stable verdict;
 # when flipping those groups alone flips the all-song rollback, the gate is
@@ -28,22 +31,18 @@ def placement_margin(assigned_score:float, competitor_scores:Sequence[float],
             math.isfinite(float(x)) for x in competitor_scores)):return None
     return assigned_score-(max(competitor_scores)+margin)
 
-def placement_fallback_near_edge(groups:Sequence[dict], row_count:int,
+def placement_fallback_near_edge(groups:Sequence[dict],
                                  tolerance:float=PLACEMENT_EDGE_TOLERANCE)->bool:
-    """Whether marginal groups alone decide the all-song rollback."""
-    sure=0
-    marginal=0
+    """Whether marginal groups alone decide the all-song rollback (no group
+    supported)."""
+    marginal=False
     for group in groups:
-        first,last=group['rows']
-        size=int(last)-int(first)+1
         value=group.get('decision_margin')
         if value is not None and abs(float(value))<=tolerance:
-            marginal+=size
-        elif not group.get('supported'):
-            sure+=size
-    total=max(1,int(row_count))
-    return ((sure/total>MAX_UNSUPPORTED_LINE_FRACTION)
-            !=((sure+marginal)/total>MAX_UNSUPPORTED_LINE_FRACTION))
+            marginal=True
+        elif group.get('supported'):
+            return False
+    return marginal
 
 def contiguous_passage_groups(passages:Sequence[int])->list[tuple[int,int,int]]:
     if not passages:return []
@@ -129,6 +128,6 @@ def check_group_placement(*,rows:list[dict], passage_ids:Sequence[int],
     fraction=len(invalid)/max(1,len(rows))
     return {'status':'OK','groups':evidence,'unsupported_rows':invalid,
             'unsupported_fraction':round(fraction,6),
-            'fallback':fraction>MAX_UNSUPPORTED_LINE_FRACTION,
-            'near_edge':placement_fallback_near_edge(evidence,len(rows)),
+            'fallback':bool(rows) and len(invalid)==len(rows),
+            'near_edge':placement_fallback_near_edge(evidence),
             'edge_tolerance':PLACEMENT_EDGE_TOLERANCE}
