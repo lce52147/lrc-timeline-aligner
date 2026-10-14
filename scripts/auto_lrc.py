@@ -4724,7 +4724,12 @@ def audio_track_labels(audio_path: Path) -> tuple[str, str]:
 
 
 def remove_generated_title_cards(entries: list[LyricEntry], audio_path: Path) -> list[LyricEntry]:
-    """Remove only a matching zero-time generated Artist - Title card."""
+    """Remove only a matching zero-time Artist - Title card.
+
+    Hand-made LRCs also write the card as Title - Artist (c07, c10 of the
+    corpus); both orders must match the file's own tags exactly, so a sung
+    line that merely contains " - " is never removed.
+    """
     artist, title = audio_track_labels(audio_path)
     normalized_title = normalize_match_text(title).casefold()
     normalized_artist = normalize_match_text(artist).casefold()
@@ -4732,16 +4737,20 @@ def remove_generated_title_cards(entries: list[LyricEntry], audio_path: Path) ->
     for entry in entries:
         text = entry_sung_text(entry).strip()
         card = re.fullmatch(r"(.+?)\s+-\s+(.+)", text)
+        left = normalize_match_text(card.group(1)).casefold() if card else ""
+        right = normalize_match_text(card.group(2)).casefold() if card else ""
+        artist_title = right == normalized_title and (
+            not normalized_artist or left == normalized_artist
+        )
+        title_artist = bool(normalized_artist) and (
+            left == normalized_title and right == normalized_artist
+        )
         is_title_card = (
             entry.source_time_cs == 0
             and len(entry.lines) == 1
             and card is not None
             and bool(normalized_title)
-            and normalize_match_text(card.group(2)).casefold() == normalized_title
-            and (
-                not normalized_artist
-                or normalize_match_text(card.group(1)).casefold() == normalized_artist
-            )
+            and (artist_title or title_artist)
         )
         if not is_title_card:
             kept.append(entry)

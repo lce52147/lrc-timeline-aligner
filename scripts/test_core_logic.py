@@ -262,6 +262,50 @@ class AnchorHintTests(unittest.TestCase):
         finally:
             auto_lrc.audio_track_labels = original_labels  # type: ignore[assignment]
 
+    def test_title_artist_order_card_is_not_aligned_as_lyric(self) -> None:
+        # c10: "Ever be my love - 山田タマル" at 0.00 was aligned as lyric #1.
+        original_labels = auto_lrc.audio_track_labels
+        auto_lrc.audio_track_labels = lambda _path: ("山田タマル", "Ever be my love")  # type: ignore[assignment]
+        try:
+            entries = [
+                LyricEntry(["Ever be my love - 山田タマル"], 0),
+                LyricEntry(["synthetic lyric line"], 2100),
+            ]
+
+            kept = remove_generated_title_cards(entries, Path("dummy.flac"))
+
+            self.assertEqual([entry.lines[0] for entry in kept], ["synthetic lyric line"])
+        finally:
+            auto_lrc.audio_track_labels = original_labels  # type: ignore[assignment]
+
+    def test_card_shaped_lines_that_do_not_match_tags_are_kept(self) -> None:
+        original_labels = auto_lrc.audio_track_labels
+        auto_lrc.audio_track_labels = lambda _path: ("Demo Artist", "Demo Song")  # type: ignore[assignment]
+        try:
+            entries = [
+                LyricEntry(["Demo Song - Someone Else"], 0),
+                LyricEntry(["Demo Artist - Demo Song"], 150),
+                LyricEntry(["Demo Song - Demo Artist", "translation"], 0),
+            ]
+
+            kept = remove_generated_title_cards(entries, Path("dummy.flac"))
+
+            self.assertEqual(len(kept), 3)
+        finally:
+            auto_lrc.audio_track_labels = original_labels  # type: ignore[assignment]
+
+    def test_title_only_tags_never_match_a_reversed_card(self) -> None:
+        original_labels = auto_lrc.audio_track_labels
+        auto_lrc.audio_track_labels = lambda _path: ("", "Demo Song")  # type: ignore[assignment]
+        try:
+            entries = [LyricEntry(["Demo Song - anything"], 0)]
+
+            kept = remove_generated_title_cards(entries, Path("dummy.flac"))
+
+            self.assertEqual(len(kept), 1)
+        finally:
+            auto_lrc.audio_track_labels = original_labels  # type: ignore[assignment]
+
     def test_untimed_source_title_is_preserved_as_potential_sung_lyric(self) -> None:
         original_labels = auto_lrc.audio_track_labels
         auto_lrc.audio_track_labels = lambda _path: ("", "Song Title")  # type: ignore[assignment]
