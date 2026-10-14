@@ -501,6 +501,16 @@ def _run_model_helper_command(
     timeout_seconds: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run an unchanged helper through a resident model host, fail-open to one-shot."""
+    with gpu_compute_phase():
+        return _run_model_helper_command_now(command, mode=mode, timeout_seconds=timeout_seconds)
+
+
+def _run_model_helper_command_now(
+    command: list[str],
+    *,
+    mode: Literal["ctc", "whisperx"],
+    timeout_seconds: float | None = None,
+) -> subprocess.CompletedProcess[str]:
     if len(command) < 2:
         return run_command(command, timeout_seconds=timeout_seconds)
     python_token = str(command[0])
@@ -9183,9 +9193,10 @@ def run_japanese_ctc_alignment(
         transcript_path.write_text(
             json.dumps([entry_sung_text(entry) for entry in entries], ensure_ascii=False), encoding="utf-8"
         )
-        proc = run_command(
-            [str(python_exe), str(helper), "--audio", str(audio_path), "--transcript", str(transcript_path), "--output", str(output_path), "--device", args.whisperx_device]
-        )
+        with gpu_compute_phase():
+            proc = run_command(
+                [str(python_exe), str(helper), "--audio", str(audio_path), "--transcript", str(transcript_path), "--output", str(output_path), "--device", args.whisperx_device]
+            )
         if proc.returncode != 0 or not output_path.exists():
             raise LrcError(f"Japanese CTC alignment failed: {proc.stderr.strip() or proc.stdout.strip()}")
         payload = json.loads(output_path.read_text(encoding="utf-8"))
@@ -12794,7 +12805,8 @@ def vocal_onset_features(
             str(temp_dir),
             str(safe_audio),
         ]
-        proc = subprocess.run(command, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        with gpu_compute_phase():
+            proc = subprocess.run(command, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         if proc.returncode != 0:
             detail = (proc.stderr or proc.stdout).strip().replace("\n", " ")
             return None, f"demucs-failed: {detail[-1000:]}"
@@ -12962,6 +12974,40 @@ def _exclusive_file_lock(path: Path, *, timeout_seconds: float | None, busy_mess
 
 
 @contextlib.contextmanager
+def _try_file_lock(path: Path):
+    """Non-blocking ``_exclusive_file_lock``: yields True while this handle holds
+    the lock, or False at once when another holder has it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+b", buffering=0) as handle:
+        if handle.tell() == 0:
+            handle.write(b"0")
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+            try:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError:
+                yield False
+                return
+            try:
+                yield True
+            finally:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                yield False
+                return
+            try:
+                yield True
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+@contextlib.contextmanager
 def demucs_cache_key_lock(cache_dir: Path, *, timeout_seconds: float = 300.0):
     """Serialize Demucs cache writers across processes."""
     with _exclusive_file_lock(
@@ -12984,13 +13030,16 @@ def whispercpp_gpu_lock():
     (~2.5 GB), giving the 8.5 GB per-song peak.  So this song's CTC/WhisperX
     helpers are parked first (weights move to CPU and return unchanged on their
     next request), and a cross-process lock lets only one song run whisper.cpp
-    at a time, so two songs can share a 12 GB GPU.  Scheduling only: inputs,
-    outputs and evidence are unchanged.  ``LRC_WHISPERCPP_GPU_LOCK=0`` disables
-    the cross-process lock (parking stays).
+    at a time, so two songs can share a 12 GB GPU.  Other songs' GPU work
+    yields too (``gpu_compute_phase``): the run starts only after their
+    in-flight helper request ends, and they park and wait until it is over.
+    Scheduling only: inputs, outputs and evidence are unchanged.
+    ``LRC_WHISPERCPP_GPU_LOCK=0`` disables the cross-process coordination
+    (parking this song's helpers stays).
     """
     _park_persistent_helper_mode("whisperx", reason="before-whispercpp")
     _park_persistent_helper_mode("ctc", reason="before-whispercpp")
-    if os.environ.get("LRC_WHISPERCPP_GPU_LOCK", "1").strip() == "0":
+    if not _gpu_coordination_enabled():
         yield
         return
     with _exclusive_file_lock(
@@ -12998,7 +13047,111 @@ def whispercpp_gpu_lock():
         timeout_seconds=None,
         busy_message="whisper.cpp GPU lock busy",
     ):
+        _WHISPERCPP_HELD_HERE.set()
+        try:
+            _wait_for_other_gpu_compute()
+            yield
+        finally:
+            _WHISPERCPP_HELD_HERE.clear()
+
+
+# One lock file per process that has CTC/WhisperX/HuBERT/Demucs work on the
+# GPU; whisper.cpp waits until no other process holds its file.
+GPU_COMPUTE_LOCK_DIR = PROJECT_ROOT / "outputs" / "cache" / ".gpu_compute"
+_WHISPERCPP_HELD_HERE = threading.Event()
+_GPU_COMPUTE_STATE: dict[str, object] = {"depth": 0, "stack": None}
+_GPU_COMPUTE_STATE_LOCK = threading.Lock()
+
+
+def _gpu_coordination_enabled() -> bool:
+    return os.environ.get("LRC_WHISPERCPP_GPU_LOCK", "1").strip() != "0"
+
+
+def _other_process_runs_whispercpp() -> bool:
+    if _WHISPERCPP_HELD_HERE.is_set():
+        return False
+    with _try_file_lock(WHISPERCPP_GPU_LOCK_PATH) as free:
+        return not free
+
+
+def _wait_for_other_gpu_compute() -> None:
+    own = f"{os.getpid()}.lock"
+    while True:
+        busy = False
+        if GPU_COMPUTE_LOCK_DIR.is_dir():
+            for path in sorted(GPU_COMPUTE_LOCK_DIR.glob("*.lock")):
+                if path.name == own:
+                    continue
+                with _try_file_lock(path) as free:
+                    if not free:
+                        busy = True
+                        break
+        if not busy:
+            return
+        time.sleep(0.1)
+
+
+def _enter_gpu_compute() -> None:
+    with _GPU_COMPUTE_STATE_LOCK:
+        depth = int(_GPU_COMPUTE_STATE["depth"])
+        if depth == 0:
+            stack = contextlib.ExitStack()
+            stack.enter_context(
+                _exclusive_file_lock(
+                    GPU_COMPUTE_LOCK_DIR / f"{os.getpid()}.lock",
+                    timeout_seconds=None,
+                    busy_message="GPU compute marker busy",
+                )
+            )
+            _GPU_COMPUTE_STATE["stack"] = stack
+        _GPU_COMPUTE_STATE["depth"] = depth + 1
+
+
+def _leave_gpu_compute() -> None:
+    with _GPU_COMPUTE_STATE_LOCK:
+        depth = int(_GPU_COMPUTE_STATE["depth"]) - 1
+        _GPU_COMPUTE_STATE["depth"] = depth
+        if depth == 0:
+            stack = _GPU_COMPUTE_STATE["stack"]
+            _GPU_COMPUTE_STATE["stack"] = None
+            if isinstance(stack, contextlib.ExitStack):
+                stack.close()
+
+
+@contextlib.contextmanager
+def gpu_compute_phase():
+    """GPU work of this song (CTC, WhisperX, HuBERT, Demucs) yields to another
+    song's whisper.cpp run.
+
+    While that run lasts this song parks its resident helpers and starts no new
+    GPU work; while this work lasts the other song's whisper.cpp waits.  The
+    peak is then one whisper.cpp plus parked contexts, not whisper.cpp plus the
+    other song's live models.  Scheduling only: inputs, outputs and evidence
+    are unchanged.
+    """
+    if not _gpu_coordination_enabled():
         yield
+        return
+    parked = False
+    while True:
+        if _other_process_runs_whispercpp():
+            if not parked:
+                _park_persistent_helper_mode("whisperx", reason="other-song-whispercpp")
+                _park_persistent_helper_mode("ctc", reason="other-song-whispercpp")
+                parked = True
+            time.sleep(0.2)
+            continue
+        _enter_gpu_compute()
+        if _other_process_runs_whispercpp():
+            # A whisper.cpp run took the lock between the check and the
+            # marker; it goes first.
+            _leave_gpu_compute()
+            continue
+        break
+    try:
+        yield
+    finally:
+        _leave_gpu_compute()
 
 
 def prepare_vocal_ctc_audio(audio_path: Path, args: argparse.Namespace) -> tuple[Path, str, str | None]:
@@ -13033,15 +13186,16 @@ def prepare_vocal_ctc_audio(audio_path: Path, args: argparse.Namespace) -> tuple
                 run_dir = Path(temp_name)
                 staged_input = _stage_demucs_input(audio_path, run_dir, key)
                 current_output = run_dir / "out"
-                proc = subprocess.run(
-                    [
-                        str(python_exe), "-X", "utf8", "-m", "demucs",
-                        "--two-stems", "vocals", "--mp3", "--shifts", "0",
-                        "-d", "cuda", "-o", str(current_output), str(staged_input),
-                    ],
-                    check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                    text=True, encoding="utf-8", errors="replace", env=demucs_env,
-                )
+                with gpu_compute_phase():
+                    proc = subprocess.run(
+                        [
+                            str(python_exe), "-X", "utf8", "-m", "demucs",
+                            "--two-stems", "vocals", "--mp3", "--shifts", "0",
+                            "-d", "cuda", "-o", str(current_output), str(staged_input),
+                        ],
+                        check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        text=True, encoding="utf-8", errors="replace", env=demucs_env,
+                    )
                 if proc.returncode:
                     detail = (proc.stderr or proc.stdout or "").strip()
                     logfile = _demucs_write_error(cache_dir, detail)
@@ -32118,7 +32272,8 @@ def _postcentral_acquire_known_lyric_hubert_tails(
             "--device", str(getattr(args, "whisperx_device", "cuda")),
         ]
         try:
-            proc = run_command(command, timeout_seconds=timeout_seconds)
+            with gpu_compute_phase():
+                proc = run_command(command, timeout_seconds=timeout_seconds)
             helper_execution.update({
                 "returncode": int(proc.returncode),
                 "stdout_tail": proc.stdout[-4000:],
@@ -32501,10 +32656,11 @@ def _postcentral_acquire_known_lyric_hubert_tails(
                 "--device", str(getattr(args, "whisperx_device", "cuda")),
             ]
             try:
-                predecessor_proc = run_command(
-                    predecessor_command,
-                    timeout_seconds=predecessor_timeout_seconds,
-                )
+                with gpu_compute_phase():
+                    predecessor_proc = run_command(
+                        predecessor_command,
+                        timeout_seconds=predecessor_timeout_seconds,
+                    )
                 predecessor_only_helper_execution.update({
                     "returncode": int(predecessor_proc.returncode),
                     "stdout_tail": predecessor_proc.stdout[-4000:],
