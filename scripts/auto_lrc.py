@@ -19200,6 +19200,126 @@ def runtime_local_whisper_evidence_for_entry(
 
 
 
+def run_local_whisper_requests(
+    requests: tuple[LocalWhisperRequest, ...],
+    capability: LocalWhisperCapability,
+    entries: list[LyricEntry],
+    args: argparse.Namespace,
+    *,
+    cache: dict[str, tuple[str, object]],
+    stats: dict[str, int],
+) -> tuple[LocalWhisperOutcome, ...]:
+    """Execute one frozen local-Whisper epoch and return outcomes in request order.
+
+    Multi-request epochs always go through _prepare_local_whisper_batch (one
+    whisper.cpp batch, one WhisperX alignment batch), whatever the worker
+    count.  With one worker this path used to be skipped, so every request
+    ran its own whisper.cpp + WhisperX (70 calls for one song), each taking
+    the cross-song GPU lock.
+    """
+    workers = DEFAULT_EVIDENCE_WORKERS
+    # A single request has nothing to batch.  Every larger epoch prepares
+    # raw ASR and WhisperX alignment in one batch first; the worker count
+    # only sets how many evaluations run at once.
+    if len(requests) <= 1:
+        outcomes: list[LocalWhisperOutcome] = []
+        for ordinal, request in enumerate(requests, start=1):
+            progress_log(
+                f"local Whisper evidence: {ordinal}/{len(requests)} "
+                f"entry={request.entry_index + 1} "
+                f"window={request.window_start:.2f}-{request.window_end:.2f}s"
+            )
+            outcome = execute_local_whisper_request(
+                request, capability, entries, args,
+                cache=cache, runtime_stats=stats,
+            )
+            outcomes.append(outcome)
+            progress_log(
+                f"local Whisper evidence: entry={request.entry_index + 1} "
+                f"status={outcome.status} reason={outcome.reason}"
+            )
+        return tuple(outcomes)
+    else:
+        # Requests are planned from one frozen pre-local-whisper graph and are
+        # bound only after every outcome is collected.  They can therefore be
+        # executed concurrently without changing Central selection semantics.
+        # Preserve deterministic result ordering and legacy cache statistics.
+        grouped: dict[str, list[tuple[int, LocalWhisperRequest]]] = {}
+        for ordinal, request in enumerate(requests, start=1):
+            key = _local_whisper_cache_key(request, capability)
+            grouped.setdefault(key, []).append((ordinal, request))
+
+        outcomes_by_ordinal: dict[int, LocalWhisperOutcome] = {}
+        work: list[tuple[str, int, LocalWhisperRequest]] = []
+        for key, group in grouped.items():
+            cached = cache.get(key)
+            if (
+                isinstance(cached, tuple)
+                and len(cached) == 2
+                and isinstance(cached[1], LocalWhisperOutcome)
+            ):
+                for ordinal, _request in group:
+                    outcomes_by_ordinal[ordinal] = cached[1]
+                stats["cache_hits"] += len(group)
+                continue
+            first_ordinal, first_request = group[0]
+            work.append((key, first_ordinal, first_request))
+            stats["cache_misses"] += 1
+            if len(group) > 1:
+                stats["cache_hits"] += len(group) - 1
+
+        progress_log(
+            f"local Whisper evidence: internal_workers={workers} "
+            f"unique_exec={len(work)}"
+        )
+        prepared_local, preparation_errors = _prepare_local_whisper_batch(
+            work, capability, args
+        )
+
+        def _run_local_parallel(
+            item: tuple[str, int, LocalWhisperRequest],
+        ) -> tuple[str, int, LocalWhisperOutcome, dict[str, int], dict[str, tuple[str, object]]]:
+            key, ordinal, request = item
+            private_cache: dict[str, tuple[str, object]] = {}
+            private_stats: dict[str, int] = {}
+            progress_log(
+                f"local Whisper evidence: start {ordinal}/{len(requests)} "
+                f"entry={request.entry_index + 1} "
+                f"window={request.window_start:.2f}-{request.window_end:.2f}s"
+            )
+            outcome = execute_local_whisper_request(
+                request, capability, entries, args,
+                cache=private_cache, runtime_stats=private_stats,
+                prepared=prepared_local.get(key),
+                preparation_error=preparation_errors.get(key),
+            )
+            return key, ordinal, outcome, private_stats, private_cache
+
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(workers, len(work) or 1),
+            thread_name_prefix="lrc-local-whisper",
+        ) as pool:
+            future_map = {pool.submit(_run_local_parallel, item): item for item in work}
+            for future in concurrent.futures.as_completed(future_map):
+                key, ordinal, outcome, private_stats, private_cache = future.result()
+                cache.update(private_cache)
+                stats["helper_invocations"] += private_stats.get(
+                    "helper_invocations", 0
+                )
+                for grouped_ordinal, _request in grouped[key]:
+                    outcomes_by_ordinal[grouped_ordinal] = outcome
+                progress_log(
+                    f"local Whisper evidence: done {ordinal}/{len(requests)} "
+                    f"entry={outcome.entry_index + 1} "
+                    f"status={outcome.status} reason={outcome.reason}"
+                )
+
+        return tuple(
+            outcomes_by_ordinal[ordinal]
+            for ordinal in range(1, len(requests) + 1)
+        )
+
+
 def _local_whisper_vocal_fusion_candidate(
     *,
     entry_index: int,
@@ -23431,104 +23551,10 @@ def collect_central_timing_candidates(
             f"cache_entries={len(retry_helper_cache)} "
             f"deferred_untrusted_new={deferred_new_probes}"
         )
-        local_whisper_workers = DEFAULT_EVIDENCE_WORKERS
-        if local_whisper_workers == 1 or len(local_whisper_requests) <= 1:
-            outcomes: list[LocalWhisperOutcome] = []
-            for ordinal, request in enumerate(local_whisper_requests, start=1):
-                progress_log(
-                    f"local Whisper evidence: {ordinal}/{len(local_whisper_requests)} "
-                    f"entry={request.entry_index + 1} "
-                    f"window={request.window_start:.2f}-{request.window_end:.2f}s"
-                )
-                outcome = execute_local_whisper_request(
-                    request, local_whisper_capability, entries, args,
-                    cache=retry_helper_cache, runtime_stats=local_whisper_stats,
-                )
-                outcomes.append(outcome)
-                progress_log(
-                    f"local Whisper evidence: entry={request.entry_index + 1} "
-                    f"status={outcome.status} reason={outcome.reason}"
-                )
-            local_whisper_outcomes = tuple(outcomes)
-        else:
-            # Requests are planned from one frozen pre-local-whisper graph and are
-            # bound only after every outcome is collected.  They can therefore be
-            # executed concurrently without changing Central selection semantics.
-            # Preserve deterministic result ordering and legacy cache statistics.
-            grouped: dict[str, list[tuple[int, LocalWhisperRequest]]] = {}
-            for ordinal, request in enumerate(local_whisper_requests, start=1):
-                key = _local_whisper_cache_key(request, local_whisper_capability)
-                grouped.setdefault(key, []).append((ordinal, request))
-
-            outcomes_by_ordinal: dict[int, LocalWhisperOutcome] = {}
-            work: list[tuple[str, int, LocalWhisperRequest]] = []
-            for key, group in grouped.items():
-                cached = retry_helper_cache.get(key)
-                if (
-                    isinstance(cached, tuple)
-                    and len(cached) == 2
-                    and isinstance(cached[1], LocalWhisperOutcome)
-                ):
-                    for ordinal, _request in group:
-                        outcomes_by_ordinal[ordinal] = cached[1]
-                    local_whisper_stats["cache_hits"] += len(group)
-                    continue
-                first_ordinal, first_request = group[0]
-                work.append((key, first_ordinal, first_request))
-                local_whisper_stats["cache_misses"] += 1
-                if len(group) > 1:
-                    local_whisper_stats["cache_hits"] += len(group) - 1
-
-            progress_log(
-                f"local Whisper evidence: internal_workers={local_whisper_workers} "
-                f"unique_exec={len(work)}"
-            )
-            prepared_local, preparation_errors = _prepare_local_whisper_batch(
-                work, local_whisper_capability, args
-            )
-
-            def _run_local_parallel(
-                item: tuple[str, int, LocalWhisperRequest],
-            ) -> tuple[str, int, LocalWhisperOutcome, dict[str, int], dict[str, tuple[str, object]]]:
-                key, ordinal, request = item
-                private_cache: dict[str, tuple[str, object]] = {}
-                private_stats: dict[str, int] = {}
-                progress_log(
-                    f"local Whisper evidence: start {ordinal}/{len(local_whisper_requests)} "
-                    f"entry={request.entry_index + 1} "
-                    f"window={request.window_start:.2f}-{request.window_end:.2f}s"
-                )
-                outcome = execute_local_whisper_request(
-                    request, local_whisper_capability, entries, args,
-                    cache=private_cache, runtime_stats=private_stats,
-                    prepared=prepared_local.get(key),
-                    preparation_error=preparation_errors.get(key),
-                )
-                return key, ordinal, outcome, private_stats, private_cache
-
-            with concurrent.futures.ThreadPoolExecutor(
-                max_workers=min(local_whisper_workers, len(work) or 1),
-                thread_name_prefix="lrc-local-whisper",
-            ) as pool:
-                future_map = {pool.submit(_run_local_parallel, item): item for item in work}
-                for future in concurrent.futures.as_completed(future_map):
-                    key, ordinal, outcome, private_stats, private_cache = future.result()
-                    retry_helper_cache.update(private_cache)
-                    local_whisper_stats["helper_invocations"] += private_stats.get(
-                        "helper_invocations", 0
-                    )
-                    for grouped_ordinal, _request in grouped[key]:
-                        outcomes_by_ordinal[grouped_ordinal] = outcome
-                    progress_log(
-                        f"local Whisper evidence: done {ordinal}/{len(local_whisper_requests)} "
-                        f"entry={outcome.entry_index + 1} "
-                        f"status={outcome.status} reason={outcome.reason}"
-                    )
-
-            local_whisper_outcomes = tuple(
-                outcomes_by_ordinal[ordinal]
-                for ordinal in range(1, len(local_whisper_requests) + 1)
-            )
+        local_whisper_outcomes = run_local_whisper_requests(
+            local_whisper_requests, local_whisper_capability, entries, args,
+            cache=retry_helper_cache, stats=local_whisper_stats,
+        )
         bind_runtime_local_whisper_evidence(
             report, entries, local_whisper_capability,
             local_whisper_requests, local_whisper_outcomes,
