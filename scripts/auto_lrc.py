@@ -13074,6 +13074,58 @@ def _other_process_runs_whispercpp() -> bool:
         return not free
 
 
+def _other_process_runs_whispercpp_confirmed() -> bool:
+    """Two observations 50 ms apart: a peer's own probe holds the lock file for
+    a moment, which must not read as a whisper.cpp run (it would park and
+    reload models for nothing)."""
+    if not _other_process_runs_whispercpp():
+        return False
+    time.sleep(0.05)
+    return _other_process_runs_whispercpp()
+
+
+WHISPERCPP_PARK_WATCH_SECONDS = 0.5
+_PARK_WATCHER: dict[str, object] = {"thread": None}
+_PARK_WATCHER_LOCK = threading.Lock()
+_PARK_WATCHER_STOP = threading.Event()
+
+
+def _whispercpp_park_watch() -> None:
+    parked = False
+    while not _PARK_WATCHER_STOP.wait(WHISPERCPP_PARK_WATCH_SECONDS):
+        if not _gpu_coordination_enabled():
+            continue
+        try:
+            busy = _other_process_runs_whispercpp_confirmed()
+        except OSError:
+            continue
+        if not busy:
+            parked = False
+            continue
+        with _GPU_COMPUTE_STATE_LOCK:
+            in_flight = int(_GPU_COMPUTE_STATE["depth"]) > 0
+        # An in-flight request ends before that run may start (it waits on
+        # this process's marker); the next request then parks and waits.
+        if not parked and not in_flight:
+            _park_persistent_helper_mode("whisperx", reason="other-song-whispercpp")
+            _park_persistent_helper_mode("ctc", reason="other-song-whispercpp")
+            parked = True
+
+
+def _ensure_whispercpp_park_watcher() -> None:
+    """Resident helpers left loaded between requests (this song busy on CPU)
+    are parked as soon as another song's whisper.cpp run starts, not only at
+    this song's next GPU request."""
+    with _PARK_WATCHER_LOCK:
+        thread = _PARK_WATCHER["thread"]
+        if isinstance(thread, threading.Thread) and thread.is_alive():
+            return
+        _PARK_WATCHER_STOP.clear()
+        thread = threading.Thread(target=_whispercpp_park_watch, name="whispercpp-park-watch", daemon=True)
+        _PARK_WATCHER["thread"] = thread
+        thread.start()
+
+
 def _wait_for_other_gpu_compute() -> None:
     own = f"{os.getpid()}.lock"
     while True:
@@ -13132,9 +13184,10 @@ def gpu_compute_phase():
     if not _gpu_coordination_enabled():
         yield
         return
+    _ensure_whispercpp_park_watcher()
     parked = False
     while True:
-        if _other_process_runs_whispercpp():
+        if _other_process_runs_whispercpp_confirmed():
             if not parked:
                 _park_persistent_helper_mode("whisperx", reason="other-song-whispercpp")
                 _park_persistent_helper_mode("ctc", reason="other-song-whispercpp")

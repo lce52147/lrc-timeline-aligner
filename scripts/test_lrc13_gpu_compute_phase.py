@@ -50,6 +50,8 @@ def finish(child: subprocess.Popen) -> None:
 
 class GpuComputePhaseTests(unittest.TestCase):
     def setUp(self) -> None:
+        # A watcher left running by another test would observe this test's locks.
+        self.stop_watcher()
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         root = Path(self.temp.name)
@@ -69,12 +71,45 @@ class GpuComputePhaseTests(unittest.TestCase):
         )
         park.start()
         self.addCleanup(park.stop)
+        self.addCleanup(self.stop_watcher)
+
+    def stop_watcher(self) -> None:
+        auto_lrc._PARK_WATCHER_STOP.set()
+        thread = auto_lrc._PARK_WATCHER["thread"]
+        if thread is not None:
+            thread.join(timeout=5)
+        auto_lrc._PARK_WATCHER["thread"] = None
+
+    def test_watcher_parks_idle_resident_helpers_when_another_song_starts_whispercpp(self) -> None:
+        with mock.patch.object(auto_lrc, "WHISPERCPP_PARK_WATCH_SECONDS", 0.1):
+            auto_lrc._ensure_whispercpp_park_watcher()
+            child = hold_lock(self.whisper_lock, 1.5)
+            time.sleep(0.8)
+            parked_during_run = list(self.parks)
+            finish(child)
+            self.stop_watcher()
+        # Parked once for the run, while this song made no GPU request at all.
+        self.assertEqual(parked_during_run, ["whisperx:other-song-whispercpp", "ctc:other-song-whispercpp"])
+
+    def test_watcher_never_parks_in_the_middle_of_a_request(self) -> None:
+        with mock.patch.object(auto_lrc, "WHISPERCPP_PARK_WATCH_SECONDS", 0.1):
+            auto_lrc._enter_gpu_compute()
+            try:
+                auto_lrc._ensure_whispercpp_park_watcher()
+                child = hold_lock(self.whisper_lock, 1.0)
+                time.sleep(0.6)
+                finish(child)
+            finally:
+                auto_lrc._leave_gpu_compute()
+                self.stop_watcher()
+        self.assertEqual(self.parks, [])
 
     def test_gpu_work_parks_and_waits_while_another_song_runs_whispercpp(self) -> None:
         child = hold_lock(self.whisper_lock, 1.5)
         started = time.monotonic()
-        with auto_lrc.gpu_compute_phase():
-            waited = time.monotonic() - started
+        with mock.patch.object(auto_lrc, "_ensure_whispercpp_park_watcher", lambda: None):
+            with auto_lrc.gpu_compute_phase():
+                waited = time.monotonic() - started
         finish(child)
         self.assertGreater(waited, 0.8)
         self.assertEqual(self.parks, ["whisperx:other-song-whispercpp", "ctc:other-song-whispercpp"])
