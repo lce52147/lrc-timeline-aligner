@@ -3971,6 +3971,18 @@ COLLAPSED_PATH_FALLBACK_MIN_SHIFT_SECONDS = 0.5
 # A collapsed region can only be bounded by sane rows outside it, so its local
 # window may exceed the ordinary 45 s split limit.
 COLLAPSED_REGION_WINDOW_MAX_SECONDS = 90.0
+# Wide-region fallback: the radius-3 local-window replay re-aligns a broken
+# passage with more sane context than the radius-1 pass.  Its row is only a
+# provisional replacement for a row Central left unresolved, and only when the
+# radius-2 replay (or another non-posterior candidate) lands on the same onset
+# and no independent onset (recurrence, local Whisper) contradicts it.  On the
+# 39-song corpus this rule moved 10-22 rows per run closer to BK and none away.
+CTC_WIDE_REGION_FALLBACK_SOURCE = "ctc-local-window-wide"
+CTC_WIDE_REGION_RADIUS = 3
+CTC_WIDE_REGION_PEER_RADIUS = 2
+CTC_WIDE_REGION_PEER_AGREEMENT_SECONDS = 0.3
+CTC_WIDE_REGION_SUPPORT_SECONDS = 0.1
+CTC_WIDE_REGION_VETO_SECONDS = 0.5
 
 
 def ctc_line_extent_collapsed(first_start: float, last_end: float) -> bool:
@@ -4076,6 +4088,49 @@ def _collapsed_path_fallback(
     )
 
 
+def _ctc_wide_region_promotions(
+    candidate_sets: tuple[tuple[TimingCandidate, ...], ...],
+    decisions: list[TimingDecision],
+    wide_region: tuple[bool, ...],
+) -> dict[int, str]:
+    """Rows whose provisional time yields to their gated wide-region replay.
+
+    Walks the finished worklist in order: an unresolved row inside the wide
+    collapsed region takes its ``ctc-local-window-wide`` time when that moves
+    it by more than the fallback shift and keeps it strictly between the
+    (possibly already promoted) previous row and the next row.  The row stays
+    provisional_unresolved; only its written clock changes.
+    """
+    written = [decision.written_time.seconds for decision in decisions]
+    forced: dict[int, str] = {}
+    for index, decision in enumerate(decisions):
+        if decision.status != "provisional_unresolved" or not wide_region[index]:
+            continue
+        wide = next(
+            (
+                candidate for candidate in candidate_sets[index]
+                if candidate.source == CTC_WIDE_REGION_FALLBACK_SOURCE
+            ),
+            None,
+        )
+        if wide is None:
+            continue
+        seconds = wide.written_time.seconds
+        lower = written[index - 1] if index else float("-inf")
+        upper = (
+            decisions[index + 1].written_time.seconds
+            if index + 1 < len(decisions)
+            else float("inf")
+        )
+        if (
+            abs(seconds - written[index]) > COLLAPSED_PATH_FALLBACK_MIN_SHIFT_SECONDS
+            and lower < seconds < upper
+        ):
+            forced[index] = wide.candidate_id
+            written[index] = seconds
+    return forced
+
+
 def select_timing_decision(
     *,
     entry_index: int,
@@ -4090,6 +4145,7 @@ def select_timing_decision(
     timing_source_policy: Literal["default", "ctc-first"] = "default",
     ctc_path_collapsed: bool = False,
     next_bound_seconds: float | None = None,
+    forced_provisional_id: str | None = None,
 ) -> TimingDecision:
     if arbiter_mode not in {"off", "gross-rescue", "reviewer-validity"}:
         raise ValueError(f"unsupported timing arbiter mode: {arbiter_mode}")
@@ -4104,10 +4160,15 @@ def select_timing_decision(
     )
     if timing_source_policy not in {"default", "ctc-first"}:
         raise ValueError(f"unsupported timing-source policy: {timing_source_policy}")
+    # Recurrence and the wide-region replay are evidence/fallback rows, never
+    # a selectable clock in their own right.
     eligible_ids = {
         item.candidate_id for item in candidates
-        if (timing_source_policy == "default" and item.source != "mutual-acoustic-recurrence")
-        or (item.source != "mutual-acoustic-recurrence" and "whisper" not in item.source.lower() and "raw" not in item.source.lower())
+        if item.source != CTC_WIDE_REGION_FALLBACK_SOURCE
+        and (
+            (timing_source_policy == "default" and item.source != "mutual-acoustic-recurrence")
+            or (item.source != "mutual-acoustic-recurrence" and "whisper" not in item.source.lower() and "raw" not in item.source.lower())
+        )
     }
     if not eligible_ids:
         raise LrcError(f"ctc-first: no eligible time candidate at line {entry_index + 1}")
@@ -4268,6 +4329,14 @@ def select_timing_decision(
             )
             if collapsed_fallback is not None:
                 provisional = collapsed_fallback
+        if forced_provisional_id is not None:
+            provisional = next(
+                (
+                    evaluation for evaluation in evaluations
+                    if evaluation.candidate.candidate_id == forced_provisional_id
+                ),
+                provisional,
+            )
         status: Literal["selected_valid", "provisional_unresolved"] = "provisional_unresolved"
         selected_id = None
         provisional_id = provisional.candidate.candidate_id
@@ -4498,7 +4567,6 @@ def build_final_timing_state(
         reviewer_evidence = tuple(None for _ in candidate_sets)
     if len(reviewer_evidence) != len(candidate_sets):
         raise ValueError("reviewer evidence does not match candidate sets")
-    decisions: list[TimingDecision | None] = [None] * len(candidate_sets)
     # Collapse is a property of the immutable whole-song CTC baseline, so it is
     # computed once here and every replay through this owner sees the same view.
     collapsed_rows = tuple(current_ctc_path_collapsed(items) for items in candidate_sets)
@@ -4516,50 +4584,78 @@ def build_final_timing_state(
         following = _current_timing_candidate(candidate_sets[row + 1])
         return following.written_time.seconds if following is not None else None
 
-    pending = list(range(len(candidate_sets)))
-    if worklist_order == "reverse":
-        pending.reverse()
-    while pending:
-        index = pending.pop(0)
-        if index and decisions[index - 1] is None:
-            pending.append(index)
-            continue
-        previous_candidate = decisions[index - 1].candidate if index else None  # type: ignore[union-attr]
-        previous_tail = (
-            resolve_reliable_tail(
-                previous_candidate,
-                independent_tail_evidence[index - 1],
-                tail_evidence_context=tail_evidence_context,
+    def run_worklist(forced: dict[int, str]) -> list[TimingDecision]:
+        decisions: list[TimingDecision | None] = [None] * len(candidate_sets)
+        pending = list(range(len(candidate_sets)))
+        if worklist_order == "reverse":
+            pending.reverse()
+        while pending:
+            index = pending.pop(0)
+            if index and decisions[index - 1] is None:
+                pending.append(index)
+                continue
+            previous_candidate = decisions[index - 1].candidate if index else None  # type: ignore[union-attr]
+            previous_tail = (
+                resolve_reliable_tail(
+                    previous_candidate,
+                    independent_tail_evidence[index - 1],
+                    tail_evidence_context=tail_evidence_context,
+                )
+                if index and previous_candidate is not None
+                else None
             )
-            if index and previous_candidate is not None
-            else None
-        )
-        new_decision = select_timing_decision(
-            entry_index=index,
-            candidates=candidate_sets[index],
-            previous_candidate=previous_candidate,
-            selection_revision=index + 1,
-            previous_tail=previous_tail,
-            peer_graph=peer_graph,
-            occurrence_entries=occurrence_entries,
-            arbiter_mode=arbiter_mode,
-            reviewer_evidence=reviewer_evidence[index],
-            timing_source_policy=timing_source_policy,
-            ctc_path_collapsed=collapsed_region[index] or incoherent_rows[index],
-            next_bound_seconds=next_bound(index),
-        )
-        old_decision = decisions[index]
-        decisions[index] = new_decision
-        changed = bool(
-            old_decision is None
-            or old_decision.candidate.candidate_id != new_decision.candidate.candidate_id
-            or old_decision.evidence.candidate_revision != new_decision.evidence.candidate_revision
-        )
-        if changed and index + 1 < len(candidate_sets) and (index + 1) not in pending:
-            pending.append(index + 1)
-    frozen_decisions = tuple(
-        decision for decision in decisions if decision is not None
-    )
+            new_decision = select_timing_decision(
+                entry_index=index,
+                candidates=candidate_sets[index],
+                previous_candidate=previous_candidate,
+                selection_revision=index + 1,
+                previous_tail=previous_tail,
+                peer_graph=peer_graph,
+                occurrence_entries=occurrence_entries,
+                arbiter_mode=arbiter_mode,
+                reviewer_evidence=reviewer_evidence[index],
+                timing_source_policy=timing_source_policy,
+                ctc_path_collapsed=collapsed_region[index] or incoherent_rows[index],
+                next_bound_seconds=next_bound(index),
+                forced_provisional_id=forced.get(index),
+            )
+            old_decision = decisions[index]
+            decisions[index] = new_decision
+            changed = bool(
+                old_decision is None
+                or old_decision.candidate.candidate_id != new_decision.candidate.candidate_id
+                or old_decision.evidence.candidate_revision != new_decision.evidence.candidate_revision
+            )
+            if changed and index + 1 < len(candidate_sets) and (index + 1) not in pending:
+                pending.append(index + 1)
+        return [decision for decision in decisions if decision is not None]
+
+    decisions = run_worklist({})
+    wide_region = ctc_collapsed_region_flags(collapsed_rows, radius=CTC_WIDE_REGION_RADIUS)
+    forced = _ctc_wide_region_promotions(candidate_sets, decisions, wide_region)
+    while forced:
+        promoted = run_worklist(forced)
+        # A promotion must survive its own replay: still unresolved, still the
+        # forced row, still strictly ordered against the replayed neighbours.
+        dropped = {
+            index for index, candidate_id in forced.items()
+            if promoted[index].candidate.candidate_id != candidate_id
+            or (
+                index
+                and promoted[index - 1].written_time.centiseconds
+                >= promoted[index].written_time.centiseconds
+            )
+            or (
+                index + 1 < len(promoted)
+                and promoted[index + 1].written_time.centiseconds
+                <= promoted[index].written_time.centiseconds
+            )
+        }
+        if not dropped:
+            decisions = promoted
+            break
+        forced = {index: value for index, value in forced.items() if index not in dropped}
+    frozen_decisions = tuple(decisions)
     audits = audit_final_timing_decisions(
         frozen_decisions,
         independent_tail_evidence=independent_tail_evidence,
@@ -10115,6 +10211,31 @@ def apply_ctc_local_window_realign(
                         "ctc_score": row.get("ctc_score"),
                         "window": {"start": round(start_time, 3), "end": round(end_time, 3)},
                     }
+                    if isinstance(assignment, dict) and region_radius in (
+                        CTC_WIDE_REGION_RADIUS, CTC_WIDE_REGION_PEER_RADIUS
+                    ):
+                        # Spans let a promoted row bound its successor's tail;
+                        # identity stays unavailable so the row is never a
+                        # valid clock or a material alternative of its own.
+                        try:
+                            wide_score = float(row.get("ctc_score", 0.0) or 0.0)
+                        except (TypeError, ValueError):
+                            wide_score = 0.0
+                        record_alignment_hypothesis(
+                            assignment,
+                            source=CTC_WIDE_REGION_FALLBACK_SOURCE,
+                            stage="ctc-local-window-shadow",
+                            raw_time=timestamp,
+                            confidence=wide_score,
+                            spans=row.get("token_spans"),
+                            sequence_support="supported",
+                            parent_source="ctc-global-mms",
+                            parent_time=float(timestamps[index]),
+                            window={"start": round(start_time, 3), "end": round(end_time, 3)},
+                            mode=f"region-radius-{region_radius}",
+                            right_edge_pileup=bool(candidate_edge_evidence.get("right_edge_pileup")),
+                            window_truncated=bool(candidate_edge_evidence.get("right_edge_pileup")),
+                        )
                 elif isinstance(assignment, dict):
                     try:
                         local_score = float(row.get("ctc_score", 0.0) or 0.0)
@@ -22959,6 +23080,100 @@ def runtime_raw_ctc_consensus_for_entry(
     return dict(evidence)
 
 
+def _attach_ctc_wide_region_candidates(
+    candidate_sets: Sequence[tuple[TimingCandidate, ...]],
+    report: dict[str, object],
+    entries: list[LyricEntry],
+    hypothesis_falsifications: Sequence[dict[str, object]],
+) -> tuple[tuple[tuple[TimingCandidate, ...], ...], list[dict[str, object]]]:
+    """Admit a row's radius-3 replay as its wide-region fallback candidate.
+
+    Agreement: the radius-2 replay lands within 0.3 s, or another candidate
+    that is not a first-token posterior lands within 0.1 s.  Veto: any
+    independent onset for the row (acoustic recurrence, a trusted local
+    Whisper onset or its arbitration) more than 0.5 s away.  The vocal-fusion
+    onsets riding on candidates are not vetoes: on c17 #20 one sat 1.3 s off
+    BK and blocked a correct wide time.
+    """
+    assignments = report.get("assignments")
+    if not isinstance(assignments, list) or len(assignments) != len(candidate_sets):
+        return tuple(candidate_sets), []
+    independent_onsets: dict[int, list[float]] = collections.defaultdict(list)
+    for key in ("mutual_acoustic_recurrence_hypotheses", "global_acoustic_recurrence_hypotheses"):
+        rows = report.get(key)
+        for row in rows if isinstance(rows, list) else []:
+            if isinstance(row, dict) and isinstance(row.get("candidate"), (int, float)):
+                independent_onsets[int(row.get("entry", 0)) - 1].append(float(row["candidate"]))
+    for row in hypothesis_falsifications:
+        if isinstance(row.get("local_onset"), (int, float)):
+            independent_onsets[int(row.get("entry", 0)) - 1].append(float(row["local_onset"]))
+    revised: list[tuple[TimingCandidate, ...]] = []
+    diagnostics: list[dict[str, object]] = []
+    for index, (candidates, assignment) in enumerate(zip(candidate_sets, assignments)):
+        hypotheses = assignment.get("alignment_hypotheses") if isinstance(assignment, dict) else None
+        wide: dict[int, dict[str, object]] = {}
+        for hypothesis in hypotheses if isinstance(hypotheses, list) else []:
+            if (
+                isinstance(hypothesis, dict)
+                and hypothesis.get("source") == CTC_WIDE_REGION_FALLBACK_SOURCE
+                and isinstance(hypothesis.get("raw_candidate_time"), (int, float))
+            ):
+                for radius in (CTC_WIDE_REGION_RADIUS, CTC_WIDE_REGION_PEER_RADIUS):
+                    if hypothesis.get("mode") == f"region-radius-{radius}":
+                        wide[radius] = hypothesis
+        primary = wide.get(CTC_WIDE_REGION_RADIUS)
+        if primary is None:
+            revised.append(tuple(candidates))
+            continue
+        seconds = canonicalize_lrc_time(float(primary["raw_candidate_time"])).seconds
+        peer = wide.get(CTC_WIDE_REGION_PEER_RADIUS)
+        peer_agrees = bool(
+            peer is not None
+            and abs(float(peer["raw_candidate_time"]) - seconds)
+            <= CTC_WIDE_REGION_PEER_AGREEMENT_SECONDS
+        )
+        supported = any(
+            candidate.source != "ctc-first-token-posterior"
+            and abs(candidate.written_time.seconds - seconds) <= CTC_WIDE_REGION_SUPPORT_SECONDS
+            for candidate in candidates
+        )
+        onsets = list(independent_onsets.get(index, []))
+        local = runtime_local_whisper_evidence_for_entry(report, entries, index)
+        if isinstance(local, dict) and isinstance(local.get("onset_time"), (int, float)):
+            onsets.append(float(local["onset_time"]))
+        vetoed = any(abs(onset - seconds) > CTC_WIDE_REGION_VETO_SECONDS for onset in onsets)
+        admitted = (peer_agrees or supported) and not vetoed
+        diagnostics.append({
+            "entry": index + 1,
+            "time": seconds,
+            "peer_time": (
+                round(float(peer["raw_candidate_time"]), 3) if peer is not None else None
+            ),
+            "peer_agrees": peer_agrees,
+            "candidate_support": supported,
+            "independent_onsets": sorted(round(onset, 3) for onset in onsets),
+            "vetoed": vetoed,
+            "admitted": admitted,
+        })
+        if not admitted:
+            revised.append(tuple(candidates))
+            continue
+        spans = _timing_spans_from_value(primary.get("spans"))
+        wide_candidate = make_timing_candidate(
+            entry_index=index,
+            entry_text=entry_sung_text(entries[index]),
+            source=CTC_WIDE_REGION_FALLBACK_SOURCE,
+            raw_time=float(primary["raw_candidate_time"]),
+            spans=spans,
+            confidence=float(primary.get("confidence", 0.0) or 0.0),
+            sequence_support="supported",
+            source_artifact=primary,
+        )
+        unique = {candidate.candidate_id: candidate for candidate in (*candidates, wide_candidate)}
+        revised.append(tuple(unique[key] for key in sorted(unique)))
+    return tuple(revised), diagnostics
+
+
 def collect_central_timing_candidates(
     audio_path: Path,
     entries: list[LyricEntry],
@@ -23339,6 +23554,9 @@ def collect_central_timing_candidates(
                     # Identity-only evidence is consumed by occurrence-level
                     # recurrence producers; it must never become a timing
                     # candidate merely because it contains helper spans.
+                    continue
+                if source == CTC_WIDE_REGION_FALLBACK_SOURCE:
+                    # Gated against the finished candidate set below.
                     continue
                 independent_identity_bound = False
                 independent_acoustic_bound = False
@@ -24035,8 +24253,18 @@ def collect_central_timing_candidates(
             f"entries={','.join(str(item.get('entry')) for item in hypothesis_falsifications)}"
         )
 
+    candidate_sets, wide_region_rows = _attach_ctc_wide_region_candidates(
+        candidate_sets, report, entries, hypothesis_falsifications
+    )
+
     diagnostics = {
         **diagnostics,
+        "ctc_wide_region_fallback": {
+            "source": CTC_WIDE_REGION_FALLBACK_SOURCE,
+            "region_radius": CTC_WIDE_REGION_RADIUS,
+            "rows": wide_region_rows,
+            "central_commit_only": True,
+        },
         "independent_tail_evidence": independent_tail_evidence_payload(
             runtime_independent_tail_evidence(report, len(entries))
         ),
@@ -26500,6 +26728,9 @@ def commit_final_timing_state(
     arbitration_diagnostics = generation_diagnostics.get("hypothesis_arbitration")
     if isinstance(arbitration_diagnostics, dict):
         report["hypothesis_arbitration"] = copy.deepcopy(arbitration_diagnostics)
+    wide_region_diagnostics = generation_diagnostics.get("ctc_wide_region_fallback")
+    if isinstance(wide_region_diagnostics, dict):
+        report["ctc_wide_region_fallback"] = copy.deepcopy(wide_region_diagnostics)
     tail_diagnostics = generation_diagnostics.get("independent_tail_evidence")
     if isinstance(tail_diagnostics, list):
         report["independent_tail_evidence_diagnostics"] = {

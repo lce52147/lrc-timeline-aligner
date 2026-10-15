@@ -386,5 +386,186 @@ class LocalWindowShadowTests(unittest.TestCase):
         self.assertEqual(sorted(local_window_times(report)), [3, 4, 5])
 
 
+def timing_candidate(
+    index: int, source: str, time: float, *, extent: float = 1.0,
+    confidence: float = 0.5, current: bool = False,
+) -> auto_lrc.TimingCandidate:
+    return auto_lrc.make_timing_candidate(
+        entry_index=index,
+        entry_text=f"line {index + 1}",
+        source=source,
+        raw_time=time,
+        spans=auto_lrc._timing_spans_from_value(span_dicts(time, extent)),
+        confidence=confidence,
+        identity_support="supported",
+        sequence_support="supported",
+        current=current,
+    )
+
+
+def wide_candidate(index: int, time: float) -> auto_lrc.TimingCandidate:
+    return auto_lrc.make_timing_candidate(
+        entry_index=index,
+        entry_text=f"line {index + 1}",
+        source=auto_lrc.CTC_WIDE_REGION_FALLBACK_SOURCE,
+        raw_time=time,
+        spans=auto_lrc._timing_spans_from_value(span_dicts(time, 1.0)),
+        confidence=0.3,
+        sequence_support="supported",
+    )
+
+
+class WideRegionPromotionTests(unittest.TestCase):
+    # Row 2's whole-song path spans 20 s (collapsed), so Central leaves it
+    # unresolved; rows 1-3 are all inside the wide region.
+    def sets(self, wide_time: float, next_time: float = 44.0):
+        return (
+            (timing_candidate(0, "ctc-current", 10.0, current=True),),
+            (
+                timing_candidate(1, "ctc-current", 20.0, extent=20.0, confidence=0.02, current=True),
+                wide_candidate(1, wide_time),
+            ),
+            (timing_candidate(2, "ctc-current", next_time, current=True),),
+        )
+
+    def test_unresolved_row_takes_the_wide_time_and_stays_unresolved(self) -> None:
+        state = auto_lrc.build_final_timing_state(self.sets(15.0))
+        decision = state.decisions[1]
+        self.assertEqual(decision.status, "provisional_unresolved")
+        self.assertEqual(decision.candidate.source, auto_lrc.CTC_WIDE_REGION_FALLBACK_SOURCE)
+        self.assertAlmostEqual(decision.written_time.seconds, 15.0, places=2)
+        self.assertFalse(state.audits[1].timing_trusted)
+
+    def test_wide_time_past_the_next_row_is_not_promoted(self) -> None:
+        state = auto_lrc.build_final_timing_state(self.sets(50.0, next_time=44.0))
+        self.assertEqual(state.decisions[1].candidate.source, "ctc-current")
+        self.assertAlmostEqual(state.decisions[1].written_time.seconds, 20.0, places=2)
+
+    def test_a_small_shift_keeps_the_provisional_time(self) -> None:
+        state = auto_lrc.build_final_timing_state(self.sets(20.3))
+        self.assertEqual(state.decisions[1].candidate.source, "ctc-current")
+
+    def test_wide_candidate_never_beats_a_valid_row(self) -> None:
+        sets = (
+            (timing_candidate(0, "ctc-current", 10.0, current=True), wide_candidate(0, 8.0)),
+            *self.sets(15.0)[1:],
+        )
+        state = auto_lrc.build_final_timing_state(sets)
+        self.assertEqual(state.decisions[0].status, "selected_valid")
+        self.assertEqual(state.decisions[0].candidate.source, "ctc-current")
+
+    def test_row_outside_the_wide_region_is_not_promoted(self) -> None:
+        sets = self.sets(15.0)
+        # Decisions as Central reaches them before any promotion.
+        without_wide = tuple(
+            tuple(c for c in items if c.source != auto_lrc.CTC_WIDE_REGION_FALLBACK_SOURCE)
+            for items in sets
+        )
+        decisions = list(auto_lrc.build_final_timing_state(without_wide).decisions)
+        self.assertEqual(
+            auto_lrc._ctc_wide_region_promotions(sets, decisions, (False, False, False)), {}
+        )
+        forced = auto_lrc._ctc_wide_region_promotions(sets, decisions, (False, True, False))
+        self.assertEqual(list(forced), [1])
+
+
+class WideRegionAdmissionTests(unittest.TestCase):
+    def report_with(self, hypotheses: list[dict[str, object]], **extra: object) -> dict[str, object]:
+        assignment: dict[str, object] = {"entry": 1, "timestamp": 20.0}
+        for item in hypotheses:
+            auto_lrc.record_alignment_hypothesis(
+                assignment,
+                source=auto_lrc.CTC_WIDE_REGION_FALLBACK_SOURCE,
+                stage="ctc-local-window-shadow",
+                raw_time=float(item["time"]),
+                confidence=0.3,
+                sequence_support="supported",
+                mode=f"region-radius-{item['radius']}",
+            )
+        return {"assignments": [assignment], **extra}
+
+    def admit(self, report: dict[str, object], candidates=None):
+        candidates = candidates or (timing_candidate(0, "ctc-current", 20.0, current=True),)
+        entries = [LyricEntry(["line 1"])]
+        sets, rows = auto_lrc._attach_ctc_wide_region_candidates((tuple(candidates),), report, entries, ())
+        wide = [c for c in sets[0] if c.source == auto_lrc.CTC_WIDE_REGION_FALLBACK_SOURCE]
+        return wide, rows
+
+    def test_radius_two_agreement_admits_the_radius_three_time(self) -> None:
+        wide, rows = self.admit(self.report_with([{"radius": 3, "time": 15.0}, {"radius": 2, "time": 15.2}]))
+        self.assertEqual(len(wide), 1)
+        self.assertAlmostEqual(wide[0].written_time.seconds, 15.0, places=2)
+        self.assertTrue(rows[0]["admitted"])
+
+    def test_non_posterior_support_admits_without_a_peer(self) -> None:
+        candidates = (
+            timing_candidate(0, "ctc-current", 20.0, current=True),
+            timing_candidate(0, "ctc-opening-local-retry", 15.05),
+        )
+        wide, _ = self.admit(self.report_with([{"radius": 3, "time": 15.0}]), candidates)
+        self.assertEqual(len(wide), 1)
+
+    def test_posterior_support_alone_is_not_agreement(self) -> None:
+        candidates = (
+            timing_candidate(0, "ctc-current", 20.0, current=True),
+            timing_candidate(0, "ctc-first-token-posterior", 15.05),
+        )
+        wide, rows = self.admit(
+            self.report_with([{"radius": 3, "time": 15.0}, {"radius": 2, "time": 17.0}]), candidates
+        )
+        self.assertEqual(wide, [])
+        self.assertFalse(rows[0]["admitted"])
+
+    def test_contradicting_recurrence_onset_vetoes(self) -> None:
+        report = self.report_with(
+            [{"radius": 3, "time": 15.0}, {"radius": 2, "time": 15.0}],
+            mutual_acoustic_recurrence_hypotheses=[{"entry": 1, "candidate": 20.2}],
+        )
+        wide, rows = self.admit(report)
+        self.assertEqual(wide, [])
+        self.assertTrue(rows[0]["vetoed"])
+
+    def test_agreeing_recurrence_onset_does_not_veto(self) -> None:
+        report = self.report_with(
+            [{"radius": 3, "time": 15.0}, {"radius": 2, "time": 15.0}],
+            mutual_acoustic_recurrence_hypotheses=[{"entry": 1, "candidate": 15.3}],
+        )
+        wide, _ = self.admit(report)
+        self.assertEqual(len(wide), 1)
+
+    def test_shadow_records_wide_hypotheses_that_only_reach_central_gated(self) -> None:
+        times = [10.0, 18.0, 26.0, 34.0, 50.0, 58.0, 66.0]
+        extents = [2.0, 2.0, 2.0, 20.0, 2.0, 2.0, 2.0]
+        report = ctc_report(times, extents)
+        run_with_shadows(times, report, 80.0, FakeHelper({4: 40.0, 6: 60.0}))
+        modes = {
+            index + 1: sorted(
+                item["mode"] for item in assignment.get("alignment_hypotheses") or []
+                if item["source"] == auto_lrc.CTC_WIDE_REGION_FALLBACK_SOURCE
+            )
+            for index, assignment in enumerate(report["assignments"])  # type: ignore[arg-type]
+        }
+        self.assertEqual(modes[1], ["region-radius-3"])
+        self.assertEqual(modes[4], ["region-radius-2", "region-radius-3"])
+        entries = [LyricEntry([f"line {index + 1}"]) for index in range(len(times))]
+        candidate_sets, diagnostics = auto_lrc.collect_central_timing_candidates(
+            Path("dummy.flac"), entries, list(times), report, 80.0, type("Args", (), {})(),
+        )
+        for items in candidate_sets:
+            self.assertLessEqual(
+                sum(item.source == auto_lrc.CTC_WIDE_REGION_FALLBACK_SOURCE for item in items), 1
+            )
+        rows = diagnostics["ctc_wide_region_fallback"]["rows"]
+        self.assertEqual([row["entry"] for row in rows], list(range(1, 8)))
+        evaluated = auto_lrc.evaluate_backend_timing(
+            "ctc", candidate_sets, report, diagnostics,
+            arbiter_mode="reviewer-validity", timing_source_policy="ctc-first",
+        )
+        # Valid rows keep their own clocks.
+        for decision in evaluated.state.decisions:
+            if decision.status == "selected_valid":
+                self.assertNotEqual(decision.candidate.source, auto_lrc.CTC_WIDE_REGION_FALLBACK_SOURCE)
+
+
 if __name__ == "__main__":
     unittest.main()
