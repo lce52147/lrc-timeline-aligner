@@ -3979,6 +3979,12 @@ COLLAPSED_REGION_WINDOW_MAX_SECONDS = 90.0
 # radius-2 replay (or another non-posterior candidate) lands on the same onset
 # and no independent onset (recurrence, local Whisper) contradicts it.  On the
 # 39-song corpus this rule moved 10-22 rows per run closer to BK and none away.
+# The replay's own windows are the region: an admitted row is eligible even
+# when Central's radius-3 flag on the whole-song path does not reach it (the
+# replay windows run to the nearest sane anchors, past that radius).  Behind
+# the flag, 726A4413 kept c04 #5, c17 #32/#34/#35 and c34 #7/#21 on their
+# broken whole-song times (up to 3.8 s off) while every admitted wide time on
+# an unresolved row was closer to BK.
 CTC_WIDE_REGION_FALLBACK_SOURCE = "ctc-local-window-wide"
 CTC_WIDE_REGION_RADIUS = 3
 CTC_WIDE_REGION_PEER_RADIUS = 2
@@ -4093,12 +4099,11 @@ def _collapsed_path_fallback(
 def _ctc_wide_region_promotions(
     candidate_sets: tuple[tuple[TimingCandidate, ...], ...],
     decisions: list[TimingDecision],
-    wide_region: tuple[bool, ...],
 ) -> dict[int, str]:
     """Rows whose provisional time yields to their gated wide-region replay.
 
-    Walks the finished worklist in order: an unresolved row inside the wide
-    collapsed region takes its ``ctc-local-window-wide`` time when that moves
+    Walks the finished worklist in order: an unresolved row carrying an
+    admitted ``ctc-local-window-wide`` candidate takes its time when that moves
     it by more than the fallback shift and keeps it strictly between the
     (possibly already promoted) previous row and the next row.  The row stays
     provisional_unresolved; only its written clock changes.
@@ -4106,7 +4111,7 @@ def _ctc_wide_region_promotions(
     written = [decision.written_time.seconds for decision in decisions]
     forced: dict[int, str] = {}
     for index, decision in enumerate(decisions):
-        if decision.status != "provisional_unresolved" or not wide_region[index]:
+        if decision.status != "provisional_unresolved":
             continue
         wide = next(
             (
@@ -4633,8 +4638,7 @@ def build_final_timing_state(
         return [decision for decision in decisions if decision is not None]
 
     decisions = run_worklist({})
-    wide_region = ctc_collapsed_region_flags(collapsed_rows, radius=CTC_WIDE_REGION_RADIUS)
-    forced = _ctc_wide_region_promotions(candidate_sets, decisions, wide_region)
+    forced = _ctc_wide_region_promotions(candidate_sets, decisions)
     while forced:
         promoted = run_worklist(forced)
         # A promotion must survive its own replay: still unresolved, still the

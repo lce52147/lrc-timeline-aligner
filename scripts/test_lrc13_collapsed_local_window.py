@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
 import unittest
 from pathlib import Path
 
-import auto_lrc
-from auto_lrc import LyricEntry
+# The helper-call counts below assume no on-disk model cache; the full suite
+# gets this from test_model_cache_replay, a single-module run needs it here.
+os.environ.setdefault("LRC_MODEL_CACHE", "0")
+
+import auto_lrc  # noqa: E402
+from auto_lrc import LyricEntry  # noqa: E402
 
 
 def span_dicts(start: float, extent: float, count: int = 4) -> list[dict[str, object]]:
@@ -454,7 +459,45 @@ class WideRegionPromotionTests(unittest.TestCase):
         self.assertEqual(state.decisions[0].status, "selected_valid")
         self.assertEqual(state.decisions[0].candidate.source, "ctc-current")
 
-    def test_row_outside_the_wide_region_is_not_promoted(self) -> None:
+    def test_admitted_row_beyond_the_collapse_radius_is_promoted(self) -> None:
+        # c17 #32 shape: the collapsed row is more than CTC_WIDE_REGION_RADIUS
+        # rows away, so Central's radius flag misses this unresolved row; the
+        # replay window still re-aligned it and the gate admitted it.
+        def plain(index: int, time: float) -> tuple[auto_lrc.TimingCandidate, ...]:
+            return (timing_candidate(index, "ctc-current", time, extent=2.0, current=True),)
+
+        sets = (
+            (timing_candidate(0, "ctc-current", 5.0, extent=20.0, confidence=0.02, current=True),),
+            *(plain(index, 30.0 + 4.0 * index) for index in range(1, 5)),
+            (
+                # No lyric-identity support: Central cannot validate the row.
+                auto_lrc.make_timing_candidate(
+                    entry_index=5,
+                    entry_text="line 6",
+                    source="ctc-current",
+                    raw_time=60.0,
+                    spans=auto_lrc._timing_spans_from_value(span_dicts(60.0, 2.0)),
+                    confidence=0.02,
+                    identity_support="unavailable",
+                    sequence_support="supported",
+                    current=True,
+                ),
+                wide_candidate(5, 56.0),
+            ),
+            plain(6, 70.0),
+        )
+        collapsed = [auto_lrc.current_ctc_path_collapsed(items) for items in sets]
+        self.assertFalse(
+            auto_lrc.ctc_collapsed_region_flags(collapsed, radius=auto_lrc.CTC_WIDE_REGION_RADIUS)[5]
+        )
+        state = auto_lrc.build_final_timing_state(sets)
+        decision = state.decisions[5]
+        self.assertEqual(decision.status, "provisional_unresolved")
+        self.assertEqual(decision.candidate.source, auto_lrc.CTC_WIDE_REGION_FALLBACK_SOURCE)
+        self.assertAlmostEqual(decision.written_time.seconds, 56.0, places=2)
+        self.assertFalse(state.audits[5].timing_trusted)
+
+    def test_promotion_needs_an_unresolved_row_with_an_admitted_wide_row(self) -> None:
         sets = self.sets(15.0)
         # Decisions as Central reaches them before any promotion.
         without_wide = tuple(
@@ -462,11 +505,8 @@ class WideRegionPromotionTests(unittest.TestCase):
             for items in sets
         )
         decisions = list(auto_lrc.build_final_timing_state(without_wide).decisions)
-        self.assertEqual(
-            auto_lrc._ctc_wide_region_promotions(sets, decisions, (False, False, False)), {}
-        )
-        forced = auto_lrc._ctc_wide_region_promotions(sets, decisions, (False, True, False))
-        self.assertEqual(list(forced), [1])
+        self.assertEqual(auto_lrc._ctc_wide_region_promotions(without_wide, decisions), {})
+        self.assertEqual(list(auto_lrc._ctc_wide_region_promotions(sets, decisions)), [1])
 
 
 class WideRegionAdmissionTests(unittest.TestCase):
