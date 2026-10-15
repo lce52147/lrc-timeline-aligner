@@ -326,7 +326,7 @@ def run_segment_skeleton(
                     vocal_segments=features.segments,
                     texts=lyric_texts,priors=original,duration=duration,
                     stem=vocal_stem,python=python_exe,helper=ctc_helper,
-                    device=device,folder=folder,runner=helper_runner)
+                    device=device,folder=folder,runner=cached_helper)
                 if final_rows is None:
                     return fallback("SECOND_DP_RECONCILIATION_FAILED",
                                     joint_details=dual_diag)
@@ -366,7 +366,7 @@ def run_segment_skeleton(
             rows=rows,passage_ids=row_to_passage,passages=plan.passages,
             lyric_texts=lyric_texts,stem=vocal_stem,duration=duration,
             python=python_exe,helper=ctc_helper,device=device,
-            runner=helper_runner,timeout=LOCAL_CTC_TIMEOUT_S)
+            runner=cached_helper,timeout=LOCAL_CTC_TIMEOUT_S)
         if placement_diag.get('status')!='OK':
             return fallback('GROUP_PLACEMENT_EVIDENCE_FAILED',
                             group_placement=placement_diag)
