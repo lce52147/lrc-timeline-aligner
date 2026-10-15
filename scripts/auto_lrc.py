@@ -4676,8 +4676,37 @@ class LrcError(RuntimeError):
     pass
 
 
-class ModelCacheMiss(LrcError):
-    """The requested cache-only execution has no verified model output."""
+class ModelCacheMiss(BaseException):
+    """The requested cache-only execution has no verified model output.
+
+    Deliberately not an LrcError/Exception: evidence collectors degrade on
+    ordinary helper failures, and a cache-only replay must never turn a miss
+    into "evidence unavailable" and still publish an LRC.
+    """
+
+
+def _model_cache_only_active() -> bool:
+    return os.environ.get("LRC_MODEL_CACHE_ONLY", "0").lower() in {"1", "true", "yes", "on"}
+
+
+def _refuse_model_launch_in_cache_only(site: str) -> None:
+    """Every GPU model launch passes gpu_compute_phase or whispercpp_gpu_lock."""
+    if _model_cache_only_active():
+        raise ModelCacheMiss(f"model-cache-only:model-launch-refused:{site}")
+
+
+def _apply_model_cache_flags(args: argparse.Namespace) -> str:
+    """CLI flags only narrow the environment; an inherited cache-only stays on."""
+    if not getattr(args, "model_cache", True):
+        os.environ["LRC_MODEL_CACHE"] = "0"
+    if getattr(args, "model_cache_only", False):
+        os.environ["LRC_MODEL_CACHE_ONLY"] = "1"
+    enabled = os.environ.get("LRC_MODEL_CACHE", "1").lower() not in {"0", "false", "no", "off"}
+    if _model_cache_only_active():
+        if not enabled:
+            raise LrcError("--model-cache-only requires the model cache to be enabled")
+        return "cache-only"
+    return "read-write" if enabled else "off"
 
 
 def _model_cache_enabled(args: argparse.Namespace) -> bool:
@@ -4782,6 +4811,7 @@ def _ctc_model_blob_sha256() -> str:
     return "unresolved"
 
 
+@lru_cache(maxsize=8)
 def _whisperx_model_identity(python_exe: Path, helper: Path, language: str) -> tuple[str, str]:
     """Resolve cached WhisperX alignment weights without loading the model."""
     probe = (
@@ -9019,22 +9049,14 @@ def decode_temp_wav(audio_path: Path) -> Path:
     return wav_path
 
 
-def _run_whispercpp_wav(
+def _whispercpp_cache_identity(
     wav_path: Path,
     args: argparse.Namespace,
     *,
     suppress_nst: bool,
-) -> list[AsrSegment]:
-    """Run whisper.cpp on an already-decoded local WAV without changing its time origin."""
-    cli_arg = getattr(args, "whisper_cli", None)
-    cli = Path(cli_arg).expanduser().resolve() if cli_arg else default_whisper_cli()
-    model_arg = getattr(args, "whisper_model", None)
-    model = Path(model_arg).expanduser().resolve() if model_arg else default_whisper_model()
-    if not cli.exists():
-        raise LrcError(f"whisper.cpp CLI not found: {cli}")
-    if not model.exists():
-        raise LrcError(f"whisper.cpp model not found: {model}")
-
+    cli: Path,
+    model: Path,
+) -> tuple[str, dict[str, object]]:
     cli_sha = _stable_file_sha256(cli)
     model_sha = _stable_file_sha256(model)
     try:
@@ -9058,6 +9080,12 @@ def _run_whispercpp_wav(
     }
     key = _model_cache_key("raw-asr", stem_sha, identity["model_revision"], model_sha,
                            identity["helper_protocol_revision"], request)
+    return key, identity
+
+
+def _whispercpp_cache_lookup(
+    key: str, identity: dict[str, object], args: argparse.Namespace
+) -> list[AsrSegment] | None:
     cached = _model_cache_read("raw-asr", key, identity, args)
     if isinstance(cached, list):
         try:
@@ -9065,6 +9093,40 @@ def _run_whispercpp_wav(
         except (KeyError, TypeError, ValueError):
             if _model_cache_only(args):
                 raise ModelCacheMiss(f"model-cache-invalid:raw-asr:{key}")
+    return None
+
+
+def _whispercpp_cache_store(
+    key: str, identity: dict[str, object], segments: list[AsrSegment], args: argparse.Namespace
+) -> None:
+    _model_cache_write(
+        "raw-asr", key, identity,
+        [{"start": item.start, "end": item.end, "text": item.text} for item in segments], args,
+    )
+
+
+def _run_whispercpp_wav(
+    wav_path: Path,
+    args: argparse.Namespace,
+    *,
+    suppress_nst: bool,
+) -> list[AsrSegment]:
+    """Run whisper.cpp on an already-decoded local WAV without changing its time origin."""
+    cli_arg = getattr(args, "whisper_cli", None)
+    cli = Path(cli_arg).expanduser().resolve() if cli_arg else default_whisper_cli()
+    model_arg = getattr(args, "whisper_model", None)
+    model = Path(model_arg).expanduser().resolve() if model_arg else default_whisper_model()
+    if not cli.exists():
+        raise LrcError(f"whisper.cpp CLI not found: {cli}")
+    if not model.exists():
+        raise LrcError(f"whisper.cpp model not found: {model}")
+
+    key, identity = _whispercpp_cache_identity(
+        wav_path, args, suppress_nst=suppress_nst, cli=cli, model=model
+    )
+    cached_segments = _whispercpp_cache_lookup(key, identity, args)
+    if cached_segments is not None:
+        return cached_segments
 
     output_base = wav_path.with_suffix("")
     command = [
@@ -9097,10 +9159,7 @@ def _run_whispercpp_wav(
             segments.append(AsrSegment(start=start, end=end, text=text))
     if not segments:
         raise LrcError("whisper.cpp produced no transcription segments")
-    _model_cache_write(
-        "raw-asr", key, identity,
-        [{"start": item.start, "end": item.end, "text": item.text} for item in segments], args,
-    )
+    _whispercpp_cache_store(key, identity, segments, args)
     return segments
 
 
@@ -9157,6 +9216,26 @@ def _run_whispercpp_wav_batch(
     if not cli.is_file() or not model.is_file():
         message = "whisper.cpp CLI/model unavailable"
         return results, {key: message for key, _ in items}
+    cache_entries: dict[str, tuple[str, dict[str, object]]] = {}
+    pending: list[tuple[str, Path]] = []
+    for item_key, item_wav in items:
+        cache_key, cache_identity = _whispercpp_cache_identity(
+            item_wav, args, suppress_nst=suppress_nst, cli=cli, model=model
+        )
+        cached_segments = _whispercpp_cache_lookup(cache_key, cache_identity, args)
+        if cached_segments is not None:
+            results[item_key] = cached_segments
+        else:
+            cache_entries[item_key] = (cache_key, cache_identity)
+            pending.append((item_key, item_wav))
+    if len(pending) != len(items):
+        progress_log(
+            f"local Whisper raw batch: model_cache_hits={len(items) - len(pending)} "
+            f"misses={len(pending)}"
+        )
+    items = pending
+    if not items:
+        return results, errors
     try:
         stat = cli.stat()
         multi = _whispercpp_multifile_supported(str(cli), stat.st_size, stat.st_mtime_ns)
@@ -9213,6 +9292,9 @@ def _run_whispercpp_wav_batch(
                 results[key] = _parse_whispercpp_json(wav_path.with_suffix(".json"))
             except (LrcError, OSError, ValueError, json.JSONDecodeError) as exc:
                 errors[key] = f"{type(exc).__name__}:{exc}"
+                continue
+            cache_key, cache_identity = cache_entries[key]
+            _whispercpp_cache_store(cache_key, cache_identity, results[key], args)
     return results, errors
 
 
@@ -13508,6 +13590,7 @@ def whispercpp_gpu_lock():
     ``LRC_WHISPERCPP_GPU_LOCK=0`` disables the cross-process coordination
     (parking this song's helpers stays).
     """
+    _refuse_model_launch_in_cache_only("whispercpp")
     _park_persistent_helper_mode("whisperx", reason="before-whispercpp")
     _park_persistent_helper_mode("ctc", reason="before-whispercpp")
     if not _gpu_coordination_enabled():
@@ -13652,6 +13735,7 @@ def gpu_compute_phase():
     other song's live models.  Scheduling only: inputs, outputs and evidence
     are unchanged.
     """
+    _refuse_model_launch_in_cache_only("gpu-compute-phase")
     if not _gpu_coordination_enabled():
         yield
         return
@@ -38933,8 +39017,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    os.environ["LRC_MODEL_CACHE"] = "1" if args.model_cache else "0"
-    os.environ["LRC_MODEL_CACHE_ONLY"] = "1" if args.model_cache_only else "0"
+    try:
+        cache_mode = _apply_model_cache_flags(args)
+    except LrcError as exc:
+        parser.error(str(exc))
+    print(f"INFO: model cache mode={cache_mode}", file=sys.stderr, flush=True)
     if args.output and len(args.audio) != 1:
         parser.error("--output can only be used with exactly one audio file")
     if args.probe and args.output:
