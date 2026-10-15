@@ -9417,8 +9417,7 @@ def run_whisperx_alignment(
             "input_transcript_revision": _timing_content_digest(transcript),
             "output_revision": _timing_content_digest(output_payload),
         }
-    if isinstance(payload.get(_RUNTIME_WHISPERX_ALIGNMENT_METADATA_KEY), dict):
-        _model_cache_write("whisperx-alignment", key, identity, payload, args)
+    _model_cache_write("whisperx-alignment", key, identity, payload, args)
     return payload
 
 
