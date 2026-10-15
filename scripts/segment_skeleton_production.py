@@ -192,18 +192,50 @@ def run_segment_skeleton(
                     passage=plan.passages[passage_index]
                     lyric_file=folder/f'group_{group_id:03d}.json'
                     result_file=folder/f'group_{group_id:03d}.aligned.json'
-                    lyric_file.write_text(json.dumps(
-                       list(lyric_texts[start:end]),ensure_ascii=False),encoding='utf8')
-                    command=[str(python_exe),str(ctc_helper),
-                      '--audio',str(vocal_stem),'--transcript',str(lyric_file),
-                      '--output',str(result_file),'--device',str(device),
-                      '--start',str(round(max(0.,passage.start-BOUNDARY_MARGIN_S),3)),
-                      '--end',str(round(min(duration,passage.end+BOUNDARY_MARGIN_S),3))]
-                    result=helper_runner(command,timeout=LOCAL_CTC_TIMEOUT_S)
-                    if result.returncode!=0 or not result_file.is_file():
-                        return fallback('LOCAL_GPU_CTC_FAILED',group=group_id,
-                          detail=str(getattr(result,'stderr',''))[-300:])
-                    data=json.loads(result_file.read_text(encoding='utf8'))
+                    request={
+                        'group_id':group_id,'start':start,'end':end,
+                        'passage_index':passage_index,
+                        'passage_start':round(max(0.,passage.start-BOUNDARY_MARGIN_S),3),
+                        'passage_end':round(min(duration,passage.end+BOUNDARY_MARGIN_S),3),
+                        'lyric_texts':list(lyric_texts[start:end]),'device':str(device),
+                    }
+                    cache_api=all(hasattr(audio_api,name) for name in (
+                        '_stable_file_sha256','_BOUNDED_RETRY_MODEL_IDENTITY',
+                        '_ctc_model_blob_sha256','_bounded_retry_protocol_revision',
+                        '_model_cache_key','_model_cache_read','_model_cache_write',
+                        '_model_cache_only_active'))
+                    data=None
+                    if cache_api:
+                        stem_sha=audio_api._stable_file_sha256(vocal_stem)
+                        helper_sha=audio_api._stable_file_sha256(ctc_helper)
+                        identity={
+                            'vocal_stem_sha256':stem_sha,
+                            'model_revision':audio_api._BOUNDED_RETRY_MODEL_IDENTITY,
+                            'model_blob_sha256':audio_api._ctc_model_blob_sha256(),
+                            'helper_protocol_revision':audio_api._bounded_retry_protocol_revision(helper_sha),
+                            'request':request,'helper_sha256':helper_sha,
+                        }
+                        key=audio_api._model_cache_key(
+                            'local-window-ctc',str(stem_sha),identity['model_revision'],
+                            identity['model_blob_sha256'],identity['helper_protocol_revision'],request)
+                        data=audio_api._model_cache_read('local-window-ctc',key,identity,
+                            SimpleNamespace(model_cache=True,model_cache_only=audio_api._model_cache_only_active()))
+                    if not isinstance(data,dict):
+                        lyric_file.write_text(json.dumps(
+                           list(lyric_texts[start:end]),ensure_ascii=False),encoding='utf8')
+                        command=[str(python_exe),str(ctc_helper),
+                          '--audio',str(vocal_stem),'--transcript',str(lyric_file),
+                          '--output',str(result_file),'--device',str(device),
+                          '--start',str(request['passage_start']),
+                          '--end',str(request['passage_end'])]
+                        result=helper_runner(command,timeout=LOCAL_CTC_TIMEOUT_S)
+                        if result.returncode!=0 or not result_file.is_file():
+                            return fallback('LOCAL_GPU_CTC_FAILED',group=group_id,
+                              detail=str(getattr(result,'stderr',''))[-300:])
+                        data=json.loads(result_file.read_text(encoding='utf8'))
+                        if cache_api:
+                            audio_api._model_cache_write('local-window-ctc',key,identity,data,
+                                SimpleNamespace(model_cache=True,model_cache_only=False))
                     chunk=data.get('entries')
                     if not isinstance(chunk,list) or len(chunk)!=end-start:
                         return fallback('LOCAL_GPU_ROWS_WRONG',group=group_id)
