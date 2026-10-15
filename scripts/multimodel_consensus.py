@@ -300,19 +300,18 @@ def choose_consensus_overrides(
         if cluster is None:
             continue
         consensus, support, _ = cluster
-        g8 = "mms" in support
-        if not g8:
-            continue
         near = tuple(sorted({
             model_family(model)
             for model, value in values.items()
             if _finite(value) and abs(float(value) - float(written_times[index])) <= tau + 1e-9
         }))
+        clean_support = tuple(family for family in support if family not in near)
         g2 = not _raw_order_violation(index, consensus, raw_anchors)
-        g3 = len(support) >= 3
+        g10 = len(clean_support) >= 3
+        g8 = "mms" in clean_support
         g4 = abs(consensus - float(written_times[index])) > min_shift
         g5_initial = len(near) < 3
-        if not (g2 and g3 and g4 and g5_initial):
+        if not (g2 and g10 and g8 and g4 and g5_initial):
             continue
         proposed[index] = ConsensusOverride(
             entry_index=index,
@@ -326,7 +325,7 @@ def choose_consensus_overrides(
             near_written_families=near,
             guards=(
                 ("G2_raw_order", g2),
-                ("G3_family_support", g3),
+                ("G10_clean_family_support", g10),
                 ("G4_shift", g4),
                 ("G5_near_written", g5_initial),
                 ("G8_mms_support", g8),

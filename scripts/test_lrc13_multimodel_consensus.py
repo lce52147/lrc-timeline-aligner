@@ -29,6 +29,38 @@ class MultiModelConsensusTests(unittest.TestCase):
         self.assertEqual(result[1].support_families, ("en-ctc", "mms", "mms1b"))
         self.assertAlmostEqual(result[1].seconds, 4.055, places=6)
 
+    def test_g10_split_family_abstains(self) -> None:
+        result = choose_consensus_overrides(
+            [0.0, 188.47, 300.0],
+            ["selected_valid", "provisional_unresolved", "selected_valid"],
+            {1: {
+                "mms": 192.856,
+                "mms1b:jpn:native": 192.856,
+                "en-ctc:facebook/wav2vec2-large-960h-lv60-self:roman": 192.896,
+                "en-ctc:torchaudio:roman": 192.556,
+                "en-ctc:jonatasgrosman/wav2vec2-large-xlsr-53-english:roman": 188.454,
+                "mms1b:eng:roman": 188.454,
+            }},
+        )
+        self.assertEqual(result, {})
+
+    def test_g10_allows_four_clean_families(self) -> None:
+        result = choose_consensus_overrides(
+            [0.0, 8.0, 30.0],
+            ["selected_valid", "provisional_unresolved", "selected_valid"],
+            {1: {
+                "mms": 20.00,
+                "en-ctc:large": 20.04,
+                "ja-ctc:large": 20.06,
+                "phoneme": 20.08,
+            }},
+        )
+        self.assertEqual(
+            result[1].support_families,
+            ("en-ctc", "ja-ctc", "mms", "phoneme"),
+        )
+        self.assertAlmostEqual(result[1].seconds, 20.05, places=6)
+
     def test_selected_valid_is_never_rewritten(self) -> None:
         result = choose_consensus_overrides(
             [1.0, 8.0],
