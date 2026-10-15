@@ -19398,7 +19398,7 @@ def execute_local_whisper_request(
             **base,
             outcome_revision=_timing_content_digest(base),
         )
-        if status != "error" and persistent_cache_key is not None and persistent_cache_identity is not None:
+        if (status != "error" or prepared is not None) and persistent_cache_key is not None and persistent_cache_identity is not None:
             _model_cache_write("local-whisper", persistent_cache_key, persistent_cache_identity, {
                 "entry_index": outcome.entry_index,
                 "request_revision": outcome.request_revision,
