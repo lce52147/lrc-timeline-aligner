@@ -58,6 +58,8 @@ _LOADED_SOURCE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 DEFAULT_REPORT_DIR = PROJECT_ROOT / "outputs" / "reports"
 DEFAULT_PROBE_DIR = PROJECT_ROOT / "outputs" / "probes"
 DEFAULT_VOCAL_CACHE_DIR = PROJECT_ROOT / "outputs" / "cache" / "vocals"
+DEFAULT_MODEL_CACHE_DIR = PROJECT_ROOT / "outputs" / "cache" / "model-outputs"
+MODEL_CACHE_SCHEMA = 1
 LRC_ALGORITHM_REVISION = "2026-09-28-lrc-v1.2-hubert-generalized-predecessor-tail"
 
 def _evidence_worker_count() -> int:
@@ -4674,6 +4676,133 @@ class LrcError(RuntimeError):
     pass
 
 
+class ModelCacheMiss(LrcError):
+    """The requested cache-only execution has no verified model output."""
+
+
+def _model_cache_enabled(args: argparse.Namespace) -> bool:
+    if os.environ.get("LRC_MODEL_CACHE", "1").lower() in {"0", "false", "no", "off"}:
+        return False
+    return bool(getattr(args, "model_cache", True)) and not bool(
+        getattr(args, "no_model_cache", False)
+    )
+
+
+def _model_cache_only(args: argparse.Namespace) -> bool:
+    return bool(getattr(args, "model_cache_only", False)) or os.environ.get(
+        "LRC_MODEL_CACHE_ONLY", "0"
+    ).lower() in {"1", "true", "yes", "on"}
+
+
+def _model_cache_key(
+    kind: str,
+    stem_sha256: str,
+    model_revision: str,
+    model_blob_sha256: str,
+    helper_protocol_revision: str,
+    request: object,
+) -> str:
+    return _timing_content_digest({
+        "schema": MODEL_CACHE_SCHEMA,
+        "kind": kind,
+        "vocal_stem_sha256": stem_sha256,
+        "model_revision": model_revision,
+        "model_blob_sha256": model_blob_sha256,
+        "helper_protocol_revision": helper_protocol_revision,
+        "request": request,
+    })
+
+
+def _model_cache_path(kind: str, key: str) -> Path:
+    safe_kind = re.sub(r"[^A-Za-z0-9_.-]", "_", kind)
+    safe_key = re.sub(r"[^A-Za-z0-9_.-]", "_", key)
+    return DEFAULT_MODEL_CACHE_DIR / safe_kind / f"{safe_key}.json"
+
+
+def _model_cache_read(
+    kind: str,
+    key: str,
+    identity: dict[str, object],
+    args: argparse.Namespace,
+) -> object | None:
+    if not _model_cache_enabled(args):
+        return None
+    path = _model_cache_path(kind, key)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if (
+            payload.get("schema") != MODEL_CACHE_SCHEMA
+            or payload.get("kind") != kind
+            or payload.get("key") != key
+            or payload.get("identity") != identity
+            or "payload" not in payload
+        ):
+            raise ValueError("identity-mismatch")
+        return payload["payload"]
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        if _model_cache_only(args):
+            raise ModelCacheMiss(f"model-cache-miss:{kind}:{key}")
+        return None
+
+
+def _model_cache_write(
+    kind: str,
+    key: str,
+    identity: dict[str, object],
+    payload: object,
+    args: argparse.Namespace,
+) -> None:
+    if not _model_cache_enabled(args):
+        return
+    path = _model_cache_path(kind, key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
+    envelope = {
+        "schema": MODEL_CACHE_SCHEMA,
+        "kind": kind,
+        "key": key,
+        "identity": identity,
+        "payload": payload,
+    }
+    temp.write_text(json.dumps(envelope, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+    os.replace(temp, path)
+
+
+def _ctc_model_blob_sha256() -> str:
+    candidates = [
+        Path.home() / ".cache" / "torch" / "hub" / "checkpoints" / "model.pt",
+        Path(os.environ.get("TORCH_HOME", "")) / "checkpoints" / "model.pt",
+    ]
+    for candidate in candidates:
+        try:
+            if candidate.is_file():
+                return _stable_file_sha256(candidate)
+        except OSError:
+            continue
+    return "unresolved"
+
+
+def _whisperx_model_identity(python_exe: Path, helper: Path, language: str) -> tuple[str, str]:
+    """Resolve cached WhisperX alignment weights without loading the model."""
+    probe = (
+        "import json; from whisperx_refine import model_provenance; "
+        "print(json.dumps(model_provenance(" + repr(str(language)) + ") or {}))"
+    )
+    try:
+        proc = subprocess.run(
+            [str(python_exe), "-c", probe], cwd=str(helper.parent), check=False,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            encoding="utf-8", errors="replace", timeout=30.0,
+        )
+        value = json.loads(proc.stdout.strip().splitlines()[-1]) if proc.returncode == 0 else {}
+        return (
+            str(value.get("align_model_revision") or "unresolved"),
+            str(value.get("align_model_blob_sha256") or "unresolved"),
+        )
+    except (OSError, subprocess.SubprocessError, ValueError, json.JSONDecodeError, IndexError):
+        return "unresolved", "unresolved"
+
+
 class SegmentSkeletonRollback(LrcError):
     """Full Central rejected this segment-current sequence; retry whole old run."""
 
@@ -8906,6 +9035,37 @@ def _run_whispercpp_wav(
     if not model.exists():
         raise LrcError(f"whisper.cpp model not found: {model}")
 
+    cli_sha = _stable_file_sha256(cli)
+    model_sha = _stable_file_sha256(model)
+    try:
+        stem_sha = _stable_file_sha256(wav_path)
+    except OSError:
+        # Unit callers may replace the subprocess before creating a real WAV;
+        # production paths always decode a content-addressed file first.
+        stem_sha = _timing_content_digest({"missing_wav_path": str(wav_path.resolve())})
+    request = {
+        "audio_sha256": stem_sha,
+        "language": str(args.whisper_language),
+        "suppress_nst": bool(suppress_nst),
+        "cli": str(cli),
+    }
+    identity = {
+        "vocal_stem_sha256": stem_sha,
+        "model_revision": f"whispercpp-cli:{cli_sha}",
+        "model_blob_sha256": model_sha,
+        "helper_protocol_revision": "whispercpp-json-transcription-v1",
+        "request": request,
+    }
+    key = _model_cache_key("raw-asr", stem_sha, identity["model_revision"], model_sha,
+                           identity["helper_protocol_revision"], request)
+    cached = _model_cache_read("raw-asr", key, identity, args)
+    if isinstance(cached, list):
+        try:
+            return [AsrSegment(float(item["start"]), float(item["end"]), str(item["text"])) for item in cached]
+        except (KeyError, TypeError, ValueError):
+            if _model_cache_only(args):
+                raise ModelCacheMiss(f"model-cache-invalid:raw-asr:{key}")
+
     output_base = wav_path.with_suffix("")
     command = [
         str(cli),
@@ -8937,6 +9097,10 @@ def _run_whispercpp_wav(
             segments.append(AsrSegment(start=start, end=end, text=text))
     if not segments:
         raise LrcError("whisper.cpp produced no transcription segments")
+    _model_cache_write(
+        "raw-asr", key, identity,
+        [{"start": item.start, "end": item.end, "text": item.text} for item in segments], args,
+    )
     return segments
 
 
@@ -9111,6 +9275,30 @@ def run_whisperx_alignment(
         json.dumps(transcript, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    stem_sha = _stable_file_sha256(wav_path)
+    helper_sha = _stable_file_sha256(helper)
+    model_revision, model_blob = _whisperx_model_identity(
+        python_exe, helper, str(args.whisper_language)
+    )
+    request = {
+        "audio_sha256": stem_sha,
+        "transcript": transcript,
+        "language": str(args.whisper_language),
+        "device": str(args.whisperx_device),
+    }
+    identity = {
+        "vocal_stem_sha256": stem_sha,
+        "model_revision": model_revision,
+        "model_blob_sha256": model_blob,
+        "helper_protocol_revision": _WHISPERX_HELPER_PROTOCOL_REVISION,
+        "request": request,
+        "helper_sha256": helper_sha,
+    }
+    key = _model_cache_key("whisperx-alignment", stem_sha, identity["model_revision"],
+                           identity["model_blob_sha256"], _WHISPERX_HELPER_PROTOCOL_REVISION, request)
+    cached = _model_cache_read("whisperx-alignment", key, identity, args)
+    if isinstance(cached, dict):
+        return cached
     _remove_stale_output(output_path)
     proc = _run_model_helper_command(
         [
@@ -9147,6 +9335,8 @@ def run_whisperx_alignment(
             "input_transcript_revision": _timing_content_digest(transcript),
             "output_revision": _timing_content_digest(output_payload),
         }
+    if isinstance(payload.get(_RUNTIME_WHISPERX_ALIGNMENT_METADATA_KEY), dict):
+        _model_cache_write("whisperx-alignment", key, identity, payload, args)
     return payload
 
 
@@ -9177,15 +9367,38 @@ def run_ctc_alignment(
     if not helper.exists():
         raise LrcError(f"CTC helper not found: {helper}")
 
-    with tempfile.TemporaryDirectory(prefix="lrc-ctc-") as temp_name:
-        temp_dir = Path(temp_name)
-        transcript_path = temp_dir / "transcript.json"
-        output_path = temp_dir / "ctc-aligned.json"
-        transcript_path.write_text(
-            json.dumps([entry_sung_text(entry) for entry in entries], ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        proc = _run_model_helper_command(
+    helper_sha = _stable_file_sha256(helper)
+    model_blob = _ctc_model_blob_sha256()
+    request = {
+        "entries": [entry_sung_text(entry) for entry in entries],
+        "duration": round(float(duration), 6),
+        "device": str(args.whisperx_device),
+        "source": audio_source,
+    }
+    identity = {
+        "vocal_stem_sha256": vocal_stem_sha256,
+        "model_revision": _BOUNDED_RETRY_MODEL_IDENTITY,
+        "model_blob_sha256": model_blob,
+        "helper_protocol_revision": _bounded_retry_protocol_revision(helper_sha),
+        "request": request,
+        "helper_sha256": helper_sha,
+    }
+    key = _model_cache_key("whole-ctc", str(vocal_stem_sha256), identity["model_revision"],
+                           model_blob, identity["helper_protocol_revision"], request)
+    cached = _model_cache_read("whole-ctc", key, identity, args)
+
+    if isinstance(cached, dict):
+        payload = cached
+    else:
+        with tempfile.TemporaryDirectory(prefix="lrc-ctc-") as temp_name:
+            temp_dir = Path(temp_name)
+            transcript_path = temp_dir / "transcript.json"
+            output_path = temp_dir / "ctc-aligned.json"
+            transcript_path.write_text(
+                json.dumps([entry_sung_text(entry) for entry in entries], ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            proc = _run_model_helper_command(
             [
                 str(python_exe),
                 str(helper),
@@ -9200,11 +9413,12 @@ def run_ctc_alignment(
             ],
             mode="ctc",
         )
-        if proc.returncode != 0:
-            raise LrcError(f"CTC forced alignment failed: {proc.stderr.strip() or proc.stdout.strip()}")
-        if not output_path.exists():
-            raise LrcError(f"CTC helper did not write output: {output_path}")
-        payload = json.loads(output_path.read_text(encoding="utf-8"))
+            if proc.returncode != 0:
+                raise LrcError(f"CTC forced alignment failed: {proc.stderr.strip() or proc.stdout.strip()}")
+            if not output_path.exists():
+                raise LrcError(f"CTC helper did not write output: {output_path}")
+            payload = json.loads(output_path.read_text(encoding="utf-8"))
+        _model_cache_write("whole-ctc", key, identity, payload, args)
 
     rows = payload.get("entries")
     if not isinstance(rows, list) or len(rows) != len(entries):
@@ -10123,6 +10337,39 @@ def apply_ctc_local_window_realign(
                     continue
             cache_key = (alignment_start_index, end_index, f"{start_time:.3f}", f"{end_time:.3f}")
             rows = window_cache.get(cache_key) if window_cache is not None else None
+            window_request = {
+                "alignment_start_index": alignment_start_index,
+                "end_index": end_index,
+                "start_time": round(start_time, 3),
+                "end_time": round(end_time, 3),
+                "transcript": [
+                    entry_sung_text(entry)
+                    for entry in entries[alignment_start_index : end_index + 1]
+                ],
+            }
+            try:
+                window_stem_sha = _stable_file_sha256(audio_path)
+                window_helper_sha = _stable_file_sha256(helper)
+            except OSError:
+                window_stem_sha = "unresolved"
+                window_helper_sha = "unresolved"
+            window_identity = {
+                "vocal_stem_sha256": window_stem_sha,
+                "model_revision": _BOUNDED_RETRY_MODEL_IDENTITY,
+                "model_blob_sha256": _ctc_model_blob_sha256(),
+                "helper_protocol_revision": _bounded_retry_protocol_revision(window_helper_sha),
+                "request": window_request,
+                "helper_sha256": window_helper_sha,
+            }
+            window_digest = _model_cache_key(
+                "local-window-ctc", str(window_stem_sha),
+                window_identity["model_revision"], window_identity["model_blob_sha256"],
+                window_identity["helper_protocol_revision"], window_request,
+            )
+            if rows is None:
+                persisted_rows = _model_cache_read("local-window-ctc", window_digest, window_identity, args)
+                if isinstance(persisted_rows, list):
+                    rows = persisted_rows
             if rows is None:
                 transcript_path = temp_dir / f"window-{window_number}.json"
                 output_path = temp_dir / f"window-{window_number}.result.json"
@@ -10142,6 +10389,8 @@ def apply_ctc_local_window_realign(
                 rows = json.loads(output_path.read_text(encoding="utf-8")).get("entries")
                 if window_cache is not None and isinstance(rows, list):
                     window_cache[cache_key] = rows
+                if isinstance(rows, list):
+                    _model_cache_write("local-window-ctc", window_digest, window_identity, rows, args)
             if not isinstance(rows, list) or len(rows) != end_index - alignment_start_index + 1:
                 errors.append(f"window-{window_number}: invalid helper output")
                 continue
@@ -19083,10 +19332,27 @@ def execute_local_whisper_request(
     if runtime_stats is None:
         runtime_stats = {}
     cache_key = _local_whisper_cache_key(request, capability)
+    local_identity = {
+        "vocal_stem_sha256": capability.audio_sha256,
+        "model_revision": capability.whisper_model_path,
+        "model_blob_sha256": capability.whisper_model_sha256,
+        "helper_protocol_revision": capability.protocol_revision,
+        "request": request.request_revision,
+    }
     cached = cache.get(cache_key)
     if isinstance(cached, tuple) and len(cached) == 2 and isinstance(cached[1], LocalWhisperOutcome):
         runtime_stats["cache_hits"] = runtime_stats.get("cache_hits", 0) + 1
         return cached[1]
+    persisted = _model_cache_read("local-whisper", cache_key, local_identity, args)
+    if isinstance(persisted, dict):
+        try:
+            outcome = LocalWhisperOutcome(**persisted)
+        except (TypeError, ValueError):
+            outcome = None
+        if outcome is not None:
+            cache[cache_key] = (outcome.outcome_revision, outcome)
+            runtime_stats["cache_hits"] = runtime_stats.get("cache_hits", 0) + 1
+            return outcome
     runtime_stats["cache_misses"] = runtime_stats.get("cache_misses", 0) + 1
 
     try:
@@ -19429,6 +19695,19 @@ def execute_local_whisper_request(
         aligned_transcript_revision=aligned_transcript_revision,
     )
     cache[cache_key] = (outcome.outcome_revision, outcome)
+    _model_cache_write("local-whisper", cache_key, local_identity, {
+        "entry_index": outcome.entry_index,
+        "request_revision": outcome.request_revision,
+        "status": outcome.status,
+        "reason": outcome.reason,
+        "onset_time": outcome.onset_time,
+        "score": outcome.score,
+        "evidence_revision": outcome.evidence_revision,
+        "occurrence_binding": outcome.occurrence_binding,
+        "raw_transcript_revision": outcome.raw_transcript_revision,
+        "aligned_transcript_revision": outcome.aligned_transcript_revision,
+        "outcome_revision": outcome.outcome_revision,
+    }, args)
     return outcome
 
 
@@ -20775,6 +21054,7 @@ def _crossline_retry_helper_cache_key(
         "helper_protocol_revision": capability.helper_protocol_revision,
         "alignment_audio_sha256": request.alignment_audio_revision,
         "model_identity": capability.model_identity,
+        "model_blob_sha256": _ctc_model_blob_sha256(),
         "device": capability.device,
         "transcript_digest": request.transcript_digest,
         "window_start": request.window_start,
@@ -20846,6 +21126,26 @@ def invoke_crossline_retry(
     # ownership, and candidate semantics.
     cache_key = _crossline_retry_helper_cache_key(request, capability)
     cached = helper_cache.get(cache_key) if helper_cache is not None else None
+    cache_identity = {
+        "vocal_stem_sha256": request.alignment_audio_revision,
+        "model_revision": capability.model_identity,
+        "model_blob_sha256": _ctc_model_blob_sha256(),
+        "helper_protocol_revision": capability.helper_protocol_revision,
+        "request": {
+            "transcript_digest": request.transcript_digest,
+            "window_start": request.window_start,
+            "window_end": request.window_end,
+            "context_entry_indexes": list(request.context_entry_indexes),
+        },
+    }
+    if cached is None:
+        persisted = _model_cache_read("crossline-joint-ctc", cache_key, cache_identity, argparse.Namespace(
+            model_cache=True, model_cache_only=False
+        ))
+        if persisted is not None and helper_cache is not None:
+            if isinstance(persisted, dict) and persisted.get("kind") in {"payload", "error"}:
+                helper_cache[cache_key] = (str(persisted["kind"]), persisted.get("value"))
+                cached = helper_cache[cache_key]
     if cached is not None:
         result_kind, result_value = cached
         if result_kind == "error":
@@ -20897,6 +21197,11 @@ def invoke_crossline_retry(
             # R3-6: transient helper failures must not suppress this evidence
             # for every later recollection in the same run.
             helper_cache[cache_key] = result
+            _model_cache_write(
+                "crossline-joint-ctc", cache_key, cache_identity,
+                {"kind": result[0], "value": result[1]},
+                argparse.Namespace(model_cache=True, model_cache_only=False),
+            )
         result_kind, result_value = result
         if result_kind == "error":
             return error_outcome(str(result_value))
@@ -38614,12 +38919,22 @@ def build_parser() -> argparse.ArgumentParser:
             "A timeout is recorded as failed evidence and does not block LRC output. Default: 180."
         ),
     )
+    parser.add_argument(
+        "--model-cache", action=argparse.BooleanOptionalAction, default=True,
+        help="Persist model execution outputs under outputs/cache (default: enabled).",
+    )
+    parser.add_argument(
+        "--model-cache-only", action="store_true",
+        help="Use only verified model-output cache entries; cache misses fail explicitly.",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    os.environ["LRC_MODEL_CACHE"] = "1" if args.model_cache else "0"
+    os.environ["LRC_MODEL_CACHE_ONLY"] = "1" if args.model_cache_only else "0"
     if args.output and len(args.audio) != 1:
         parser.error("--output can only be used with exactly one audio file")
     if args.probe and args.output:
