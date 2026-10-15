@@ -228,8 +228,11 @@ def score_phase(
             if row["text"] != gt_text:
                 raise ScoringError(f"TEXT_ALIGNMENT {candidate}:{lineno}")
             rows.append({**row, "bk": gt_time, "song": info["song"], "case": index, "line": lineno})
-    if len(rows) != 1489:
-        raise ScoringError(f"DENOMINATOR_CHANGED {name}: {len(rows)} != 1489")
+    # 752e6c7e: remove_generated_title_cards also recognizes "Title - Artist"
+    # cards (c07, c10). Candidate and BK both go through that function, so
+    # every run, old or new, now scores the same 1487 sung rows.
+    if len(rows) != 1487:
+        raise ScoringError(f"DENOMINATOR_CHANGED {name}: {len(rows)} != 1487")
     return {
         "label": name,
         "commit": expected_commit,
