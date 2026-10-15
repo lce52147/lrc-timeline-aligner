@@ -19369,6 +19369,8 @@ def execute_local_whisper_request(
     preparation_error: str | None = None,
 ) -> LocalWhisperOutcome:
     """Run one bounded Whisper.cpp -> WhisperX observation; never select a timestamp directly."""
+    persistent_cache_key: str | None = None
+    persistent_cache_identity: dict[str, object] | None = None
     def finish(
         status: Literal["evidence", "invalid", "error"],
         reason: str,
@@ -19392,10 +19394,25 @@ def execute_local_whisper_request(
             "raw_transcript_revision": raw_transcript_revision,
             "aligned_transcript_revision": aligned_transcript_revision,
         }
-        return LocalWhisperOutcome(
+        outcome = LocalWhisperOutcome(
             **base,
             outcome_revision=_timing_content_digest(base),
         )
+        if status != "error" and persistent_cache_key is not None and persistent_cache_identity is not None:
+            _model_cache_write("local-whisper", persistent_cache_key, persistent_cache_identity, {
+                "entry_index": outcome.entry_index,
+                "request_revision": outcome.request_revision,
+                "status": outcome.status,
+                "reason": outcome.reason,
+                "onset_time": outcome.onset_time,
+                "score": outcome.score,
+                "evidence_revision": outcome.evidence_revision,
+                "occurrence_binding": outcome.occurrence_binding,
+                "raw_transcript_revision": outcome.raw_transcript_revision,
+                "aligned_transcript_revision": outcome.aligned_transcript_revision,
+                "outcome_revision": outcome.outcome_revision,
+            }, args)
+        return outcome
 
     if capability.capability_revision != request.capability_revision:
         return finish("invalid", "capability-revision-mismatch")
@@ -19422,11 +19439,15 @@ def execute_local_whisper_request(
         "helper_protocol_revision": capability.protocol_revision,
         "request": request.request_revision,
     }
+    persistent_cache_key = cache_key
+    persistent_cache_identity = local_identity
     cached = cache.get(cache_key)
     if isinstance(cached, tuple) and len(cached) == 2 and isinstance(cached[1], LocalWhisperOutcome):
         runtime_stats["cache_hits"] = runtime_stats.get("cache_hits", 0) + 1
         return cached[1]
     persisted = _model_cache_read("local-whisper", cache_key, local_identity, args)
+    if isinstance(persisted, dict) and persisted.get("status") == "error":
+        persisted = None
     if isinstance(persisted, dict):
         try:
             outcome = LocalWhisperOutcome(**persisted)
