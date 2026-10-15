@@ -41,6 +41,14 @@ import numpy as np
 from ctc_confidence import ctc_alignment_confidence
 import arbiter as timing_arbiter
 import lrc_timestamp_pairs
+from multimodel_consensus import (
+    MODEL_SPECS,
+    PROTOCOL_REVISION as MULTIMODEL_PROTOCOL_REVISION,
+    build_windows,
+    choose_consensus_overrides,
+    consensus_report,
+    model_identity,
+)
 from export_alignment_audit import build_rows as build_audit_rows
 from export_alignment_audit import write_anchor_template
 from export_alignment_audit import write_markdown as write_audit_markdown
@@ -4988,6 +4996,231 @@ def _model_cache_write(
     }
     temp.write_text(json.dumps(envelope, ensure_ascii=False, sort_keys=True), encoding="utf-8")
     os.replace(temp, path)
+
+
+def _apply_multimodel_consensus_runtime(
+    state: FinalTimingState,
+    candidate_sets: tuple[tuple[TimingCandidate, ...], ...],
+    report: dict[str, object],
+    entries: list[LyricEntry],
+    args: argparse.Namespace,
+) -> FinalTimingState:
+    """Apply only gated consensus rewrites to Central's provisional rows."""
+    diagnostic: dict[str, object] = {
+        "schema": 1,
+        "protocol_revision": MULTIMODEL_PROTOCOL_REVISION,
+        "source": "multi-model-consensus",
+        "status": "skipped",
+    }
+    report["multimodel_consensus"] = diagnostic
+    if str(getattr(args, "multimodel_consensus", "on")) == "off":
+        diagnostic["reason"] = "disabled"
+        return state
+    if str(getattr(args, "timing_source_policy", "default")) != "ctc-first":
+        diagnostic["reason"] = "timing-source-policy-not-ctc-first"
+        return state
+    if report.get("ctc_audio_source") != "vocal-stem":
+        diagnostic["reason"] = "no-vocal-stem"
+        return state
+    stem_value = report.get("ctc_audio_path")
+    if not isinstance(stem_value, str) or not Path(stem_value).is_file():
+        diagnostic["reason"] = "vocal-stem-path-unavailable"
+        return state
+    stem = Path(stem_value).resolve()
+    stem_sha = report.get("vocal_stem_sha256")
+    if not isinstance(stem_sha, str) or not stem_sha:
+        stem_sha = _path_sha256(stem)
+
+    written_times = tuple(decision.written_time.seconds for decision in state.decisions)
+    statuses = tuple(decision.status for decision in state.decisions)
+    texts = tuple(entry_sung_text(entry) for entry in entries)
+    windows = build_windows(written_times, statuses, texts)
+    if not windows:
+        diagnostic["reason"] = "no-provisional-rows"
+        diagnostic["windows"] = []
+        return state
+
+    device = str(getattr(args, "whisperx_device", "auto"))
+    cache_request = {
+        "protocol_revision": MULTIMODEL_PROTOCOL_REVISION,
+        "models": list(MODEL_SPECS),
+        "device": device,
+        "windows": list(windows),
+    }
+    model_ids = {spec: model_identity(spec) for spec in MODEL_SPECS}
+    diagnostic["model_identities"] = model_ids
+    unverified_models = [
+        spec for spec, identity in model_ids.items()
+        if identity.get("model_revision") == "UNVERIFIED"
+        or identity.get("model_blob_sha256") == "UNVERIFIED"
+    ]
+    if unverified_models:
+        diagnostic["status"] = "skipped"
+        diagnostic["reason"] = "model-identity-unverified"
+        diagnostic["unverified_models"] = unverified_models
+        return state
+    model_revision = _timing_content_digest({
+        spec: identity["model_revision"] for spec, identity in model_ids.items()
+    })
+    model_blob_sha = _timing_content_digest({
+        spec: identity["model_blob_sha256"] for spec, identity in model_ids.items()
+    })
+    cache_identity = {
+        "model_revision": model_revision,
+        "model_blob_sha256": model_blob_sha,
+        "helper_protocol_revision": MULTIMODEL_PROTOCOL_REVISION,
+        "models": list(MODEL_SPECS),
+    }
+    cache_key = _model_cache_key(
+        "multimodel-consensus",
+        str(stem_sha),
+        model_revision,
+        model_blob_sha,
+        MULTIMODEL_PROTOCOL_REVISION,
+        cache_request,
+    )
+    diagnostic["cache_key"] = cache_key
+    diagnostic["cache_path"] = str(_model_cache_path("multimodel-consensus", cache_key))
+    diagnostic["windows"] = list(windows)
+    diagnostic["models"] = list(MODEL_SPECS)
+
+    try:
+        payload = _model_cache_read(
+            "multimodel-consensus", cache_key, cache_identity, args
+        )
+        if payload is not None:
+            cache_status = "cache-hit"
+        else:
+            helper = Path(__file__).with_name("multimodel_align.py")
+            request = {**cache_request, "stem": str(stem)}
+            proc = subprocess.run(
+                [str(default_ctc_python()), str(helper)],
+                input=json.dumps(request, ensure_ascii=False, sort_keys=True),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=max(900.0, float(getattr(args, "crossline_retry_timeout", 180.0))),
+                check=False,
+            )
+            if proc.returncode != 0:
+                raise LrcError(
+                    f"multimodel helper failed ({proc.returncode}): "
+                    f"{proc.stderr[-1200:]}"
+                )
+            payload = json.loads(proc.stdout)
+            if not isinstance(payload, dict):
+                raise LrcError("multimodel helper returned a non-object")
+            if payload.get("protocol_revision") != MULTIMODEL_PROTOCOL_REVISION:
+                raise LrcError("multimodel helper protocol revision mismatch")
+            _model_cache_write(
+                "multimodel-consensus", cache_key, cache_identity, payload, args
+            )
+            cache_status = "cache-filled"
+    except ModelCacheMiss:
+        raise
+    except (LrcError, OSError, ValueError, TypeError, json.JSONDecodeError, subprocess.SubprocessError) as exc:
+        diagnostic["status"] = "error"
+        diagnostic["error"] = f"{type(exc).__name__}: {exc}"
+        return state
+
+    if not isinstance(payload, dict) or not isinstance(payload.get("windows"), dict):
+        diagnostic["status"] = "error"
+        diagnostic["error"] = "helper-payload-missing-windows"
+        return state
+    model_outputs: dict[int, Mapping[str, object]] = {}
+    for raw_index, values in payload["windows"].items():
+        if isinstance(values, dict):
+            try:
+                model_outputs[int(raw_index)] = values
+            except (TypeError, ValueError):
+                continue
+    raw_anchors = tuple(
+        (index, candidate.written_time.seconds)
+        for index, candidates in enumerate(candidate_sets)
+        for candidate in candidates
+        if candidate.source == RAW_ORDER_ANCHOR_SOURCE
+    )
+    overrides = choose_consensus_overrides(
+        written_times,
+        statuses,
+        model_outputs,
+        raw_anchors,
+    )
+    diagnostic.update({
+        "status": "no-override" if not overrides else "applied",
+        "cache_status": cache_status,
+        "errors": payload.get("errors", {}),
+        "model_outputs": payload["windows"],
+        "overrides": consensus_report(overrides),
+    })
+    if not overrides:
+        return state
+
+    decisions = list(state.decisions)
+    for index, override in overrides.items():
+        decision = decisions[index]
+        if decision.status != "provisional_unresolved":
+            continue
+        old_candidate = decision.candidate
+        written_time = canonicalize_lrc_time(override.seconds)
+        candidate_id = _timing_content_digest({
+            "source": "multi-model-consensus",
+            "entry_index": index,
+            "old_candidate_id": old_candidate.candidate_id,
+            "seconds": written_time.seconds,
+            "model_times": list(override.model_times),
+            "support_families": list(override.support_families),
+        })
+        candidate = replace(
+            old_candidate,
+            candidate_id=candidate_id,
+            source="multi-model-consensus",
+            raw_time=override.seconds,
+            written_time=written_time,
+            generation_revision=_timing_content_digest({
+                "candidate_id": candidate_id,
+                "protocol_revision": MULTIMODEL_PROTOCOL_REVISION,
+                "guards": list(override.guards),
+            }),
+            spans=(),
+            current=False,
+        )
+        previous = decisions[index - 1].candidate if index else None
+        evidence = normalize_timing_candidate(candidate, previous)
+        new_selection_revision = decision.selection_revision + 1
+        recovery = RecoveryProvenance(
+            candidate_id=candidate_id,
+            candidate_revision=evidence.candidate_revision,
+            evidence_revision=decision.timing_evidence_revision + 1,
+            canonical_written_centiseconds=written_time.centiseconds,
+            old_selection_revision=decision.selection_revision,
+            new_selection_revision=new_selection_revision,
+            resolved_finding_ids=(),
+            passed_invariants=tuple(
+                [name for name, passed in override.guards if passed]
+                + ["G6_provisional_unresolved"]
+            ),
+            resolution_mode="challenger-recovery",
+            evaluator_version="multi-model-consensus-v1",
+        )
+        decisions[index] = replace(
+            decision,
+            selection_revision=new_selection_revision,
+            provisional_candidate_id=candidate_id,
+            written_time=written_time,
+            timestamp_revision=decision.timestamp_revision + 1,
+            timing_evidence_revision=decision.timing_evidence_revision + 1,
+            evidence=evidence,
+            candidate=candidate,
+            recovery=recovery,
+        )
+    return FinalTimingState(
+        decisions=tuple(decisions),
+        written_times=tuple(decision.written_time for decision in decisions),
+        audits=state.audits,
+    )
 
 
 def _ctc_model_blob_sha256() -> str:
@@ -38870,6 +39103,13 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
         if isinstance(postcentral_projection, dict):
             report[_RUNTIME_BACKEND_PROVENANCE_PROJECTION_SEED_KEY] = postcentral_projection
         final_timing_state = commit_evaluated_backend(timing_selection, report)
+        final_timing_state = _apply_multimodel_consensus_runtime(
+            final_timing_state,
+            timing_selection.selected.candidate_sets,
+            report,
+            entries,
+            args,
+        )
         duplicate_recompute, duplicate_resolution = (
             _postcommit_recompute_duplicate_review(
                 entries, report, timing_selection, final_timing_state
@@ -39223,6 +39463,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--model-cache-only", action="store_true",
         help="Use only verified model-output cache entries; cache misses fail explicitly.",
+    )
+    parser.add_argument(
+        "--multimodel-consensus", choices=("off", "on"), default="on",
+        help="Run gated multi-model consensus on Central provisional rows (default: on).",
     )
     return parser
 
