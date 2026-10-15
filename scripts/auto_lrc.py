@@ -4052,6 +4052,77 @@ def current_ctc_path_incoherent(candidates: tuple[TimingCandidate, ...]) -> bool
     return analyze_candidate_regions(current).temporal_coherence == "incoherent"
 
 
+RAW_ORDER_ANCHOR_SOURCE = "raw-vocal-independent-fusion"
+
+
+def ctc_current_out_of_raw_order(
+    candidate_sets: tuple[tuple[TimingCandidate, ...], ...],
+) -> tuple[bool, ...]:
+    """Rows whose ``ctc-current`` time contradicts the order of independent
+    raw-ASR onsets: later than a later row's onset, or earlier than an
+    earlier row's.
+
+    The onsets are the raw-ASR identity rows the vocal stem confirmed
+    (``raw-vocal-independent-fusion``).  They only diagnose the whole-song
+    path here, exactly like collapse and incoherence; they never become a
+    selectable clock.  Read before the timing-source policy strips them.
+    c39 #20-#26: seven rows piled into 149-177 s while the raw onsets of #20,
+    #22, #24 and #26 sit at 139, 146, 162 and 175 s; only #23's own extent
+    looked collapsed.
+    """
+    anchors = _raw_order_anchors(candidate_sets)
+    flags: list[bool] = []
+    for index, candidates in enumerate(candidate_sets):
+        current = _current_timing_candidate(candidates)
+        flags.append(
+            current is not None
+            and _contradicts_raw_order(index, current.written_time.seconds, anchors)
+        )
+    return tuple(flags)
+
+
+def _raw_order_anchors(
+    candidate_sets: tuple[tuple[TimingCandidate, ...], ...],
+) -> tuple[tuple[int, float], ...]:
+    return tuple(
+        (index, candidate.written_time.seconds)
+        for index, candidates in enumerate(candidate_sets)
+        for candidate in candidates
+        if candidate.source == RAW_ORDER_ANCHOR_SOURCE
+    )
+
+
+def _contradicts_raw_order(
+    index: int, seconds: float, anchors: tuple[tuple[int, float], ...]
+) -> bool:
+    return any(
+        (other > index and value <= seconds) or (other < index and value >= seconds)
+        for other, value in anchors
+    )
+
+
+def raw_order_contradicting_candidate_ids(
+    candidate_sets: tuple[tuple[TimingCandidate, ...], ...],
+) -> tuple[frozenset[str], ...]:
+    """Per row, the candidates whose time contradicts the independent raw
+    onset order (see ``ctc_current_out_of_raw_order``).  Such a time cannot be
+    a valid clock: it puts the row after a later row's heard onset or before
+    an earlier one's.  It may still be the provisional time when nothing
+    better exists.  c39 #23: a retry of the collapsed path at 173.14 s was
+    selected_valid although the raw onsets of #24-#26 sit at 162-175 s, and
+    as a valid row it barred their correct wide-region replays.
+    """
+    anchors = _raw_order_anchors(candidate_sets)
+    return tuple(
+        frozenset(
+            candidate.candidate_id for candidate in candidates
+            if candidate.source != RAW_ORDER_ANCHOR_SOURCE
+            and _contradicts_raw_order(index, candidate.written_time.seconds, anchors)
+        )
+        for index, candidates in enumerate(candidate_sets)
+    )
+
+
 def _collapsed_path_fallback(
     evaluations: tuple[CandidateEvaluation, ...],
     eligible_ids: set[str],
@@ -4087,6 +4158,93 @@ def _collapsed_path_fallback(
         and abs(evaluation.candidate.written_time.seconds - current_seconds)
         > COLLAPSED_PATH_FALLBACK_MIN_SHIFT_SECONDS
         and lower < evaluation.candidate.written_time.seconds < upper
+    ]
+    if not options:
+        return None
+    return max(
+        options,
+        key=lambda item: (item.candidate.confidence, item.candidate.candidate_id),
+    )
+
+
+CORROBORATED_REALIGNMENT_SOURCES = ("ctc-local-window", "ctc-opening-local-retry")
+CORROBORATED_REALIGNMENT_AGREEMENT_SECONDS = 0.15
+CORROBORATED_REALIGNMENT_RAW_ONSET_SECONDS = 0.30
+
+
+def raw_onset_seconds_by_row(
+    candidate_sets: tuple[tuple[TimingCandidate, ...], ...],
+) -> tuple[tuple[float, ...], ...]:
+    """Each row's independent raw-ASR onsets, read before the timing-source
+    policy strips them (evidence only, never a clock)."""
+    return tuple(
+        tuple(
+            candidate.written_time.seconds for candidate in candidates
+            if candidate.source == RAW_ORDER_ANCHOR_SOURCE
+        )
+        for candidates in candidate_sets
+    )
+
+
+def _corroborated_realignment_fallback(
+    evaluations: tuple[CandidateEvaluation, ...],
+    eligible_ids: set[str],
+    current: CandidateEvaluation,
+    previous_candidate: TimingCandidate | None,
+    next_bound_seconds: float | None,
+    raw_onsets: tuple[float, ...],
+) -> CandidateEvaluation | None:
+    """Provisional replacement for an unresolved row that is not visibly
+    collapsed: the window re-alignment and the opening retry are separate CTC
+    passes over different audio spans; when both land on the same onset and
+    the independent raw onset is there too, that onset outweighs the
+    whole-song time.  The clock is still a CTC row; the row stays
+    provisional_unresolved.  c20 #24: whole-song 74.57 s; local window 72.76,
+    opening retry 72.77, raw onset 72.78 (BK 72.79).
+    """
+    if not raw_onsets:
+        return None
+    lower = (
+        previous_candidate.written_time.seconds + HOP_SECONDS
+        if previous_candidate is not None
+        else float("-inf")
+    )
+    upper = (
+        next_bound_seconds - HOP_SECONDS
+        if next_bound_seconds is not None
+        else float("inf")
+    )
+    current_seconds = current.candidate.written_time.seconds
+    by_source: dict[str, list[CandidateEvaluation]] = {}
+    for evaluation in evaluations:
+        candidate = evaluation.candidate
+        if (
+            candidate.source in CORROBORATED_REALIGNMENT_SOURCES
+            and candidate.candidate_id in eligible_ids
+            and not candidate.window_truncated
+            and not candidate.right_edge_pileup
+            and lower < candidate.written_time.seconds < upper
+            and abs(candidate.written_time.seconds - current_seconds)
+            > COLLAPSED_PATH_FALLBACK_MIN_SHIFT_SECONDS
+            and any(
+                abs(candidate.written_time.seconds - onset)
+                <= CORROBORATED_REALIGNMENT_RAW_ONSET_SECONDS
+                for onset in raw_onsets
+            )
+        ):
+            by_source.setdefault(candidate.source, []).append(evaluation)
+    if len(by_source) < len(CORROBORATED_REALIGNMENT_SOURCES):
+        return None
+    options = [
+        evaluation
+        for evaluation in by_source[COLLAPSED_PATH_FALLBACK_SOURCE]
+        if any(
+            abs(evaluation.candidate.written_time.seconds - other.candidate.written_time.seconds)
+            <= CORROBORATED_REALIGNMENT_AGREEMENT_SECONDS
+            for source, others in by_source.items()
+            if source != COLLAPSED_PATH_FALLBACK_SOURCE
+            for other in others
+        )
     ]
     if not options:
         return None
@@ -4153,6 +4311,8 @@ def select_timing_decision(
     ctc_path_collapsed: bool = False,
     next_bound_seconds: float | None = None,
     forced_provisional_id: str | None = None,
+    raw_order_contradicting_ids: frozenset[str] = frozenset(),
+    raw_onsets: tuple[float, ...] = (),
 ) -> TimingDecision:
     if arbiter_mode not in {"off", "gross-rescue", "reviewer-validity"}:
         raise ValueError(f"unsupported timing arbiter mode: {arbiter_mode}")
@@ -4165,6 +4325,17 @@ def select_timing_decision(
         )
         for candidate in sorted(candidates, key=lambda item: item.candidate_id)
     )
+    if raw_order_contradicting_ids:
+        evaluations = tuple(
+            replace(
+                evaluation,
+                valid=False,
+                rejection_reasons=tuple(evaluation.rejection_reasons) + ("contradicts-raw-onset-order",),
+            )
+            if evaluation.candidate.candidate_id in raw_order_contradicting_ids
+            else evaluation
+            for evaluation in evaluations
+        )
     if timing_source_policy not in {"default", "ctc-first"}:
         raise ValueError(f"unsupported timing-source policy: {timing_source_policy}")
     # Recurrence and the wide-region replay are evidence/fallback rows, never
@@ -4336,6 +4507,17 @@ def select_timing_decision(
             )
             if collapsed_fallback is not None:
                 provisional = collapsed_fallback
+        elif provisional.candidate.current:
+            corroborated = _corroborated_realignment_fallback(
+                evaluations,
+                eligible_ids,
+                provisional,
+                previous_candidate,
+                next_bound_seconds,
+                raw_onsets,
+            )
+            if corroborated is not None:
+                provisional = corroborated
         if forced_provisional_id is not None:
             provisional = next(
                 (
@@ -4560,6 +4742,9 @@ def build_final_timing_state(
 ) -> FinalTimingState:
     if worklist_order not in {"forward", "reverse"}:
         raise ValueError(f"unsupported timing worklist order: {worklist_order}")
+    out_of_raw_order = ctc_current_out_of_raw_order(candidate_sets)
+    raw_order_contradicting = raw_order_contradicting_candidate_ids(candidate_sets)
+    raw_onsets = raw_onset_seconds_by_row(candidate_sets)
     candidate_sets = apply_central_timing_source_policy(
         candidate_sets, timing_source_policy
     )
@@ -4622,9 +4807,13 @@ def build_final_timing_state(
                 arbiter_mode=arbiter_mode,
                 reviewer_evidence=reviewer_evidence[index],
                 timing_source_policy=timing_source_policy,
-                ctc_path_collapsed=collapsed_region[index] or incoherent_rows[index],
+                ctc_path_collapsed=(
+                    collapsed_region[index] or incoherent_rows[index] or out_of_raw_order[index]
+                ),
                 next_bound_seconds=next_bound(index),
                 forced_provisional_id=forced.get(index),
+                raw_order_contradicting_ids=raw_order_contradicting[index],
+                raw_onsets=raw_onsets[index],
             )
             old_decision = decisions[index]
             decisions[index] = new_decision
