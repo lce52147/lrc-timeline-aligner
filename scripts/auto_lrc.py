@@ -38877,7 +38877,7 @@ def write_lrc(
     output_path.write_text("\n".join(body) + "\n", encoding="utf-8-sig")
 
 
-from lrc_review_tsv import write_review_tsv
+from lrc_review_tsv import format_top_review, write_review_tsv
 from lrc_publication import publish_pair, recover_pair
 
 def report_artifact_paths(audio_path: Path, output_path: Path, report_dir: Path) -> tuple[Path, Path, Path]:
@@ -39394,6 +39394,9 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
         ),
         lambda stage: write_alignment_report(stage, report),
     )
+    if not getattr(args, "no_review_summary", False):
+        for line in format_top_review(review_tsv_path):
+            print(line)
 
     if strategy.startswith("weighted-fallback"):
         print(
@@ -39472,6 +39475,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--report-dir",
         help="Directory for JSON reports and strict-review audit artifacts. Default: project outputs/reports.",
+    )
+    parser.add_argument(
+        "--no-review-summary",
+        action="store_true",
+        help="suppress the top-5 review list (used by R2 baseline pass)",
     )
     parser.add_argument(
         "--mode",

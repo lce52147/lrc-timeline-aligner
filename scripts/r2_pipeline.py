@@ -745,6 +745,7 @@ def prepare_baseline_args(
         },
         flags={"--strict-review", "--fail-on-review-required"},
     )
+    cleaned.append("--no-review-summary")
     cleaned.extend(
         [
             "--arbiter", "off",
