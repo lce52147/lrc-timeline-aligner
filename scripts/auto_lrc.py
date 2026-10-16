@@ -39395,8 +39395,11 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
         lambda stage: write_alignment_report(stage, report),
     )
     if not getattr(args, "no_review_summary", False):
-        for line in format_top_review(review_tsv_path):
-            print(line)
+        try:
+            for line in format_top_review(review_tsv_path):
+                print(line)
+        except (OSError, ValueError) as error:
+            print(f"REVIEW TOP 5: unavailable ({type(error).__name__})")
 
     if strategy.startswith("weighted-fallback"):
         print(

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import copy
+from contextlib import redirect_stdout
+import io
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 import auto_lrc
 import lrc_review_tsv
@@ -125,6 +128,27 @@ class ReviewSeverityTests(unittest.TestCase):
             empty = Path(folder) / "empty.tsv"
             empty.write_text("", encoding="utf-8")
             self.assertEqual(lrc_review_tsv.format_top_review(empty), ["REVIEW TOP 5: none"])
+
+    def test_missing_review_tsv_summary_is_nonfatal(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            audio = root / "song.flac"
+            lyrics = root / "song.txt"
+            audio.write_bytes(b"audio")
+            lyrics.write_text("[00:01.00]line\n", encoding="utf-8")
+            args = auto_lrc.build_parser().parse_args([
+                str(audio), "--lyrics", str(lyrics), "--output", str(root / "song.lrc"),
+                "--timing-source", "lyrics", "--report-dir", str(root / "reports"), "--overwrite",
+            ])
+            output = io.StringIO()
+            with (
+                mock.patch.object(auto_lrc, "probe_duration", return_value=2.0),
+                mock.patch.object(auto_lrc, "audio_track_labels", return_value=("", "Song")),
+                mock.patch.object(auto_lrc, "write_review_tsv"),
+                redirect_stdout(output),
+            ):
+                auto_lrc.process_audio(audio, args)
+        self.assertIn("REVIEW TOP 5: unavailable (FileNotFoundError)", output.getvalue())
 
     def test_cli_and_r2_summary_flag(self) -> None:
         args = auto_lrc.build_parser().parse_args(["song.flac", "--no-review-summary"])
