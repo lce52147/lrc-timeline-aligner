@@ -11498,6 +11498,30 @@ class PathFreeCapabilityIdentityTests(unittest.TestCase):
                 auto_lrc._local_whisper_cache_key(request_second, local_second),
             )
 
+    def test_local_whisper_cache_revision_ignores_planner_provenance(self) -> None:
+        request = auto_lrc.LocalWhisperRequest(
+            3, "capability", "audio", (3,), ("candidate-a",),
+            ("text-a",), "text-a", 21.32, 29.54, "window-a", "request-a",
+        )
+        planner_only_change = replace(
+            request,
+            context_candidate_ids=("candidate-b",),
+            window_definition_revision="window-b",
+            request_revision="request-b",
+        )
+        self.assertEqual(
+            auto_lrc._local_whisper_execution_request_revision(request.__dict__),
+            auto_lrc._local_whisper_execution_request_revision(
+                planner_only_change.__dict__
+            ),
+        )
+        self.assertNotEqual(
+            auto_lrc._local_whisper_execution_request_revision(request.__dict__),
+            auto_lrc._local_whisper_execution_request_revision(
+                replace(request, window_end=29.55).__dict__
+            ),
+        )
+
     def test_different_bytes_same_path_change_path_free_identity(self) -> None:
         with TemporaryDirectory() as temp_name:
             audio = Path(temp_name) / "stem.mp3"

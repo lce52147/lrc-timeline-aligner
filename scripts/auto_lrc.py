@@ -18305,12 +18305,7 @@ def plan_local_whisper_requests(
             }
             requests.append(LocalWhisperRequest(
                 **payload,
-                request_revision=_timing_content_digest({
-                    **payload,
-                    "context_entry_indexes": list(context_indexes),
-                    "context_candidate_ids": list(payload["context_candidate_ids"]),
-                    "transcript_digests": list(transcript_digests),
-                }),
+                request_revision=_local_whisper_execution_request_revision(payload),
             ))
     # A broken global CTC can collapse an entire verse 10-20 seconds earlier.
     # Local Whisper requests centered on Central's provisional baseline will
@@ -18380,12 +18375,7 @@ def plan_local_whisper_requests(
         }
         requests.append(LocalWhisperRequest(
             **payload,
-            request_revision=_timing_content_digest({
-                **payload,
-                "context_entry_indexes": list(context_indexes),
-                "context_candidate_ids": list(payload["context_candidate_ids"]),
-                "transcript_digests": list(transcripts_digest),
-            }),
+            request_revision=_local_whisper_execution_request_revision(payload),
         ))
     unique = {item.request_revision: item for item in requests}
     return tuple(sorted(
@@ -18623,6 +18613,23 @@ def _r2t_collect_final_material_targets(
     return targets, metadata
 
 
+def _local_whisper_execution_request_revision(
+    payload: dict[str, object],
+) -> str:
+    """Hash only the bounded helper input; planner provenance stays diagnostic."""
+    return _timing_content_digest({
+        "schema": "local-whisper-execution-request-v2",
+        "entry_index": payload["entry_index"],
+        "capability_revision": payload["capability_revision"],
+        "audio_revision": payload["audio_revision"],
+        "context_entry_indexes": list(payload["context_entry_indexes"]),
+        "transcript_digests": list(payload["transcript_digests"]),
+        "transcript_digest": payload["transcript_digest"],
+        "window_start": payload["window_start"],
+        "window_end": payload["window_end"],
+    })
+
+
 def _r2t_plan_neutral_conflict_probe_requests(
     report: dict[str, object],
     capability: LocalWhisperCapability | None,
@@ -18727,12 +18734,7 @@ def _r2t_plan_neutral_conflict_probe_requests(
         }
         requests.append(LocalWhisperRequest(
             **payload,
-            request_revision=_timing_content_digest({
-                **payload,
-                "context_entry_indexes": list(context_indexes),
-                "context_candidate_ids": list(payload["context_candidate_ids"]),
-                "transcript_digests": list(transcript_digests),
-            }),
+            request_revision=_local_whisper_execution_request_revision(payload),
         ))
     return (
         tuple(sorted(requests, key=lambda item: (item.entry_index, item.request_revision))),
