@@ -38880,6 +38880,7 @@ def write_lrc(
 from lrc_review_tsv import format_top_review, write_review_tsv
 from lrc_manual_edits import archive_manual_edits, manual_edit_reason
 from lrc_publication import publish_pair, recover_pair
+import lrc_stage_timings
 
 def _publish_lrc_report(
     output_path: Path,
@@ -39640,6 +39641,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--multimodel-consensus", choices=("off", "on"), default="on",
         help="Run gated multi-model consensus on Central provisional rows (default: on).",
     )
+    parser.add_argument(
+        "--stage-timings-pass", choices=("standalone", "baseline", "final"), default="standalone",
+        help="label recorded in report stage_timings (set by R2)",
+    )
     return parser
 
 
@@ -39684,6 +39689,41 @@ def main(argv: list[str] | None = None) -> int:
             _cleanup_managed_temp_dirs_since(temp_snapshot)
     return 1 if failures else 0
 
+
+_STAGE_TIMING_SPEC = (
+    ("process_audio", "song", "song"),
+    ("load_lyrics", "load-lyrics", "top"),
+    ("build_lyric_preflight", "lyric-preflight", "top"),
+    ("probe_duration", "probe-duration", "top"),
+    ("run_backend_competition_over_skeleton_gate", "backend-competition", "top"),
+    ("prepare_backend_timing_preview", "timing-preview", "top"),
+    ("_precommit_neutral_boundary_arbitration", "neutral-arbitration", "top"),
+    ("_postcentral_acquire_targeted_joint_ctc_tails", "postcentral-ctc-tails", "top"),
+    ("_postcentral_acquire_known_lyric_hubert_tails", "postcentral-hubert-tails", "top"),
+    ("_precommit_hubert_existing_candidate_recovery", "hubert-recovery", "top"),
+    ("_precommit_independent_peer_existing_candidate_recovery", "peer-recovery", "top"),
+    ("commit_evaluated_backend", "commit-backend", "top"),
+    ("_apply_multimodel_consensus_runtime", "multimodel-consensus", "top"),
+    ("_postcommit_recompute_duplicate_review", "duplicate-review", "top"),
+    ("compute_final_timing_self_check", "self-check", "top"),
+    ("commit_final_timing_state", "commit-final", "top"),
+    ("write_review_tsv", "write-review-tsv", "top"),
+    ("write_lrc", "write-lrc", "top"),
+    ("write_alignment_report", "write-report", "top"),
+    ("_publish_lrc_report", "publish", "top"),
+    ("run_auto_backend_competition", "competition-pass", "nested"),
+    ("decode_temp_wav", "decode-wav", "nested"),
+    ("try_whispercpp_diagnostic_candidate", "raw-asr", "nested"),
+    ("try_ctc_candidate", "ctc-whole", "nested"),
+    ("prepare_vocal_ctc_audio", "separation", "nested"),
+    ("apply_ctc_local_window_realign", "ctc-local-windows", "nested"),
+    ("run_ctc_local_window_shadows", "ctc-window-shadows", "nested"),
+    ("run_whisperx_best_candidate", "whisperx", "nested"),
+    ("_model_cache_read", "model-cache-read", "read"),
+    ("_model_cache_write", "model-cache-write", "write"),
+)
+
+lrc_stage_timings.install(globals(), _STAGE_TIMING_SPEC)
 
 if __name__ == "__main__":
     raise SystemExit(main())

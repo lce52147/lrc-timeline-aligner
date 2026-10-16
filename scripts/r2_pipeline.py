@@ -680,7 +680,11 @@ def acquire_reviewer_evidence(
         if name == "HUBP" and not plan_ok:
             statuses[name] = {"status": "SKIPPED_DEPENDENCY"}
             continue
-        code = _run_logged(command, log_path)
+        started = time.perf_counter()
+        try:
+            code = _run_logged(command, log_path)
+        finally:
+            elapsed = time.perf_counter() - started
         status_payload: Mapping[str, object] | None = None
         if name == "HUB" and data_path.is_file():
             loaded = json.loads(data_path.read_text(encoding="utf-8-sig"))
@@ -689,6 +693,7 @@ def acquire_reviewer_evidence(
         statuses[name] = {
             "status": reviewer_step_status(name, code, status_payload),
             "exit_code": code,
+            "seconds": round(max(0.0, float(elapsed)), 6),
         }
         if name == "HUBP_PLAN":
             plan_ok = code == 0
@@ -743,10 +748,11 @@ def prepare_baseline_args(
         backend_args,
         one_value={
             "--arbiter", "--reviewer-evidence", "--output", "--report-dir",
-            "--min-trusted-percent",
+            "--min-trusted-percent", "--stage-timings-pass",
         },
         flags={"--strict-review", "--fail-on-review-required", "--discard-manual-edits"},
     )
+    cleaned.extend(["--stage-timings-pass", "baseline"])
     cleaned.append("--no-review-summary")
     cleaned.extend(
         [
@@ -762,9 +768,10 @@ def prepare_baseline_args(
 def prepare_final_args(backend_args: Sequence[str], evidence_path: Path) -> list[str]:
     cleaned = _strip_options(
         backend_args,
-        one_value={"--arbiter", "--reviewer-evidence"},
+        one_value={"--arbiter", "--reviewer-evidence", "--stage-timings-pass"},
         flags=set(),
     )
+    cleaned.extend(["--stage-timings-pass", "final"])
     cleaned.extend(
         [
             "--arbiter", "reviewer-validity",
@@ -777,6 +784,80 @@ def prepare_final_args(backend_args: Sequence[str], evidence_path: Path) -> list
 def _run_backend(args: Sequence[str]) -> int:
     result = subprocess.run([sys.executable, str(AUTO_LRC), *args], cwd=PROJECT, check=False)
     return int(result.returncode)
+
+
+def _report_stage_total(path: Path | None) -> float | None:
+    if path is None or not path.is_file():
+        return None
+    try:
+        value = json.loads(path.read_text(encoding="utf-8-sig"))
+        timing = value.get("stage_timings") if isinstance(value, Mapping) else None
+        total = timing.get("total_seconds") if isinstance(timing, Mapping) else None
+        return float(total) if total is not None else None
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _write_r2_timings(
+    run_dir: Path,
+    stages: list[dict[str, object]],
+    reviewers: Mapping[str, object],
+    baseline_report: Path | None,
+    final_report: Path | None,
+    total_seconds: float,
+) -> None:
+    try:
+        baseline_total = _report_stage_total(baseline_report)
+        final_total = _report_stage_total(final_report)
+        stage_seconds = {int(row["stage"]): row.get("seconds") for row in stages}
+        payload = {
+            "schema": 1,
+            "stages": stages,
+            "reviewers": dict(reviewers),
+            "baseline_report": {
+                "path": str(baseline_report) if baseline_report is not None else None,
+                "stage_timings_total_seconds": baseline_total,
+            },
+            "final_report": {
+                "path": str(final_report) if final_report is not None else None,
+                "stage_timings_total_seconds": final_total,
+            },
+            "process_overhead_seconds": {
+                "baseline": (
+                    float(stage_seconds[1]) - baseline_total
+                    if stage_seconds.get(1) is not None and baseline_total is not None else None
+                ),
+                "final": (
+                    float(stage_seconds[3]) - final_total
+                    if stage_seconds.get(3) is not None and final_total is not None else None
+                ),
+            },
+            "total_seconds": round(max(0.0, float(total_seconds)), 6),
+        }
+        _write_json(run_dir / "r2-timings.json", payload)
+    except Exception as exc:
+        print(f"WARN: r2 timings unavailable ({type(exc).__name__})", file=sys.stderr, flush=True)
+
+
+def _print_r2_timings(stages: list[dict[str, object]], reviewers: Mapping[str, object], total: float) -> None:
+    try:
+        by_stage = {int(row["stage"]): row for row in stages}
+        def seconds(stage):
+            value = by_stage.get(stage, {}).get("seconds")
+            return float(value) if value is not None else 0.0
+        reviewer_bits = []
+        for name, value in reviewers.items():
+            if isinstance(value, Mapping) and value.get("seconds") is not None:
+                reviewer_bits.append(f"{name} {float(value['seconds']):.2f}s")
+        detail = ", ".join(reviewer_bits)
+        print(
+            f"R2 TIMINGS total={total:.2f}s | 1 baseline {seconds(1):.2f}s | "
+            f"2 reviewers {seconds(2):.2f}s ({detail}) | 3 final {seconds(3):.2f}s | "
+            f"4 trust {seconds(4):.2f}s",
+            flush=True,
+        )
+    except Exception as exc:
+        print(f"WARN: r2 timings unavailable ({type(exc).__name__})", file=sys.stderr, flush=True)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -807,145 +888,127 @@ def main(argv: list[str] | None = None) -> int:
     if parsed.probe:
         parser.error("R2 production pipeline does not support --probe")
     audio_path = Path(parsed.audio[0]).expanduser().resolve()
-    run_dir = reviewer_work_directory(
-        Path(args.work_dir).expanduser().resolve(), audio_path
-    )
+    run_dir = reviewer_work_directory(Path(args.work_dir).expanduser().resolve(), audio_path)
+    run_dir.mkdir(parents=True, exist_ok=True)
     baseline_output = run_dir / "baseline.lrc"
     baseline_report_dir = run_dir / "baseline-reports"
     evidence_path = run_dir / "reviewer-evidence.json"
-    final_output = (
-        Path(parsed.output).expanduser().resolve()
-        if parsed.output
-        else audio_path.with_suffix(".lrc")
-    )
-    final_report_dir = (
-        Path(parsed.report_dir).expanduser().resolve()
-        if parsed.report_dir
-        else auto_lrc.DEFAULT_REPORT_DIR
-    )
-    final_report_path, _audit_path, _template_path = auto_lrc.report_artifact_paths(
-        audio_path, final_output, final_report_dir
-    )
-    if parsed.overwrite and final_output.exists():
-        edit_reason = manual_edit_reason(final_output, final_report_path)
-        if edit_reason and not getattr(parsed, "discard_manual_edits", False) and not journal_path(final_report_path).exists():
-            print(
-                f"ERROR: Manual review edits detected for {final_output} ({edit_reason}); refusing to overwrite. "
-                "Re-run with --discard-manual-edits to replace them (the edited LRC is archived first).",
-                file=sys.stderr,
-            )
-            return 2
-
-    baseline_args = prepare_baseline_args(
-        backend_args, output=baseline_output, report_dir=baseline_report_dir
-    )
-    stage_started = time.perf_counter()
-    print(stage_message(1, "R2: generating Central baseline"), flush=True)
-    baseline_code = _run_backend(baseline_args)
-    if baseline_code != 0:
-        return baseline_code
-    report_path, _audit, _template = auto_lrc.report_artifact_paths(
-        audio_path, baseline_output.resolve(), baseline_report_dir.resolve()
-    )
-    if not report_path.is_file():
-        print(f"ERROR: baseline report missing: {report_path}", file=sys.stderr)
-        return 1
-    print(stage_done_message(1, time.perf_counter() - stage_started), flush=True)
-
-    stage_started = time.perf_counter()
-    print(stage_message(2, "R2: acquiring independent reviewer evidence"), flush=True)
+    final_output = Path(parsed.output).expanduser().resolve() if parsed.output else audio_path.with_suffix(".lrc")
+    final_report_dir = Path(parsed.report_dir).expanduser().resolve() if parsed.report_dir else auto_lrc.DEFAULT_REPORT_DIR
+    final_report_path, _audit_path, _template_path = auto_lrc.report_artifact_paths(audio_path, final_output, final_report_dir)
+    stages: list[dict[str, object]] = [
+        {"stage": stage, "name": name, "seconds": None, "status": "not-run"}
+        for stage, name in ((1, "baseline"), (2, "reviewers"), (3, "final"), (4, "trust"))
+    ]
+    reviewers: Mapping[str, object] = {}
+    baseline_report_path: Path | None = None
+    started_total = time.perf_counter()
+    active_stage = 0
     try:
-        summary = acquire_reviewer_evidence(
-            report_path,
-            evidence_path,
-            run_dir / "reviewers",
-            reviewer_python=args.reviewer_python,
-            device=args.reviewer_device,
-            include_hub=args.include_hub_reviewer,
-        )
-    except MissingCurrentCandidateError as exc:
-        final_output = (
-            Path(parsed.output).expanduser().resolve()
-            if parsed.output
-            else audio_path.with_suffix(".lrc")
-        )
-        final_report_dir = (
-            Path(parsed.report_dir).expanduser().resolve()
-            if parsed.report_dir
-            else auto_lrc.DEFAULT_REPORT_DIR
-        )
-        print(f"WARNING: R2 skipped for this song: {exc}", file=sys.stderr, flush=True)
-        return _run_backend(
-            prepare_baseline_args(
-                backend_args, output=final_output, report_dir=final_report_dir
+        if parsed.overwrite and final_output.exists():
+            edit_reason = manual_edit_reason(final_output, final_report_path)
+            if edit_reason and not getattr(parsed, "discard_manual_edits", False) and not journal_path(final_report_path).exists():
+                print(
+                    f"ERROR: Manual review edits detected for {final_output} ({edit_reason}); refusing to overwrite. "
+                    "Re-run with --discard-manual-edits to replace them (the edited LRC and edit log are archived first).",
+                    file=sys.stderr,
+                )
+                return 2
+
+        baseline_args = prepare_baseline_args(backend_args, output=baseline_output, report_dir=baseline_report_dir)
+        active_stage = 1
+        stage_started = time.perf_counter()
+        print(stage_message(1, "R2: generating Central baseline"), flush=True)
+        baseline_code = _run_backend(baseline_args)
+        stages[0].update({"seconds": round(time.perf_counter() - stage_started, 6), "status": "ok" if baseline_code == 0 else "failed"})
+        active_stage = 0
+        if baseline_code != 0:
+            return baseline_code
+        baseline_report_path, _audit, _template = auto_lrc.report_artifact_paths(audio_path, baseline_output.resolve(), baseline_report_dir.resolve())
+        if not baseline_report_path.is_file():
+            print(f"ERROR: baseline report missing: {baseline_report_path}", file=sys.stderr)
+            return 1
+
+        active_stage = 2
+        stage_started = time.perf_counter()
+        print(stage_message(2, "R2: acquiring independent reviewer evidence"), flush=True)
+        try:
+            summary = acquire_reviewer_evidence(
+                report_path=baseline_report_path,
+                output_path=evidence_path,
+                work_dir=run_dir / "reviewers",
+                reviewer_python=args.reviewer_python,
+                device=args.reviewer_device,
+                include_hub=args.include_hub_reviewer,
             )
-        )
-    print(
-        stage_message(
-            2,
-            "R2: reviewer acquisition "
-            + json.dumps(summary, ensure_ascii=False, sort_keys=True),
-        ),
-        flush=True,
-    )
-    print(stage_done_message(2, time.perf_counter() - stage_started), flush=True)
+        except MissingCurrentCandidateError as exc:
+            stages[1].update({"seconds": round(time.perf_counter() - stage_started, 6), "status": "skipped"})
+            active_stage = 0
+            print(f"WARNING: R2 skipped for this song: {exc}", file=sys.stderr, flush=True)
+            return _run_backend(
+                prepare_baseline_args(
+                    backend_args, output=final_output, report_dir=final_report_dir
+                )
+            )
+        reviewers = summary.get("statuses", {}) if isinstance(summary, Mapping) else {}
+        stages[1].update({"seconds": round(time.perf_counter() - stage_started, 6), "status": "ok"})
+        active_stage = 0
+        print(stage_message(2, "R2: reviewer acquisition " + json.dumps(summary, ensure_ascii=False, sort_keys=True)), flush=True)
 
-    stage_started = time.perf_counter()
-    print(stage_message(3, "R2: generating final reviewer-validity output"), flush=True)
-    final_code = _run_backend(prepare_final_args(backend_args, evidence_path))
-    if final_code != 0:
-        return final_code
+        active_stage = 3
+        stage_started = time.perf_counter()
+        print(stage_message(3, "R2: generating final reviewer-validity output"), flush=True)
+        final_code = _run_backend(prepare_final_args(backend_args, evidence_path))
+        stages[2].update({"seconds": round(time.perf_counter() - stage_started, 6), "status": "ok" if final_code == 0 else "failed"})
+        active_stage = 0
+        if final_code != 0:
+            return final_code
+        if not final_report_path.is_file():
+            print(f"ERROR: final report missing: {final_report_path}", file=sys.stderr)
+            return 1
 
-    if not final_report_path.is_file():
-        print(f"ERROR: final report missing: {final_report_path}", file=sys.stderr)
-        return 1
-    print(stage_done_message(3, time.perf_counter() - stage_started), flush=True)
-
-    stage_started = time.perf_counter()
-    print(stage_message(4, "R2: building reviewer trust summary"), flush=True)
-    reviewer_data_path = run_dir / "reviewers" / "reviewer-data.json"
-    hubp_path = run_dir / "reviewers" / "hubp-raw.json"
-    reviewer_payload = json.loads(reviewer_data_path.read_text(encoding="utf-8-sig"))
-    hubp_payload: dict[str, object] = {}
-    if hubp_path.is_file():
-        loaded_hubp = json.loads(hubp_path.read_text(encoding="utf-8-sig"))
-        if isinstance(loaded_hubp, dict):
-            hubp_payload = loaded_hubp
-    final_report = json.loads(final_report_path.read_text(encoding="utf-8-sig"))
-    if not isinstance(final_report, Mapping):
-        raise ValueError("final report must be a JSON object")
-    trust_report = build_reviewer_trust_report(
-        reviewer_payload,
-        hubp_payload,
-        final_times_from_report(final_report_path),
-        profile=args.reviewer_profile,
-    )
-    trust_path = run_dir / "reviewer-trust.json"
-    _write_json(trust_path, trust_report)
-    print(
-        stage_message(
-            4,
-            "R2: reviewer trust "
-            + json.dumps(
-                {
-                    "profile": trust_report["profile"],
-                    "trusted_count": trust_report["trusted_count"],
-                    "review_count": trust_report["review_count"],
-                    "path": str(trust_path),
-                },
-                ensure_ascii=False,
-                sort_keys=True,
-            ),
-        ),
-        flush=True,
-    )
-    print(stage_done_message(4, time.perf_counter() - stage_started), flush=True)
-    for message in build_lyric_review_messages(final_report, reviewer_payload):
-        print(message, flush=True)
-    sparse_notice = build_sparse_reviewer_notice(reviewer_payload, hubp_payload)
-    if sparse_notice:
-        print(sparse_notice, flush=True)
-    return 0
+        active_stage = 4
+        stage_started = time.perf_counter()
+        print(stage_message(4, "R2: building reviewer trust summary"), flush=True)
+        reviewer_data_path = run_dir / "reviewers" / "reviewer-data.json"
+        hubp_path = run_dir / "reviewers" / "hubp-raw.json"
+        reviewer_payload = json.loads(reviewer_data_path.read_text(encoding="utf-8-sig"))
+        hubp_payload: dict[str, object] = {}
+        if hubp_path.is_file():
+            loaded_hubp = json.loads(hubp_path.read_text(encoding="utf-8-sig"))
+            if isinstance(loaded_hubp, dict):
+                hubp_payload = loaded_hubp
+        final_report = json.loads(final_report_path.read_text(encoding="utf-8-sig"))
+        if not isinstance(final_report, Mapping):
+            raise ValueError("final report must be a JSON object")
+        trust_report = build_reviewer_trust_report(reviewer_payload, hubp_payload, final_times_from_report(final_report_path), profile=args.reviewer_profile)
+        trust_path = run_dir / "reviewer-trust.json"
+        _write_json(trust_path, trust_report)
+        stages[3].update({"seconds": round(time.perf_counter() - stage_started, 6), "status": "ok"})
+        active_stage = 0
+        print(stage_message(4, "R2: reviewer trust " + json.dumps({"profile": trust_report["profile"], "trusted_count": trust_report["trusted_count"], "review_count": trust_report["review_count"], "path": str(trust_path)}, ensure_ascii=False, sort_keys=True)), flush=True)
+        for message in build_lyric_review_messages(final_report, reviewer_payload):
+            print(message, flush=True)
+        sparse_notice = build_sparse_reviewer_notice(reviewer_payload, hubp_payload)
+        if sparse_notice:
+            print(sparse_notice, flush=True)
+        return 0
+    except BaseException as exc:
+        if 1 <= active_stage <= 4:
+            row = stages[active_stage - 1]
+            if row["status"] == "not-run":
+                row.update(
+                    {
+                        "seconds": round(time.perf_counter() - stage_started, 6),
+                        "status": f"error:{type(exc).__name__}",
+                    }
+                )
+        raise
+    finally:
+        total = time.perf_counter() - started_total
+        _write_r2_timings(run_dir, stages, reviewers, baseline_report_path, final_report_path, total)
+        if not getattr(parsed, "no_review_summary", False):
+            _print_r2_timings(stages, reviewers, total)
 
 
 if __name__ == "__main__":
