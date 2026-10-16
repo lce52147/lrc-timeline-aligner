@@ -65,6 +65,48 @@ from auto_lrc import (
 )
 from evaluate_lrc import summarize
 from export_alignment_audit import build_rows, write_markdown
+from multimodel_consensus import model_disagreement_review
+
+
+class MultimodelReviewOnlyTests(unittest.TestCase):
+    def test_mms_disagreement_is_review_only(self) -> None:
+        result = model_disagreement_review(
+            written_times=(10.0,),
+            statuses=("selected_valid",),
+            model_outputs={0: {"mms": 12.2}},
+            windows=({"entry_index": 0, "start": 9.0, "end": 13.0},),
+        )
+        self.assertEqual(result[0]["reason"], "model-disagreement")
+        self.assertIn("mms", result[0]["triggers"])
+
+    def test_three_family_cluster_is_reviewed_and_window_is_required(self) -> None:
+        values = {
+            "mms": 12.2,
+            "mms1b:eng:roman": 12.21,
+            "ja-ctc:test": 12.19,
+        }
+        result = model_disagreement_review(
+            written_times=(10.0, 20.0),
+            statuses=("selected_valid", "selected_valid"),
+            model_outputs={0: values, 1: values},
+            windows=({"entry_index": 0, "start": 9.0, "end": 13.0},),
+        )
+        self.assertIn("cluster", result[0]["triggers"])
+        self.assertNotIn(1, result)
+
+    def test_model_disagreement_flag_is_actionable_review(self) -> None:
+        report = {
+            "timing_entries": 1,
+            "assignments": [{
+                "timestamp": 10.0,
+                "timing_trusted": True,
+                "content_trusted": True,
+                "flags": ["model-disagreement"],
+            }],
+        }
+        update_report_confidence_metrics(report)
+        self.assertTrue(report["assignments"][0]["review_required"])
+        self.assertIn("model-disagreement", report["assignments"][0]["final_trust_reason_codes"])
 
 
 class PersistentHelperRoutingTests(unittest.TestCase):

@@ -261,6 +261,70 @@ def _best_cluster(
     return chosen[2], chosen[3], chosen[4]
 
 
+def model_disagreement_review(
+    written_times: Sequence[float],
+    statuses: Sequence[str],
+    model_outputs: Mapping[int | str, Mapping[str, object]],
+    windows: Sequence[Mapping[str, object]],
+    *,
+    tau: float = TAU_SECONDS,
+    min_disagreement: float = 1.0,
+) -> dict[int, dict[str, object]]:
+    """Find review-only model disagreements without proposing a new time."""
+    if len(written_times) != len(statuses):
+        raise ValueError("written_times/statuses cardinality mismatch")
+    windows_by_entry: dict[int, tuple[float, float]] = {}
+    for window in windows:
+        try:
+            index = int(window["entry_index"])
+            start = float(window["start"])
+            end = float(window["end"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if 0 <= index < len(statuses) and math.isfinite(start) and math.isfinite(end) and start <= end:
+            windows_by_entry[index] = (start, end)
+
+    reviewed: dict[int, dict[str, object]] = {}
+    for raw_index, values in model_outputs.items():
+        try:
+            index = int(raw_index)
+        except (TypeError, ValueError):
+            continue
+        if not (0 <= index < len(statuses)) or index not in windows_by_entry:
+            continue
+        if not isinstance(values, Mapping):
+            continue
+        start, end = windows_by_entry[index]
+        written = float(written_times[index])
+        triggers: list[str] = []
+        mms_time = values.get("mms")
+        if _finite(mms_time) and start <= float(mms_time) <= end:
+            if abs(float(mms_time) - written) > min_disagreement:
+                triggers.append("mms")
+        cluster = _best_cluster(values, tau)
+        cluster_time = None
+        cluster_families: tuple[str, ...] = ()
+        if cluster is not None:
+            cluster_time, cluster_families, _ = cluster
+            if (
+                len(cluster_families) >= 3
+                and start <= cluster_time <= end
+                and abs(cluster_time - written) > min_disagreement
+            ):
+                triggers.append("cluster")
+        if triggers:
+            reviewed[index] = {
+                "entry_index": index,
+                "reason": "model-disagreement",
+                "written_time": written,
+                "mms_time": float(mms_time) if _finite(mms_time) else None,
+                "best_cluster_time": cluster_time,
+                "cluster_families": list(cluster_families),
+                "triggers": triggers,
+            }
+    return reviewed
+
+
 def _raw_order_violation(
     index: int,
     seconds: float,

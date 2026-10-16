@@ -47,6 +47,7 @@ from multimodel_consensus import (
     build_windows,
     choose_consensus_overrides,
     consensus_report,
+    model_disagreement_review,
     model_identity,
 )
 from export_alignment_audit import build_rows as build_audit_rows
@@ -5136,6 +5137,25 @@ def _apply_multimodel_consensus_runtime(
                 model_outputs[int(raw_index)] = values
             except (TypeError, ValueError):
                 continue
+    review_only = model_disagreement_review(
+        written_times,
+        statuses,
+        model_outputs,
+        windows,
+    )
+    diagnostic["review_only_model_disagreements"] = list(review_only.values())
+    assignments = report.get("assignments")
+    if isinstance(assignments, list):
+        for index, evidence in review_only.items():
+            if not (0 <= index < len(assignments)) or not isinstance(assignments[index], dict):
+                continue
+            assignment = assignments[index]
+            flags = assignment.get("flags")
+            assignment["flags"] = list(dict.fromkeys([
+                *(flags if isinstance(flags, list) else []),
+                "model-disagreement",
+            ]))
+            assignment["model_disagreement"] = evidence
     raw_anchors = tuple(
         (index, candidate.written_time.seconds)
         for index, candidates in enumerate(candidate_sets)
@@ -28049,7 +28069,7 @@ FINAL_LINE_TRUST_CLASSIFICATION: dict[str, str] = {
           "unresolved-material-alternative", "F1-vocal-absent",
           "F1-vocal-check-unavailable",
           "F3-compressed-or-nonmonotonic", "F3-nonmonotonic",
-          "F4-ctc-final-disagreement"}},
+          "F4-ctc-final-disagreement", "model-disagreement"}},
 }
 
 
