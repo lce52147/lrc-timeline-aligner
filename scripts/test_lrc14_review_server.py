@@ -158,6 +158,7 @@ class ReviewServerTests(unittest.TestCase):
         self.assertEqual(self._json_request("POST", "/api/song/0/save", body)[0], 400)
         self.assertEqual(self._json_request("POST", "/api/song/0/save", {"base_sha256": detail["base_sha256"], "edits": []}, Origin="http://evil")[0], 403)
         self.server.store.read_only = True
+        self.assertTrue(self._detail()["server_read_only"])
         self.assertEqual(self._json_request("POST", "/api/song/0/save", {"base_sha256": detail["base_sha256"], "edits": []})[0], 403)
 
     def test_audio_ranges_missing_stem_and_head(self) -> None:
@@ -240,16 +241,49 @@ class ReviewServerTests(unittest.TestCase):
         hits = [line for line in source if "checked references" in line.casefold() or "lrc bk" in line.casefold()]
         self.assertEqual(len(hits), 1)
         page = (SCRIPTS / "review_page" / "index.html").read_text(encoding="utf-8")
-        for marker in ("currentTime = start", "loadedmetadata", "BracketLeft", "base_sha256:song.detail.base_sha256", "beforeunload"):
+        for marker in ("currentTime = start", "loadedmetadata", "BracketLeft", "base_sha256:song.detail.base_sha256", "beforeunload", "server_read_only", "response.status === 409", "reloaded and kept staged edits"):
             self.assertIn(marker, page)
 
-    def test_bom_crlf_save_bytes(self) -> None:
+    def test_bom_crlf_save_bytes_and_stale_save(self) -> None:
         self._start(True)
         detail = self._detail()
         payload = {"base_sha256": detail["base_sha256"], "edits": [{"entry": 2, "cs": 250, "source": "ctc", "nudge_cs": 50}]}
         self.assertEqual(self._json_request("POST", "/api/song/0/save", payload)[0], 200)
-        self.assertIn(b"\r\n", self.output.read_bytes())
-        self.assertNotIn(b"\r\r\n", self.output.read_bytes())
+        expected = (
+            b"\xef\xbb\xbf[ar:test]\r\n[al:album]\r\n[00:00.00]title\r\n"
+            b"[00:01.00]one\r\n[00:02.50]two a\r\n[00:02.50]two b\r\n"
+            b"[00:03.00]three\r\n[00:03.00]four\r\n[01:02.00]five\r\n"
+        )
+        self.assertEqual(self.output.read_bytes(), expected)
+        _auto, edits = review_server.review_artifact_paths(self.report)
+        before_log = edits.read_bytes()
+        self.assertEqual(self._json_request("POST", "/api/song/0/save", payload)[0], 409)
+        self.assertEqual(self.output.read_bytes(), expected)
+        self.assertEqual(edits.read_bytes(), before_log)
+
+    def test_missing_lrc_rounding_and_non_ascii_token(self) -> None:
+        self.assertEqual(review_server._tag_cs(1.005), 101)
+        self.assertEqual(review_server._seconds_cs(1.005), 101)
+        self.assertFalse(review_server._safe_compare("é", self.server.token))
+        data = json.loads(self.report.read_text())
+        data.pop("output_path")
+        missing = self.root / "missing.align-report.json"
+        missing.write_text(json.dumps(data), encoding="utf-8")
+        store = review_server.ReviewStore(self.root, [missing])
+        song = store.song(0)
+        self.assertEqual(song["read_only_reason"], "lrc-missing")
+        status, _result = review_server._save_song(song, {"base_sha256": "0" * 64, "edits": []})
+        self.assertEqual(status, 403)
+        self.assertFalse((self.root / "candidate.lrc").exists())
+
+    def test_malformed_audio_report_is_excluded(self) -> None:
+        data = json.loads(self.report.read_text())
+        data["audio_path"] = None
+        malformed = self.root / "malformed.align-report.json"
+        malformed.write_text(json.dumps(data), encoding="utf-8")
+        store = review_server.ReviewStore(self.root, [malformed])
+        self.assertEqual(store.songs, [])
+        self.assertIn(malformed.resolve(), store.excluded)
 
 
 if __name__ == "__main__":

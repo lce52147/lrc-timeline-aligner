@@ -4,6 +4,7 @@ import hashlib
 import http.server
 import math
 import json
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import os
 import pathlib
 import re
@@ -42,6 +43,13 @@ def _safe_compare(left, right):
         return False
 
 
+def _round_cs(value):
+    try:
+        return int((Decimal(str(value)) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+
+
 def _number(value):
     if isinstance(value, bool):
         return None
@@ -54,7 +62,7 @@ def _number(value):
 
 def _tag_cs(value):
     if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return math.floor(float(value) * 100 + 0.5)
+        return _round_cs(value)
     match = re.fullmatch(r"\[?(\d+):(\d{2})\.(\d{2})\]?", str(value or ""))
     if not match:
         return None
@@ -146,6 +154,7 @@ def _path_is_excluded(path):
 
 def _report_files(targets, report_dir):
     found = []
+    excluded = []
     targets = list(targets or [])
     if not targets:
         targets = [report_dir]
@@ -184,10 +193,19 @@ def _report_files(targets, report_dir):
                 data = json.loads(report.read_text(encoding="utf-8-sig"))
             except (OSError, ValueError):
                 continue
+            if not isinstance(data.get("audio_path"), str):
+                if report not in excluded:
+                    excluded.append(report)
+                continue
             paths = (report, data.get("audio_path", ""), data.get("output_path", ""))
-            if report.is_file() and not any(_path_is_excluded(item) for item in paths) and report not in found:
+            if not report.is_file():
+                continue
+            if any(_path_is_excluded(item) for item in paths):
+                if report not in excluded:
+                    excluded.append(report)
+            elif report not in found:
                 found.append(report)
-    return sorted(found, key=lambda item: item.name.casefold())
+    return sorted(found, key=lambda item: item.name.casefold()), sorted(excluded, key=lambda item: item.name.casefold())
 
 
 def _report_rows(report_path, report):
@@ -237,7 +255,7 @@ def _candidate_time(value):
 
 def _seconds_cs(value):
     number = _number(value)
-    return None if number is None else math.floor(number * 100 + 0.5)
+    return None if number is None else _round_cs(number)
 
 
 def _candidate_rows(assignment, current_cs, auto_cs):
@@ -311,6 +329,15 @@ def _trust_state(report, output_path, auto_path, edits_path, mapping, current_da
         elif _tag_tail(current) != _tag_tail(reference):
             return True, "lrc-lyric-content-changed"
     return False, None
+
+
+def _path_is_file(value):
+    if not isinstance(value, (str, pathlib.Path)) or not value:
+        return False
+    try:
+        return pathlib.Path(value).is_file()
+    except (OSError, ValueError):
+        return False
 
 
 def _song_payload(report_path, report):
@@ -402,8 +429,8 @@ def _song_payload(report_path, report):
         "read_only_reason": reason,
         "audio_path": str(report.get("audio_path", "")),
         "ctc_audio_path": str(report.get("ctc_audio_path", "")),
-        "has_flac": pathlib.Path(report.get("audio_path", "")).is_file(),
-        "has_stem": pathlib.Path(report.get("ctc_audio_path", "")).is_file(),
+        "has_flac": _path_is_file(report.get("audio_path")),
+        "has_stem": _path_is_file(report.get("ctc_audio_path")),
         "output_path": str(output_path) if output_path else "",
         "base_sha256": _sha256_bytes(current_data),
         "duration_seconds": _number(report.get("duration_seconds")) or 0.0,
@@ -538,11 +565,13 @@ class ReviewStore:
         self.read_only = bool(read_only)
         self.lock = threading.RLock()
         self.songs = []
+        self.excluded = []
         self.reload()
 
     def reload(self):
         self.songs = []
-        for path in _report_files(self.targets, self.report_dir):
+        reports, self.excluded = _report_files(self.targets, self.report_dir)
+        for path in reports:
             try:
                 report = json.loads(path.read_text(encoding="utf-8-sig"))
                 if isinstance(report, dict):
@@ -566,8 +595,10 @@ class ReviewStore:
             return current
 
 
-def _public_song(song):
-    return {key: value for key, value in song.items() if key not in {"report_data", "output", "auto", "edits"}}
+def _public_song(song, server_read_only=False):
+    payload = {key: value for key, value in song.items() if key not in {"report_data", "output", "auto", "edits"}}
+    payload["server_read_only"] = bool(server_read_only)
+    return payload
 
 
 class ReviewHandler(http.server.BaseHTTPRequestHandler):
@@ -627,7 +658,7 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
                 self._send(403, b"forbidden\n", "text/plain; charset=utf-8")
                 return
             with self.server.store.lock:
-                payload = [{"index": index, "song": song["song"], "rows": len(song["rows"]), "review_rows": song["review_rows"], "read_only": song["read_only"], "read_only_reason": song["read_only_reason"]} for index, song in enumerate(self.server.store.songs)]
+                payload = [{"index": index, "song": song["song"], "rows": len(song["rows"]), "review_rows": song["review_rows"], "read_only": song["read_only"], "read_only_reason": song["read_only_reason"], "server_read_only": self.server.store.read_only} for index, song in enumerate(self.server.store.songs)]
             self._json(200, payload)
             return
         match = re.fullmatch(r"/api/song/(\d+)", parsed.path)
@@ -639,7 +670,7 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
             if song is None:
                 self._json(404, {"error": "not found"})
             else:
-                self._json(200, _public_song(song))
+                self._json(200, _public_song(song, self.server.store.read_only))
             return
         match = re.fullmatch(r"/audio/(\d+)/(flac|stem)", parsed.path)
         if match:
@@ -692,7 +723,7 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
                 self._json(403, {"error": "read-only"})
                 return
             status, result = _save_song(song, body)
-            self._json(status, _public_song(result) if status == 200 else result)
+            self._json(status, _public_song(result, self.server.store.read_only) if status == 200 else result)
 
     def _serve_audio(self, index, kind, query, head):
         if not self._token_query_ok(query):
@@ -775,13 +806,13 @@ def run_server(targets, report_dir=None, port=0, no_browser=False, read_only=Fal
     if dump_summary:
         for song in store.songs:
             share = sum(len({item.get("cs") for item in row.get("candidates", [])}) >= 2 for row in song["rows"])
-            print(json.dumps({"song": song["song"], "rows": len(song["rows"]), "review_rows": song["review_rows"], "read_only": song["read_only"], "reason": song["read_only_reason"], "has_flac": pathlib.Path(song["audio_path"]).is_file(), "has_stem": pathlib.Path(song["ctc_audio_path"]).is_file(), "share_rows": share}, ensure_ascii=True))
+            print(json.dumps({"song": song["song"], "rows": len(song["rows"]), "review_rows": song["review_rows"], "read_only": song["read_only"], "reason": song["read_only_reason"], "has_flac": _path_is_file(song["audio_path"]), "has_stem": _path_is_file(song["ctc_audio_path"]), "share_rows": share}, ensure_ascii=True))
         return None
     server = http.server.ThreadingHTTPServer(("127.0.0.1", int(port)), ReviewHandler)
     server.store = store
     server.token = secrets.token_urlsafe(32)
     url = f"http://127.0.0.1:{server.server_port}/#t={urllib.parse.quote(server.token)}"
-    print(json.dumps({"url": url, "token": server.token, "songs": len(store.songs)}, ensure_ascii=False), flush=True)
+    print(json.dumps({"url": url, "token": server.token, "songs": len(store.songs), "excluded": len(store.excluded)}, ensure_ascii=False), flush=True)
     if not no_browser:
         webbrowser.open(url)
     try:

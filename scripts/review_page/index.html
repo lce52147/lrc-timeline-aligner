@@ -20,7 +20,7 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
 </head>
 <body>
 <header>
-  <div class="toolbar"><button id="save">Save</button><label><input id="untrusted" type="checkbox"> show UNTRUSTED</label><button id="mode">V: FLAC</button><span id="status" class="status">loading</span></div>
+  <div class="toolbar"><button id="save">Save</button><span id="server-mode" class="muted"></span><label><input id="untrusted" type="checkbox"> show UNTRUSTED</label><button id="mode">V: FLAC</button><span id="status" class="status">loading</span></div>
   <div class="meta">Keys: Up/Down row · 1-9 pick/play · [ ] nudge · Space play · P/N adjacent line · V audio · Enter accept/next · K keep/next · U undo · Ctrl+S save</div>
 </header>
 <main id="queue" class="queue"></main>
@@ -47,6 +47,8 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
   const adjacentText = value => value ? time(value.cs) + ' · ' + esc(value.lyric || '') : '—';
   const sourceText = c => (c.sources || [c.label]).join(',');
   function setDirty() { state.dirty = state.edits.size > 0; }
+  const serverReadOnly = () => state.songs.some(song => song.detail?.server_read_only);
+  const editable = song => !song.read_only && !song.detail?.server_read_only;
   function select(item) {
     const index = visible().indexOf(item);
     if (index >= 0) state.selected = index;
@@ -86,11 +88,18 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
     if (audio.readyState >= 1) seekAndPlay();
   }
   function stage(item, cs, source, nudgeCs) {
-    if (item.song.read_only || cs == null) return;
-    state.edits.set(keyFor(item), {entry:item.row.entry, cs, source:String(source || 'manual').slice(0,64), nudge_cs:nudgeCs});
+    if (!editable(item.song) || cs == null) return;
+    const key = keyFor(item), current = item.row.current_cs;
+    if (current != null && cs === current) {
+      state.edits.delete(key);
+      state.error = ''; setDirty(); render();
+      return;
+    }
+    state.edits.set(key, {entry:item.row.entry, cs, source:String(source || 'manual').slice(0,64), nudge_cs:nudgeCs});
     state.error = ''; setDirty(); render();
   }
   function stageCandidate(item, candidate) {
+    select(item);
     stage(item, candidate.cs, sourceText(candidate), candidate.cs - (item.row.current_cs ?? candidate.cs));
     playAround(item, candidate.cs);
   }
@@ -111,8 +120,11 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
       items.forEach(item => box.appendChild(rowElement(item)));
       queue.appendChild(box);
     });
+    const globalReadOnly = serverReadOnly();
     status.textContent = state.error || rows.length + ' visible / ' + state.rows.length + ' total' + (state.dirty ? ' · unsaved' : '') + ' · ' + state.mode;
     status.className = state.error ? 'warning' : state.dirty ? 'status dirty' : 'status';
+    document.getElementById('save').disabled = globalReadOnly || !state.dirty;
+    document.getElementById('server-mode').textContent = globalReadOnly ? 'server read-only' : '';
     document.getElementById('mode').textContent = 'V: ' + state.mode.toUpperCase();
   }
   function rowElement(item) {
@@ -122,7 +134,7 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
     const lyrics = (row.lyrics || [row.lyric || '']).map(esc).join('<br>');
     const chips = (row.candidates || []).map((c,i) => {
       const delta = c.cs - (row.current_cs ?? c.cs);
-      return '<button class="chip ' + (c.rejected ? 'rejected ' : '') + (c.cs === chosen ? 'selected' : '') + '" data-candidate="' + i + '" title="' + esc(sourceText(c)) + '">' + (i+1) + ': ' + time(c.cs) + ' (' + (delta >= 0 ? '+' : '') + delta + 'cs) <span class="meta">' + esc(sourceText(c)) + '</span></button>';
+      return '<button class="chip ' + (c.rejected ? 'rejected ' : '') + (c.cs === chosen ? 'selected' : '') + '" data-candidate="' + i + '"' + (editable(song) ? '' : ' disabled') + ' title="' + esc(sourceText(c)) + '">' + (i+1) + ': ' + time(c.cs) + ' (' + (delta >= 0 ? '+' : '') + delta + 'cs) <span class="meta">' + esc(sourceText(c)) + '</span></button>';
     }).join('');
     div.className = 'row ' + String(row.review || 'UNTRUSTED').toLowerCase() + (visible()[state.selected] === item ? ' selected-row' : '');
     div.dataset.key = key;
@@ -132,11 +144,11 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
       (ordering ? '<div class="order-warning">warning: working time is outside adjacent line order</div>' : '') +
       '<div class="audio"><button class="play" data-kind="flac" ' + (song.has_flac ? '' : 'disabled') + '>play FLAC</button><button class="play" data-kind="stem" ' + (song.has_stem ? '' : 'disabled') + '>play stem</button>' + (song.has_flac ? '' : '<span class="muted">FLAC unavailable</span>') + (song.has_stem ? '' : '<span class="muted">stem unavailable</span>') + '</div>' +
       '<div>working <b>' + time(chosen) + '</b></div><div class="chips">' + (chips || '<span class="muted">no candidates</span>') + '</div>' +
-      '<div class="meta">' + (song.read_only ? 'read-only: ' + esc(song.read_only_reason || 'unknown') : '') + '</div>';
+      '<div class="meta">' + ((song.read_only || song.detail?.server_read_only) ? 'read-only: ' + esc(song.read_only_reason || (song.detail?.server_read_only ? 'server' : 'unknown')) : '') + '</div>';
     div.addEventListener('click', () => { select(item); render(); });
     div.querySelectorAll('.play').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); playAround(item, working(item), button.dataset.kind); }));
     div.querySelectorAll('.chip').forEach(button => button.addEventListener('click', event => {
-      event.stopPropagation(); const candidate = row.candidates[Number(button.dataset.candidate)]; if (candidate && !song.read_only) stageCandidate(item, candidate);
+      event.stopPropagation(); const candidate = row.candidates[Number(button.dataset.candidate)]; if (candidate && editable(song)) stageCandidate(item, candidate);
     }));
     return div;
   }
@@ -155,6 +167,7 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
     } catch (error) { state.error = error.message; render(); }
   }
   async function save() {
+    if (serverReadOnly()) { state.error = 'save disabled: server read-only'; render(); return; }
     if (!state.dirty) return;
     const bySong = new Map();
     state.edits.forEach((edit,key) => { const index = Number(key.split(':')[0]); if (!bySong.has(index)) bySong.set(index, []); bySong.get(index).push(edit); });
@@ -167,6 +180,12 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
           body:JSON.stringify({base_sha256:song.detail.base_sha256, edits})
         });
         const data = await response.json().catch(() => ({error:response.statusText}));
+        if (response.status === 409) {
+          await load();
+          state.error = 'save failed: stale base_sha256; reloaded and kept staged edits';
+          setDirty(); render();
+          return;
+        }
         if (!response.ok) throw Error(data.error || response.statusText);
         edits.forEach(edit => state.edits.delete(String(index) + ':' + edit.entry));
         song.detail = data;
@@ -174,11 +193,15 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
       setDirty(); state.error = ''; await load();
     } catch (error) { state.error = 'save failed: ' + error.message; setDirty(); render(); }
   }
+
   document.getElementById('save').addEventListener('click', save);
   document.getElementById('untrusted').addEventListener('change', event => { state.showUntrusted = event.target.checked; render(); });
   document.getElementById('mode').addEventListener('click', () => { state.mode = state.mode === 'flac' ? 'stem' : 'flac'; render(); });
   document.addEventListener('keydown', event => {
-    if (event.ctrlKey && event.key.toLowerCase() === 's') { event.preventDefault(); save(); return; }
+    if (event.ctrlKey && !event.altKey && !event.metaKey && event.key.toLowerCase() === 's') { event.preventDefault(); save(); return; }
+    if (event.altKey || event.metaKey || event.ctrlKey) return;
+    if (event.target?.closest?.('input,textarea,select,[contenteditable]')) return;
+    if (event.target?.closest?.('button') && (event.key === 'Enter' || event.code === 'Space')) return;
     const rows = visible(), item = rows[state.selected];
     if (!item) return;
     if (event.key === 'ArrowDown' || event.key.toLowerCase() === 'j') { event.preventDefault(); state.selected = Math.min(rows.length - 1, state.selected + 1); render(); return; }
@@ -186,20 +209,30 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
     if (event.key.toLowerCase() === 'k') { event.preventDefault(); state.edits.delete(keyFor(item)); setDirty(); nextRow(); return; }
     if (event.key.toLowerCase() === 'u') { event.preventDefault(); state.edits.delete(keyFor(item)); setDirty(); render(); return; }
     if (event.key.toLowerCase() === 'v') { event.preventDefault(); state.mode = state.mode === 'flac' ? 'stem' : 'flac'; render(); return; }
-    if (event.key === 'Enter') { event.preventDefault(); stage(item, working(item), 'accepted', 0); nextRow(); return; }
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      if (!editFor(item) && working(item) != null && working(item) !== item.row.current_cs) stage(item, working(item), 'accepted', 0);
+      nextRow();
+      return;
+    }
     if (event.code === 'Space') { event.preventDefault(); playAround(item, working(item)); return; }
     if (event.key.toLowerCase() === 'p') { event.preventDefault(); if (item.row.previous) playAround(item, item.row.previous.cs); return; }
     if (event.key.toLowerCase() === 'n') { event.preventDefault(); if (item.row.next) playAround(item, item.row.next.cs); return; }
     if (event.code === 'BracketLeft' || event.code === 'BracketRight') {
-      event.preventDefault(); const delta = event.shiftKey ? 1 : 10;
-      const cs = Math.max(0, (working(item) || 0) + (event.code === 'BracketLeft' ? -delta : delta));
-      stage(item, cs, 'nudge', cs - (item.row.current_cs ?? cs)); return;
+      event.preventDefault();
+      const delta = event.shiftKey ? 1 : 10;
+      const signedDelta = event.code === 'BracketLeft' ? -delta : delta;
+      const cs = Math.max(0, (working(item) || 0) + signedDelta);
+      const existing = editFor(item);
+      stage(item, cs, existing?.source || 'nudge', (existing?.nudge_cs || 0) + signedDelta);
+      return;
     }
     if (/^[1-9]$/.test(event.key)) {
       const candidate = item.row.candidates?.[Number(event.key) - 1];
-      if (candidate) stageCandidate(item, candidate);
+      if (candidate && editable(item.song)) stageCandidate(item, candidate);
     }
   });
+
   addEventListener('beforeunload', event => { if (state.dirty) { event.preventDefault(); event.returnValue = ''; } });
   load();
 })();
