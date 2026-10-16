@@ -28052,6 +28052,7 @@ def report_has_verified_central_commit(report: dict[str, object]) -> bool:
 
 # A single, declarative authority for final-line defect classification.
 # Unknown diagnostics are INFO until an owner explicitly classifies them.
+SILENT_RISK_REVIEW_FLAG = "silent-risk:selected-confidence-le-0.8-and-next-gap-ge-19"
 FINAL_LINE_TRUST_CLASSIFICATION: dict[str, str] = {
     **{code: "INFO" for code in {
         "manual_anchor_resolved", "central-selected", "central-provisional",
@@ -28069,7 +28070,8 @@ FINAL_LINE_TRUST_CLASSIFICATION: dict[str, str] = {
           "unresolved-material-alternative", "F1-vocal-absent",
           "F1-vocal-check-unavailable",
           "F3-compressed-or-nonmonotonic", "F3-nonmonotonic",
-          "F4-ctc-final-disagreement", "model-disagreement"}},
+          "F4-ctc-final-disagreement", "model-disagreement",
+          SILENT_RISK_REVIEW_FLAG}},
 }
 
 
@@ -28120,7 +28122,26 @@ def final_line_trust(
     return FinalLineTrustDecision(trusted, review, tuple(reasons))
 
 
-def update_report_confidence_metrics(report: dict[str, object]) -> None:
+def _silent_risk_rule_applies(assignments: list[object], index: int) -> bool:
+    if index + 1 >= len(assignments):
+        return False
+    assignment = assignments[index]
+    following = assignments[index + 1]
+    if not isinstance(assignment, dict) or not isinstance(following, dict):
+        return False
+    confidence = assignment.get("confidence")
+    current_time = assignment.get("timestamp")
+    next_time = following.get("timestamp")
+    if any(isinstance(value, bool) or not isinstance(value, (int, float)) for value in (confidence, current_time, next_time)):
+        return False
+    if not all(math.isfinite(float(value)) for value in (confidence, current_time, next_time)):
+        return False
+    return 0.0 <= float(confidence) <= 0.8 and float(next_time) - float(current_time) >= 19.0
+
+
+def update_report_confidence_metrics(
+    report: dict[str, object], *, apply_silent_risk: bool = False
+) -> None:
     assignments = report.get("assignments")
     if not isinstance(assignments, list):
         return
@@ -28179,6 +28200,16 @@ def update_report_confidence_metrics(report: dict[str, object]) -> None:
         related_suspicious = [
             row for row in suspicious_rows if row.get("entry") == index + 1
         ]
+        if (
+            apply_silent_risk
+            and not bool(item.get("review_required"))
+            and _silent_risk_rule_applies(assignments, index)
+        ):
+            flags = item.get("flags")
+            item["flags"] = list(dict.fromkeys([
+                *(flags if isinstance(flags, list) else []),
+                SILENT_RISK_REVIEW_FLAG,
+            ]))
         decision = final_line_trust(
             item, related_suspicious, central_committed=central_committed
         )
@@ -39151,7 +39182,7 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
             final_output=True,
         )
         assert_report_timestamp_equality(report, final_timing_state)
-        update_report_confidence_metrics(report)
+        update_report_confidence_metrics(report, apply_silent_risk=True)
         projection_seed = report.get(_RUNTIME_BACKEND_PROVENANCE_PROJECTION_SEED_KEY)
         if isinstance(projection_seed, dict):
             report[_BACKEND_PROVENANCE_PROJECTION_KEY] = _finalize_backend_provenance_projection(

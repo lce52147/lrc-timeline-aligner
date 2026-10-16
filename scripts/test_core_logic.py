@@ -108,6 +108,35 @@ class MultimodelReviewOnlyTests(unittest.TestCase):
         self.assertTrue(report["assignments"][0]["review_required"])
         self.assertIn("model-disagreement", report["assignments"][0]["final_trust_reason_codes"])
 
+    def test_silent_risk_rule_is_review_only(self) -> None:
+        report = {
+            "timing_entries": 2,
+            "assignments": [
+                {
+                    "timestamp": 10.0,
+                    "confidence": 0.8,
+                    "timing_trusted": True,
+                    "content_trusted": True,
+                    "flags": [],
+                },
+                {
+                    "timestamp": 30.0,
+                    "confidence": 0.9,
+                    "timing_trusted": True,
+                    "content_trusted": True,
+                    "flags": [],
+                },
+            ],
+        }
+        update_report_confidence_metrics(report, apply_silent_risk=True)
+        flagged = report["assignments"][0]
+        untouched = report["assignments"][1]
+        self.assertIn(auto_lrc.SILENT_RISK_REVIEW_FLAG, flagged["flags"])
+        self.assertTrue(flagged["review_required"])
+        self.assertIn(auto_lrc.SILENT_RISK_REVIEW_FLAG, flagged["final_trust_reason_codes"])
+        self.assertEqual(flagged["timestamp"], 10.0)
+        self.assertFalse(untouched["review_required"])
+
 
 class PersistentHelperRoutingTests(unittest.TestCase):
     def setUp(self) -> None:
