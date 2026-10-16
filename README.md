@@ -2,11 +2,11 @@
 
 Local LRC timestamp generation for Windows. The tool keeps lyric order fixed, generates timing evidence from the audio, lets Central arbitration choose the final line starts, and writes a same-name `.lrc` plus an audit report.
 
-## v1.3.1 and the v1.3 timing baseline
+## What's new in v1.3
 
 v1.3.1 is an installation and packaging update. It does not change the v1.3 timing or alignment policy. The setup path now builds the repository-local ASR environment, pins the validated dependencies and third-party binaries, can prefetch the production models, and finishes with a doctor check.
 
-The timing features and validation results below are the unchanged v1.3.0 baseline:
+v1.3 adds a post-Central multimodel consensus layer and stronger review flagging on top of the v1.2 architecture.
 
 - **Multimodel consensus (post-Central):** rows that Central leaves unresolved are re-aligned by MMS, MMS-1B (eng/jpn), three English CTC models and a Japanese CTC model. A new time is accepted only when at least three model families agree within 0.10 s (MMS required) and the occurrence/boundary guards pass.
 - **Review flags:** `model-disagreement` and `silent-risk` mark lines where the models disagree or the timing pattern is risky, so large errors are surfaced for review instead of being written silently.
