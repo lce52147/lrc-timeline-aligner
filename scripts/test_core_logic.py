@@ -11522,6 +11522,51 @@ class PathFreeCapabilityIdentityTests(unittest.TestCase):
             ),
         )
 
+    def test_planner_and_execution_revisions_are_separate(self) -> None:
+        payload = {
+            "entry_index": 3,
+            "capability_revision": "capability",
+            "audio_revision": "audio",
+            "context_entry_indexes": (3,),
+            "context_candidate_ids": ("candidate-a",),
+            "transcript_digests": ("text-a",),
+            "transcript_digest": "text-a",
+            "window_start": 21.32,
+            "window_end": 29.54,
+            "window_definition_revision": "window-a",
+        }
+
+        def make(candidate_id: str, window_revision: str) -> auto_lrc.LocalWhisperRequest:
+            request_payload = {
+                **payload,
+                "context_candidate_ids": (candidate_id,),
+                "window_definition_revision": window_revision,
+            }
+            return auto_lrc.LocalWhisperRequest(
+                **request_payload,
+                request_revision=auto_lrc._timing_content_digest({
+                    **request_payload,
+                    "context_entry_indexes": list(request_payload["context_entry_indexes"]),
+                    "context_candidate_ids": list(request_payload["context_candidate_ids"]),
+                    "transcript_digests": list(request_payload["transcript_digests"]),
+                }),
+                execution_revision=auto_lrc._local_whisper_execution_request_revision(
+                    request_payload
+                ),
+            )
+
+        first = make("candidate-a", "window-a")
+        second = make("candidate-b", "window-b")
+        self.assertNotEqual(first.request_revision, second.request_revision)
+        self.assertEqual(first.execution_revision, second.execution_revision)
+        capability = types.SimpleNamespace(
+            capability_revision="capability", protocol_revision="protocol"
+        )
+        self.assertEqual(
+            auto_lrc._local_whisper_cache_key(first, capability),
+            auto_lrc._local_whisper_cache_key(second, capability),
+        )
+
     def test_different_bytes_same_path_change_path_free_identity(self) -> None:
         with TemporaryDirectory() as temp_name:
             audio = Path(temp_name) / "stem.mp3"

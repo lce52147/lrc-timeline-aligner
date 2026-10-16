@@ -8,7 +8,12 @@ import auto_lrc
 
 
 def request(entry: int, start: float) -> SimpleNamespace:
-    return SimpleNamespace(entry_index=entry, window_start=start, window_end=start + 20.0)
+    return SimpleNamespace(
+        entry_index=entry,
+        window_start=start,
+        window_end=start + 20.0,
+        request_revision=f"window-{start:g}",
+    )
 
 
 class LocalWhisperBatchTests(unittest.TestCase):
@@ -22,7 +27,12 @@ class LocalWhisperBatchTests(unittest.TestCase):
 
         def fake_execute(req, capability, entries, args, **kwargs):  # type: ignore[no-untyped-def]
             executed.append((req.entry_index, kwargs.get("prepared")))
-            return SimpleNamespace(entry_index=req.entry_index, status="evidence", reason="fake")
+            return SimpleNamespace(
+                entry_index=req.entry_index,
+                request_revision=req.request_revision,
+                status="evidence",
+                reason="fake",
+            )
 
         stats = {"cache_hits": 0, "cache_misses": 0, "helper_invocations": 0}
         with mock.patch.object(auto_lrc, "DEFAULT_EVIDENCE_WORKERS", 1), \

@@ -1338,6 +1338,7 @@ class LocalWhisperRequest:
     window_end: float
     window_definition_revision: str
     request_revision: str
+    execution_revision: str = ""
 
 
 @dataclass(frozen=True)
@@ -18305,7 +18306,13 @@ def plan_local_whisper_requests(
             }
             requests.append(LocalWhisperRequest(
                 **payload,
-                request_revision=_local_whisper_execution_request_revision(payload),
+                request_revision=_timing_content_digest({
+                    **payload,
+                    "context_entry_indexes": list(context_indexes),
+                    "context_candidate_ids": list(payload["context_candidate_ids"]),
+                    "transcript_digests": list(transcript_digests),
+                }),
+                execution_revision=_local_whisper_execution_request_revision(payload),
             ))
     # A broken global CTC can collapse an entire verse 10-20 seconds earlier.
     # Local Whisper requests centered on Central's provisional baseline will
@@ -18375,7 +18382,13 @@ def plan_local_whisper_requests(
         }
         requests.append(LocalWhisperRequest(
             **payload,
-            request_revision=_local_whisper_execution_request_revision(payload),
+            request_revision=_timing_content_digest({
+                **payload,
+                "context_entry_indexes": list(context_indexes),
+                "context_candidate_ids": list(payload["context_candidate_ids"]),
+                "transcript_digests": list(transcripts_digest),
+            }),
+            execution_revision=_local_whisper_execution_request_revision(payload),
         ))
     unique = {item.request_revision: item for item in requests}
     return tuple(sorted(
@@ -18734,7 +18747,13 @@ def _r2t_plan_neutral_conflict_probe_requests(
         }
         requests.append(LocalWhisperRequest(
             **payload,
-            request_revision=_local_whisper_execution_request_revision(payload),
+            request_revision=_timing_content_digest({
+                **payload,
+                "context_entry_indexes": list(context_indexes),
+                "context_candidate_ids": list(payload["context_candidate_ids"]),
+                "transcript_digests": list(transcript_digests),
+            }),
+            execution_revision=_local_whisper_execution_request_revision(payload),
         ))
     return (
         tuple(sorted(requests, key=lambda item: (item.entry_index, item.request_revision))),
@@ -19780,15 +19799,46 @@ def _precommit_neutral_boundary_arbitration(
     return revised_selection, probe_payload, payload
 
 
+def _local_whisper_request_execution_revision(request: LocalWhisperRequest) -> str:
+    return request.execution_revision or _local_whisper_execution_request_revision(
+        request.__dict__
+    )
+
+
 def _local_whisper_cache_key(
     request: LocalWhisperRequest,
     capability: LocalWhisperCapability,
 ) -> str:
+    # Keep the serialized key shape stable so K2 cache entries remain reusable.
     return "local-whisper:" + _timing_content_digest({
-        "request_revision": request.request_revision,
+        "request_revision": _local_whisper_request_execution_revision(request),
         "capability_revision": capability.capability_revision,
         "protocol_revision": capability.protocol_revision,
     })
+
+
+def _local_whisper_outcome_for_request(
+    outcome: LocalWhisperOutcome,
+    request: LocalWhisperRequest,
+) -> LocalWhisperOutcome:
+    if outcome.request_revision == request.request_revision:
+        return outcome
+    base = {
+        "entry_index": outcome.entry_index,
+        "request_revision": request.request_revision,
+        "status": outcome.status,
+        "reason": outcome.reason,
+        "onset_time": outcome.onset_time,
+        "score": outcome.score,
+        "evidence_revision": outcome.evidence_revision,
+        "occurrence_binding": outcome.occurrence_binding,
+        "raw_transcript_revision": outcome.raw_transcript_revision,
+        "aligned_transcript_revision": outcome.aligned_transcript_revision,
+    }
+    return LocalWhisperOutcome(
+        **base,
+        outcome_revision=_timing_content_digest(base),
+    )
 
 
 def _shift_local_assignment_to_global(
@@ -19885,14 +19935,14 @@ def execute_local_whisper_request(
         "model_revision": capability.whisper_model_path,
         "model_blob_sha256": capability.whisper_model_sha256,
         "helper_protocol_revision": capability.protocol_revision,
-        "request": request.request_revision,
+        "request": _local_whisper_request_execution_revision(request),
     }
     persistent_cache_key = cache_key
     persistent_cache_identity = local_identity
     cached = cache.get(cache_key)
     if isinstance(cached, tuple) and len(cached) == 2 and isinstance(cached[1], LocalWhisperOutcome):
         runtime_stats["cache_hits"] = runtime_stats.get("cache_hits", 0) + 1
-        return cached[1]
+        return _local_whisper_outcome_for_request(cached[1], request)
     persisted = _model_cache_read("local-whisper", cache_key, local_identity, args)
     if isinstance(persisted, dict) and persisted.get("status") == "error":
         persisted = None
@@ -19902,6 +19952,7 @@ def execute_local_whisper_request(
         except (TypeError, ValueError):
             outcome = None
         if outcome is not None:
+            outcome = _local_whisper_outcome_for_request(outcome, request)
             cache[cache_key] = (outcome.outcome_revision, outcome)
             runtime_stats["cache_hits"] = runtime_stats.get("cache_hits", 0) + 1
             return outcome
@@ -20651,8 +20702,10 @@ def run_local_whisper_requests(
                 and len(cached) == 2
                 and isinstance(cached[1], LocalWhisperOutcome)
             ):
-                for ordinal, _request in group:
-                    outcomes_by_ordinal[ordinal] = cached[1]
+                for ordinal, grouped_request in group:
+                    outcomes_by_ordinal[ordinal] = _local_whisper_outcome_for_request(
+                        cached[1], grouped_request
+                    )
                 stats["cache_hits"] += len(group)
                 continue
             first_ordinal, first_request = group[0]
@@ -20699,8 +20752,10 @@ def run_local_whisper_requests(
                 stats["helper_invocations"] += private_stats.get(
                     "helper_invocations", 0
                 )
-                for grouped_ordinal, _request in grouped[key]:
-                    outcomes_by_ordinal[grouped_ordinal] = outcome
+                for grouped_ordinal, grouped_request in grouped[key]:
+                    outcomes_by_ordinal[grouped_ordinal] = _local_whisper_outcome_for_request(
+                        outcome, grouped_request
+                    )
                 progress_log(
                     f"local Whisper evidence: done {ordinal}/{len(requests)} "
                     f"entry={outcome.entry_index + 1} "
