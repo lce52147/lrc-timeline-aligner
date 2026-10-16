@@ -1,15 +1,36 @@
-# LRC Timeline Aligner — v1.2
+# LRC Timeline Aligner — v1.3
 
 Local LRC timestamp generation for Windows. The tool keeps lyric order fixed, generates timing evidence from the audio, lets Central arbitration choose the final line starts, and writes a same-name `.lrc` plus an audit report.
 
+## What's new in v1.3
+
+v1.3 adds a post-Central multimodel consensus layer and stronger review flagging on top of the v1.2 architecture.
+
+- **Multimodel consensus (post-Central):** rows that Central leaves unresolved are re-aligned by MMS, MMS-1B (eng/jpn), three English CTC models and a Japanese CTC model. A new time is accepted only when at least three model families agree within 0.10 s (MMS required) and the occurrence/boundary guards pass.
+- **Review flags:** `model-disagreement` and `silent-risk` mark lines where the models disagree or the timing pattern is risky, so large errors are surfaced for review instead of being written silently.
+- **Reproducible reruns:** model outputs are cached by execution identity, so cache-only replays reproduce a run exactly.
+
+Measured on the 39-song / 1487-line manually checked validation pool (cache-only replay of the v1.3.0 release):
+
+| Measure | v1.3.0 |
+|---|---|
+| Lines within 0.2 s (PCO@0.2) | 1362 / 1487 (91.6%) |
+| Lines off by more than 0.5 s | 59 |
+| Lines off by more than 1 s | 40, all flagged for review |
+| TRUSTED lines off by more than 1 s | 0 |
+| Test suite | 1031 passed, 5 skipped |
+
+These results describe this corpus and do not predict accuracy on arbitrary songs. The v1.2 sections below are kept for history.
+
 ## Current architecture
 
-The production path has four layers:
+The production path has five layers:
 
 1. CTC and Whisper-family producers generate candidate timings and evidence from the supplied audio and lyric text.
 2. Central arbitration evaluates candidate identity, sequence, acoustic support, boundary ownership, and temporal coherence. Central is the only layer that selects the timestamp written to the LRC.
 3. The optional R1/R2 arbiter can preserve or validate an incoming Central current. `gross-rescue` is the registered R1 rule. `reviewer-validity` is the validated R2 rule and accepts independent HUBP, WhisperX, and XLSR reviewer evidence only for registered soft evidence gaps.
-4. The selected timestamps are serialized to LRC. Review/trust fields remain diagnostic metadata unless an explicit strict-review option asks for a non-zero exit.
+4. Post-Central multimodel consensus (v1.3) may replace a still-unresolved Central time when at least three model families agree, and adds review flags where they disagree.
+5. The selected timestamps are serialized to LRC. Review/trust fields remain diagnostic metadata unless an explicit strict-review option asks for a non-zero exit.
 
 Checked reference timestamps are never part of normal automatic inference. Explicit `lyrics` / `checked` modes remain available when assisted timing is intentionally requested.
 
@@ -29,6 +50,8 @@ After Central selects immutable lyric times, the final report audits every line 
 On the **37-song / 1414-line manually checked BK research pool**, retrospective report replay flags 107 rows: 57/86 large (>1s) errors and 73/195 errors over 200ms; 34 flagged lines were actually within 200ms. This is **diagnostic recall, not timestamp accuracy improvement**. Historical-report replay is not an independent full new same-parent A/B. See _review/H2_BK37_OFFLINE_AUDIT_20261009.json.
 
 ## Known limitations（已知限制）
+
+In v1.3, the remaining large errors are lines where every acoustic model fails together: very weak vocals, long instrumental gaps, and some repeated choruses. They are flagged for review in the report. The v1.2 notes below describe the earlier behavior.
 
 Occurrence loss is a known v1.2 limitation: whole-song CTC may misidentify repeated sung passages and collapse or shift consecutive lyric rows. Verified examples: 04 影色舞, 03. Choir ‘S’ Choir, 01.ミレニアの水槽, and My Dearest. Manual listening is required; model confidence alone is insufficient.
 
