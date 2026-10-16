@@ -1,5 +1,6 @@
 """Recoverable two-file publication of an LRC and its alignment report."""
 from __future__ import annotations
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -51,6 +52,7 @@ def publish_pair(
     write_report: Callable[[Path], object],
     *,
     replace: Callable[[Path, Path], object] = os.replace,
+    on_lrc_staged: Callable[[str], object] | None = None,
 ) -> None:
     recover_pair(lrc_path, report_path)
     lrc_path.parent.mkdir(parents=True, exist_ok=True)
@@ -65,6 +67,9 @@ def publish_pair(
     journal_written = False
     try:
         write_lrc(stages["lrc"])
+        if on_lrc_staged is not None and stages["lrc"].is_file():
+            digest = hashlib.sha256(stages["lrc"].read_bytes()).hexdigest()
+            on_lrc_staged(digest)
         write_report(stages["report"])
         if not stages["lrc"].is_file() or stages["lrc"].stat().st_size == 0:
             raise PublicationError("LRC stage was not written")

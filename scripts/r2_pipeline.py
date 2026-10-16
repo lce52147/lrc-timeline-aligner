@@ -24,6 +24,8 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import auto_lrc  # noqa: E402
+from lrc_manual_edits import manual_edit_reason  # noqa: E402
+from lrc_publication import journal_path  # noqa: E402
 import reviewer_layer  # noqa: E402
 import reviewer_independent_offset as vocal_offset  # noqa: E402
 
@@ -743,7 +745,7 @@ def prepare_baseline_args(
             "--arbiter", "--reviewer-evidence", "--output", "--report-dir",
             "--min-trusted-percent",
         },
-        flags={"--strict-review", "--fail-on-review-required"},
+        flags={"--strict-review", "--fail-on-review-required", "--discard-manual-edits"},
     )
     cleaned.append("--no-review-summary")
     cleaned.extend(
@@ -811,6 +813,28 @@ def main(argv: list[str] | None = None) -> int:
     baseline_output = run_dir / "baseline.lrc"
     baseline_report_dir = run_dir / "baseline-reports"
     evidence_path = run_dir / "reviewer-evidence.json"
+    final_output = (
+        Path(parsed.output).expanduser().resolve()
+        if parsed.output
+        else audio_path.with_suffix(".lrc")
+    )
+    final_report_dir = (
+        Path(parsed.report_dir).expanduser().resolve()
+        if parsed.report_dir
+        else auto_lrc.DEFAULT_REPORT_DIR
+    )
+    final_report_path, _audit_path, _template_path = auto_lrc.report_artifact_paths(
+        audio_path, final_output, final_report_dir
+    )
+    if parsed.overwrite and final_output.exists():
+        edit_reason = manual_edit_reason(final_output, final_report_path)
+        if edit_reason and not getattr(parsed, "discard_manual_edits", False) and not journal_path(final_report_path).exists():
+            print(
+                f"ERROR: Manual review edits detected for {final_output} ({edit_reason}); refusing to overwrite. "
+                "Re-run with --discard-manual-edits to replace them (the edited LRC is archived first).",
+                file=sys.stderr,
+            )
+            return 2
 
     baseline_args = prepare_baseline_args(
         backend_args, output=baseline_output, report_dir=baseline_report_dir
@@ -872,19 +896,6 @@ def main(argv: list[str] | None = None) -> int:
     if final_code != 0:
         return final_code
 
-    final_output = (
-        Path(parsed.output).expanduser().resolve()
-        if parsed.output
-        else audio_path.with_suffix(".lrc")
-    )
-    final_report_dir = (
-        Path(parsed.report_dir).expanduser().resolve()
-        if parsed.report_dir
-        else auto_lrc.DEFAULT_REPORT_DIR
-    )
-    final_report_path, _audit_path, _template_path = auto_lrc.report_artifact_paths(
-        audio_path, final_output, final_report_dir
-    )
     if not final_report_path.is_file():
         print(f"ERROR: final report missing: {final_report_path}", file=sys.stderr)
         return 1

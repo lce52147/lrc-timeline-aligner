@@ -34,7 +34,7 @@ import unicodedata
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal, Mapping, Sequence
+from typing import Callable, Literal, Mapping, Sequence
 
 import numpy as np
 
@@ -38878,7 +38878,23 @@ def write_lrc(
 
 
 from lrc_review_tsv import format_top_review, write_review_tsv
+from lrc_manual_edits import archive_manual_edits, manual_edit_reason
 from lrc_publication import publish_pair, recover_pair
+
+def _publish_lrc_report(
+    output_path: Path,
+    report_path: Path,
+    write_lrc_stage: Callable[[Path], object],
+    report: dict[str, object],
+) -> None:
+    publish_pair(
+        output_path,
+        report_path,
+        write_lrc_stage,
+        lambda stage: write_alignment_report(stage, report),
+        on_lrc_staged=lambda digest: report.__setitem__("published_lrc_sha256", digest),
+    )
+
 
 def report_artifact_paths(audio_path: Path, output_path: Path, report_dir: Path) -> tuple[Path, Path, Path]:
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -38998,6 +39014,15 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
     # GPU time for a probe whose destination could not be written.
     if output_path.exists() and not args.overwrite:
         raise LrcError(f"Output already exists: {output_path}. Use --overwrite to replace it.")
+    edit_reason = manual_edit_reason(output_path, recovery_report)
+    if edit_reason and not getattr(args, "discard_manual_edits", False):
+        raise LrcError(
+            f"Manual review edits detected for {output_path} ({edit_reason}); refusing to overwrite. "
+            "Re-run with --discard-manual-edits to replace them (the edited LRC is archived first)."
+        )
+    if edit_reason:
+        for archived in archive_manual_edits(output_path, recovery_report):
+            progress_log(f"archived manual review artifact: {archived}")
     requested_whisper_language = args.whisper_language
     if args.whisper_language == "auto":
         args = copy.copy(args)
@@ -39386,13 +39411,14 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
     report["review_tsv_path"] = str(review_tsv_path)
     write_review_tsv(review_tsv_path, report, entries)
     progress_log(f"publishing LRC/report pair: {report_path}")
-    publish_pair(
-        output_path, report_path,
+    _publish_lrc_report(
+        output_path,
+        report_path,
         lambda stage: write_lrc(
             stage, audio_path, lyrics_path, entries, written_times, duration,
             True, metadata_lines, f"LRC tools {strategy}",
         ),
-        lambda stage: write_alignment_report(stage, report),
+        report,
     )
     if not getattr(args, "no_review_summary", False):
         try:
@@ -39439,7 +39465,7 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
         report["strict_failure_reason"] = strict_reason
         report["review_audit_path"] = str(audit_path)
         report["anchor_template_path"] = str(template_path)
-        publish_pair(output_path, report_path, lambda q: shutil.copy2(output_path,q), lambda q: write_alignment_report(q,report))
+        _publish_lrc_report(output_path, report_path, lambda q: shutil.copy2(output_path, q), report)
         raise LrcError(
             f"strict review failed for {output_path}: {strict_reason}. "
             f"Draft LRC, report, review audit, and anchor template were written; inspect {audit_path}, "
@@ -39466,6 +39492,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Explicit lyric path. Omit to auto-detect <song>.lyrics.lrc, <song>.lyrics.txt, or <song>.txt.",
     )
     parser.add_argument("--overwrite", action="store_true", help="Replace existing .lrc files.")
+    parser.add_argument("--discard-manual-edits", action="store_true", help="allow --overwrite to replace an LRC edited in the review page; the edited LRC and edit log are archived first")
     parser.add_argument(
         "--output",
         help="Explicit output .lrc path. Only valid when processing one FLAC file.",
