@@ -108,7 +108,7 @@ class ManualEditTests(unittest.TestCase):
             edited = output.read_bytes()
             self._run_lyrics(root, overwrite=True, discard=True)
             stem = report.name[:-len(".align-report.json")]
-            archives = list(root.glob(stem + ".discarded-*.lrc"))
+            archives = [path for path in report.parent.glob(stem + ".discarded-*.lrc") if not path.name.endswith(".auto.lrc")]
             self.assertEqual(len(archives), 1)
             self.assertEqual(archives[0].read_bytes(), edited)
             self.assertTrue(list(report.parent.glob(stem + ".discarded-*.auto.lrc")))

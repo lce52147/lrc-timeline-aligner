@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import http.server
+import math
 import json
 import os
 import pathlib
@@ -34,6 +35,13 @@ def _sha256_file(path):
     return digest.hexdigest()
 
 
+def _safe_compare(left, right):
+    try:
+        return secrets.compare_digest(left, right)
+    except TypeError:
+        return False
+
+
 def _number(value):
     if isinstance(value, bool):
         return None
@@ -46,7 +54,7 @@ def _number(value):
 
 def _tag_cs(value):
     if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return int(round(float(value) * 100))
+        return math.floor(float(value) * 100 + 0.5)
     match = re.fullmatch(r"\[?(\d+):(\d{2})\.(\d{2})\]?", str(value or ""))
     if not match:
         return None
@@ -130,6 +138,8 @@ def _timing_mapping(data, display_lines, assignments):
 
 
 def _path_is_excluded(path):
+    if not isinstance(path, (str, pathlib.Path)):
+        return False
     parts = {part.casefold() for part in pathlib.Path(path).parts}
     return any(name in parts for name in _EXCLUDED_DIR_NAMES)
 
@@ -225,6 +235,11 @@ def _candidate_time(value):
     return None
 
 
+def _seconds_cs(value):
+    number = _number(value)
+    return None if number is None else math.floor(number * 100 + 0.5)
+
+
 def _candidate_rows(assignment, current_cs, auto_cs):
     raw = []
     if auto_cs is not None:
@@ -234,15 +249,15 @@ def _candidate_rows(assignment, current_cs, auto_cs):
     for item in candidates:
         value = _candidate_time(item)
         if value is not None:
-            raw.append((int(round(value * 100)), str(item.get("source", "candidate")), _number(item.get("score")) or 0.0, False))
+            raw.append((_seconds_cs(value), str(item.get("source", "candidate")), _number(item.get("score")) or 0.0, False))
     first = _number(assignment.get("ctc_first_token_start"))
     if first is not None:
-        raw.append((int(round(first * 100)), "ctc-first-token", _number(assignment.get("ctc_first_token_score")) or 0.0, False))
+        raw.append((_seconds_cs(first), "ctc-first-token", _number(assignment.get("ctc_first_token_score")) or 0.0, False))
     rejected = assignment.get("rejected_candidates")
     for item in rejected if isinstance(rejected, list) else []:
         value = _candidate_time(item)
         if value is not None:
-            raw.append((int(round(value * 100)), str(item.get("source", "rejected")), _number(item.get("score")) or 0.0, True))
+            raw.append((_seconds_cs(value), str(item.get("source", "rejected")), _number(item.get("score")) or 0.0, True))
     merged = []
     for cs, source, score, rejected_flag in sorted(raw, key=lambda item: (-item[2], item[0], item[1])):
         match = next((item for item in merged if abs(item["cs"] - cs) <= 5), None)
@@ -301,49 +316,79 @@ def _trust_state(report, output_path, auto_path, edits_path, mapping, current_da
 def _song_payload(report_path, report):
     assignments = report.get("assignments") if isinstance(report.get("assignments"), list) else []
     output_value = report.get("output_path")
-    output_path = pathlib.Path(output_value).expanduser() if isinstance(output_value, str) and output_value else report_path.parent.parent / "candidate.lrc"
-    if not output_path.is_file():
-        candidate = report_path.parent.parent / "candidate.lrc"
-        if candidate.is_file():
-            output_path = candidate
+    output_path = pathlib.Path(output_value).expanduser() if isinstance(output_value, str) and output_value else None
     auto_path, edits_path = review_artifact_paths(report_path)
-    current_data = output_path.read_bytes() if output_path.is_file() else b""
+    current_data = output_path.read_bytes() if output_path and output_path.is_file() else b""
     reference_data = auto_path.read_bytes() if auto_path.is_file() else current_data
-    timing_entries = report.get("timing_entries")
-    if timing_entries is not None and (not isinstance(timing_entries, int) or timing_entries != len(assignments)):
-        mapping, mapping_reason = None, "timing-entry-count-mismatch"
+    mapping = None
+    mapping_reason = None
+    if output_path is None or not output_path.is_file():
+        mapping_reason = "lrc-missing"
     else:
-        mapping, _reference_lines, mapping_reason = _timing_mapping(reference_data, report.get("display_lines"), assignments)
+        timing_entries = report.get("timing_entries")
+        if timing_entries is not None and (not isinstance(timing_entries, int) or timing_entries != len(assignments)):
+            mapping_reason = "timing-entry-count-mismatch"
+        else:
+            mapping, _reference_lines, mapping_reason = _timing_mapping(
+                reference_data, report.get("display_lines"), assignments
+            )
     _cbom, _ctrailing, current_lines = _split_lrc(current_data)
     readonly = mapping_reason is not None
     reason = mapping_reason
     rows = []
     if mapping is not None:
-        trust_readonly, trust_reason = _trust_state(report, output_path, auto_path, edits_path, mapping, current_data, reference_data)
+        trust_readonly, trust_reason = _trust_state(
+            report, output_path, auto_path, edits_path, mapping, current_data, reference_data
+        )
         if trust_readonly:
             readonly, reason = True, trust_reason
         _abom, _atrailing, auto_lines = _split_lrc(reference_data)
         features = lrc_review_tsv.severity_features(report)
         tsv_rows = _report_rows(report_path, report)
-        listed = {int(row.get("entry")): row for row in tsv_rows if isinstance(row, dict) and str(row.get("entry", "")).isdigit()}
+        listed = {
+            int(row.get("entry")): row for row in tsv_rows
+            if isinstance(row, dict) and str(row.get("entry", "")).isdigit()
+        }
+
+        def line_time(lines, index):
+            return _line_tag(lines[index]) if 0 <= index < len(lines) else None
+
+        def line_lyrics(lines, indexes):
+            return [
+                _tag_tail(lines[index]).rstrip(b"\r").decode("utf-8", "replace")
+                for index in indexes if 0 <= index < len(lines)
+            ]
+
+        def adjacent(index):
+            if not (0 <= index < len(mapping)):
+                return None
+            indexes = mapping[index]
+            return {
+                "cs": line_time(current_lines, indexes[0]),
+                "lyrics": line_lyrics(current_lines, indexes),
+                "lyric": "\n".join(line_lyrics(current_lines, indexes)),
+            }
+
         for index, line_indexes in enumerate(mapping):
             assignment = assignments[index]
             feature = features.get(index + 1, {})
-            current_cs = _line_tag(current_lines[line_indexes[0]])
-            auto_cs = _line_tag(auto_lines[line_indexes[0]]) if line_indexes[0] < len(auto_lines) else current_cs
-            lyric = _tag_tail(current_lines[line_indexes[0]]).rstrip(b"\r").decode("utf-8", "replace")
+            current_cs = line_time(current_lines, line_indexes[0])
+            auto_cs = line_time(auto_lines, line_indexes[0])
+            lyrics = line_lyrics(current_lines, line_indexes)
             row = {
                 "entry": index + 1,
-                "lyric": lyric,
+                "lyrics": lyrics,
+                "lyric": "\n".join(lyrics),
                 "current_cs": current_cs,
                 "auto_cs": auto_cs,
                 "current": current_cs / 100.0 if current_cs is not None else None,
                 "auto": auto_cs / 100.0 if auto_cs is not None else None,
-                "previous": feature.get("prev_time"),
-                "next": feature.get("next_time"),
+                "previous": adjacent(index - 1),
+                "next": adjacent(index + 1),
                 "review": listed.get(index + 1, {}).get("status", feature.get("status", "UNTRUSTED")),
                 "severity_rank": listed.get(index + 1, {}).get("severity_rank"),
                 "severity_score": feature.get("severity_score", 0),
+                "candidate_spread": feature.get("candidate_spread_s"),
                 "reason": listed.get(index + 1, {}).get("reason_codes", ""),
                 "candidates": _candidate_rows(assignment, current_cs, auto_cs),
             }
@@ -357,7 +402,9 @@ def _song_payload(report_path, report):
         "read_only_reason": reason,
         "audio_path": str(report.get("audio_path", "")),
         "ctc_audio_path": str(report.get("ctc_audio_path", "")),
-        "output_path": str(output_path),
+        "has_flac": pathlib.Path(report.get("audio_path", "")).is_file(),
+        "has_stem": pathlib.Path(report.get("ctc_audio_path", "")).is_file(),
+        "output_path": str(output_path) if output_path else "",
         "base_sha256": _sha256_bytes(current_data),
         "duration_seconds": _number(report.get("duration_seconds")) or 0.0,
         "report_data": report,
@@ -383,6 +430,8 @@ def _save_song(song, body):
     if set(body) != {"base_sha256", "edits"} or not isinstance(body.get("edits"), list) or not isinstance(body.get("base_sha256"), str):
         return 400, {"error": "body must contain base_sha256 and edits"}
     output = song["output"]
+    if output is None or not output.is_file():
+        return 403, {"error": "lrc-missing"}
     current = output.read_bytes()
     if _sha256_bytes(current) != body["base_sha256"]:
         return 409, {"error": "stale base_sha256"}
@@ -531,11 +580,11 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
         return self.headers.get("Host", "") == f"127.0.0.1:{self.server.server_port}"
 
     def _token_header_ok(self):
-        return secrets.compare_digest(self.headers.get("X-Review-Token", ""), self.server.token)
+        return _safe_compare(self.headers.get("X-Review-Token", ""), self.server.token)
 
     def _token_query_ok(self, query):
         values = urllib.parse.parse_qs(query).get("t", [])
-        return bool(values) and secrets.compare_digest(values[0], self.server.token)
+        return bool(values) and _safe_compare(values[0], self.server.token)
 
     def _send(self, status, data=b"", content_type="application/octet-stream", extra=None, head=False):
         self.send_response(status)
@@ -549,7 +598,7 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
         if not head and data:
             try:
                 self.wfile.write(data)
-            except (BrokenPipeError, ConnectionResetError):
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 pass
 
     def _json(self, status, payload):
@@ -712,7 +761,7 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
                             break
                         try:
                             self.wfile.write(block)
-                        except (BrokenPipeError, ConnectionResetError):
+                        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                             break
                         remaining -= len(block)
         except (OSError, ConnectionResetError, BrokenPipeError):

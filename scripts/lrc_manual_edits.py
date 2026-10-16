@@ -61,7 +61,7 @@ def archive_manual_edits(output_path: Path, report_path: Path) -> list[Path]:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     stem = report_path.name[:-len(_REPORT_SUFFIX)]
     archived: list[Path] = []
-    lrc_archive = output_path.with_name(stem + f".discarded-{stamp}.lrc")
+    lrc_archive = report_path.with_name(stem + f".discarded-{stamp}.lrc")
     shutil.copy2(output_path, lrc_archive)
     archived.append(lrc_archive)
     for source, suffix in ((auto_path, ".auto.lrc"), (edits_path, ".review-edits.json")):
