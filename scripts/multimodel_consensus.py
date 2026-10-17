@@ -54,7 +54,7 @@ def _sha256_file(path: Path) -> str:
 def _hf_snapshot(repo: str, revision: str | None = None) -> Path | None:
     roots = []
     for value in (
-        os.environ.get("HUGGINGFACE_HUB_CACHE"),
+        os.environ.get("HF_HUB_CACHE"),
         os.environ.get("HF_HOME"),
         str(Path.home() / ".cache" / "huggingface" / "hub"),
     ):
@@ -71,10 +71,11 @@ def _hf_snapshot(repo: str, revision: str | None = None) -> Path | None:
             candidate = snapshots / revision
             if candidate.is_dir():
                 return candidate
+            continue
         ref = repo_dir / "refs" / "main"
         if ref.is_file():
-            revision = ref.read_text(encoding="utf-8").strip()
-            candidate = snapshots / revision
+            ref_revision = ref.read_text(encoding="utf-8").strip()
+            candidate = snapshots / ref_revision
             if candidate.is_dir():
                 return candidate
         found = sorted(item for item in snapshots.iterdir() if item.is_dir())
@@ -83,15 +84,20 @@ def _hf_snapshot(repo: str, revision: str | None = None) -> Path | None:
     return None
 
 
-def _snapshot_blob(snapshot: Path) -> str:
+def _snapshot_weights(snapshot: Path) -> tuple[Path, ...]:
     files = sorted(
         item for item in snapshot.iterdir()
         if item.is_file() and _WEIGHT_NAME.fullmatch(item.name)
     )
-    if not files:
-        return "UNVERIFIED"
     if any(item.name.startswith("model") and item.suffix == ".safetensors" for item in files):
         files = [item for item in files if not item.name.startswith("pytorch_model")]
+    return tuple(files)
+
+
+def _snapshot_blob(snapshot: Path) -> str:
+    files = _snapshot_weights(snapshot)
+    if not files:
+        return "UNVERIFIED"
     blobs: list[str] = []
     for item in files:
         resolved = item.resolve()
@@ -100,6 +106,26 @@ def _snapshot_blob(snapshot: Path) -> str:
             blob = _sha256_file(resolved)
         blobs.append(f"{item.name}:{blob}")
     return hashlib.sha256("\n".join(blobs).encode("utf-8")).hexdigest()
+
+
+def hf_model_load_options(repo: str) -> dict[str, object]:
+    revision = HF_MODEL_REVISIONS.get(repo)
+    if revision is None:
+        raise RuntimeError(f"unpinned Hugging Face model: {repo}")
+    snapshot = _hf_snapshot(repo, revision)
+    if snapshot is None:
+        raise RuntimeError(f"pinned Hugging Face snapshot unavailable: {repo}@{revision}")
+    weights = _snapshot_weights(snapshot)
+    if not weights:
+        raise RuntimeError(f"pinned Hugging Face weights unavailable: {repo}@{revision}")
+    return {
+        "revision": revision,
+        "local_files_only": True,
+        "use_safetensors": any(
+            item.name.startswith("model") and item.suffix == ".safetensors"
+            for item in weights
+        ),
+    }
 
 
 def _torch_blob(filename: str) -> str:

@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 import multimodel_consensus
+import doctor
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -58,8 +59,26 @@ class InstallationContractTests(unittest.TestCase):
             extra.mkdir(parents=True)
             (pinned / "pytorch_model.bin").write_bytes(b"pinned")
             (extra / "model.safetensors").write_bytes(b"converted")
-            with mock.patch.dict(os.environ, {"HUGGINGFACE_HUB_CACHE": str(hub)}, clear=False):
+            with mock.patch.dict(os.environ, {"HF_HUB_CACHE": str(hub)}, clear=False), mock.patch.object(
+                multimodel_consensus.Path, "home", return_value=Path(tmp) / "home"
+            ):
                 self.assertEqual(multimodel_consensus._hf_snapshot(repo, revision), pinned)
+
+    def test_hf_identity_does_not_fallback_when_pinned_snapshot_is_missing(self) -> None:
+        repo = "facebook/wav2vec2-large-960h-lv60-self"
+        revision = multimodel_consensus.HF_MODEL_REVISIONS[repo]
+        with tempfile.TemporaryDirectory() as tmp:
+            hub = Path(tmp) / "hub"
+            repo_dir = hub / "models--facebook--wav2vec2-large-960h-lv60-self"
+            fallback = repo_dir / "snapshots" / "bdb144224e9bb4a242a52f223186f120f6589a6b"
+            fallback.mkdir(parents=True)
+            (fallback / "model.safetensors").write_bytes(b"converted")
+            (repo_dir / "refs").mkdir()
+            (repo_dir / "refs" / "main").write_text(fallback.name, encoding="utf-8")
+            with mock.patch.dict(os.environ, {"HF_HUB_CACHE": str(hub)}, clear=False), mock.patch.object(
+                multimodel_consensus.Path, "home", return_value=Path(tmp) / "home"
+            ):
+                self.assertIsNone(multimodel_consensus._hf_snapshot(repo, revision))
 
     def test_hf_identity_prefers_safetensors_when_both_weight_formats_are_cached(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -70,6 +89,62 @@ class InstallationContractTests(unittest.TestCase):
             blob = hashlib.sha256(safe.read_bytes()).hexdigest()
             expected = hashlib.sha256(f"model.safetensors:{blob}".encode("utf-8")).hexdigest()
             self.assertEqual(multimodel_consensus._snapshot_blob(snapshot), expected)
+
+    def test_hf_load_options_share_weight_selection_with_identity(self) -> None:
+        repo = "jonatasgrosman/wav2vec2-large-xlsr-53-english"
+        revision = multimodel_consensus.HF_MODEL_REVISIONS[repo]
+        with tempfile.TemporaryDirectory() as tmp:
+            hub = Path(tmp) / "hub"
+            snapshot = hub / "models--jonatasgrosman--wav2vec2-large-xlsr-53-english" / "snapshots" / revision
+            snapshot.mkdir(parents=True)
+            (snapshot / "model.safetensors").write_bytes(b"safe")
+            (snapshot / "pytorch_model.bin").write_bytes(b"legacy")
+            with mock.patch.dict(os.environ, {"HF_HUB_CACHE": str(hub)}, clear=False):
+                self.assertEqual(
+                    multimodel_consensus.hf_model_load_options(repo),
+                    {"revision": revision, "local_files_only": True, "use_safetensors": True},
+                )
+
+    def test_every_consensus_hf_repo_is_pinned(self) -> None:
+        repos = set()
+        for spec in multimodel_consensus.MODEL_SPECS:
+            if spec.startswith("mms1b:"):
+                repos.add("facebook/mms-1b-all")
+            elif spec.startswith(("en-ctc:", "ja-ctc:")):
+                repo = spec.split(":", 2)[1]
+                if repo != "torchaudio":
+                    repos.add(repo)
+        self.assertEqual(repos, set(multimodel_consensus.HF_MODEL_REVISIONS))
+
+    def test_runtime_sources_require_offline_pinned_hf_loads(self) -> None:
+        multimodel = (ROOT / "scripts" / "multimodel_align.py").read_text(encoding="utf-8-sig")
+        japanese = (ROOT / "scripts" / "japanese_ctc_align.py").read_text(encoding="utf-8-sig")
+        self.assertIn('HF_HUB_OFFLINE"] = "1"', multimodel)
+        self.assertIn("hf_model_load_options", multimodel)
+        self.assertIn('HF_HUB_OFFLINE"] = "1"', japanese)
+        self.assertIn("hf_model_load_options", japanese)
+
+    def test_doctor_checks_transformers_cache_contract(self) -> None:
+        source = (ROOT / "scripts" / "doctor.py").read_text(encoding="utf-8-sig")
+        self.assertIn('doctor.check("hf-cache-environment"', source)
+        self.assertIn('"TRANSFORMERS_CACHE"', source)
+
+    def test_doctor_rejects_split_transformers_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            hub = Path(tmp) / "hub"
+            legacy = Path(tmp) / "transformers"
+            empty = {"HF_HOME": None, "HF_HUB_CACHE": None, "TRANSFORMERS_CACHE": None}
+            with mock.patch.dict(
+                os.environ,
+                {"HF_HUB_CACHE": str(hub), "TRANSFORMERS_CACHE": str(legacy)},
+                clear=False,
+            ), mock.patch.object(doctor, "_persistent_hf_environment", return_value=empty):
+                with self.assertRaisesRegex(RuntimeError, "TRANSFORMERS_CACHE differs from hub"):
+                    doctor.check_hf_cache_environment()
+
+    def test_setup_removes_only_stale_isolated_transformers_cache(self) -> None:
+        source = (ROOT / "setup.ps1").read_text(encoding="utf-8-sig")
+        self.assertIn('Join-Path $scriptDir "_isolated\\hf\\transformers"', source)
 
     def test_setup_pins_external_binary_archives(self) -> None:
         source = (ROOT / "setup.ps1").read_text(encoding="utf-8-sig")

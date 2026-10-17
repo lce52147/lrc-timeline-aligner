@@ -6,12 +6,16 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import subprocess
 from pathlib import Path
+
+os.environ["HF_HUB_OFFLINE"] = "1"
 
 import torch
 import torchaudio
 from transformers import AutoModelForCTC, AutoProcessor
+from multimodel_consensus import hf_model_load_options
 
 
 MODEL_NAME = "jonatasgrosman/wav2vec2-large-xlsr-53-japanese"
@@ -58,8 +62,13 @@ def main() -> int:
     if not isinstance(lines, list) or not all(isinstance(line, str) and line for line in lines):
         raise RuntimeError("--transcript must be a non-empty JSON string list")
     device = "cuda" if args.device == "auto" and torch.cuda.is_available() else args.device
-    processor = AutoProcessor.from_pretrained(MODEL_NAME)
-    model = AutoModelForCTC.from_pretrained(MODEL_NAME).to(device).eval()
+    model_options = hf_model_load_options(MODEL_NAME)
+    processor = AutoProcessor.from_pretrained(
+        MODEL_NAME,
+        revision=model_options["revision"],
+        local_files_only=True,
+    )
+    model = AutoModelForCTC.from_pretrained(MODEL_NAME, **model_options).to(device).eval()
     waveform = decode_audio(Path(args.audio), args.start, args.end)
     with torch.inference_mode():
         logits = model(waveform.to(device)).logits

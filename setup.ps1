@@ -138,6 +138,12 @@ if ($Check) {
     exit 0
 }
 
+$staleTransformersCache = Join-Path $scriptDir "_isolated\hf\transformers"
+if (Test-Path -LiteralPath $staleTransformersCache) {
+    Remove-Item -LiteralPath $staleTransformersCache -Recurse -Force
+    Write-Host "Removed stale Transformers cache: $staleTransformersCache" -ForegroundColor DarkYellow
+}
+
 if ($Force -and (Test-Path -LiteralPath $venvDir)) {
     Write-Host "Rebuilding .venv-asr" -ForegroundColor Yellow
     Remove-Item -LiteralPath $venvDir -Recurse -Force

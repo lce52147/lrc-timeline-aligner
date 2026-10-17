@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import gc
 import json
+import os
 import re
 import subprocess
 import sys
@@ -17,6 +18,8 @@ import tempfile
 import unicodedata
 from pathlib import Path
 from typing import Any, Callable
+
+os.environ["HF_HUB_OFFLINE"] = "1"
 
 import numpy as np
 import torch
@@ -28,6 +31,7 @@ import ctc_align as C  # noqa: E402
 from multimodel_consensus import (  # noqa: E402
     MODEL_SPECS,
     PROTOCOL_REVISION,
+    hf_model_load_options,
     model_identity,
 )
 SAMPLE_RATE = 16_000
@@ -92,7 +96,7 @@ def _lines(row: dict[str, Any]) -> list[str]:
 
 
 class HFCtc:
-    def __init__(self, name: str, text_mode: str, device: str, revision: str) -> None:
+    def __init__(self, name: str, text_mode: str, device: str) -> None:
         from transformers import (
             AutoFeatureExtractor,
             AutoModelForCTC,
@@ -100,13 +104,17 @@ class HFCtc:
             Wav2Vec2Processor,
         )
 
-        revision_arg = {"revision": revision} if revision != "UNVERIFIED" else {}
+        model_options = hf_model_load_options(name)
+        common_options = {
+            "revision": model_options["revision"],
+            "local_files_only": True,
+        }
         self.processor = Wav2Vec2Processor(
-            feature_extractor=AutoFeatureExtractor.from_pretrained(name, **revision_arg),
-            tokenizer=AutoTokenizer.from_pretrained(name, **revision_arg),
+            feature_extractor=AutoFeatureExtractor.from_pretrained(name, **common_options),
+            tokenizer=AutoTokenizer.from_pretrained(name, **common_options),
         )
         self.model = (
-            AutoModelForCTC.from_pretrained(name, **revision_arg)
+            AutoModelForCTC.from_pretrained(name, **model_options)
             .to(device)
             .eval()
         )
@@ -152,17 +160,21 @@ class HFCtc:
 
 
 class Mms1b(HFCtc):
-    def __init__(self, lang: str, text_mode: str, device: str, revision: str) -> None:
+    def __init__(self, lang: str, text_mode: str, device: str) -> None:
         from transformers import AutoProcessor, Wav2Vec2ForCTC
 
         name = "facebook/mms-1b-all"
-        revision_arg = {"revision": revision} if revision != "UNVERIFIED" else {}
+        model_options = hf_model_load_options(name)
+        common_options = {
+            "revision": model_options["revision"],
+            "local_files_only": True,
+        }
         self.processor = AutoProcessor.from_pretrained(
-            name, target_lang=lang, **revision_arg
+            name, target_lang=lang, **common_options
         )
         self.model = (
             Wav2Vec2ForCTC.from_pretrained(
-                name, target_lang=lang, ignore_mismatched_sizes=True, **revision_arg
+                name, target_lang=lang, ignore_mismatched_sizes=True, **model_options
             )
             .to(device)
             .eval()
@@ -250,15 +262,15 @@ def _load(spec: str, device: str) -> Callable[[dict[str, Any]], float | None]:
         return lambda row: _mms(row, device)
     if spec.startswith("mms1b:"):
         _, lang, text_mode = spec.split(":", 2)
-        return Mms1b(lang, text_mode, device, model_identity(spec)["model_revision"])
+        return Mms1b(lang, text_mode, device)
     if spec.startswith("en-ctc:torchaudio:"):
         return TorchaudioEnglish(device)
     if spec.startswith("en-ctc:"):
         _, name, text_mode = spec.split(":", 2)
-        return HFCtc(name, text_mode, device, model_identity(spec)["model_revision"])
+        return HFCtc(name, text_mode, device)
     if spec.startswith("ja-ctc:"):
         _, name, text_mode = spec.split(":", 2)
-        return HFCtc(name, text_mode, device, model_identity(spec)["model_revision"])
+        return HFCtc(name, text_mode, device)
     raise ValueError(f"unsupported multimodel spec: {spec}")
 
 

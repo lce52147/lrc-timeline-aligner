@@ -15,14 +15,7 @@ SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from multimodel_consensus import MODEL_SPECS  # noqa: E402
-
-
-HF_REVISIONS = {
-    "facebook/mms-1b-all": "3d33597edbdaaba14a8e858e2c8caa76e3cec0cd",
-    "facebook/wav2vec2-large-960h-lv60-self": "54074b1c16f4de6a5ad59affb4caa8f2ea03a119",
-    "jonatasgrosman/wav2vec2-large-xlsr-53-english": "569a6236e92bd5f7652a0420bfe9bb94c5664080",
-}
+from multimodel_consensus import HF_MODEL_REVISIONS, MODEL_SPECS  # noqa: E402
 ENGLISH_XLSR_REPO = "jonatasgrosman/wav2vec2-large-xlsr-53-english"
 ENGLISH_XLSR_FILES = (
     "config.json",
@@ -33,7 +26,6 @@ ENGLISH_XLSR_FILES = (
     "vocab.json",
 )
 JAPANESE_XLSR_REPO = "jonatasgrosman/wav2vec2-large-xlsr-53-japanese"
-JAPANESE_XLSR_EXPECTED = "cf031e020336460d15a417eba710bbc5bb43be9a"
 HUBP_REPO = "prj-beatrice/japanese-hubert-base-phoneme-ctc"
 HUBP_REVISION = "1ec4eb3c45b2a1cafb7c477d447df34ca03070f2"
 KNOWN_HUBERT_REPO = "TKU410410103/hubert-base-japanese-asr"
@@ -83,7 +75,7 @@ def _prefetch_hf() -> None:
     for repo in sorted(repos):
         if repo == JAPANESE_XLSR_REPO:
             continue
-        revision = HF_REVISIONS.get(repo)
+        revision = HF_MODEL_REVISIONS.get(repo)
         if revision is None:
             raise RuntimeError(f"un-pinned MODEL_SPECS repo: {repo}")
         patterns = (
@@ -95,12 +87,12 @@ def _prefetch_hf() -> None:
         if path.name != revision:
             raise RuntimeError(f"snapshot revision mismatch for {repo}: {path.name} != {revision}")
 
-    japanese = _download_snapshot(JAPANESE_XLSR_REPO, "main")
-    if japanese.name != JAPANESE_XLSR_EXPECTED:
-        print(
-            f"WARN japanese XLSR main moved: {japanese.name} != {JAPANESE_XLSR_EXPECTED}",
-            file=sys.stderr,
-            flush=True,
+    japanese_revision = HF_MODEL_REVISIONS[JAPANESE_XLSR_REPO]
+    japanese = _download_snapshot(JAPANESE_XLSR_REPO, japanese_revision)
+    if japanese.name != japanese_revision:
+        raise RuntimeError(
+            f"snapshot revision mismatch for {JAPANESE_XLSR_REPO}: "
+            f"{japanese.name} != {japanese_revision}"
         )
 
     _download_snapshot(

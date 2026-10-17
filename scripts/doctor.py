@@ -82,6 +82,63 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _persistent_hf_environment(scope: str) -> dict[str, str | None]:
+    names = ("HF_HOME", "HF_HUB_CACHE", "TRANSFORMERS_CACHE")
+    values = {name: None for name in names}
+    if os.name != "nt":
+        return values
+    import winreg
+
+    if scope == "User":
+        root, key = winreg.HKEY_CURRENT_USER, "Environment"
+    elif scope == "Machine":
+        root, key = winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+    else:
+        raise ValueError(scope)
+    try:
+        with winreg.OpenKey(root, key) as handle:
+            for name in names:
+                try:
+                    values[name] = str(winreg.QueryValueEx(handle, name)[0])
+                except FileNotFoundError:
+                    pass
+    except FileNotFoundError:
+        pass
+    return values
+
+
+def _hf_hub_path(values: dict[str, str | None]) -> Path:
+    if values.get("HF_HUB_CACHE"):
+        raw = str(values["HF_HUB_CACHE"])
+    elif values.get("HF_HOME"):
+        raw = str(Path(str(values["HF_HOME"])) / "hub")
+    else:
+        raw = str(Path.home() / ".cache" / "huggingface" / "hub")
+    return Path(os.path.expandvars(raw)).expanduser().resolve()
+
+
+def check_hf_cache_environment() -> str:
+    names = ("HF_HOME", "HF_HUB_CACHE", "TRANSFORMERS_CACHE")
+    scopes = {
+        "Process": {name: os.environ.get(name) for name in names},
+        "User": _persistent_hf_environment("User"),
+        "Machine": _persistent_hf_environment("Machine"),
+    }
+    report: dict[str, object] = {}
+    mismatches: list[str] = []
+    for scope, values in scopes.items():
+        hub = _hf_hub_path(values)
+        transformers_cache = values.get("TRANSFORMERS_CACHE")
+        report[scope] = {**values, "resolved_hub": str(hub)}
+        if transformers_cache:
+            legacy = Path(os.path.expandvars(transformers_cache)).expanduser().resolve()
+            if legacy != hub:
+                mismatches.append(f"{scope}:{legacy} != {hub}")
+    if mismatches:
+        raise RuntimeError("TRANSFORMERS_CACHE differs from hub: " + "; ".join(mismatches))
+    return json.dumps(report, sort_keys=True)
+
+
 class Doctor:
     def __init__(self) -> None:
         self.results: list[dict[str, object]] = []
@@ -278,6 +335,7 @@ def main() -> int:
 
     doctor = Doctor()
     doctor.check("python", check_python)
+    doctor.check("hf-cache-environment", check_hf_cache_environment)
     for dist, (module, expected) in EXPECTED_PACKAGES.items():
         doctor.check(f"package:{dist}", lambda d=dist, m=module, e=expected: check_package(d, m, e))
     doctor.check("torch", lambda: check_torch(args.expect_cuda))
