@@ -55,7 +55,13 @@ class InstallationContractTests(unittest.TestCase):
         self.assertIn("6ba69e3482d7826214f90a6a9c84ca07782aec1e1d0c6a7c30c994fd5d816ccb", source)
         self.assertIn("64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2", source)
 
+    def test_prefetch_limits_mms_to_production_files(self) -> None:
+        source = (ROOT / "scripts" / "prefetch_models.py").read_text(encoding="utf-8-sig")
+        self.assertIn('HF_HUB_DISABLE_XET", "1"', source)
+        self.assertIn('"adapter.eng.safetensors"', source)
+        self.assertIn('"adapter.jpn.safetensors"', source)
+        self.assertIn('patterns = MMS1B_FILES if repo == "facebook/mms-1b-all" else None', source)
+
 
 if __name__ == "__main__":
     unittest.main()
-

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import gc
+import os
 import sys
 from pathlib import Path
+
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
 from huggingface_hub import snapshot_download
 import torchaudio
@@ -26,6 +29,16 @@ HUBP_REPO = "prj-beatrice/japanese-hubert-base-phoneme-ctc"
 HUBP_REVISION = "1ec4eb3c45b2a1cafb7c477d447df34ca03070f2"
 KNOWN_HUBERT_REPO = "TKU410410103/hubert-base-japanese-asr"
 KNOWN_HUBERT_REVISION = "9206637a0f07d78aa9101ff9439a9d7fe1a43778"
+MMS1B_FILES = (
+    "adapter.eng.safetensors",
+    "adapter.jpn.safetensors",
+    "config.json",
+    "model.safetensors",
+    "preprocessor_config.json",
+    "special_tokens_map.json",
+    "tokenizer_config.json",
+    "vocab.json",
+)
 
 
 def _repo_from_spec(spec: str) -> str | None:
@@ -38,12 +51,20 @@ def _repo_from_spec(spec: str) -> str | None:
     return None
 
 
-def _download_snapshot(repo: str, revision: str, *, local_dir: Path | None = None) -> Path:
+def _download_snapshot(
+    repo: str,
+    revision: str,
+    *,
+    local_dir: Path | None = None,
+    allow_patterns: tuple[str, ...] | None = None,
+) -> Path:
     print(f"PREFETCH hf {repo}@{revision}", flush=True)
     path = snapshot_download(
         repo_id=repo,
         revision=revision,
         local_dir=str(local_dir) if local_dir is not None else None,
+        allow_patterns=allow_patterns,
+        max_workers=2,
     )
     return Path(path)
 
@@ -56,7 +77,8 @@ def _prefetch_hf() -> None:
         revision = HF_REVISIONS.get(repo)
         if revision is None:
             raise RuntimeError(f"un-pinned MODEL_SPECS repo: {repo}")
-        path = _download_snapshot(repo, revision)
+        patterns = MMS1B_FILES if repo == "facebook/mms-1b-all" else None
+        path = _download_snapshot(repo, revision, allow_patterns=patterns)
         if path.name != revision:
             raise RuntimeError(f"snapshot revision mismatch for {repo}: {path.name} != {revision}")
 
@@ -98,4 +120,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

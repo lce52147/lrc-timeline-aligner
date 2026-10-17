@@ -318,4 +318,3 @@ try {
 Write-Host "Setup complete." -ForegroundColor Green
 Write-Host "Python: $venvPython"
 Write-Host "Doctor report: $doctorJson"
-
