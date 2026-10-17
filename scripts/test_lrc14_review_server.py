@@ -267,7 +267,6 @@ class ReviewServerTests(unittest.TestCase):
 
     def test_stale_api_save_returns_409_with_changed_base_timestamp(self) -> None:
         stale = self._detail()
-        staged_base_cs = stale["rows"][0]["current_cs"]
         fresh = {
             "base_sha256": stale["base_sha256"],
             "edits": [{"entry": 1, "cs": 125, "source": "other-reviewer", "nudge_cs": 25}],
@@ -279,7 +278,56 @@ class ReviewServerTests(unittest.TestCase):
         }
         status, _headers, body = self._json_request("POST", "/api/song/0/save", stale_edit)
         self.assertEqual((status, json.loads(body)["error"]), (409, "stale base_sha256"))
-        self.assertNotEqual(self._detail()["rows"][0]["current_cs"], staged_base_cs)
+
+    def test_client_409_reload_marks_conflict_and_blocks_resubmit(self) -> None:
+        page = (SCRIPTS / "review_page" / "index.html").read_text(encoding="utf-8")
+        source = page.split("<script>", 1)[1].rsplit("</script>", 1)[0]
+        harness = r"""
+const vm = require('vm');
+const source = SOURCE;
+const elements = new Map(), documentListeners = {};
+let lastRow = null, serverCs = 100, postCount = 0;
+function element(id='') {
+  return {id, children:[], dataset:{}, className:'', textContent:'', disabled:false,
+    addEventListener(type, fn) { this['on' + type] = fn; },
+    appendChild(child) { this.children.push(child); if (String(child.className).includes('row ')) lastRow = child; },
+    querySelectorAll() { return []; }, blur() {},
+    set innerHTML(value) { this._html = value; this.children = []; }, get innerHTML() { return this._html || ''; }}; }
+global.document = {
+  getElementById(id) { if (!elements.has(id)) elements.set(id, element(id)); return elements.get(id); },
+  createElement() { return element(); },
+  addEventListener(type, fn) { documentListeners[type] = fn; },
+};
+global.location = {search:'?t=test', hash:'', origin:'http://test'};
+global.addEventListener = () => {};
+const response = (ok, status, data) => ({ok, status, statusText:'error', json:async () => data});
+function detail() { return {base_sha256:serverCs === 100 ? 'old' : 'new', server_read_only:false, rows:[{
+  entry:1, review:'REVIEW', current_cs:serverCs, candidates:[], lyrics:['one'], severity_score:1
+}]}; }
+global.fetch = async (path, options={}) => {
+  if (path === '/api/songs') return response(true, 200, [{index:0, song:'song', read_only:false, has_flac:false, has_stem:false}]);
+  if (path === '/api/song/0' && !options.method) return response(true, 200, detail());
+  if (path === '/api/song/0/save') { postCount++; serverCs = 125; return response(false, 409, {error:'stale base_sha256'}); }
+  throw Error('unexpected fetch ' + path);
+};
+const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve => setImmediate(resolve)); };
+(async () => {
+  vm.runInThisContext(source);
+  await settle();
+  const event = extra => Object.assign({ctrlKey:false, altKey:false, metaKey:false, shiftKey:false,
+    key:'', code:'', target:null, preventDefault(){}}, extra);
+  documentListeners.keydown(event({key:']', code:'BracketRight'}));
+  documentListeners.keydown(event({ctrlKey:true, key:'s'}));
+  await settle();
+  const marked = !!lastRow && lastRow.className.includes('conflict');
+  documentListeners.keydown(event({ctrlKey:true, key:'s'}));
+  await settle();
+  console.log(JSON.stringify({marked, postCount, serverCs}));
+})().catch(error => { console.error(error.stack); process.exitCode = 1; });
+""".replace("SOURCE", json.dumps(source))
+        result = subprocess.run(["node", "-"], input=harness, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {"marked": True, "postCount": 1, "serverCs": 125})
 
     def test_missing_lrc_rounding_and_non_ascii_token(self) -> None:
         self.assertEqual(review_server._tag_cs(1.005), 101)

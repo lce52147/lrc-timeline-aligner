@@ -98,7 +98,7 @@ def _read_tsv(path):
             metadata[key.strip()] = value.strip()
     review_rows = int(metadata["review_rows"])
     untrusted_rows = int(metadata["untrusted_rows"])
-    rows = list(csv.DictReader(lines[1:], delimiter="\t"))
+    rows = list(csv.DictReader(lines[1:], delimiter="\t", quoting=csv.QUOTE_NONE))
     required = {"severity_reasons", "severity_score"}
     if not required.issubset(rows[0].keys() if rows else lines[1].split("\t")):
         raise ValueError("invalid review TSV columns")
@@ -309,13 +309,16 @@ def format_console(summary):
         f"model-disagreement={row['model_disagreement_rows']} max-score={row['max_severity_score']}"
         for index, row in enumerate(summary["attention"], start=1)
     )
-    command = summary["review_command"]
-    lines.append(
-        "REVIEW PAGE: " + " ".join(
-            [_quote(command[0]), _quote(command[1]), "--report-dir", _quote(command[3])]
-            + [_quote(value) for value in command[4:]]
+    if summary["attention"]:
+        command = summary["review_command"]
+        lines.append(
+            "REVIEW PAGE: " + " ".join(
+                [_quote(command[0]), _quote(command[1]), "--report-dir", _quote(command[3])]
+                + [_quote(value) for value in command[4:]]
+            )
         )
-    )
+    else:
+        lines.append("REVIEW PAGE: none (no songs need review)")
     lines.append(
         "BATCH JSON: disabled" if summary.get("_json_disabled")
         else f"BATCH JSON: {summary.get('_json_path', 'disabled')}"
@@ -325,7 +328,7 @@ def format_console(summary):
 
 def write_json(summary, report_dir, *, output=None, now=None, pid=None):
     report_dir = Path(report_dir).expanduser().resolve()
-    if not report_dir.is_dir():
+    if output is None and not report_dir.is_dir():
         raise FileNotFoundError(report_dir)
     stamp = now or datetime.datetime.now()
     if isinstance(stamp, (int, float)):
@@ -412,6 +415,10 @@ def build_parser():
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(errors="replace")
     args = build_parser().parse_args(argv)
     try:
         audios = _expand_inputs(args.paths)
@@ -428,7 +435,12 @@ def main(argv=None):
         disabled = args.no_json or os.environ.get("LRC_BATCH_SUMMARY") == "0"
         summary["_json_disabled"] = disabled
         bookkeeping_failed = False
-        if not disabled:
+        if not disabled and not report_dir.is_dir() and args.json_out is None:
+            summary["_json_disabled"] = True
+            print(f"WARN: report directory does not exist; batch JSON skipped: {report_dir}", file=sys.stderr)
+        elif not disabled:
+            if not report_dir.is_dir():
+                print(f"WARN: report directory does not exist: {report_dir}", file=sys.stderr)
             try:
                 write_json(summary, report_dir, output=args.json_out)
             except Exception as exc:

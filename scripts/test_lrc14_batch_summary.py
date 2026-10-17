@@ -77,7 +77,7 @@ class BatchSummaryTests(unittest.TestCase):
             "audio_path": str(audio),
             "lyric_preflight": {"status": "OK"},
             "multimodel_consensus": {
-                "review_only_model_disagreements": [{"entry": 1}],
+                "review_only_model_disagreements": [{"entry": 1}, {"entry": 2}],
             },
             "assignments": [
                 {
@@ -100,7 +100,7 @@ class BatchSummaryTests(unittest.TestCase):
             ],
         }
         path = self.report_dir / f"{audio.stem}.review.tsv"
-        entries = [auto_lrc.LyricEntry(["one"]), auto_lrc.LyricEntry(["two"])]
+        entries = [auto_lrc.LyricEntry(['"one']), auto_lrc.LyricEntry(["two"])]
         lrc_review_tsv.write_review_tsv(path, report, entries)
         return path, report
 
@@ -197,7 +197,8 @@ class BatchSummaryTests(unittest.TestCase):
         self.assertEqual(row["status"], "ok")
         self.assertEqual(row["review_rows"], 1)
         self.assertEqual(row["untrusted_rows"], 1)
-        self.assertEqual(row["model_disagreement_rows"], 1)
+        self.assertEqual(row["review_rows"] + row["untrusted_rows"], 2)
+        self.assertEqual(row["model_disagreement_rows"], 2)
         self.assertEqual(row["max_severity_score"], 7)
 
         for name, contents in (("missing.tsv", None), ("garbled.tsv", "bad\tdata\n")):
@@ -337,6 +338,15 @@ class BatchSummaryTests(unittest.TestCase):
             "BATCH JSON: disabled",
         ])
 
+        summary = batch.summarize(
+            [{**records[0], "review_rows": 0}],
+            report_dir=self.report_dir,
+            review_server_path=SCRIPTS / "review_server.py",
+            python_exe=sys.executable,
+            targets=[alpha],
+        )
+        self.assertIn("REVIEW PAGE: none (no songs need review)", batch.format_console(summary))
+
     def test_07_json_contract_controls_cleanup_and_review_server_exclusion(self) -> None:
         batch = _module()
         audio = self._audio("json.flac")
@@ -397,9 +407,54 @@ class BatchSummaryTests(unittest.TestCase):
         ])
         self.assertEqual(code, 1)
         self.assertFalse(absent.exists())
-        self.assertEqual(stderr.count("WARN:"), 1)
+        self.assertEqual(
+            stderr,
+            f"WARN: report directory does not exist; batch JSON skipped: {absent.resolve()}\n",
+        )
 
-    def test_08_main_is_read_only_except_summary_json(self) -> None:
+        ok_record = {**records[0], "status": "ok"}
+        with mock.patch.object(batch, "collect", return_value=[ok_record]):
+            code, stdout, stderr = self._main([
+                str(other), "--report-dir", str(absent),
+                "--work-dir", str(self.work_dir),
+            ])
+        self.assertEqual(code, 0)
+        self.assertIn("BATCH JSON: disabled", stdout)
+        self.assertIn("batch JSON skipped", stderr)
+
+        explicit_json = self.root / "elsewhere" / "summary.json"
+        explicit_json.parent.mkdir()
+        with mock.patch.object(batch, "collect", return_value=[ok_record]):
+            code, stdout, stderr = self._main([
+                str(other), "--report-dir", str(absent),
+                "--work-dir", str(self.work_dir),
+                "--json-out", str(explicit_json),
+            ])
+        self.assertEqual(code, 0)
+        self.assertTrue(explicit_json.is_file())
+        self.assertIn(f"BATCH JSON: {explicit_json.resolve()}", stdout)
+        self.assertIn("report directory does not exist", stderr)
+
+    def test_08_cp950_pipes_replace_unencodable_names(self) -> None:
+        audio = self._audio("🎵.flac")
+        self._report(audio)
+        missing_text = self.root / "🎤.txt"
+        result = subprocess.run(
+            [
+                sys.executable, str(SCRIPTS / "lrc_batch_summary.py"),
+                str(audio), str(missing_text), "--report-dir", str(self.report_dir),
+                "--work-dir", str(self.work_dir), "--no-json",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={**os.environ, "CUDA_VISIBLE_DEVICES": "-1", "PYTHONIOENCODING": "cp950:strict"},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode("cp950", errors="replace"))
+        self.assertIn("BATCH JSON: disabled", result.stdout.decode("cp950"))
+        self.assertIn("WARN: skipped non-FLAC", result.stderr.decode("cp950"))
+        self.assertNotIn(b"UnicodeEncodeError", result.stdout + result.stderr)
+
+    def test_09_main_is_read_only_except_summary_json(self) -> None:
         audio = self._audio("readonly.flac")
         tsv, _report_fixture = self._real_tsv(audio)
         report = self._report(audio, review_tsv=tsv)
@@ -418,7 +473,7 @@ class BatchSummaryTests(unittest.TestCase):
         self.assertEqual(self._snapshot(self.root), before)
         self.assertEqual(len(list(self.report_dir.glob("*.batch-summary.json"))), 1)
 
-    def test_09_input_expansion_sort_dedupe_warnings_and_usage_error(self) -> None:
+    def test_10_input_expansion_sort_dedupe_warnings_and_usage_error(self) -> None:
         album = self.root / "album"
         album.mkdir()
         upper = self._audio("album/B.flac")
@@ -445,7 +500,7 @@ class BatchSummaryTests(unittest.TestCase):
         code, _stdout, _stderr = self._main([str(empty), "--no-json"])
         self.assertEqual(code, 2)
 
-    def test_10_eta_empty_and_median(self) -> None:
+    def test_11_eta_empty_and_median(self) -> None:
         batch = _module()
         self.assertEqual(batch.format_eta([], 9), "n/a")
         self.assertEqual(
@@ -453,7 +508,7 @@ class BatchSummaryTests(unittest.TestCase):
             "~2h29m (median 4m31s x 33 left, n=3)",
         )
 
-    def test_11_import_isolation_and_forbidden_source_terms(self) -> None:
+    def test_12_import_isolation_and_forbidden_source_terms(self) -> None:
         module_path = SCRIPTS / "lrc_batch_summary.py"
         self.assertTrue(module_path.is_file())
         code = (
