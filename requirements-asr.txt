@@ -1,13 +1,11 @@
-# Core ASR/alignment dependencies for the optional WhisperX backend.
-# Install PyTorch with the CUDA wheel matching your GPU first when needed:
-# https://pytorch.org/get-started/locally/
-whisperx
-torch
-torchaudio
-numpy
-pykakasi
-fugashi
-unidic-lite
-transformers
-huggingface-hub
+# Runtime dependencies for the production ASR/alignment path.
+# PyTorch 2.8.0 + torchaudio 2.8.0 are installed by setup.ps1 for CUDA 12.8 or CPU.
+whisperx==3.8.6
+demucs==4.0.1
+numpy==2.4.4
+pykakasi==2.3.0
+fugashi==1.5.2
+unidic-lite==1.0.8
+transformers==4.57.6
+huggingface-hub==0.36.2
 pyopenjtalk-plus==0.4.1.post3

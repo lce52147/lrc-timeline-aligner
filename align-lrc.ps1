@@ -63,6 +63,11 @@ $env:PYTHONIOENCODING = "utf-8"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $backend = Join-Path $scriptDir "scripts\auto_lrc.py"
 $r2Pipeline = Join-Path $scriptDir "scripts\r2_pipeline.py"
+$localFfmpegBin = Join-Path $scriptDir "tools\ffmpeg\bin"
+if ((Test-Path -LiteralPath (Join-Path $localFfmpegBin "ffmpeg.exe")) -and
+    (Test-Path -LiteralPath (Join-Path $localFfmpegBin "ffprobe.exe"))) {
+    $env:PATH = "$localFfmpegBin;$env:PATH"
+}
 $defaultReportDirectory = Join-Path $scriptDir "outputs\reports"
 if (-not $ReportDirectory) {
     $ReportDirectory = $defaultReportDirectory
@@ -145,9 +150,15 @@ if ($Lyrics -and $Paths.Count -eq 1) {
     }
 }
 
-$pythonCommand = Get-Command python -ErrorAction SilentlyContinue
-if (-not $pythonCommand) {
-    throw "Python was not found on PATH."
+$localPython = Join-Path $scriptDir ".venv-asr\Scripts\python.exe"
+if (Test-Path -LiteralPath $localPython -PathType Leaf) {
+    $pythonExe = $localPython
+} else {
+    $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $pythonCommand) {
+        throw "Python was not found. Run setup.ps1 to create .venv-asr, or install Python 3.11 on PATH."
+    }
+    $pythonExe = $pythonCommand.Source
 }
 
 $argsList = @($backend, "--mode", $Mode, "--timing-source", $TimingSource, "--arbiter", $Arbiter, "--timing-source-policy", $TimingSourcePolicy)
@@ -268,7 +279,7 @@ if ($Arbiter -eq "reviewer-validity" -and -not $ReviewerEvidence) {
             $pipelineArgs += $argsList[1..($argsList.Count - 1)]
         }
         $pipelineArgs += $rawPath
-        & $pythonCommand.Source @pipelineArgs
+        & $pythonExe @pipelineArgs
         $songExitCode = $LASTEXITCODE
         if ($songExitCode -ne 0) {
             $exitCode = $songExitCode
@@ -277,7 +288,7 @@ if ($Arbiter -eq "reviewer-validity" -and -not $ReviewerEvidence) {
 }
 else {
     $argsList += $Paths
-    & $pythonCommand.Source @argsList
+    & $pythonExe @argsList
     $exitCode = $LASTEXITCODE
 }
 

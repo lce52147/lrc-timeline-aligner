@@ -91,10 +91,11 @@ def _snapshot_blob(snapshot: Path) -> str:
 
 def _torch_blob(filename: str) -> str:
     roots = []
-    for value in (os.environ.get("TORCH_HOME"), str(Path.home() / ".cache" / "torch" / "hub")):
-        if value:
-            root = Path(value)
-            roots.append(root / "checkpoints" if root.name != "checkpoints" else root)
+    torch_home = os.environ.get("TORCH_HOME")
+    if torch_home:
+        root = Path(torch_home)
+        roots.extend((root / "hub" / "checkpoints", root / "checkpoints"))
+    roots.append(Path.home() / ".cache" / "torch" / "hub" / "checkpoints")
     for root in dict.fromkeys(roots):
         path = root / filename
         if path.is_file():

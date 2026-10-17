@@ -5245,10 +5245,12 @@ def _apply_multimodel_consensus_runtime(
 
 
 def _ctc_model_blob_sha256() -> str:
-    candidates = [
-        Path.home() / ".cache" / "torch" / "hub" / "checkpoints" / "model.pt",
-        Path(os.environ.get("TORCH_HOME", "")) / "checkpoints" / "model.pt",
-    ]
+    candidates: list[Path] = []
+    torch_home = os.environ.get("TORCH_HOME")
+    if torch_home:
+        root = Path(torch_home)
+        candidates.extend((root / "hub" / "checkpoints" / "model.pt", root / "checkpoints" / "model.pt"))
+    candidates.append(Path.home() / ".cache" / "torch" / "hub" / "checkpoints" / "model.pt")
     for candidate in candidates:
         try:
             if candidate.is_file():
