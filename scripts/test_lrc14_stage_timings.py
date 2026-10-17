@@ -1,4 +1,5 @@
 import contextlib
+import ast
 import io
 import inspect
 import json
@@ -7,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 import threading
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -47,6 +48,21 @@ class TimingModuleTests(unittest.TestCase):
         starts = [x["start_s"] for x in data["stages"]]
         self.assertEqual(starts, sorted(starts))
         self.assertTrue(all(x["seconds"] >= 0 for x in data["stages"]))
+
+    def test_rows_aggregate_cap_and_startup_are_reported(self):
+        namespace = {"PROGRESS_START": 1.0}
+        with mock.patch.object(st.time, "monotonic", return_value=3.5):
+            st.install(namespace, ())
+            with st.session("standalone", "audio") as data:
+                repeated = st.timed("same", lambda: None)
+                repeated(); repeated()
+                for index in range(205):
+                    st.timed(f"row-{index}", lambda: None)()
+        same = next(row for row in data["stages"] if row["name"] == "same")
+        self.assertEqual((same["calls"], same["errors"]), (2, 0))
+        self.assertEqual(len(data["stages"]), 200)
+        self.assertEqual(data["stages_truncated"], 6)
+        self.assertEqual(data["startup_seconds"], 2.5)
 
     def test_exception_identity_and_base_exception_are_recorded(self):
         error = ValueError("bad")
@@ -98,6 +114,15 @@ class TimingModuleTests(unittest.TestCase):
             data["stages"] = BrokenList()
             self.assertEqual(wrapped(), 7)
 
+    def test_clock_failure_calls_original_once_untimed(self):
+        calls = []
+        wrapped = st.timed("original", lambda: calls.append(1) or 7)
+        with st.session("standalone", "audio") as data:
+            with mock.patch.object(st, "_CLOCK", side_effect=RuntimeError("clock")):
+                self.assertEqual(wrapped(), 7)
+        self.assertEqual(calls, [1])
+        self.assertEqual(data["stages"], [])
+
     def test_worker_stage_is_separate(self):
         def original():
             return 3
@@ -108,6 +133,17 @@ class TimingModuleTests(unittest.TestCase):
             thread.join()
         self.assertEqual(data["stages"], [])
         self.assertEqual(data["worker_stages"]["worker"]["calls"], 1)
+
+    def test_session_owner_is_the_thread_that_opens_it(self):
+        result = {}
+        def run():
+            with st.session("standalone", "audio") as data:
+                st.timed("owner", lambda: None)()
+                result.update(data)
+        thread = threading.Thread(target=run)
+        thread.start(); thread.join()
+        self.assertEqual(result["stages"][0]["name"], "owner")
+        self.assertEqual(result["worker_stages"], {})
 
     def test_cache_counters_and_vocal_status(self):
         class ModelCacheMiss(BaseException):
@@ -129,7 +165,7 @@ class TimingModuleTests(unittest.TestCase):
             with self.assertRaises(ModelCacheMiss):
                 r("raw-asr")
             st.timed("cache-write", write, cache_kind="write")("raw-asr")
-            st.timed("prepare_vocal_ctc_audio", stem)()
+            st.timed("separation", stem, function_name="prepare_vocal_ctc_audio")()
         self.assertEqual(data["model_cache"]["raw-asr"], {"hit": 1, "miss": 2, "fill": 1})
         self.assertEqual(data["vocal_stem"], ["cache-hit"])
 
@@ -141,6 +177,13 @@ class TimingModuleTests(unittest.TestCase):
         st.install(namespace, spec)
         self.assertIs(namespace["exists"], first)
         self.assertIn("missing", st.install_report()["missing"])
+
+    def test_install_uses_function_name_for_vocal_status(self):
+        namespace = {"prepare_vocal_ctc_audio": lambda: ("x", "vocals", "cache-hit")}
+        st.install(namespace, (("prepare_vocal_ctc_audio", "separation", "nested"),))
+        with st.session("standalone", "audio") as data:
+            namespace["prepare_vocal_ctc_audio"]()
+        self.assertEqual(data["vocal_stem"], ["cache-hit"])
 
     def test_no_bk_imports_and_no_numpy(self):
         source = (Path(__file__).with_name("lrc_stage_timings.py")).read_text(encoding="utf-8")
@@ -188,32 +231,77 @@ class ProductionIntegrationTests(unittest.TestCase):
             self.assertEqual(new_report["stage_timings"]["pass"], "standalone")
             names = {row["name"] for row in new_report["stage_timings"]["stages"]}
             self.assertTrue({"load-lyrics", "probe-duration", "write-review-tsv", "write-lrc"} <= names, repr(names))
+            self.assertNotIn("song", names)
+            self.assertGreaterEqual(new_report["stage_timings"]["unaccounted_seconds"], 0.0)
             self.assertEqual(new_out.count("TIMINGS pass=standalone status=ok"), 1)
             _, _, suppressed = self._run(root, enabled=True, no_summary=True)
             self.assertNotIn("TIMINGS pass=standalone", suppressed)
 
-    def test_song_wrapper_carries_rollback_and_prints_once(self):
-        class SegmentSkeletonRollback(Exception):
-            pass
+    def test_song_wrapper_carries_real_main_rollback_and_attempt_two_is_terminal(self):
         calls = []
+        attempts = []
         def fake(audio, args):
-            calls.append(1)
+            calls.append(getattr(args, "option_a_rollback_reason", None))
+            attempts.append(st._ACTIVE["attempts"])
             if len(calls) == 1:
-                raise SegmentSkeletonRollback("retry")
+                raise auto_lrc.SegmentSkeletonRollback("retry")
             return Path("out.lrc")
-        class Args:
-            stage_timings_pass = "standalone"
-            no_review_summary = False
-            option_a_rollback_reason = None
+        namespace = {"process_audio": fake}
+        st.install(namespace, (("process_audio", "song", "song"),))
         output = io.StringIO()
-        with redirect_stdout(output):
-            with self.assertRaises(SegmentSkeletonRollback):
-                st._song_wrapper(fake, (Path("song.flac"), Args()), {}, "song")
-            Args.option_a_rollback_reason = "retry"
-            st._song_wrapper(fake, (Path("song.flac"), Args()), {}, "song")
-        self.assertEqual(len(calls), 2)
+        with mock.patch.object(auto_lrc, "process_audio", namespace["process_audio"]), \
+             mock.patch.object(auto_lrc, "_apply_model_cache_flags", return_value="off"), \
+             mock.patch.object(auto_lrc, "_managed_temp_snapshot", return_value=set()), \
+             mock.patch.object(auto_lrc, "_cleanup_managed_temp_dirs_since"), redirect_stdout(output):
+            self.assertEqual(auto_lrc.main(["song.flac"]), 0)
+        self.assertEqual(calls, [None, "retry"])
+        self.assertEqual(attempts, [1, 2])
         self.assertEqual(output.getvalue().count("TIMINGS pass=standalone"), 1)
-        self.assertEqual(st._ACTIVE, None)
+
+        calls.clear(); attempts.clear(); output = io.StringIO()
+        def always_fail(audio, args):
+            attempts.append(st._ACTIVE["attempts"])
+            raise auto_lrc.SegmentSkeletonRollback("retry")
+        namespace = {"process_audio": always_fail}
+        st.install(namespace, (("process_audio", "song", "song"),))
+        with mock.patch.object(auto_lrc, "process_audio", namespace["process_audio"]), \
+             mock.patch.object(auto_lrc, "_apply_model_cache_flags", return_value="off"), \
+             mock.patch.object(auto_lrc, "_managed_temp_snapshot", return_value=set()), \
+             mock.patch.object(auto_lrc, "_cleanup_managed_temp_dirs_since"), redirect_stdout(output):
+            self.assertEqual(auto_lrc.main(["song.flac"]), 1)
+        self.assertEqual(attempts, [1, 2])
+        self.assertEqual(output.getvalue().count("TIMINGS pass=standalone"), 1)
+        self.assertIn("status=error:SegmentSkeletonRollback", output.getvalue())
+
+    def test_stale_pending_session_is_dropped_before_next_song(self):
+        args = SimpleNamespace(
+            stage_timings_pass="standalone",
+            no_review_summary=True,
+            option_a_rollback_reason=None,
+        )
+        def rollback(audio, parsed):
+            raise auto_lrc.SegmentSkeletonRollback("retry")
+        with self.assertRaises(auto_lrc.SegmentSkeletonRollback):
+            st._song_wrapper(rollback, (Path("old.flac"), args), {}, "song")
+
+        error_output = io.StringIO()
+        with redirect_stderr(error_output):
+            result = st._song_wrapper(lambda audio, parsed: Path("new.lrc"), (Path("new.flac"), args), {}, "song")
+        self.assertEqual(result, Path("new.lrc"))
+        self.assertEqual(error_output.getvalue(), "WARN: stage timings: dropped pending session\n")
+        self.assertEqual(st._PENDING, {})
+
+    def test_song_session_setup_failure_calls_original_once_untimed(self):
+        args = SimpleNamespace(
+            stage_timings_pass="standalone",
+            no_review_summary=False,
+            option_a_rollback_reason=None,
+        )
+        calls = []
+        with mock.patch.object(st, "_CLOCK", side_effect=RuntimeError("clock")):
+            result = st._song_wrapper(lambda audio, parsed: calls.append(audio) or Path("out.lrc"), (Path("song.flac"), args), {}, "song")
+        self.assertEqual(result, Path("out.lrc"))
+        self.assertEqual(calls, [Path("song.flac")])
 
     def test_song_wrapper_records_stage_failure_and_same_exception(self):
         class LrcError(Exception):
@@ -245,6 +333,24 @@ class StageArgsTests(unittest.TestCase):
         self.assertEqual(final.count("--stage-timings-pass"), 1)
         self.assertEqual(final[final.index("--stage-timings-pass") + 1], "final")
         self.assertEqual(r2_pipeline.auto_lrc.build_parser().parse_args(["song.flac", "--stage-timings-pass", "final"]).stage_timings_pass, "final")
+
+    def test_stage_spec_rebinding_contract(self):
+        tree = ast.parse(Path(auto_lrc.__file__).read_text(encoding="utf-8"))
+        for parent in ast.walk(tree):
+            for child in ast.iter_child_nodes(parent):
+                child.parent = parent
+        defs = {node.name: node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        imports = {alias.asname or alias.name for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom)) for alias in node.names}
+        for name, _label, _role in auto_lrc._STAGE_TIMING_SPEC:
+            self.assertTrue(name in defs or name == "write_review_tsv" and name in imports, name)
+            if name in defs:
+                self.assertEqual(defs[name].decorator_list, [], name)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id == name:
+                    self.assertIsInstance(getattr(node, "parent", None), ast.Call, name)
+        self.assertEqual(st.install_report()["missing"], [])
+        for name, _label, _role in auto_lrc._STAGE_TIMING_SPEC:
+            self.assertTrue(getattr(vars(auto_lrc)[name], "__stage_timing_wrapper__", False), name)
 
 
 class R2TimingTests(unittest.TestCase):
@@ -309,6 +415,50 @@ class R2TimingTests(unittest.TestCase):
         self.assertEqual(len(timings["stages"]), 4)
         self.assertIn("process_overhead_seconds", timings)
         self.assertIn("R2 TIMINGS", output.getvalue())
+        for stage in range(1, 5):
+            self.assertIn(f"[{stage}/4] 完成，用時", output.getvalue())
+
+    def test_r2_manual_edit_refusal_writes_no_timing_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            audio = root / "song.flac"
+            output = root / "song.lrc"
+            audio.write_bytes(b"audio"); output.write_text("edited", encoding="utf-8")
+            with mock.patch.object(r2_pipeline, "manual_edit_reason", return_value="edited"), \
+                 mock.patch.object(r2_pipeline, "journal_path", return_value=root / "missing-journal"):
+                result = r2_pipeline.main(["--work-dir", str(root / "work"), "--", str(audio), "--output", str(output), "--overwrite"])
+            run_dir = r2_pipeline.reviewer_work_directory(root / "work", audio)
+            self.assertEqual(result, 2)
+            self.assertFalse((run_dir / "r2-timings.json").exists())
+
+    def test_r2_partial_reviewer_failure_reads_status_file_and_reraises_same_exception(self):
+        error = RuntimeError("reviewer failed")
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            audio = root / "song.flac"; audio.write_bytes(b"audio")
+            lyrics = root / "song.txt"; lyrics.write_text("\n".join(f"かな{i}" for i in range(1, 9)), encoding="utf-8")
+            vocal = root / "vocals.wav"; vocal.write_bytes(b"vocal")
+            def backend(args):
+                args = list(args)
+                output = Path(args[args.index("--output") + 1])
+                report_dir = Path(args[args.index("--report-dir") + 1])
+                report_path, _, _ = auto_lrc.report_artifact_paths(audio, output, report_dir)
+                report_path.parent.mkdir(parents=True, exist_ok=True)
+                assignments = [{"entry": i, "timestamp": float(i), "ctc_first_token_start": float(i), "candidates": [{"source": "ctc-current", "time": float(i)}]} for i in range(1, 9)]
+                report_path.write_text(json.dumps({"lyrics_path": str(lyrics), "audio_path": str(audio), "ctc_audio_path": str(vocal), "assignments": assignments}), encoding="utf-8")
+                output.parent.mkdir(parents=True, exist_ok=True); output.write_text("", encoding="utf-8")
+                return 0
+            with mock.patch.object(r2_pipeline, "_run_backend", side_effect=backend), \
+                 mock.patch.object(r2_pipeline, "build_reviewer_commands", return_value=[("HUBP_PLAN", ["plan"]), ("WX", ["wx"])]), \
+                 mock.patch.object(r2_pipeline, "_run_logged", side_effect=[0, error]):
+                with self.assertRaises(RuntimeError) as caught:
+                    r2_pipeline.main(["--work-dir", str(root / "work"), "--", str(audio), "--output", str(root / "final.lrc")])
+            run_dir = r2_pipeline.reviewer_work_directory(root / "work", audio)
+            timings = json.loads((run_dir / "r2-timings.json").read_text(encoding="utf-8"))
+        self.assertIs(caught.exception, error)
+        self.assertIn("HUBP_PLAN", timings["reviewers"])
+        self.assertIsNotNone(timings["reviewers"]["HUBP_PLAN"]["seconds"])
+        self.assertEqual(timings["stages"][1]["status"], "error:RuntimeError")
 
 
 if __name__ == "__main__":

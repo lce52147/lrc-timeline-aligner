@@ -10,12 +10,12 @@ import time
 
 
 _CLOCK = time.perf_counter
-_MAIN_THREAD = threading.main_thread().ident
 _LOCK = threading.RLock()
 _ACTIVE = None
 _TLS = threading.local()
 _PENDING = {}
 _INSTALL = {"wrapped": [], "missing": []}
+_PROGRESS_START = None
 
 
 def set_clock(fn):
@@ -56,9 +56,11 @@ def _state_payload(state):
         "clock": "perf_counter",
         "pass": state["pass"],
         "attempts": int(state.get("attempts", 1)),
+        "startup_seconds": state.get("startup_seconds"),
         "total_seconds": total,
         "unaccounted_seconds": _round(max(0.0, total - top)),
         "stages": stages,
+        "stages_truncated": int(state.get("stages_truncated", 0)),
         "worker_stages": worker,
         "model_cache": state["model_cache"],
         "vocal_stem": list(state["vocal_stem"]),
@@ -88,12 +90,19 @@ def session(pass_label, audio_key, *, state=None, attempt=1):
     global _ACTIVE
     previous = _ACTIVE
     if state is None:
+        try:
+            startup_seconds = _round(time.monotonic() - _PROGRESS_START) if _PROGRESS_START is not None else None
+        except Exception:
+            startup_seconds = None
         state = {
             "pass": str(pass_label),
             "audio_key": str(audio_key),
             "t0": _CLOCK(),
             "attempts": int(attempt),
+            "startup_seconds": startup_seconds,
+            "owner_thread": threading.get_ident(),
             "stages": [],
+            "stages_truncated": 0,
             "worker_stages": {},
             "model_cache": {},
             "vocal_stem": [],
@@ -102,6 +111,7 @@ def session(pass_label, audio_key, *, state=None, attempt=1):
         }
     else:
         state["attempts"] = int(attempt)
+        state["owner_thread"] = threading.get_ident()
         state["pending"] = False
     _ACTIVE = state
     _TLS.stack = []
@@ -120,7 +130,19 @@ def session(pass_label, audio_key, *, state=None, attempt=1):
 
 def _append_stage(state, row):
     try:
-        state["stages"].append(row)
+        with _LOCK:
+            for existing in state["stages"]:
+                if all(existing.get(key) == row.get(key) for key in ("name", "parent", "depth", "attempt")):
+                    existing["calls"] += row["calls"]
+                    existing["seconds"] = _round(existing["seconds"] + row["seconds"])
+                    existing["errors"] += row["errors"]
+                    if row["status"] != "ok":
+                        existing["status"] = row["status"]
+                    return
+            if len(state["stages"]) >= 200:
+                state["stages_truncated"] = int(state.get("stages_truncated", 0)) + 1
+            else:
+                state["stages"].append(row)
     except Exception:
         pass
 
@@ -160,7 +182,7 @@ def _is_miss(exc):
     return exc.__class__.__name__ == "ModelCacheMiss"
 
 
-def _call(fn, args, kwargs, name, *, cache_kind=None, role=None):
+def _call(fn, args, kwargs, name, *, cache_kind=None, function_name=None):
     state = _ACTIVE
     if state is None or not _enabled():
         return fn(*args, **kwargs)
@@ -179,8 +201,11 @@ def _call(fn, args, kwargs, name, *, cache_kind=None, role=None):
             else:
                 _cache_count(state, kind, "fill")
             return result
-    if threading.get_ident() != _MAIN_THREAD:
-        started = _CLOCK()
+    if threading.get_ident() != state.get("owner_thread"):
+        try:
+            started = _CLOCK()
+        except Exception:
+            return fn(*args, **kwargs)
         failed = False
         try:
             return fn(*args, **kwargs)
@@ -199,20 +224,22 @@ def _call(fn, args, kwargs, name, *, cache_kind=None, role=None):
             "attempt": int(state.get("attempts", 1)),
             "start_s": _round(_CLOCK() - state["t0"]),
             "seconds": 0.0,
+            "calls": 1,
+            "errors": 0,
             "status": "ok",
         }
         stack.append(row)
         _TLS.stack = stack
+        started = _CLOCK()
     except Exception:
-        row = None
-        stack = []
-    started = _CLOCK()
+        return fn(*args, **kwargs)
     try:
         result = fn(*args, **kwargs)
     except BaseException as exc:
         if row is not None:
             try:
                 row["status"] = f"error:{type(exc).__name__}"
+                row["errors"] = 1
             except Exception:
                 pass
         raise
@@ -224,20 +251,21 @@ def _call(fn, args, kwargs, name, *, cache_kind=None, role=None):
                 _append_stage(state, row)
             except Exception:
                 pass
-    if name == "prepare_vocal_ctc_audio":
+    if function_name == "prepare_vocal_ctc_audio":
         try:
             status = result[2] if isinstance(result, tuple) and len(result) >= 3 else None
             if status:
-                state["vocal_stem"].append(str(status)[:80])
+                with _LOCK:
+                    state["vocal_stem"].append(str(status)[:80])
         except Exception:
             pass
     return result
 
 
-def timed(name, fn, *, cache_kind=None, role=None):
+def timed(name, fn, *, cache_kind=None, function_name=None):
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
-        return _call(fn, args, kwargs, name, cache_kind=cache_kind, role=role)
+        return _call(fn, args, kwargs, name, cache_kind=cache_kind, function_name=function_name)
     wrapper.__stage_timing_wrapper__ = True
     wrapper.__stage_timing_label__ = name
     return wrapper
@@ -266,7 +294,7 @@ def _print_summary(state, status):
         top = [row for row in payload["stages"] if row.get("parent") is None]
         top.sort(key=lambda row: float(row.get("seconds", 0.0)), reverse=True)
         shown = top[:6]
-        detail = " | ".join(f"{row['name']} {row['seconds']:.6f}s" for row in shown)
+        detail = " | ".join(f"{row['name']} {row['seconds']:.1f}s" for row in shown)
         other = sum(float(row.get("seconds", 0.0)) for row in top[6:])
         cache = payload["model_cache"]
         hit = sum(int(row.get("hit", 0)) for row in cache.values())
@@ -274,37 +302,58 @@ def _print_summary(state, status):
         fill = sum(int(row.get("fill", 0)) for row in cache.values())
         stem = payload["vocal_stem"][-1] if payload["vocal_stem"] else "n/a"
         suffix = (detail + " | ") if detail else ""
-        print(f"TIMINGS pass={payload['pass']} status={status} total={payload['total_seconds']:.6f}s | {suffix}other {other:.6f}s | cache hit={hit} miss={miss} fill={fill} | stem={stem}", flush=True)
+        print(f"TIMINGS pass={payload['pass']} status={status} total={payload['total_seconds']:.1f}s | {suffix}other {other:.1f}s | cache hit={hit} miss={miss} fill={fill} | stem={stem}", flush=True)
     except Exception:
         pass
 
 
 def _song_wrapper(fn, args, kwargs, name):
-    arg_object = args[1] if len(args) > 1 else kwargs.get("args")
-    pass_label = _args_value(arg_object, "stage_timings_pass", "standalone")
-    state = _PENDING.pop(_audio_key(args, kwargs), None)
-    retry = state is not None and bool(_args_value(arg_object, "option_a_rollback_reason"))
-    no_summary = bool(_args_value(args[1] if len(args) > 1 else kwargs.get("args"), "no_review_summary", False))
-    holder = {"value": None, "error": None, "pending": False}
-    context = session(pass_label, _audio_key(args, kwargs), state=state, attempt=2 if retry else 1)
     try:
-        with context as active:
+        arg_object = args[1] if len(args) > 1 else kwargs.get("args")
+        pass_label = _args_value(arg_object, "stage_timings_pass", "standalone")
+        rollback_reason = _args_value(arg_object, "option_a_rollback_reason")
+        no_summary = bool(_args_value(arg_object, "no_review_summary", False))
+        audio_key = _audio_key(args, kwargs)
+        retry = bool(rollback_reason)
+        with _LOCK:
+            dropped = bool(_PENDING) and (not retry or audio_key not in _PENDING or len(_PENDING) > 1)
+            state = _PENDING.pop(audio_key, None) if retry else None
+            _PENDING.clear()
+        if dropped:
+            print("WARN: stage timings: dropped pending session", file=sys.stderr, flush=True)
+        context = session(pass_label, audio_key, state=state, attempt=2 if retry else 1)
+    except Exception:
+        return fn(*args, **kwargs)
+    try:
+        active = context.__enter__()
+    except Exception:
+        return fn(*args, **kwargs)
+    try:
+        value = fn(*args, **kwargs)
+    except BaseException as exc:
+        pending = exc.__class__.__name__ == "SegmentSkeletonRollback" and not retry
+        if pending:
             try:
-                holder["value"] = _call(fn, args, kwargs, name)
-            except BaseException as exc:
-                holder["error"] = exc
-                if exc.__class__.__name__ == "SegmentSkeletonRollback" and not retry:
-                    active["pending"] = True
-                    _PENDING[_audio_key(args, kwargs)] = active
-                    holder["pending"] = True
-            if not holder["pending"]:
-                status = "ok" if holder["error"] is None else f"error:{type(holder['error']).__name__}"
-                if not no_summary:
-                    _print_summary(active, status)
-    finally:
-        if holder["error"] is not None:
-            raise holder["error"]
-    return holder["value"]
+                active["pending"] = True
+                with _LOCK:
+                    _PENDING[audio_key] = active
+            except Exception:
+                pass
+        elif not no_summary:
+            _print_summary(active, f"error:{type(exc).__name__}")
+        try:
+            context.__exit__(*sys.exc_info())
+        except Exception:
+            pass
+        raise
+    else:
+        if not no_summary:
+            _print_summary(active, "ok")
+        try:
+            context.__exit__(None, None, None)
+        except Exception:
+            pass
+        return value
 
 
 def _install_special(name, label, fn, role):
@@ -331,7 +380,7 @@ def _install_special(name, label, fn, role):
                             report["stage_timings"] = payload
                 except Exception:
                     pass
-            return _call(fn, args, kwargs, label)
+            return _call(fn, args, kwargs, label, function_name=name)
         publish_wrapper.__stage_timing_wrapper__ = True
         return publish_wrapper
     if name == "write_alignment_report":
@@ -345,13 +394,19 @@ def _install_special(name, label, fn, role):
                         payload.update(_state_payload(_ACTIVE))
                 except Exception:
                     pass
-            return _call(fn, args, kwargs, label)
+            return _call(fn, args, kwargs, label, function_name=name)
         report_wrapper.__stage_timing_wrapper__ = True
         return report_wrapper
-    return timed(label, fn, cache_kind=role if role in {"read", "write"} else None)
+    cache_kind = "read" if name == "_model_cache_read" else "write" if name == "_model_cache_write" else None
+    return timed(label, fn, cache_kind=cache_kind, function_name=name)
 
 
 def install(namespace, spec):
+    global _PROGRESS_START
+    try:
+        _PROGRESS_START = namespace.get("PROGRESS_START")
+    except Exception:
+        _PROGRESS_START = None
     _INSTALL["wrapped"] = []
     _INSTALL["missing"] = []
     for row in spec:

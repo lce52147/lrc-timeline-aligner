@@ -683,6 +683,15 @@ def acquire_reviewer_evidence(
         started = time.perf_counter()
         try:
             code = _run_logged(command, log_path)
+        except BaseException as exc:
+            elapsed = time.perf_counter() - started
+            statuses[name] = {
+                "status": f"error:{type(exc).__name__}",
+                "exit_code": None,
+                "seconds": round(max(0.0, float(elapsed)), 6),
+            }
+            _write_json(status_path, {"schema": 1, "steps": statuses})
+            raise
         finally:
             elapsed = time.perf_counter() - started
         status_payload: Mapping[str, object] | None = None
@@ -801,7 +810,7 @@ def _report_stage_total(path: Path | None) -> float | None:
 def _write_r2_timings(
     run_dir: Path,
     stages: list[dict[str, object]],
-    reviewers: Mapping[str, object],
+    reviewers: Mapping[str, object] | None,
     baseline_report: Path | None,
     final_report: Path | None,
     total_seconds: float,
@@ -813,7 +822,7 @@ def _write_r2_timings(
         payload = {
             "schema": 1,
             "stages": stages,
-            "reviewers": dict(reviewers),
+            "reviewers": dict(reviewers) if isinstance(reviewers, Mapping) else None,
             "baseline_report": {
                 "path": str(baseline_report) if baseline_report is not None else None,
                 "stage_timings_total_seconds": baseline_total,
@@ -839,21 +848,21 @@ def _write_r2_timings(
         print(f"WARN: r2 timings unavailable ({type(exc).__name__})", file=sys.stderr, flush=True)
 
 
-def _print_r2_timings(stages: list[dict[str, object]], reviewers: Mapping[str, object], total: float) -> None:
+def _print_r2_timings(stages: list[dict[str, object]], reviewers: Mapping[str, object] | None, total: float) -> None:
     try:
         by_stage = {int(row["stage"]): row for row in stages}
         def seconds(stage):
             value = by_stage.get(stage, {}).get("seconds")
             return float(value) if value is not None else 0.0
         reviewer_bits = []
-        for name, value in reviewers.items():
+        for name, value in (reviewers or {}).items():
             if isinstance(value, Mapping) and value.get("seconds") is not None:
-                reviewer_bits.append(f"{name} {float(value['seconds']):.2f}s")
+                reviewer_bits.append(f"{name} {float(value['seconds']):.1f}s")
         detail = ", ".join(reviewer_bits)
         print(
-            f"R2 TIMINGS total={total:.2f}s | 1 baseline {seconds(1):.2f}s | "
-            f"2 reviewers {seconds(2):.2f}s ({detail}) | 3 final {seconds(3):.2f}s | "
-            f"4 trust {seconds(4):.2f}s",
+            f"R2 TIMINGS total={total:.1f}s | 1 baseline {seconds(1):.1f}s | "
+            f"2 reviewers {seconds(2):.1f}s ({detail}) | 3 final {seconds(3):.1f}s | "
+            f"4 trust {seconds(4):.1f}s",
             flush=True,
         )
     except Exception as exc:
@@ -888,39 +897,39 @@ def main(argv: list[str] | None = None) -> int:
     if parsed.probe:
         parser.error("R2 production pipeline does not support --probe")
     audio_path = Path(parsed.audio[0]).expanduser().resolve()
+    final_output = Path(parsed.output).expanduser().resolve() if parsed.output else audio_path.with_suffix(".lrc")
+    final_report_dir = Path(parsed.report_dir).expanduser().resolve() if parsed.report_dir else auto_lrc.DEFAULT_REPORT_DIR
+    final_report_path, _audit_path, _template_path = auto_lrc.report_artifact_paths(audio_path, final_output, final_report_dir)
+    if parsed.overwrite and final_output.exists():
+        edit_reason = manual_edit_reason(final_output, final_report_path)
+        if edit_reason and not getattr(parsed, "discard_manual_edits", False) and not journal_path(final_report_path).exists():
+            print(
+                f"ERROR: Manual review edits detected for {final_output} ({edit_reason}); refusing to overwrite. "
+                "Re-run with --discard-manual-edits to replace them (the edited LRC and edit log are archived first).",
+                file=sys.stderr,
+            )
+            return 2
     run_dir = reviewer_work_directory(Path(args.work_dir).expanduser().resolve(), audio_path)
     run_dir.mkdir(parents=True, exist_ok=True)
     baseline_output = run_dir / "baseline.lrc"
     baseline_report_dir = run_dir / "baseline-reports"
     evidence_path = run_dir / "reviewer-evidence.json"
-    final_output = Path(parsed.output).expanduser().resolve() if parsed.output else audio_path.with_suffix(".lrc")
-    final_report_dir = Path(parsed.report_dir).expanduser().resolve() if parsed.report_dir else auto_lrc.DEFAULT_REPORT_DIR
-    final_report_path, _audit_path, _template_path = auto_lrc.report_artifact_paths(audio_path, final_output, final_report_dir)
     stages: list[dict[str, object]] = [
         {"stage": stage, "name": name, "seconds": None, "status": "not-run"}
         for stage, name in ((1, "baseline"), (2, "reviewers"), (3, "final"), (4, "trust"))
     ]
-    reviewers: Mapping[str, object] = {}
+    reviewers: Mapping[str, object] | None = None
     baseline_report_path: Path | None = None
     started_total = time.perf_counter()
     active_stage = 0
     try:
-        if parsed.overwrite and final_output.exists():
-            edit_reason = manual_edit_reason(final_output, final_report_path)
-            if edit_reason and not getattr(parsed, "discard_manual_edits", False) and not journal_path(final_report_path).exists():
-                print(
-                    f"ERROR: Manual review edits detected for {final_output} ({edit_reason}); refusing to overwrite. "
-                    "Re-run with --discard-manual-edits to replace them (the edited LRC and edit log are archived first).",
-                    file=sys.stderr,
-                )
-                return 2
-
         baseline_args = prepare_baseline_args(backend_args, output=baseline_output, report_dir=baseline_report_dir)
         active_stage = 1
         stage_started = time.perf_counter()
         print(stage_message(1, "R2: generating Central baseline"), flush=True)
         baseline_code = _run_backend(baseline_args)
         stages[0].update({"seconds": round(time.perf_counter() - stage_started, 6), "status": "ok" if baseline_code == 0 else "failed"})
+        print(stage_done_message(1, stages[0]["seconds"]), flush=True)
         active_stage = 0
         if baseline_code != 0:
             return baseline_code
@@ -952,6 +961,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         reviewers = summary.get("statuses", {}) if isinstance(summary, Mapping) else {}
         stages[1].update({"seconds": round(time.perf_counter() - stage_started, 6), "status": "ok"})
+        print(stage_done_message(2, stages[1]["seconds"]), flush=True)
         active_stage = 0
         print(stage_message(2, "R2: reviewer acquisition " + json.dumps(summary, ensure_ascii=False, sort_keys=True)), flush=True)
 
@@ -960,6 +970,7 @@ def main(argv: list[str] | None = None) -> int:
         print(stage_message(3, "R2: generating final reviewer-validity output"), flush=True)
         final_code = _run_backend(prepare_final_args(backend_args, evidence_path))
         stages[2].update({"seconds": round(time.perf_counter() - stage_started, 6), "status": "ok" if final_code == 0 else "failed"})
+        print(stage_done_message(3, stages[2]["seconds"]), flush=True)
         active_stage = 0
         if final_code != 0:
             return final_code
@@ -985,6 +996,7 @@ def main(argv: list[str] | None = None) -> int:
         trust_path = run_dir / "reviewer-trust.json"
         _write_json(trust_path, trust_report)
         stages[3].update({"seconds": round(time.perf_counter() - stage_started, 6), "status": "ok"})
+        print(stage_done_message(4, stages[3]["seconds"]), flush=True)
         active_stage = 0
         print(stage_message(4, "R2: reviewer trust " + json.dumps({"profile": trust_report["profile"], "trusted_count": trust_report["trusted_count"], "review_count": trust_report["review_count"], "path": str(trust_path)}, ensure_ascii=False, sort_keys=True)), flush=True)
         for message in build_lyric_review_messages(final_report, reviewer_payload):
@@ -1006,6 +1018,11 @@ def main(argv: list[str] | None = None) -> int:
         raise
     finally:
         total = time.perf_counter() - started_total
+        try:
+            status_payload = json.loads((run_dir / "reviewers" / "reviewer-status.json").read_text(encoding="utf-8-sig"))
+            reviewers = status_payload.get("steps") if isinstance(status_payload, Mapping) and isinstance(status_payload.get("steps"), Mapping) else None
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            reviewers = None
         _write_r2_timings(run_dir, stages, reviewers, baseline_report_path, final_report_path, total)
         if not getattr(parsed, "no_review_summary", False):
             _print_r2_timings(stages, reviewers, total)
