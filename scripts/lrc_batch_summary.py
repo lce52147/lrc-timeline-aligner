@@ -150,9 +150,12 @@ def _record(audio, index, report_dir, work_dir, since_stamp, since_text):
         record["notes"].append(f"report:{type(exc).__name__}")
         return record
 
-    record["status"] = (
-        "stale" if since_stamp is not None and artifact.stat().st_mtime < since_stamp else "ok"
-    )
+    if not record["lrc_exists"]:
+        record["status"] = "lrc-missing"
+    elif since_stamp is not None and artifact.stat().st_mtime < since_stamp:
+        record["status"] = "stale"
+    else:
+        record["status"] = "ok"
     timings = report.get("stage_timings")
     if isinstance(timings, dict):
         record["stage_timings_total_seconds"] = _rounded(timings.get("total_seconds"))
@@ -241,6 +244,7 @@ def summarize(records, *, report_dir, review_server_path, python_exe, targets, n
     counts = {
         "ok": sum(row.get("status") == "ok" for row in records),
         "stale": sum(row.get("status") == "stale" for row in records),
+        "lrc_missing": sum(row.get("status") == "lrc-missing" for row in records),
         "no_report": sum(row.get("status") == "no-report" for row in records),
         "unreadable": sum(row.get("status") == "unreadable" for row in records),
     }
@@ -295,7 +299,7 @@ def format_console(summary):
     counts = summary["counts"]
     lines = [
         f"BATCH SUMMARY: {summary['n_songs']} songs | ok={counts['ok']} stale={counts['stale']} "
-        f"no-report={counts['no_report']} unreadable={counts['unreadable']} | "
+        f"lrc-missing={counts['lrc_missing']} no-report={counts['no_report']} unreadable={counts['unreadable']} | "
         f"time {_duration(summary['total_known_seconds'])} "
         f"(known for {sum(row.get('seconds') is not None for row in summary['songs'])}/{summary['n_songs']}) | "
         f"review rows={summary['total_review_rows']} (untrusted={summary['total_untrusted_rows']})"

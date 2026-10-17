@@ -159,8 +159,11 @@ class BatchSummaryTests(unittest.TestCase):
         missing = self._audio("missing.flac")
         bad = self._audio("bad.flac")
         mismatch = self._audio("mismatch.flac")
+        lrc_missing = self._audio("lrc-missing.flac")
         self._report(ok)
         stale_report = self._report(stale)
+        self._report(lrc_missing)
+        lrc_missing.with_suffix(".lrc").unlink()
         old = (datetime.now().astimezone() - timedelta(hours=2)).timestamp()
         os.utime(stale_report, (old, old))
         batch = _module()
@@ -170,15 +173,23 @@ class BatchSummaryTests(unittest.TestCase):
         self._report(mismatch, audio_path=self.root / "other.flac")
 
         records = self._collect(
-            [ok, stale, missing, bad, mismatch],
+            [ok, stale, missing, bad, mismatch, lrc_missing],
             since=datetime.now().astimezone() - timedelta(hours=1),
         )
         self.assertEqual(
             [row["status"] for row in records],
-            ["ok", "stale", "no-report", "unreadable", "unreadable"],
+            ["ok", "stale", "no-report", "unreadable", "unreadable", "lrc-missing"],
         )
+        summary = batch.summarize(
+            records,
+            report_dir=self.report_dir,
+            review_server_path=SCRIPTS / "review_server.py",
+            python_exe=sys.executable,
+            targets=[ok, stale, missing, bad, mismatch, lrc_missing],
+        )
+        self.assertEqual(summary["counts"]["lrc_missing"], 1)
         code, _out, _err = self._main([
-            *(str(path) for path in [ok, stale, missing, bad, mismatch]),
+            *(str(path) for path in [ok, stale, missing, bad, mismatch, lrc_missing]),
             "--report-dir", str(self.report_dir), "--work-dir", str(self.work_dir),
             "--since", "1h", "--no-json",
         ])
@@ -330,7 +341,7 @@ class BatchSummaryTests(unittest.TestCase):
             f'--report-dir "{command[3]}" "{command[4]}"'
         )
         self.assertEqual(batch.format_console(summary), [
-            "BATCH SUMMARY: 2 songs | ok=1 stale=0 no-report=1 unreadable=0 | "
+            "BATCH SUMMARY: 2 songs | ok=1 stale=0 lrc-missing=0 no-report=1 unreadable=0 | "
             "time 1h02m (known for 1/2) | review rows=3 (untrusted=4)",
             "  MISSING missing.flac: no-report",
             "  ATTENTION #1 alpha.flac: review=3 model-disagreement=2 max-score=7",
