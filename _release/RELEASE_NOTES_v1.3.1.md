@@ -21,6 +21,10 @@ Measured on the same 39-song / 1487-line manually checked validation pool:
 - Model identity lookup is deterministic when Hugging Face caches contain multiple snapshots or both safetensors and legacy PyTorch weights.
 - R2 preserves the displaced Central CTC baseline after a multi-model consensus replacement and skips reviewer acquisition cleanly for older cached reports that lack it.
 
+Known limitation: different Python and numerical-library builds (for example, Anaconda and python.org) may produce different timings for a small number of rows, including a single-row difference of 4.85 s. Repeated runs within the same environment are fully deterministic.
+
+D1 hotfix: when multi-model consensus replaces the Central CTC candidate, v1.3.1 preserves the displaced candidate as the R2 baseline and marks the consensus result as the proposal. Older cached reports without that baseline skip reviewer acquisition cleanly and continue the batch.
+
 ### Install
 
 1. Download and unzip `lrc-timeline-aligner-v1.3.1.zip`.
