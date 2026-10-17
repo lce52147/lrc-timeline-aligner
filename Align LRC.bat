@@ -14,5 +14,5 @@ if "%EXIT_CODE%"=="0" (
 ) else (
   echo Failed with exit code %EXIT_CODE%.
 )
-if not "%LRC_TOOLS_NO_PAUSE%"=="1" pause
+if not "%LRC_NO_PAUSE%"=="1" pause
 exit /b %EXIT_CODE%

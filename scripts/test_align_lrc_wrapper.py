@@ -11,6 +11,37 @@ WRAPPER = REPO_ROOT / "align-lrc.ps1"
 
 
 class AlignLrcWrapperSafetyTests(unittest.TestCase):
+    def test_wrapper_progress_summary_and_encoding_contract(self) -> None:
+        source = WRAPPER.read_text(encoding="utf-8-sig")
+        self.assertIn("$songCount = $Paths.Count", source)
+        self.assertIn("songs queued", source)
+        self.assertIn("Format-Elapsed", source)
+        self.assertIn('$summaryScript = Join-Path $scriptDir "scripts\\lrc_batch_summary.py"', source)
+        self.assertIn('"--since", $runStartIso', source)
+        self.assertIn('"--report-dir", $ReportDirectory', source)
+        self.assertIn('"--work-dir", $scriptDir', source)
+        self.assertIn("$PSNativeCommandUseErrorActionPreference = $false", source)
+        self.assertIn("$previousConsoleOutputEncoding", source)
+        self.assertIn("$previousPythonEncoding", source)
+        self.assertIn('$reviewBatchPath = [System.IO.Path]::GetFullPath', source)
+
+    def test_review_batch_is_ascii_crlf_and_uses_local_server(self) -> None:
+        raw = (REPO_ROOT / "Review LRC.bat").read_bytes()
+        self.assertNotIn(b"\x00", raw)
+        self.assertTrue(raw.count(b"\r\n") >= 1)
+        self.assertNotIn(b"\n", raw.replace(b"\r\n", b""))
+        text = raw.decode("ascii")
+        self.assertIn("setlocal", text)
+        self.assertIn("scripts\\review_server.py", text)
+        self.assertIn('"%~dp0scripts\\review_server.py" %*', text)
+        self.assertIn("LRC_NO_PAUSE", text)
+        self.assertNotIn(" cd ", text.lower())
+
+    def test_alignment_pause_uses_shared_no_pause_switch(self) -> None:
+        text = (REPO_ROOT / "Align LRC.bat").read_text(encoding="ascii")
+        self.assertIn("LRC_NO_PAUSE", text)
+        self.assertNotIn("LRC_TOOLS_NO_PAUSE", text)
+
     def test_default_routes_through_r2_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

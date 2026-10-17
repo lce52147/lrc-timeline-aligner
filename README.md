@@ -77,6 +77,12 @@ You can also drag a FLAC onto `Align LRC.bat`. A lyric file may be dragged by it
 
 The generated LRC is written beside the audio. Reports go to `outputs\reports` by default.
 
+For a run with several songs, the wrapper prints the queue size and one elapsed/ETA line at the start and end of each song. The ETA average includes every completed attempt, including failures, because each attempt consumes runtime. After alignment it invokes scripts\lrc_batch_summary.py for the original input folder with the run start time, report directory, and repository work directory. A summary warning never replaces the alignment exit code.
+
+To review generated reports, run Review LRC.bat with no arguments. It opens the reports in the local review server and keeps the console window open while the server is running; close the window to stop it. Pass report files or folders, or options such as --read-only, when you need a narrower review. The default server uses a free localhost port. If a manually selected port is occupied, omit --port or choose another one. Edits are saved by the review page and are consumed by the next alignment run.
+
+Windows command lines have an 8191-character limit. Paths with spaces and special characters are passed as argument arrays by the PowerShell wrapper; for a large set of such paths, drop the whole report folder onto Review LRC.bat or process the audio in smaller batches instead of building one long command line.
+
 Direct Python usage:
 
 ```powershell

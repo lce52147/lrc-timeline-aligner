@@ -56,6 +56,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$previousConsoleOutputEncoding = [Console]::OutputEncoding
+$previousOutputEncoding = $OutputEncoding
+$previousPythonEncoding = $env:PYTHONIOENCODING
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 $env:PYTHONIOENCODING = "utf-8"
@@ -255,41 +258,122 @@ elseif ($FailOnReviewRequired -or $MinTrustedPercent -ge 0) {
     Write-Host "Strict gate: fail-on-review=$FailOnReviewRequired min-trusted=$MinTrustedPercent" -ForegroundColor Yellow
 }
 
+$inputRoot = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($Paths[0]))
+$runStartIso = [DateTimeOffset]::UtcNow.ToString("o")
+$stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+$songCount = $Paths.Count
+$completedSeconds = @()
+
+function Format-Elapsed([double] $seconds) {
+    $safeSeconds = [Math]::Max(0.0, $seconds)
+    $span = [TimeSpan]::FromSeconds($safeSeconds)
+    return "{0}:{1:00}:{2:00}" -f [int][Math]::Floor($span.TotalHours), $span.Minutes, $span.Seconds
+}
+
 if ($Arbiter -eq "reviewer-validity" -and -not $ReviewerEvidence) {
     if (-not (Test-Path -LiteralPath $r2Pipeline -PathType Leaf)) {
         throw "R2 pipeline not found: $r2Pipeline"
     }
     Write-Host "R2 reviewer acquisition: enabled" -ForegroundColor DarkCyan
     Write-Host "Reviewer trust profile: $ReviewerProfile" -ForegroundColor DarkCyan
-    $exitCode = 0
-    foreach ($rawPath in $Paths) {
-        $pipelineArgs = @(
-            $r2Pipeline,
-            "--reviewer-device", $WhisperXDevice,
-            "--reviewer-profile", $ReviewerProfile
+}
+
+Write-Host "$songCount songs queued" -ForegroundColor Cyan
+$exitCode = 0
+$songIndex = 0
+foreach ($rawPath in $Paths) {
+    $songIndex++
+    $songName = [System.IO.Path]::GetFileName($rawPath)
+    $songStarted = $stopwatch.Elapsed.TotalSeconds
+    Write-Host ("[{0}/{1}] {2} elapsed {3} ETA -- START" -f $songIndex, $songCount, $songName, (Format-Elapsed $songStarted)) -ForegroundColor DarkCyan
+    $songExitCode = 1
+    try {
+        if ($Arbiter -eq "reviewer-validity" -and -not $ReviewerEvidence) {
+            $pipelineArgs = @(
+                $r2Pipeline,
+                "--reviewer-device", $WhisperXDevice,
+                "--reviewer-profile", $ReviewerProfile
+            )
+            if ($WhisperXPython) {
+                $pipelineArgs += @("--reviewer-python", $WhisperXPython)
+            }
+            if ($IncludeHubReviewer) {
+                $pipelineArgs += "--include-hub-reviewer"
+            }
+            $pipelineArgs += "--"
+            if ($argsList.Count -gt 1) {
+                $pipelineArgs += $argsList[1..($argsList.Count - 1)]
+            }
+            $pipelineArgs += $rawPath
+            & $pythonExe @pipelineArgs
+            $songExitCode = $LASTEXITCODE
+        }
+        else {
+            $argsList += $rawPath
+            & $pythonExe @argsList
+            $songExitCode = $LASTEXITCODE
+            $argsList = @($argsList[0..($argsList.Count - 2)])
+        }
+    }
+    catch {
+        Write-Warning ("Alignment failed for {0}: {1}" -f $songName, $_.Exception.Message)
+        $songExitCode = 1
+        if ($argsList.Count -gt 0 -and $argsList[-1] -eq $rawPath) {
+            $argsList = @($argsList[0..($argsList.Count - 2)])
+        }
+    }
+
+    $songElapsed = $stopwatch.Elapsed.TotalSeconds - $songStarted
+    $completedSeconds += $songElapsed
+    if ($songExitCode -ne 0) {
+        $exitCode = $songExitCode
+    }
+    $remaining = $songCount - $songIndex
+    if ($remaining -eq 0) {
+        $eta = "0:00:00"
+    }
+    else {
+        $eta = Format-Elapsed ((($completedSeconds | Measure-Object -Average).Average) * $remaining)
+    }
+    Write-Host ("[{0}/{1}] {2} elapsed {3} ETA {4} exit {5} END" -f $songIndex, $songCount, $songName, (Format-Elapsed $songElapsed), $eta, $songExitCode) -ForegroundColor DarkCyan
+}
+
+$summaryScript = Join-Path $scriptDir "scripts\lrc_batch_summary.py"
+if (Test-Path -LiteralPath $summaryScript -PathType Leaf) {
+    $savedErrorActionPreference = $ErrorActionPreference
+    $nativePreferenceVariable = Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue
+    $savedNativePreference = if ($nativePreferenceVariable) { $nativePreferenceVariable.Value } else { $null }
+    try {
+        $ErrorActionPreference = "Continue"
+        $PSNativeCommandUseErrorActionPreference = $false
+        $summaryArgs = @(
+            $summaryScript,
+            $inputRoot,
+            "--since", $runStartIso,
+            "--report-dir", $ReportDirectory,
+            "--work-dir", $scriptDir
         )
-        if ($WhisperXPython) {
-            $pipelineArgs += @("--reviewer-python", $WhisperXPython)
+        & $pythonExe @summaryArgs
+        $summaryExitCode = $LASTEXITCODE
+        if ($summaryExitCode -ne 0) {
+            Write-Warning "Batch summary failed; preserving alignment exit code $exitCode."
         }
-        if ($IncludeHubReviewer) {
-            $pipelineArgs += "--include-hub-reviewer"
+    }
+    catch {
+        Write-Warning ("Batch summary failed; preserving alignment exit code {0}: {1}" -f $exitCode, $_.Exception.Message)
+    }
+    finally {
+        $ErrorActionPreference = $savedErrorActionPreference
+        if ($nativePreferenceVariable) {
+            $PSNativeCommandUseErrorActionPreference = $savedNativePreference
         }
-        $pipelineArgs += "--"
-        if ($argsList.Count -gt 1) {
-            $pipelineArgs += $argsList[1..($argsList.Count - 1)]
-        }
-        $pipelineArgs += $rawPath
-        & $pythonExe @pipelineArgs
-        $songExitCode = $LASTEXITCODE
-        if ($songExitCode -ne 0) {
-            $exitCode = $songExitCode
+        else {
+            Remove-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue
         }
     }
 }
 else {
-    $argsList += $Paths
-    & $pythonExe @argsList
-    $exitCode = $LASTEXITCODE
+    Write-Warning "Batch summary script was not found: $summaryScript"
 }
 
 if ($exitCode -eq 0) {
@@ -366,4 +450,14 @@ if ($exitCode -eq 0) {
     }
 }
 
+$reviewBatchPath = [System.IO.Path]::GetFullPath((Join-Path $scriptDir "Review LRC.bat"))
+Write-Host "Review LRC.bat: $reviewBatchPath" -ForegroundColor Yellow
+[Console]::OutputEncoding = $previousConsoleOutputEncoding
+$OutputEncoding = $previousOutputEncoding
+if ($null -eq $previousPythonEncoding) {
+    Remove-Item Env:PYTHONIOENCODING -ErrorAction SilentlyContinue
+}
+else {
+    $env:PYTHONIOENCODING = $previousPythonEncoding
+}
 exit $exitCode
