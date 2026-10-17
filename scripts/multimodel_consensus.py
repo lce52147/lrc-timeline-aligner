@@ -30,6 +30,13 @@ MODEL_SPECS = (
     "ja-ctc:jonatasgrosman/wav2vec2-large-xlsr-53-japanese:native",
 )
 
+HF_MODEL_REVISIONS = {
+    "facebook/mms-1b-all": "3d33597edbdaaba14a8e858e2c8caa76e3cec0cd",
+    "facebook/wav2vec2-large-960h-lv60-self": "54074b1c16f4de6a5ad59affb4caa8f2ea03a119",
+    "jonatasgrosman/wav2vec2-large-xlsr-53-english": "569a6236e92bd5f7652a0420bfe9bb94c5664080",
+    "jonatasgrosman/wav2vec2-large-xlsr-53-japanese": "cf031e020336460d15a417eba710bbc5bb43be9a",
+}
+
 
 _WEIGHT_NAME = re.compile(
     r"^(?:pytorch_model|model|adapter(?:\.[^/]+)?)-?\d*(?:-of-\d+)?\.(?:bin|safetensors)$"
@@ -44,7 +51,7 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _hf_snapshot(repo: str) -> Path | None:
+def _hf_snapshot(repo: str, revision: str | None = None) -> Path | None:
     roots = []
     for value in (
         os.environ.get("HUGGINGFACE_HUB_CACHE"),
@@ -60,6 +67,10 @@ def _hf_snapshot(repo: str) -> Path | None:
         snapshots = repo_dir / "snapshots"
         if not snapshots.is_dir():
             continue
+        if revision:
+            candidate = snapshots / revision
+            if candidate.is_dir():
+                return candidate
         ref = repo_dir / "refs" / "main"
         if ref.is_file():
             revision = ref.read_text(encoding="utf-8").strip()
@@ -79,6 +90,8 @@ def _snapshot_blob(snapshot: Path) -> str:
     )
     if not files:
         return "UNVERIFIED"
+    if any(item.name.startswith("model") and item.suffix == ".safetensors" for item in files):
+        files = [item for item in files if not item.name.startswith("pytorch_model")]
     blobs: list[str] = []
     for item in files:
         resolved = item.resolve()
@@ -124,7 +137,7 @@ def model_identity(spec: str) -> dict[str, str]:
         repo = parts[1]
     else:
         return {"model_revision": "UNVERIFIED", "model_blob_sha256": "UNVERIFIED"}
-    snapshot = _hf_snapshot(repo)
+    snapshot = _hf_snapshot(repo, HF_MODEL_REVISIONS.get(repo))
     if snapshot is None:
         return {"model_revision": "UNVERIFIED", "model_blob_sha256": "UNVERIFIED"}
     return {

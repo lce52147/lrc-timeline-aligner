@@ -23,6 +23,15 @@ HF_REVISIONS = {
     "facebook/wav2vec2-large-960h-lv60-self": "54074b1c16f4de6a5ad59affb4caa8f2ea03a119",
     "jonatasgrosman/wav2vec2-large-xlsr-53-english": "569a6236e92bd5f7652a0420bfe9bb94c5664080",
 }
+ENGLISH_XLSR_REPO = "jonatasgrosman/wav2vec2-large-xlsr-53-english"
+ENGLISH_XLSR_FILES = (
+    "config.json",
+    "model.safetensors",
+    "preprocessor_config.json",
+    "special_tokens_map.json",
+    "tokenizer_config.json",
+    "vocab.json",
+)
 JAPANESE_XLSR_REPO = "jonatasgrosman/wav2vec2-large-xlsr-53-japanese"
 JAPANESE_XLSR_EXPECTED = "cf031e020336460d15a417eba710bbc5bb43be9a"
 HUBP_REPO = "prj-beatrice/japanese-hubert-base-phoneme-ctc"
@@ -77,7 +86,11 @@ def _prefetch_hf() -> None:
         revision = HF_REVISIONS.get(repo)
         if revision is None:
             raise RuntimeError(f"un-pinned MODEL_SPECS repo: {repo}")
-        patterns = MMS1B_FILES if repo == "facebook/mms-1b-all" else None
+        patterns = (
+            MMS1B_FILES if repo == "facebook/mms-1b-all"
+            else ENGLISH_XLSR_FILES if repo == ENGLISH_XLSR_REPO
+            else None
+        )
         path = _download_snapshot(repo, revision, allow_patterns=patterns)
         if path.name != revision:
             raise RuntimeError(f"snapshot revision mismatch for {repo}: {path.name} != {revision}")

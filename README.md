@@ -1,10 +1,12 @@
-# LRC Timeline Aligner — v1.3
+# LRC Timeline Aligner — v1.3.1
 
 Local LRC timestamp generation for Windows. The tool keeps lyric order fixed, generates timing evidence from the audio, lets Central arbitration choose the final line starts, and writes a same-name `.lrc` plus an audit report.
 
-## What's new in v1.3
+## v1.3.1 and the v1.3 timing baseline
 
-v1.3 adds a post-Central multimodel consensus layer and stronger review flagging on top of the v1.2 architecture.
+v1.3.1 is an installation and packaging update. It does not change the v1.3 timing or alignment policy. The setup path now builds the repository-local ASR environment, pins the validated dependencies and third-party binaries, can prefetch the production models, and finishes with a doctor check.
+
+The timing features and validation results below are the unchanged v1.3.0 baseline:
 
 - **Multimodel consensus (post-Central):** rows that Central leaves unresolved are re-aligned by MMS, MMS-1B (eng/jpn), three English CTC models and a Japanese CTC model. A new time is accepted only when at least three model families agree within 0.10 s (MMS required) and the occurrence/boundary guards pass.
 - **Review flags:** `model-disagreement` and `silent-risk` mark lines where the models disagree or the timing pattern is risky, so large errors are surfaced for review instead of being written silently.
@@ -240,73 +242,37 @@ corpus; they are not a guarantee for arbitrary music.
 
 ## Environment rebuild
 
-The repository does not include audio, model weights, private references, generated reports, virtual environments, or third-party binaries.
+The repository does not include audio, model weights, private references, generated reports, virtual environments, or third-party binaries. Windows with Python 3.11 is required; `setup.ps1` does not install system Python.
 
-Recommended Windows setup:
-
-```powershell
-py -m venv .venv-asr
-.\.venv-asr\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-# Install the PyTorch / torchaudio build matching your CUDA or CPU environment first.
-python -m pip install -r .\requirements-asr.txt
-python -m pip install -r .\requirements.txt
-```
-
-The 2026-10-02 validated Windows environment used Python 3.11.5, ffmpeg
-9.0.1 (Gyan essentials build), PyTorch 2.8.0+cu128, torchaudio
-2.8.0+cu128, WhisperX 3.8.6, Transformers 4.57.6, NumPy 2.4.4,
-pykakasi 2.3.0, huggingface-hub 0.36.2, and the CUDA 12.8 PyTorch
-runtime. The GPU validation host used an NVIDIA GeForce RTX 4070 Ti with
-driver 610.88. Exact GPU hardware is not a correctness requirement, but
-the CUDA/PyTorch pair must be compatible.
-
-Source for the version and hardware numbers in the preceding paragraph is the validated local environment inventory. Reproduce the corresponding values on another machine with:
+From an extracted release folder, run:
 
 ```powershell
-python --version
-ffmpeg -version
-python -c "import importlib.metadata as m; print({p:m.version(p) for p in ['torch','torchaudio','whisperx','transformers','numpy','pykakasi','huggingface-hub']})"
-nvidia-smi
+powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
 ```
 
-External components used by the automatic path:
-
-- Python 3 on Windows.
-- `ffmpeg` and `ffprobe` on `PATH`.
-- PyTorch / torchaudio matching the selected CUDA runtime or CPU.
-- whisper.cpp built for Windows, with `whisper-cli.exe` at `tools\whisper.cpp\Release\whisper-cli.exe` unless an explicit path is supplied.
-- whisper.cpp `ggml-large-v3.bin` at `models\whisper.cpp\ggml-large-v3.bin` unless an explicit model path is supplied.
-- WhisperX in `.venv-asr`.
-- The XLSR Japanese CTC model `jonatasgrosman/wav2vec2-large-xlsr-53-japanese` available in the Hugging Face cache when XLSR reviewer evidence is used.
-- The HUBP model `prj-beatrice/japanese-hubert-base-phoneme-ctc`, revision `1ec4eb3c45b2a1cafb7c477d447df34ca03070f2`, materialized at `models\hubert-phoneme-ctc` when R2 reviewer evidence is used.
-
-The validated XLSR cache resolved to revision
-`cf031e020336460d15a417eba710bbc5bb43be9a`. HUBP planning also requires
-`pyopenjtalk-plus==0.4.1.post3`; it must be installed in the environment
-that runs `build_hubp_plan.py`.
-
-Source for the model revision identifiers and the pinned `pyopenjtalk-plus` version in this section is the public acquisition command below plus `requirements-asr.txt`; rerunning those commands resolves the same requested revisions when they remain available upstream.
-
-The reviewer models can be acquired with huggingface-hub after the Python
-environment is installed:
+For a first install that downloads all production/reviewer model assets up front:
 
 ```powershell
-python -c "from huggingface_hub import snapshot_download; snapshot_download('prj-beatrice/japanese-hubert-base-phoneme-ctc', revision='1ec4eb3c45b2a1cafb7c477d447df34ca03070f2', local_dir='models/hubert-phoneme-ctc')"
-python -c "from huggingface_hub import snapshot_download; snapshot_download('jonatasgrosman/wav2vec2-large-xlsr-53-japanese', revision='cf031e020336460d15a417eba710bbc5bb43be9a')"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -Prefetch
 ```
 
-The local whisper.cpp executable used for validation does not expose a
-version string and its checkout metadata is unavailable, so no exact
-whisper.cpp revision is claimed here. Rebuild the current upstream
-`whisper-cli` with CUDA support when desired, place it at the path above,
-and obtain the `large-v3` GGML model using whisper.cpp's model download
-script or an equivalent official model source. Model and binary files stay
-outside Git.
+`setup.ps1` creates or reuses `.venv-asr`, selects the CUDA or CPU PyTorch 2.8.0 build, installs the pinned ASR lock plus the public requirements, installs repository-local ffmpeg/ffprobe when PATH does not provide them, installs the pinned whisper.cpp binary and `ggml-large-v3.bin`, optionally prefetches the Hugging Face and torchaudio models, then runs `scripts\doctor.py`. Use `-Force` to rebuild the venv, or `-Cuda` / `-Cpu` to override GPU detection.
 
-`requirements.txt` and `requirements-asr.txt` are dependency pointers, not a lockfile. They do not install ffmpeg, whisper.cpp, model weights, or the correct CUDA-specific PyTorch build.
+`align-lrc.ps1` prefers `.venv-asr\Scripts\python.exe` and automatically adds the repository-local ffmpeg directory to PATH. Normal use therefore does not depend on another Python installation or a third-party ffmpeg copy elsewhere on the machine.
 
-CUDA is optional for the base code paths but is the tested configuration for the reviewer generators used by R2. Model acquisition must be completed before using those reviewers.
+The v1.3.1 clean-install work used Python 3.11.5 on an NVIDIA GeForce RTX 4070 Ti with 12,282 MiB VRAM. Peak inference VRAM was not instrumented, so 12 GB is the validated host capacity rather than a measured minimum. The completed prefetch plus two-song validation folder occupied 37.12 GiB excluding the copied test songs. The third clean `-Prefetch` attempt took 2224.481 seconds (37 min 4 s) to reach the doctor gate. That attempt downloaded and installed the full environment but the doctor gate failed on cache-dependent model identity; the source fix is covered by the installation tests, and the deployment report keeps the clean gate marked failed because the three-round cap prohibited a fourth rebuild.
+
+Pinned external runtime identities used by this candidate:
+
+- ffmpeg 8.1.2 (Gyan essentials build).
+- whisper.cpp Windows CUDA build `b5454`.
+- `ggml-large-v3.bin`: 3,095,033,483 bytes, SHA256 `64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2`.
+- PyTorch / torchaudio 2.8.0+cu128 on the validated GPU host.
+- WhisperX 3.8.6, Transformers 4.57.6, NumPy 2.4.4, huggingface-hub 0.36.2, and pyopenjtalk-plus 0.4.1.post3.
+
+The first clean run is network- and disk-heavy. Observed large transfers included the 3.5 GB PyTorch CUDA wheel, a 2.88 GB `ggml-large-v3` model, two roughly 1.18 GB torchaudio checkpoints, the whisper.cpp CUDA archive, ffmpeg, and the prefetched Hugging Face model snapshots. Later runs reuse the repository-local venv and the configured model caches.
+
+After setup, place `Song.flac` and `Song.lyrics.txt` (or `.lyrics.lrc`) together and drag the FLAC onto `Align LRC.bat`, or run the PowerShell wrapper directly.
 
 ## Output and review
 
