@@ -1051,6 +1051,7 @@ class TimingDecision:
     rejected_candidates: tuple[CandidateEvaluation, ...]
     recovery: RecoveryProvenance | None
     arbiter: timing_arbiter.GrossRescueDecision | None = None
+    replaced_candidate: TimingCandidate | None = None
 
 
 @dataclass(frozen=True)
@@ -4015,6 +4016,14 @@ def _current_timing_candidate(candidates: tuple[TimingCandidate, ...]) -> Timing
     return next((item for item in candidates if item.current), None)
 
 
+def _active_legacy_candidate(candidate: object) -> bool:
+    return (
+        isinstance(candidate, dict)
+        and candidate.get("source") != "selected_path"
+        and candidate.get("replaced_by_consensus") is not True
+    )
+
+
 def ctc_spans_collapsed(spans: Sequence[TimingTokenSpan]) -> bool:
     if not spans:
         return False
@@ -5236,6 +5245,7 @@ def _apply_multimodel_consensus_runtime(
             evidence=evidence,
             candidate=candidate,
             recovery=recovery,
+            replaced_candidate=old_candidate,
         )
     return FinalTimingState(
         decisions=tuple(decisions),
@@ -24764,7 +24774,7 @@ def collect_central_timing_candidates(
         legacy_candidates = raw_assignment.get("candidates")
         if isinstance(legacy_candidates, list):
             for legacy in legacy_candidates:
-                if not isinstance(legacy, dict) or legacy.get("source") == "selected_path":
+                if not _active_legacy_candidate(legacy):
                     continue
                 raw_time = legacy.get("time")
                 if not isinstance(raw_time, (int, float)):
@@ -27452,6 +27462,19 @@ def commit_final_timing_state(
             }
             for item in decision.rejected_candidates
         ]
+        displaced_candidate = decision.replaced_candidate
+        displaced_payload = (
+            [{
+                "candidate_id": displaced_candidate.candidate_id,
+                "source": displaced_candidate.source,
+                "time": displaced_candidate.written_time.seconds,
+                "score": round(displaced_candidate.confidence, 6),
+                "reasons": ["replaced-by-multi-model-consensus"],
+                "replaced_by_consensus": True,
+            }]
+            if displaced_candidate is not None
+            else []
+        )
         raw_assignment["candidates"] = [
             {
                 "candidate_id": decision.candidate.candidate_id,
@@ -27460,6 +27483,7 @@ def commit_final_timing_state(
                 "score": round(decision.candidate.confidence, 6),
                 "reasons": ["central-selected" if audit.timing_trusted else "central-provisional"],
             },
+            *displaced_payload,
             *canonical_rejected,
         ]
         raw_assignment["rejected_candidates"] = canonical_rejected

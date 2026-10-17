@@ -69,6 +69,13 @@ from multimodel_consensus import model_disagreement_review
 
 
 class MultimodelReviewOnlyTests(unittest.TestCase):
+    def test_displaced_consensus_baseline_cannot_reenter_central(self) -> None:
+        self.assertFalse(auto_lrc._active_legacy_candidate({
+            "source": "ctc-current",
+            "replaced_by_consensus": True,
+        }))
+        self.assertTrue(auto_lrc._active_legacy_candidate({"source": "ctc-current"}))
+
     def test_mms_disagreement_is_review_only(self) -> None:
         result = model_disagreement_review(
             written_times=(10.0,),

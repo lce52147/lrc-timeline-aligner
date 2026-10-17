@@ -30,6 +30,10 @@ import reviewer_independent_offset as vocal_offset  # noqa: E402
 TRUST_REVIEWERS = reviewer_layer.SHIPPED_REVIEWERS
 
 
+class MissingCurrentCandidateError(ValueError):
+    pass
+
+
 def _finite(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
@@ -68,7 +72,9 @@ def _current_candidate(assignment: Mapping[str, object]) -> Mapping[str, object]
         if isinstance(item, Mapping) and item.get("source") == "ctc-current"
     ]
     if len(currents) != 1:
-        raise ValueError("baseline assignment must contain exactly one ctc-current candidate")
+        raise MissingCurrentCandidateError(
+            "baseline assignment must contain exactly one ctc-current candidate"
+        )
     return currents[0]
 
 
@@ -121,8 +127,8 @@ def build_reviewer_payload(report: Mapping[str, object]) -> dict[str, object]:
                 "text": auto_lrc.entry_sung_text(entry),
                 "sources": {
                     "MMS": {"time": mms_time},
-                    "CUR": {"time": cur_time},
-                    "FIN": {"time": fin_time},
+                    "CUR": {"time": cur_time, "role": "baseline"},
+                    "FIN": {"time": fin_time, "role": "proposal"},
                 },
             }
         )
@@ -823,14 +829,32 @@ def main(argv: list[str] | None = None) -> int:
 
     stage_started = time.perf_counter()
     print(stage_message(2, "R2: acquiring independent reviewer evidence"), flush=True)
-    summary = acquire_reviewer_evidence(
-        report_path,
-        evidence_path,
-        run_dir / "reviewers",
-        reviewer_python=args.reviewer_python,
-        device=args.reviewer_device,
-        include_hub=args.include_hub_reviewer,
-    )
+    try:
+        summary = acquire_reviewer_evidence(
+            report_path,
+            evidence_path,
+            run_dir / "reviewers",
+            reviewer_python=args.reviewer_python,
+            device=args.reviewer_device,
+            include_hub=args.include_hub_reviewer,
+        )
+    except MissingCurrentCandidateError as exc:
+        final_output = (
+            Path(parsed.output).expanduser().resolve()
+            if parsed.output
+            else audio_path.with_suffix(".lrc")
+        )
+        final_report_dir = (
+            Path(parsed.report_dir).expanduser().resolve()
+            if parsed.report_dir
+            else auto_lrc.DEFAULT_REPORT_DIR
+        )
+        print(f"WARNING: R2 skipped for this song: {exc}", file=sys.stderr, flush=True)
+        return _run_backend(
+            prepare_baseline_args(
+                backend_args, output=final_output, report_dir=final_report_dir
+            )
+        )
     print(
         stage_message(
             2,

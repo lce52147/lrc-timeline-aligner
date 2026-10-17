@@ -19,6 +19,7 @@ Measured on the same 39-song / 1487-line manually checked validation pool:
 - `align-lrc.ps1` now prefers the repository venv and repository-local ffmpeg.
 - `-Prefetch` acquires the production/reviewer model assets and `doctor.py` verifies the runtime before use.
 - Model identity lookup is deterministic when Hugging Face caches contain multiple snapshots or both safetensors and legacy PyTorch weights.
+- R2 preserves the displaced Central CTC baseline after a multi-model consensus replacement and skips reviewer acquisition cleanly for older cached reports that lack it.
 
 ### Install
 

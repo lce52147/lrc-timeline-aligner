@@ -61,6 +61,70 @@ class R2PipelineTests(unittest.TestCase):
         self.assertEqual(song["rows"][0]["sources"]["CUR"]["time"], 1.0)
         self.assertEqual(song["rows"][0]["sources"]["FIN"]["time"], 1.02)
         self.assertEqual(song["rows"][0]["sources"]["MMS"]["time"], 0.99)
+        self.assertEqual(song["rows"][0]["sources"]["CUR"]["role"], "baseline")
+        self.assertEqual(song["rows"][0]["sources"]["FIN"]["role"], "proposal")
+
+    def test_from_captured_consensus_state_fails_before_baseline_restore_then_passes(self) -> None:
+        # Captured from the G3' フロム entry 1 failure at 21.25 s.
+        captured = {
+            "timestamp": 21.25,
+            "candidates": [
+                {"source": "multi-model-consensus", "time": 21.25},
+                {"source": "ctc-first-token-posterior", "time": 14.96},
+                {"source": "ctc-detached-initial-token-recovery", "time": 17.28},
+                {"source": "audio-validated-current", "time": 16.74},
+            ],
+        }
+
+        with self.assertRaises(r2_pipeline.MissingCurrentCandidateError):
+            r2_pipeline._current_candidate(captured)
+
+        fixed = dict(captured)
+        fixed["candidates"] = [
+            captured["candidates"][0],
+            {
+                "source": "ctc-current",
+                "time": 16.74,
+                "replaced_by_consensus": True,
+            },
+            *captured["candidates"][1:],
+        ]
+        current = r2_pipeline._current_candidate(fixed)
+
+        self.assertEqual(current["time"], 16.74)
+        self.assertTrue(current["replaced_by_consensus"])
+
+    def test_consensus_replacement_preserves_exactly_one_current_baseline(self) -> None:
+        assignment = {
+            "timestamp": 91.23,
+            "candidates": [
+                {"source": "multi-model-consensus", "time": 91.23},
+                {
+                    "source": "ctc-current",
+                    "time": 90.74,
+                    "replaced_by_consensus": True,
+                },
+                {"source": "raw-asr", "time": 90.71},
+            ],
+        }
+
+        current = r2_pipeline._current_candidate(assignment)
+
+        self.assertEqual(current["time"], 90.74)
+        self.assertTrue(current["replaced_by_consensus"])
+        self.assertEqual(
+            sum(item.get("source") == "ctc-current" for item in assignment["candidates"]),
+            1,
+        )
+
+    def test_old_report_without_current_raises_graceful_skip_signal(self) -> None:
+        with self.assertRaisesRegex(
+            r2_pipeline.MissingCurrentCandidateError,
+            "exactly one ctc-current",
+        ):
+            r2_pipeline._current_candidate(
+                {"candidates": [{"source": "multi-model-consensus", "time": 91.23}]}
+            )
 
     def test_build_reviewer_payload_removes_generated_title_card_like_backend(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
