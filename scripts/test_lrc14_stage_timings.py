@@ -123,6 +123,25 @@ class TimingModuleTests(unittest.TestCase):
         self.assertEqual(calls, [1])
         self.assertEqual(data["stages"], [])
 
+    def test_exit_clock_failure_clears_stack_and_preserves_call_semantics(self):
+        error = RuntimeError("original")
+        with st.session("standalone", "audio") as data:
+            with mock.patch.object(st, "_CLOCK", side_effect=[1.0, 2.0, RuntimeError("clock")]):
+                self.assertEqual(st.timed("ok", lambda: 7)(), 7)
+            self.assertEqual(getattr(st._TLS, "stack", []), [])
+        self.assertEqual(data["stages"], [])
+
+        def fail():
+            raise error
+
+        with st.session("standalone", "audio") as data:
+            with mock.patch.object(st, "_CLOCK", side_effect=[1.0, 2.0, RuntimeError("clock")]):
+                with self.assertRaises(RuntimeError) as caught:
+                    st.timed("fail", fail)()
+            self.assertIs(caught.exception, error)
+            self.assertEqual(getattr(st._TLS, "stack", []), [])
+        self.assertEqual(data["stages"], [])
+
     def test_worker_stage_is_separate(self):
         def original():
             return 3
@@ -383,12 +402,17 @@ class R2TimingTests(unittest.TestCase):
             root = Path(folder)
             audio = root / "song.flac"
             audio.write_bytes(b"audio")
+            run_dir = r2_pipeline.reviewer_work_directory(root / "work", audio)
+            stale_status = run_dir / "reviewers" / "reviewer-status.json"
+            stale_status.parent.mkdir(parents=True)
+            stale_status.write_text(json.dumps({"schema": 1, "steps": {"STALE": {"seconds": 9.0}}}), encoding="utf-8")
             with mock.patch.object(r2_pipeline, "_run_backend", return_value=1):
                 result = r2_pipeline.main(["--work-dir", str(root / "work"), "--", str(audio), "--timing-source", "lyrics", "--output", str(root / "final.lrc"), "--report-dir", str(root / "reports")])
-            run_dir = r2_pipeline.reviewer_work_directory(root / "work", audio)
             timings = json.loads((run_dir / "r2-timings.json").read_text(encoding="utf-8"))
+            self.assertFalse(stale_status.exists())
         self.assertEqual(result, 1)
         self.assertEqual([row["status"] for row in timings["stages"]], ["failed", "not-run", "not-run", "not-run"])
+        self.assertIsNone(timings["reviewers"])
         self.assertIsNotNone(timings["total_seconds"])
 
     def test_r2_main_full_mocked_run_writes_overhead_and_summary(self):

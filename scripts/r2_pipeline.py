@@ -911,6 +911,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
     run_dir = reviewer_work_directory(Path(args.work_dir).expanduser().resolve(), audio_path)
     run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "reviewers" / "reviewer-status.json").unlink(missing_ok=True)
     baseline_output = run_dir / "baseline.lrc"
     baseline_report_dir = run_dir / "baseline-reports"
     evidence_path = run_dir / "reviewer-evidence.json"

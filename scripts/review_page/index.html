@@ -15,7 +15,7 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
 .chips,.audio{display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin:6px 0}.chip{border:1px solid #bbb;background:#fff;border-radius:15px}
 .chip.selected{background:#dcecff;border-color:#3880d0}.chip.rejected{text-decoration:line-through;color:#888}
 .dirty{background:#fff4ce}.muted{color:#777}.order-warning{color:#b42318;font-weight:600}
-.selected-row{outline:2px solid #3880d0;outline-offset:-2px}
+.selected-row{outline:2px solid #3880d0;outline-offset:-2px}.row.conflict{background:#fff0f0;border-left-color:#b42318}
 </style>
 </head>
 <body>
@@ -43,6 +43,7 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
   const visible = () => state.rows.filter(item => item.row.review === 'REVIEW' || state.showUntrusted);
   const keyFor = item => String(item.song.index) + ':' + String(item.row.entry);
   const editFor = item => state.edits.get(keyFor(item));
+  const conflicted = item => { const edit = editFor(item); return !!edit && edit.base_cs !== item.row.current_cs; };
   const working = item => editFor(item)?.cs ?? item.row.current_cs;
   const adjacentText = value => value ? time(value.cs) + ' · ' + esc(value.lyric || '') : '—';
   const sourceText = c => (c.sources || [c.label]).join(',');
@@ -136,12 +137,14 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
       const delta = c.cs - (row.current_cs ?? c.cs);
       return '<button class="chip ' + (c.rejected ? 'rejected ' : '') + (c.cs === chosen ? 'selected' : '') + '" data-candidate="' + i + '"' + (editable(song) ? '' : ' disabled') + ' title="' + esc(sourceText(c)) + '">' + (i+1) + ': ' + time(c.cs) + ' (' + (delta >= 0 ? '+' : '') + delta + 'cs) <span class="meta">' + esc(sourceText(c)) + '</span></button>';
     }).join('');
-    div.className = 'row ' + String(row.review || 'UNTRUSTED').toLowerCase() + (visible()[state.selected] === item ? ' selected-row' : '');
+    const conflict = conflicted(item);
+    div.className = 'row ' + String(row.review || 'UNTRUSTED').toLowerCase() + (conflict ? ' conflict' : '') + (visible()[state.selected] === item ? ' selected-row' : '');
     div.dataset.key = key;
     div.innerHTML = '<div class="meta">' + esc(song.song) + ' · entry ' + row.entry + ' · ' + esc(row.review) + ' · rank ' + esc(row.severity_rank ?? '—') + ' · ' + esc(row.reason || '') + '</div>' +
       '<div class="lyric">' + (lyrics || '<span class="muted">no lyric text</span>') + '</div>' +
       '<div>current <b>' + time(row.current_cs) + '</b> · auto ' + time(row.auto_cs) + ' · previous ' + adjacentText(previous) + ' · next ' + adjacentText(next) + '</div>' +
       (ordering ? '<div class="order-warning">warning: working time is outside adjacent line order</div>' : '') +
+      (conflict ? '<div class="order-warning">conflict: timestamp changed; repick a candidate or press U</div>' : '') +
       '<div class="audio"><button class="play" data-kind="flac" ' + (song.has_flac ? '' : 'disabled') + '>play FLAC</button><button class="play" data-kind="stem" ' + (song.has_stem ? '' : 'disabled') + '>play stem</button>' + (song.has_flac ? '' : '<span class="muted">FLAC unavailable</span>') + (song.has_stem ? '' : '<span class="muted">stem unavailable</span>') + '</div>' +
       '<div>working <b>' + time(chosen) + '</b></div><div class="chips">' + (chips || '<span class="muted">no candidates</span>') + '</div>' +
       '<div class="meta">' + ((song.read_only || song.detail?.server_read_only) ? 'read-only: ' + esc(song.read_only_reason || (song.detail?.server_read_only ? 'server' : 'unknown')) : '') + '</div>';
@@ -174,6 +177,7 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
       state.error = dropped ? dropped + ' dropped staged edit' + (dropped === 1 ? '' : 's') + ' after reload' : '';
       render();
     } catch (error) { state.error = error.message; render(); }
+    return state.error;
   }
   async function save() {
     if (serverReadOnly()) { state.error = 'save disabled: server read-only'; render(); return; }
@@ -196,7 +200,6 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
         });
         const data = await response.json().catch(() => ({error:response.statusText}));
         if (response.status === 409) {
-          await load();
           failures.push(song.song + ': save failed: stale base_sha256; reloaded and kept staged edits');
           continue;
         }
@@ -208,7 +211,8 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
       }
     }
     setDirty();
-    if (!failures.length) await load();
+    const loadMessage = await load();
+    if (loadMessage) failures.push(loadMessage);
     state.error = failures.join('; '); setDirty(); render();
   }
 
@@ -238,6 +242,10 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
     if (event.key.toLowerCase() === 'n') { event.preventDefault(); if (item.row.next) playAround(item, item.row.next.cs); return; }
     if (event.code === 'BracketLeft' || event.code === 'BracketRight') {
       event.preventDefault();
+      if (conflicted(item)) {
+        alert('This timestamp changed after staging. Repick a candidate or press U before nudging.');
+        return;
+      }
       const delta = event.shiftKey ? 1 : 10;
       const signedDelta = event.code === 'BracketLeft' ? -delta : delta;
       const before = working(item) || 0;

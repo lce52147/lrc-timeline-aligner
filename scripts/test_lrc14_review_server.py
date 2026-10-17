@@ -244,7 +244,8 @@ class ReviewServerTests(unittest.TestCase):
         for marker in ("currentTime = start", "loadedmetadata", "BracketLeft", "base_sha256:song.detail.base_sha256", "beforeunload", "server_read_only", "response.status === 409", "reloaded and kept staged edits",
                        "base_cs:item.row.current_cs", "candidate.cs, sourceText(candidate), 0", "actualDelta = cs - before",
                        "dropped staged edit", "edit.base_cs !== item.row.current_cs", "button.blur()",
-                       "event.target?.type !== 'checkbox'"):
+                       "event.target?.type !== 'checkbox'", "const conflict = conflicted(item)",
+                       "const loadMessage = await load()", "alert('This timestamp changed after staging"):
             self.assertIn(marker, page)
 
     def test_bom_crlf_save_bytes_and_stale_save(self) -> None:
@@ -263,6 +264,22 @@ class ReviewServerTests(unittest.TestCase):
         self.assertEqual(self._json_request("POST", "/api/song/0/save", payload)[0], 409)
         self.assertEqual(self.output.read_bytes(), expected)
         self.assertEqual(edits.read_bytes(), before_log)
+
+    def test_stale_api_save_returns_409_with_changed_base_timestamp(self) -> None:
+        stale = self._detail()
+        staged_base_cs = stale["rows"][0]["current_cs"]
+        fresh = {
+            "base_sha256": stale["base_sha256"],
+            "edits": [{"entry": 1, "cs": 125, "source": "other-reviewer", "nudge_cs": 25}],
+        }
+        self.assertEqual(self._json_request("POST", "/api/song/0/save", fresh)[0], 200)
+        stale_edit = {
+            "base_sha256": stale["base_sha256"],
+            "edits": [{"entry": 1, "cs": 110, "source": "manual", "nudge_cs": 10}],
+        }
+        status, _headers, body = self._json_request("POST", "/api/song/0/save", stale_edit)
+        self.assertEqual((status, json.loads(body)["error"]), (409, "stale base_sha256"))
+        self.assertNotEqual(self._detail()["rows"][0]["current_cs"], staged_base_cs)
 
     def test_missing_lrc_rounding_and_non_ascii_token(self) -> None:
         self.assertEqual(review_server._tag_cs(1.005), 101)

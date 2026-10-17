@@ -246,8 +246,8 @@ def _call(fn, args, kwargs, name, *, cache_kind=None, function_name=None):
     finally:
         if row is not None:
             try:
-                row["seconds"] = _round(_CLOCK() - started)
                 stack.pop()
+                row["seconds"] = _round(_CLOCK() - started)
                 _append_stage(state, row)
             except Exception:
                 pass
