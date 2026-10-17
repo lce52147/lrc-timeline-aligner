@@ -241,7 +241,10 @@ class ReviewServerTests(unittest.TestCase):
         hits = [line for line in source if "checked references" in line.casefold() or "lrc bk" in line.casefold()]
         self.assertEqual(len(hits), 1)
         page = (SCRIPTS / "review_page" / "index.html").read_text(encoding="utf-8")
-        for marker in ("currentTime = start", "loadedmetadata", "BracketLeft", "base_sha256:song.detail.base_sha256", "beforeunload", "server_read_only", "response.status === 409", "reloaded and kept staged edits"):
+        for marker in ("currentTime = start", "loadedmetadata", "BracketLeft", "base_sha256:song.detail.base_sha256", "beforeunload", "server_read_only", "response.status === 409", "reloaded and kept staged edits",
+                       "base_cs:item.row.current_cs", "candidate.cs, sourceText(candidate), 0", "actualDelta = cs - before",
+                       "dropped staged edit", "edit.base_cs !== item.row.current_cs", "button.blur()",
+                       "event.target?.type !== 'checkbox'"):
             self.assertIn(marker, page)
 
     def test_bom_crlf_save_bytes_and_stale_save(self) -> None:
@@ -284,6 +287,27 @@ class ReviewServerTests(unittest.TestCase):
         store = review_server.ReviewStore(self.root, [malformed])
         self.assertEqual(store.songs, [])
         self.assertIn(malformed.resolve(), store.excluded)
+
+    def test_non_object_reports_are_excluded_at_every_discovery_site(self) -> None:
+        bad = self.root / "bad.align-report.json"
+        bad.write_text("[]", encoding="utf-8")
+        for target in (bad, self.audio, self.root / "empty"):
+            if target.name == "empty":
+                target.mkdir()
+            reports, excluded = review_server._report_files([target], self.root)
+            self.assertNotIn(bad.name, {path.name for path in reports})
+            self.assertIn(bad.name, {path.name for path in excluded})
+
+    def test_startup_lists_excluded_report_names(self) -> None:
+        bad = self.root / "bad.align-report.json"
+        bad.write_text("null", encoding="utf-8")
+        fake_server = mock.Mock()
+        fake_server.server_port = 1234
+        with mock.patch.object(review_server.http.server, "ThreadingHTTPServer", return_value=fake_server), \
+             mock.patch("builtins.print") as output:
+            review_server.run_server([bad], self.root, no_browser=True)
+        startup = output.call_args_list[-1].args[0]
+        self.assertEqual(json.loads(startup)["excluded_files"], [bad.name])
 
 
 if __name__ == "__main__":

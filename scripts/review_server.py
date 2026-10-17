@@ -152,6 +152,14 @@ def _path_is_excluded(path):
     return any(name in parts for name in _EXCLUDED_DIR_NAMES)
 
 
+def _load_report(path):
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, UnicodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def _report_files(targets, report_dir):
     found = []
     excluded = []
@@ -166,9 +174,10 @@ def _report_files(targets, report_dir):
             candidates = []
             target = str(path).casefold()
             for report in report_dir.glob("*.align-report.json"):
-                try:
-                    data = json.loads(report.read_text(encoding="utf-8-sig"))
-                except (OSError, ValueError):
+                data = _load_report(report)
+                if data is None:
+                    if report not in excluded:
+                        excluded.append(report)
                     continue
                 if str(data.get("audio_path", "")).casefold() == target:
                     candidates.append(report)
@@ -180,18 +189,20 @@ def _report_files(targets, report_dir):
                 prefix = str(path).casefold().rstrip("\\/") + "\\"
                 candidates = []
                 for report in report_dir.glob("*.align-report.json"):
-                    try:
-                        data = json.loads(report.read_text(encoding="utf-8-sig"))
-                    except (OSError, ValueError):
+                    data = _load_report(report)
+                    if data is None:
+                        if report not in excluded:
+                            excluded.append(report)
                         continue
                     if str(data.get("audio_path", "")).casefold().startswith(prefix):
                         candidates.append(report)
         else:
             candidates = []
         for report in candidates:
-            try:
-                data = json.loads(report.read_text(encoding="utf-8-sig"))
-            except (OSError, ValueError):
+            data = _load_report(report)
+            if data is None:
+                if report not in excluded:
+                    excluded.append(report)
                 continue
             if not isinstance(data.get("audio_path"), str):
                 if report not in excluded:
@@ -812,7 +823,8 @@ def run_server(targets, report_dir=None, port=0, no_browser=False, read_only=Fal
     server.store = store
     server.token = secrets.token_urlsafe(32)
     url = f"http://127.0.0.1:{server.server_port}/#t={urllib.parse.quote(server.token)}"
-    print(json.dumps({"url": url, "token": server.token, "songs": len(store.songs), "excluded": len(store.excluded)}, ensure_ascii=False), flush=True)
+    print(json.dumps({"url": url, "token": server.token, "songs": len(store.songs), "excluded": len(store.excluded),
+                      "excluded_files": [path.name for path in store.excluded]}, ensure_ascii=False), flush=True)
     if not no_browser:
         webbrowser.open(url)
     try:

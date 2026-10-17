@@ -95,12 +95,12 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
       state.error = ''; setDirty(); render();
       return;
     }
-    state.edits.set(key, {entry:item.row.entry, cs, source:String(source || 'manual').slice(0,64), nudge_cs:nudgeCs});
+    state.edits.set(key, {entry:item.row.entry, cs, source:String(source || 'manual').slice(0,64), nudge_cs:nudgeCs, base_cs:item.row.current_cs});
     state.error = ''; setDirty(); render();
   }
   function stageCandidate(item, candidate) {
     select(item);
-    stage(item, candidate.cs, sourceText(candidate), candidate.cs - (item.row.current_cs ?? candidate.cs));
+    stage(item, candidate.cs, sourceText(candidate), 0);
     playAround(item, candidate.cs);
   }
   function nextRow() {
@@ -146,7 +146,7 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
       '<div>working <b>' + time(chosen) + '</b></div><div class="chips">' + (chips || '<span class="muted">no candidates</span>') + '</div>' +
       '<div class="meta">' + ((song.read_only || song.detail?.server_read_only) ? 'read-only: ' + esc(song.read_only_reason || (song.detail?.server_read_only ? 'server' : 'unknown')) : '') + '</div>';
     div.addEventListener('click', () => { select(item); render(); });
-    div.querySelectorAll('.play').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); playAround(item, working(item), button.dataset.kind); }));
+    div.querySelectorAll('.play').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); button.blur(); playAround(item, working(item), button.dataset.kind); }));
     div.querySelectorAll('.chip').forEach(button => button.addEventListener('click', event => {
       event.stopPropagation(); const candidate = row.candidates[Number(button.dataset.candidate)]; if (candidate && editable(song)) stageCandidate(item, candidate);
     }));
@@ -154,6 +154,7 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
   }
   async function load() {
     try {
+      const previousEdits = new Map(state.edits);
       const list = await api('/api/songs');
       const details = await Promise.all(list.map(song => api('/api/song/' + song.index)));
       state.songs = list.map((song,i) => Object.assign({}, song, {detail:details[i]}));
@@ -163,7 +164,15 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
         || (b.row.candidate_spread ?? -Infinity) - (a.row.candidate_spread ?? -Infinity)
         || a.song.index - b.song.index
         || (a.row.severity_rank ?? 999999) - (b.row.severity_rank ?? 999999));
-      state.error = ''; render();
+      const currentRows = new Map(state.rows.map(item => [keyFor(item), item]));
+      let dropped = 0;
+      previousEdits.forEach((edit,key) => {
+        const item = currentRows.get(key);
+        if (!item || !editable(item.song)) { state.edits.delete(key); dropped++; }
+      });
+      setDirty();
+      state.error = dropped ? dropped + ' dropped staged edit' + (dropped === 1 ? '' : 's') + ' after reload' : '';
+      render();
     } catch (error) { state.error = error.message; render(); }
   }
   async function save() {
@@ -171,36 +180,45 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
     if (!state.dirty) return;
     const bySong = new Map();
     state.edits.forEach((edit,key) => { const index = Number(key.split(':')[0]); if (!bySong.has(index)) bySong.set(index, []); bySong.get(index).push(edit); });
-    try {
-      for (const [index, edits] of bySong) {
+    const failures = [];
+    for (const [index, edits] of bySong) {
+      try {
         const song = state.songs.find(item => item.index === index);
+        const conflicts = edits.filter(edit => {
+          const item = state.rows.find(row => row.song.index === index && row.row.entry === edit.entry);
+          return !item || edit.base_cs !== item.row.current_cs;
+        });
+        if (conflicts.length) { failures.push(song.song + ': staged edit conflicts with current timestamp; repick or U before save'); continue; }
         const response = await fetch('/api/song/' + index + '/save', {
           method:'POST',
           headers:{'X-Review-Token':token, 'Origin':location.origin, 'Content-Type':'application/json'},
-          body:JSON.stringify({base_sha256:song.detail.base_sha256, edits})
+          body:JSON.stringify({base_sha256:song.detail.base_sha256, edits:edits.map(({base_cs,...edit}) => edit)})
         });
         const data = await response.json().catch(() => ({error:response.statusText}));
         if (response.status === 409) {
           await load();
-          state.error = 'save failed: stale base_sha256; reloaded and kept staged edits';
-          setDirty(); render();
-          return;
+          failures.push(song.song + ': save failed: stale base_sha256; reloaded and kept staged edits');
+          continue;
         }
-        if (!response.ok) throw Error(data.error || response.statusText);
+        if (!response.ok) { failures.push(song.song + ': save failed: ' + (data.error || response.statusText)); continue; }
         edits.forEach(edit => state.edits.delete(String(index) + ':' + edit.entry));
         song.detail = data;
+      } catch (error) {
+        failures.push('song ' + index + ': save failed: ' + error.message);
       }
-      setDirty(); state.error = ''; await load();
-    } catch (error) { state.error = 'save failed: ' + error.message; setDirty(); render(); }
+    }
+    setDirty();
+    if (!failures.length) await load();
+    state.error = failures.join('; '); setDirty(); render();
   }
 
-  document.getElementById('save').addEventListener('click', save);
+  document.getElementById('save').addEventListener('click', event => { event.currentTarget.blur(); save(); });
   document.getElementById('untrusted').addEventListener('change', event => { state.showUntrusted = event.target.checked; render(); });
-  document.getElementById('mode').addEventListener('click', () => { state.mode = state.mode === 'flac' ? 'stem' : 'flac'; render(); });
+  document.getElementById('mode').addEventListener('click', event => { event.currentTarget.blur(); state.mode = state.mode === 'flac' ? 'stem' : 'flac'; render(); });
   document.addEventListener('keydown', event => {
     if (event.ctrlKey && !event.altKey && !event.metaKey && event.key.toLowerCase() === 's') { event.preventDefault(); save(); return; }
     if (event.altKey || event.metaKey || event.ctrlKey) return;
-    if (event.target?.closest?.('input,textarea,select,[contenteditable]')) return;
+    if (event.target?.closest?.('input,textarea,select,[contenteditable]') && event.target?.type !== 'checkbox') return;
     if (event.target?.closest?.('button') && (event.key === 'Enter' || event.code === 'Space')) return;
     const rows = visible(), item = rows[state.selected];
     if (!item) return;
@@ -222,9 +240,11 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
       event.preventDefault();
       const delta = event.shiftKey ? 1 : 10;
       const signedDelta = event.code === 'BracketLeft' ? -delta : delta;
-      const cs = Math.max(0, (working(item) || 0) + signedDelta);
+      const before = working(item) || 0;
+      const cs = Math.max(0, before + signedDelta);
+      const actualDelta = cs - before;
       const existing = editFor(item);
-      stage(item, cs, existing?.source || 'nudge', (existing?.nudge_cs || 0) + signedDelta);
+      stage(item, cs, existing?.source || 'nudge', (existing?.nudge_cs || 0) + actualDelta);
       return;
     }
     if (/^[1-9]$/.test(event.key)) {
