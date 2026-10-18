@@ -217,13 +217,14 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
   console.log(JSON.stringify({
     tabs: queue.children[0].children.map(child => child.textContent),
     keys: queue.children[1].children.map(child => child.dataset.key),
-    audio: queue.children[1].children[1]._html.includes('data-kind="flac" >play FLAC')
+    audio: queue.children[1].children[1]._html.includes('data-kind="flac" >play FLAC'),
+    nudge: queue.children[1].children[0]._html.includes('data-delta="-10"')
   }));
 })().catch(error => { console.error(error.stack); process.exitCode = 1; });
 """.replace("SOURCE", json.dumps(source))
         result = subprocess.run(["node", "-"], input=harness, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout), {"tabs": ["song (2)"], "keys": ["0:1", "0:2"], "audio": True})
+        self.assertEqual(json.loads(result.stdout), {"tabs": ["song (2)"], "keys": ["0:1", "0:2"], "audio": True, "nudge": True})
 
     def test_acceptance_save_three_entries_and_second_save(self) -> None:
         detail = self._detail()
@@ -361,6 +362,10 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         self.assertIn("className = 'song-tabs'", page)
         self.assertIn("state.activeSong", page)
         self.assertIn("song.song + ' (' + pending + ')'", page)
+        self.assertIn('class="nudge-button"', page)
+        self.assertIn('data-delta="-10"', page)
+        self.assertIn('data-delta="10"', page)
+        self.assertIn("nudge(item, Number(button.dataset.delta))", page)
 
     def test_bom_crlf_save_bytes_and_stale_save(self) -> None:
         self._start(True)
