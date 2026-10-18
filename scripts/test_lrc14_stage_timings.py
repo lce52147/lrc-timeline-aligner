@@ -415,6 +415,24 @@ class R2TimingTests(unittest.TestCase):
         self.assertIsNone(timings["reviewers"])
         self.assertIsNotNone(timings["total_seconds"])
 
+    def test_r2_baseline_exception_reraises_same_object_after_writing_timings(self):
+        error = RuntimeError("baseline backend failed")
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            audio = root / "song.flac"
+            audio.write_bytes(b"audio")
+            with mock.patch.object(r2_pipeline, "_run_backend", side_effect=error):
+                with self.assertRaises(RuntimeError) as caught:
+                    r2_pipeline.main([
+                        "--work-dir", str(root / "work"), "--", str(audio),
+                        "--output", str(root / "final.lrc"),
+                    ])
+            run_dir = r2_pipeline.reviewer_work_directory(root / "work", audio)
+            timings = json.loads((run_dir / "r2-timings.json").read_text(encoding="utf-8"))
+        self.assertIs(caught.exception, error)
+        self.assertEqual(timings["stages"][0]["status"], "error:RuntimeError")
+        self.assertEqual([row["status"] for row in timings["stages"][1:]], ["not-run"] * 3)
+
     def test_r2_main_full_mocked_run_writes_overhead_and_summary(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
