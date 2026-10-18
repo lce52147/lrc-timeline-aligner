@@ -455,6 +455,14 @@ class R2TimingTests(unittest.TestCase):
             self.assertEqual(result, 2)
             self.assertFalse((run_dir / "r2-timings.json").exists())
 
+    def test_r2_parser_error_writes_no_timing_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            work_dir = Path(folder) / "work"
+            with self.assertRaises(SystemExit) as caught:
+                r2_pipeline.main(["--work-dir", str(work_dir)])
+            self.assertEqual(caught.exception.code, 2)
+            self.assertFalse(list(work_dir.rglob("r2-timings.json")))
+
     def test_r2_partial_reviewer_failure_reads_status_file_and_reraises_same_exception(self):
         error = RuntimeError("reviewer failed")
         with tempfile.TemporaryDirectory() as folder:
