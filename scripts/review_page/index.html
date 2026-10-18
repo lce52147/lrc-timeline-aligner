@@ -63,8 +63,8 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
     if (!available) { state.error = kind.toUpperCase() + ' audio is unavailable for this song'; render(); return; }
     stopPlayer();
     const audio = new Audio('/audio/' + item.song.index + '/' + kind + '?t=' + encodeURIComponent(token));
-    const start = Math.max(0, targetCs / 100 - 2);
-    const stop = targetCs / 100 + 2;
+    const start = targetCs / 100;
+    const stop = start + 2;
     let started = false, active = true;
     const cleanup = () => { if (!active) return; active = false; audio.pause(); audio.removeEventListener('timeupdate', check); if (state.player === audio) state.player = null; };
     const check = () => { if (audio.currentTime >= stop) cleanup(); };

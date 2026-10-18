@@ -315,6 +315,9 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         hits = [line for line in source if "checked references" in line.casefold() or "lrc bk" in line.casefold()]
         self.assertEqual(len(hits), 1)
         page = (SCRIPTS / "review_page" / "index.html").read_text(encoding="utf-8")
+        self.assertIn("const start = targetCs / 100;", page)
+        self.assertIn("const stop = start + 2;", page)
+        self.assertNotIn("targetCs / 100 - 2", page)
         for marker in ("currentTime = start", "loadedmetadata", "BracketLeft", "base_sha256:song.detail.base_sha256", "beforeunload", "server_read_only", "response.status === 409", "reloaded and kept staged edits",
                        "base_cs:item.row.current_cs", "candidate.cs, sourceText(candidate), 0", "actualDelta = cs - before",
                        "dropped staged edit", "edit.base_cs !== item.row.current_cs", "button.blur()",
