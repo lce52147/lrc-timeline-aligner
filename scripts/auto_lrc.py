@@ -4993,7 +4993,7 @@ def _model_cache_write(
     payload: object,
     args: argparse.Namespace,
 ) -> None:
-    if not _model_cache_enabled(args):
+    if not _model_cache_enabled(args) or _model_cache_only(args):
         return
     path = _model_cache_path(kind, key)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -9473,6 +9473,45 @@ def default_whisperx_ready() -> bool:
     return default_whisper_cli().exists() and default_whisper_model().exists() and default_whisperx_python().exists()
 
 
+def _effective_raw_asr_paths(args: argparse.Namespace) -> tuple[Path, Path]:
+    cli_arg = getattr(args, "whisper_cli", None)
+    model_arg = getattr(args, "whisper_model", None)
+    cli = Path(cli_arg).expanduser().resolve() if cli_arg else default_whisper_cli()
+    model = Path(model_arg).expanduser().resolve() if model_arg else default_whisper_model()
+    return cli, model
+
+
+def _raw_asr_backend_status(args: argparse.Namespace) -> dict[str, object]:
+    cli, model = _effective_raw_asr_paths(args)
+    missing: list[str] = []
+    if not cli.is_file():
+        missing.append(f"whisper-cli:{cli}")
+    if not model.is_file():
+        missing.append(f"whisper-model:{model}")
+    available = not missing
+    return {
+        "available": available,
+        "attempted": False,
+        "failure_kind": None if available else "backend-unavailable",
+        "missing_components": missing,
+        "paths": {"whisper_cli": str(cli), "whisper_model": str(model)},
+        "fallback": None if available else "empty-raw-asr-events",
+    }
+
+
+def _raw_asr_warning(status: dict[str, object]) -> str:
+    failure_kind = str(status.get("failure_kind") or "backend-unavailable")
+    missing = status.get("missing_components")
+    details = ", ".join(str(item) for item in missing) if isinstance(missing, list) and missing else str(status.get("error") or "unknown error")
+    return f"raw ASR unavailable ({failure_kind}): {details}; fallback=empty-raw-asr-events"
+
+
+def _attach_raw_asr_status(report: dict[str, object], status: dict[str, object]) -> None:
+    report["raw_asr_backend"] = copy.deepcopy(status)
+    if status.get("failure_kind"):
+        report["raw_asr_warning"] = _raw_asr_warning(status)
+
+
 def default_ctc_ready() -> bool:
     return default_ctc_python().exists() and (Path(__file__).resolve().parent / "ctc_align.py").exists()
 
@@ -11862,7 +11901,9 @@ def try_whispercpp_diagnostic_candidate(
         )
         report["diagnostic_only"] = True
         return timestamps, report, None, raw_segments
-    except LrcError as exc:
+    except (LrcError, OSError, ValueError) as exc:
+        if _model_cache_only(args):
+            raise ModelCacheMiss(f"model-cache-miss:raw-ASR:{exc}") from exc
         return (
             [],
             {"backend": "whispercpp_raw", "diagnostic_only": True, "error": str(exc)},
@@ -14787,12 +14828,21 @@ def run_auto_backend_competition(
     raw_diagnostic_segments: list[AsrSegment] | None = None
     shared_whisper_wav: Path | None = None
     whisperx_evidence_candidates: list[tuple[list[float], dict[str, object], str]] = []
+    raw_asr_status = _raw_asr_backend_status(args)
+    if not bool(raw_asr_status["available"]):
+        if _model_cache_only(args):
+            raise ModelCacheMiss(
+                "model-cache-miss:raw-ASR-backend-unavailable:"
+                + ",".join(str(item) for item in raw_asr_status["missing_components"])
+            )
+        progress_log("WARNING: " + _raw_asr_warning(raw_asr_status))
 
     # R2L performance-only scheduling: Raw ASR does not consume CTC output,
     # while CTC local-window realignment *does* consume the Raw diagnostic.
     # Run Raw first so the base CTC pass and its local-window follow-up can share
     # one resident CTC helper lifecycle. Candidate/evidence logic is unchanged.
-    if default_whisperx_ready():
+    if bool(raw_asr_status["available"]):
+        raw_asr_status["attempted"] = True
         _close_persistent_helper_mode("ctc", reason="before-global-raw-asr")
         progress_log("running raw ASR diagnostic (pre-CTC schedule)")
         try:
@@ -14816,7 +14866,10 @@ def run_auto_backend_competition(
                 f"quality={candidate_selection_quality(raw_report):.1f}"
             )
         else:
-            progress_log(f"raw ASR diagnostic failed: {raw_error}")
+            raw_asr_status["failure_kind"] = "execution-failed"
+            raw_asr_status["error"] = str(raw_error or "unknown error")
+            raw_asr_status["fallback"] = "empty-raw-asr-events"
+            progress_log("WARNING: " + _raw_asr_warning(raw_asr_status))
         diagnostic_candidates.append(
             {
                 "backend": "whispercpp_raw",
@@ -15018,6 +15071,7 @@ def run_auto_backend_competition(
     )
     selected_report = copy.deepcopy(selected["report"])
     assert isinstance(selected_report, dict)
+    _attach_raw_asr_status(selected_report, raw_asr_status)
     selected_timestamps = list(selected["timestamps"])
     selected_backend = str(selected.get("backend", selected_report.get("backend", "auto")))
     if selected_backend == "ctc":

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -19,7 +20,7 @@ from unittest import mock
 os.environ.setdefault("LRC_MODEL_CACHE", "0")
 
 import auto_lrc
-from auto_lrc import AsrSegment, ModelCacheMiss
+from auto_lrc import AsrSegment, LyricEntry, ModelCacheMiss
 
 
 class ModelCacheReplayTests(unittest.TestCase):
@@ -65,12 +66,32 @@ class ModelCacheReplayTests(unittest.TestCase):
         self.assertEqual(errors, {})
         self.assertEqual(run.call_count, 1)
         self.assertEqual(first["a"], [AsrSegment(1.0, 2.5, "text-a")])
+        cache_root = Path(auto_lrc.DEFAULT_MODEL_CACHE_DIR)
+        before = {
+            str(path.relative_to(cache_root)): (
+                path.stat().st_size,
+                path.stat().st_mtime_ns,
+                hashlib.sha256(path.read_bytes()).hexdigest(),
+            )
+            for path in cache_root.rglob("*")
+            if path.is_file()
+        }
 
         with mock.patch.dict(os.environ, {"LRC_MODEL_CACHE_ONLY": "1"}), \
                 mock.patch.object(auto_lrc, "run_command", side_effect=AssertionError("launched")):
             replay, errors = auto_lrc._run_whispercpp_wav_batch(self.wavs, self.args, suppress_nst=False)
         self.assertEqual(errors, {})
         self.assertEqual(replay, first)
+        after = {
+            str(path.relative_to(cache_root)): (
+                path.stat().st_size,
+                path.stat().st_mtime_ns,
+                hashlib.sha256(path.read_bytes()).hexdigest(),
+            )
+            for path in cache_root.rglob("*")
+            if path.is_file()
+        }
+        self.assertEqual(after, before)
 
     def test_cache_only_miss_is_not_an_ordinary_failure(self) -> None:
         self.assertFalse(issubclass(ModelCacheMiss, Exception))
@@ -94,6 +115,40 @@ class ModelCacheReplayTests(unittest.TestCase):
         args = auto_lrc.build_parser().parse_args(["song.flac", "--model-cache-only", "--no-model-cache"])
         with self.assertRaises(auto_lrc.LrcError):
             auto_lrc._apply_model_cache_flags(args)
+
+
+    def test_cache_only_missing_raw_backend_fails_before_ctc(self) -> None:
+        for missing_name in ("whisper_cli", "whisper_model"):
+            with self.subTest(missing_name=missing_name):
+                args = argparse.Namespace(**vars(self.args))
+                args.model_cache_only = True
+                setattr(args, missing_name, str(Path(self.td.name) / f"missing-{missing_name}"))
+                with mock.patch.object(auto_lrc, "try_ctc_candidate", side_effect=AssertionError("CTC reached")):
+                    with self.assertRaisesRegex(ModelCacheMiss, "raw-ASR-backend-unavailable"):
+                        auto_lrc.run_auto_backend_competition(
+                            self.wavs[0][1], [], 1.0, args, None
+                        )
+
+    def test_cache_only_raw_execution_failure_is_model_cache_miss(self) -> None:
+        args = argparse.Namespace(**vars(self.args))
+        args.model_cache_only = True
+        with mock.patch.object(auto_lrc, "run_whispercpp", side_effect=auto_lrc.LrcError("CLI failed")):
+            with self.assertRaisesRegex(ModelCacheMiss, "model-cache-miss:raw-ASR:CLI failed"):
+                auto_lrc.try_whispercpp_diagnostic_candidate(
+                    self.wavs[0][1], [LyricEntry(["text"])], 1.0, args
+                )
+
+    def test_ordinary_raw_backend_status_is_machine_readable_warning(self) -> None:
+        args = argparse.Namespace(**vars(self.args))
+        args.whisper_cli = str(Path(self.td.name) / "missing-cli")
+        status = auto_lrc._raw_asr_backend_status(args)
+        report: dict[str, object] = {}
+        auto_lrc._attach_raw_asr_status(report, status)
+        self.assertFalse(status["available"])
+        self.assertEqual(status["failure_kind"], "backend-unavailable")
+        self.assertEqual(status["fallback"], "empty-raw-asr-events")
+        self.assertFalse(report["raw_asr_backend"]["available"])
+        self.assertIn("raw ASR unavailable", report["raw_asr_warning"])
 
 
 if __name__ == "__main__":
