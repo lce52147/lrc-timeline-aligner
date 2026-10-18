@@ -9,6 +9,7 @@ body{margin:0;min-height:100vh;background:#0b1220}header{position:sticky;top:0;b
 button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#17253a;border:1px solid #3a4d6b;border-radius:5px}button:hover:not(:disabled){background:#203653}button:disabled{cursor:not-allowed;opacity:.45}
 .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.status{color:#a9bad0}.warning{color:#ff9b9b}
 .queue{max-width:1100px;margin:12px auto}.song{background:#111c2e;border:1px solid #293852;border-radius:8px;margin:10px 0;overflow:hidden;box-shadow:0 6px 20px #05091466}
+.song-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0}.song-tab.active{background:#285987;border-color:#8cc7f7}
 .song h2{font-size:15px;margin:0;padding:10px;background:#17243a}.row{padding:10px;border-top:1px solid #25344c}
 .row.review{border-left:4px solid #ff6b6b}.row.untrusted{border-left:4px solid #e4ad45}
 .meta{color:#9fb0c7;font-size:12px}.lyric{font-size:16px;margin:4px 0 8px;white-space:pre-wrap;color:#f4f7fb}
@@ -32,7 +33,7 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
   const token = new URLSearchParams(location.search).get('t') || new URLSearchParams(location.hash.slice(1)).get('t');
   const queue = document.getElementById('queue');
   const status = document.getElementById('status');
-  const state = {songs:[], rows:[], edits:new Map(), dirty:false, selected:0, showUntrusted:false, mode:'flac', player:null, error:''};
+  const state = {songs:[], rows:[], edits:new Map(), dirty:false, selected:0, activeSong:null, showUntrusted:false, mode:'flac', player:null, error:''};
   const api = async (path, options={}) => {
     const headers = Object.assign({'X-Review-Token':token}, options.headers || {});
     const response = await fetch(path, Object.assign({}, options, {headers}));
@@ -43,7 +44,7 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
   const time = cs => cs == null ? '—' :
     String(Math.floor(cs/6000)).padStart(2,'0') + ':' + String(Math.floor(cs%6000/100)).padStart(2,'0') + '.' + String(cs%100).padStart(2,'0');
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const visible = () => state.rows.filter(item => item.row.review === 'REVIEW' || state.showUntrusted);
+  const visible = () => state.rows.filter(item => (state.activeSong == null || item.song.index === state.activeSong) && (item.row.review === 'REVIEW' || state.showUntrusted));
   const keyFor = item => String(item.song.index) + ':' + String(item.row.entry);
   const editFor = item => state.edits.get(keyFor(item));
   const conflicted = item => { const edit = editFor(item); return !!edit && edit.base_cs !== item.row.current_cs; };
@@ -129,9 +130,23 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
     if (rows.length) { state.selected = Math.min(rows.length - 1, state.selected + 1); render(); }
   }
   function render() {
+    if (state.activeSong == null && state.songs.length) state.activeSong = state.songs[0].index;
+    if (state.activeSong != null && !state.songs.some(song => song.index === state.activeSong)) state.activeSong = state.songs[0]?.index ?? null;
     const rows = visible();
     state.selected = Math.min(state.selected, Math.max(0, rows.length - 1));
     queue.innerHTML = '';
+    const tabs = document.createElement('nav');
+    tabs.className = 'song-tabs';
+    state.songs.forEach(song => {
+      const pending = state.rows.filter(item => item.song.index === song.index && item.row.review === 'REVIEW').length;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'song-tab' + (song.index === state.activeSong ? ' active' : '');
+      button.textContent = song.song + ' (' + pending + ')';
+      button.addEventListener('click', () => { state.activeSong = song.index; state.selected = 0; render(); });
+      tabs.appendChild(button);
+    });
+    queue.appendChild(tabs);
     const grouped = new Map();
     rows.forEach(item => { if (!grouped.has(item.song.index)) grouped.set(item.song.index, []); grouped.get(item.song.index).push(item); });
     grouped.forEach(items => {
