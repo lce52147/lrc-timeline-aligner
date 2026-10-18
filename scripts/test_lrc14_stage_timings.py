@@ -397,6 +397,27 @@ class R2TimingTests(unittest.TestCase):
         self.assertIn("seconds", result["statuses"]["WX"])
         self.assertIn("seconds", result["statuses"]["XLSR"])
 
+    def test_reviewer_acquisition_drops_stale_status_before_early_failure(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            lyrics = root / "song.txt"
+            vocal = root / "vocals.wav"
+            report_path = root / "baseline.json"
+            work = root / "reviewers"
+            lyrics.write_text("\n".join(f"かな{i}" for i in range(1, 9)) + "\n", encoding="utf-8")
+            vocal.write_bytes(b"fake")
+            assignments = [{"entry": i, "timestamp": float(i), "ctc_first_token_start": float(i), "candidates": [{"source": "ctc-current", "time": float(i)}]} for i in range(1, 9)]
+            report_path.write_text(json.dumps({"lyrics_path": str(lyrics), "audio_path": str(root / "song.flac"), "ctc_audio_path": str(vocal), "assignments": assignments}), encoding="utf-8")
+            status_path = work / "reviewer-status.json"
+            work.mkdir()
+            status_path.write_text(json.dumps({"schema": 1, "steps": {"STALE": {"seconds": 9.0}}}), encoding="utf-8")
+            error = ValueError("reviewer command construction failed")
+            with mock.patch.object(r2_pipeline, "build_reviewer_commands", side_effect=error):
+                with self.assertRaises(ValueError) as caught:
+                    r2_pipeline.acquire_reviewer_evidence(report_path, root / "evidence.json", work)
+        self.assertIs(caught.exception, error)
+        self.assertFalse(status_path.exists())
+
     def test_r2_main_writes_timings_when_baseline_fails(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

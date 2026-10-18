@@ -657,6 +657,7 @@ def acquire_reviewer_evidence(
     hubp_path = work_dir / "hubp-raw.json"
     log_path = work_dir / "reviewers.log"
     status_path = work_dir / "reviewer-status.json"
+    status_path.unlink(missing_ok=True)
     # HUBP resumes any song previously marked OK, even when its lyrics changed.
     # Invalidate the complete HUBP plan/output pair on every acquisition.
     for stale_path in (plan_path, hubp_path):
