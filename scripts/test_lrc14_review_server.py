@@ -107,6 +107,26 @@ class ReviewServerTests(unittest.TestCase):
             "GET", "/api/song/0", **{"X-Review-Token": self.server.token}
         )[2])
 
+    def test_selector_exposes_precentral_recommendation(self) -> None:
+        candidates = review_server._candidate_rows(
+            {
+                "candidates": [
+                    {"time": 36.42, "source": "ctc-current", "score": .86},
+                    {"time": 37.01, "source": "ctc-nearby", "score": .90},
+                ],
+                "precentral_candidate_recommendation": {
+                    "time": 37.0, "source": "raw_asr", "score": .98,
+                },
+            },
+            3642,
+            3642,
+        )
+        self.assertIn(3700, [item["cs"] for item in candidates])
+        diagnostic = next(item for item in candidates if item["cs"] == 3700)
+        self.assertTrue(diagnostic["diagnostic_only"])
+        self.assertIn("raw_asr", diagnostic["sources"])
+        self.assertIn("ctc-nearby", diagnostic["sources"])
+
     def test_mapping_payload_and_adjacent_lines(self) -> None:
         detail = self._detail()
         self.assertFalse(detail["read_only"])
@@ -151,6 +171,15 @@ class ReviewServerTests(unittest.TestCase):
 
     def test_page_keeps_lyric_order_when_severity_differs(self) -> None:
         page = (SCRIPTS / "review_page" / "index.html").read_text(encoding="utf-8")
+        self.assertIn("severity-badge", page)
+        self.assertIn("a.song.index - b.song.index || a.row.entry - b.row.entry", page)
+        self.assertIn("candidate-play", page)
+        self.assertIn("candidate-apply", page)
+        self.assertIn("stage(item, candidate.cs", page)
+        self.assertIn("CTC first-sound candidate", page)
+        self.assertIn("ASR diagnostic hint", page)
+        self.assertIn("diagnostic only", page)
+        self.assertIn("color-scheme:dark", page)
         source = page.split("<script>", 1)[1].rsplit("</script>", 1)[0]
         harness = r"""
 const vm = require('vm');
@@ -185,12 +214,16 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
   vm.runInThisContext(source);
   await settle();
   const queue = elements.get('queue');
-  console.log(JSON.stringify(queue.children[0].children.map(child => child.dataset.key)));
+  console.log(JSON.stringify({
+    keys: queue.children[0].children.map(child => child.dataset.key),
+    audio: queue.children[0].children[1]._html.includes('data-kind="flac" >play FLAC')
+  }));
 })().catch(error => { console.error(error.stack); process.exitCode = 1; });
 """.replace("SOURCE", json.dumps(source))
         result = subprocess.run(["node", "-"], input=harness, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout), ["0:1", "0:2"])
+        self.assertEqual(json.loads(result.stdout), {"keys": ["0:1", "0:2"], "audio": True})
+
     def test_acceptance_save_three_entries_and_second_save(self) -> None:
         detail = self._detail()
         first = {
@@ -315,15 +348,15 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         hits = [line for line in source if "checked references" in line.casefold() or "lrc bk" in line.casefold()]
         self.assertEqual(len(hits), 1)
         page = (SCRIPTS / "review_page" / "index.html").read_text(encoding="utf-8")
-        self.assertIn("const start = targetCs / 100;", page)
-        self.assertIn("const stop = start + 2;", page)
-        self.assertNotIn("targetCs / 100 - 2", page)
         for marker in ("currentTime = start", "loadedmetadata", "BracketLeft", "base_sha256:song.detail.base_sha256", "beforeunload", "server_read_only", "response.status === 409", "reloaded and kept staged edits",
                        "base_cs:item.row.current_cs", "candidate.cs, sourceText(candidate), 0", "actualDelta = cs - before",
                        "dropped staged edit", "edit.base_cs !== item.row.current_cs", "button.blur()",
                        "event.target?.type !== 'checkbox'", "const conflict = conflicted(item)",
                        "const loadMessage = await load()", "alert('This timestamp changed after staging"):
             self.assertIn(marker, page)
+        self.assertIn("const start = targetCs / 100;", page)
+        self.assertIn("const stop = start + 2;", page)
+        self.assertNotIn("targetCs / 100 - 2", page)
 
     def test_bom_crlf_save_bytes_and_stale_save(self) -> None:
         self._start(True)

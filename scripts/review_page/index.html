@@ -4,18 +4,21 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer"><title>LRC review</title>
 <style>
-:root{font:14px system-ui,sans-serif;color:#202124;background:#f6f7f9}
-body{margin:0}header{position:sticky;top:0;background:#fff;border-bottom:1px solid #ddd;padding:10px 16px;z-index:2}
-button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-allowed;opacity:.45}
-.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.status{color:#666}.warning{color:#b42318}
-.queue{max-width:1100px;margin:12px auto}.song{background:#fff;border:1px solid #ddd;border-radius:6px;margin:10px 0;overflow:hidden}
-.song h2{font-size:15px;margin:0;padding:10px;background:#f0f2f5}.row{padding:10px;border-top:1px solid #eee}
-.row.review{border-left:4px solid #d33}.row.untrusted{border-left:4px solid #e09800}
-.meta{color:#666;font-size:12px}.lyric{font-size:16px;margin:4px 0 8px;white-space:pre-wrap}
-.chips,.audio{display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin:6px 0}.chip{border:1px solid #bbb;background:#fff;border-radius:15px}
-.chip.selected{background:#dcecff;border-color:#3880d0}.chip.rejected{text-decoration:line-through;color:#888}
-.dirty{background:#fff4ce}.muted{color:#777}.order-warning{color:#b42318;font-weight:600}
-.selected-row{outline:2px solid #3880d0;outline-offset:-2px}.row.conflict{background:#fff0f0;border-left-color:#b42318}
+:root{font:14px system-ui,sans-serif;color:#e5edf7;background:#0b1220;color-scheme:dark}
+body{margin:0;min-height:100vh;background:#0b1220}header{position:sticky;top:0;background:#101a2b;border-bottom:1px solid #293852;padding:10px 16px;z-index:2}
+button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#17253a;border:1px solid #3a4d6b;border-radius:5px}button:hover:not(:disabled){background:#203653}button:disabled{cursor:not-allowed;opacity:.45}
+.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.status{color:#a9bad0}.warning{color:#ff9b9b}
+.queue{max-width:1100px;margin:12px auto}.song{background:#111c2e;border:1px solid #293852;border-radius:8px;margin:10px 0;overflow:hidden;box-shadow:0 6px 20px #05091466}
+.song h2{font-size:15px;margin:0;padding:10px;background:#17243a}.row{padding:10px;border-top:1px solid #25344c}
+.row.review{border-left:4px solid #ff6b6b}.row.untrusted{border-left:4px solid #e4ad45}
+.meta{color:#9fb0c7;font-size:12px}.lyric{font-size:16px;margin:4px 0 8px;white-space:pre-wrap;color:#f4f7fb}
+.severity-badge{display:inline-block;padding:1px 5px;border:1px solid #49617e;border-radius:10px;background:#20324b;color:#c8dbf1;font-size:11px}
+.chips,.audio{display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin:6px 0}
+.candidate{display:flex;gap:8px;align-items:center;flex-wrap:wrap;border:1px solid #3a4d6b;border-radius:6px;padding:6px 8px;background:#142136}
+.candidate.selected{background:#163d62;border-color:#5da9ee}.candidate.rejected{text-decoration:line-through;color:#8291a5}
+.candidate-info{min-width:300px;line-height:1.5}.candidate-source{color:#d4e2f2}.candidate-delta{color:#9fb8d4;font-variant-numeric:tabular-nums}.candidate-actions{display:flex;gap:4px}.candidate-action{padding:3px 6px}
+.dirty{background:#5d4b1d}.muted{color:#8291a5}.order-warning{color:#ff9b9b;font-weight:600}
+.selected-row{outline:2px solid #5da9ee;outline-offset:-2px}.row.conflict{background:#321d28;border-left-color:#ff6b6b}
 </style>
 </head>
 <body>
@@ -47,6 +50,17 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
   const working = item => editFor(item)?.cs ?? item.row.current_cs;
   const adjacentText = value => value ? time(value.cs) + ' · ' + esc(value.lyric || '') : '—';
   const sourceText = c => (c.sources || [c.label]).join(',');
+  const sourceLabel = source => ({
+    'audio-validated-current':'audio-checked result', auto:'current result', current:'current result',
+    'raw_asr':'ASR diagnostic hint', 'precentral-recommendation':'ASR diagnostic hint',
+    'ctc-acoustic-backtrack':'CTC audio candidate', 'ctc-current':'CTC current candidate',
+    'ctc-first-token':'CTC first-sound candidate', 'ctc-first-token-posterior':'CTC first-sound candidate',
+    'ctc-joint-boundary-consensus':'CTC boundary candidate', 'ctc-local-window':'CTC local-window candidate',
+    'ctc-local-window-wide':'CTC wide-window candidate', 'ctc-nearby-phonetic-peak':'nearby sound candidate',
+    'ctc-opening-local-retry':'opening retry candidate', 'ctc-opening-vocal-fusion':'opening voice candidate',
+    'ctc-vocal-activity-reentry':'voice re-entry candidate', 'ctc-vocal-onset-confirmed':'voice-onset candidate'
+  }[source] || String(source || 'candidate').replace(/^ctc-/, 'CTC ').replace(/-/g, ' '));
+  const sourceLabels = c => (c.sources || [c.label]).map(sourceLabel).join(', ');
   function setDirty() { state.dirty = state.edits.size > 0; }
   const serverReadOnly = () => state.songs.some(song => song.detail?.server_read_only);
   const editable = song => !song.read_only && !song.detail?.server_read_only;
@@ -100,9 +114,15 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
     state.error = ''; setDirty(); render();
   }
   function stageCandidate(item, candidate) {
+    if (candidate?.diagnostic_only) return;
     select(item);
     stage(item, candidate.cs, sourceText(candidate), 0);
     playAround(item, candidate.cs);
+  }
+  function applyCandidate(item, candidate) {
+    if (candidate?.diagnostic_only) return;
+    select(item);
+    stage(item, candidate.cs, sourceText(candidate), 0);
   }
   function nextRow() {
     const rows = visible();
@@ -134,13 +154,20 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
     const ordering = chosen != null && ((previousCs != null && chosen <= previousCs) || (nextCs != null && chosen >= nextCs));
     const lyrics = (row.lyrics || [row.lyric || '']).map(esc).join('<br>');
     const chips = (row.candidates || []).map((c,i) => {
-      const delta = c.cs - (row.current_cs ?? c.cs);
-      return '<button class="chip ' + (c.rejected ? 'rejected ' : '') + (c.cs === chosen ? 'selected' : '') + '" data-candidate="' + i + '"' + (editable(song) ? '' : ' disabled') + ' title="' + esc(sourceText(c)) + '">' + (i+1) + ': ' + time(c.cs) + ' (' + (delta >= 0 ? '+' : '') + delta + 'cs) <span class="meta">' + esc(sourceText(c)) + '</span></button>';
+      const delta = row.current_cs == null ? '—' : (c.cs - row.current_cs >= 0 ? '+' : '') + ((c.cs - row.current_cs) / 100).toFixed(2) + 's';
+      const source = sourceLabels(c);
+      const marker = c.cs === row.current_cs ? ' · current' : '';
+      const diagnostic = c.diagnostic_only ? ' · diagnostic only' : '';
+      return '<div class="candidate ' + (c.rejected ? 'rejected ' : '') + (c.cs === chosen ? 'selected' : '') + '">' +
+        '<span class="candidate-info"><b>' + (i+1) + '. ' + time(c.cs) + marker + '</b> · <span class="candidate-source">' + esc(source) + '</span><span class="candidate-delta"> · from current ' + esc(delta) + '</span>' + diagnostic + (c.rejected ? ' · rejected' : '') + '</span>' +
+        '<span class="candidate-actions"><button type="button" class="candidate-action candidate-play" data-candidate="' + i + '" aria-label="listen to candidate ' + (i+1) + '">listen</button>' +
+        '<button type="button" class="candidate-action candidate-apply" data-candidate="' + i + '"' + (editable(song) && !c.diagnostic_only ? '' : ' disabled') + ' aria-label="apply candidate ' + (i+1) + '">apply</button></span></div>';
     }).join('');
     const conflict = conflicted(item);
     div.className = 'row ' + String(row.review || 'UNTRUSTED').toLowerCase() + (conflict ? ' conflict' : '') + (visible()[state.selected] === item ? ' selected-row' : '');
     div.dataset.key = key;
-    div.innerHTML = '<div class="meta">' + esc(song.song) + ' · entry ' + row.entry + ' · ' + esc(row.review) + ' · rank ' + esc(row.severity_rank ?? '—') + ' · ' + esc(row.reason || '') + '</div>' +
+    const severity = '<span class="severity-badge">severity ' + esc(row.severity_score ?? 0) + ' · rank ' + esc(row.severity_rank ?? '—') + '</span>';
+    div.innerHTML = '<div class="meta">' + esc(song.song) + ' · entry ' + row.entry + ' · ' + esc(row.review) + ' · ' + severity + ' · ' + esc(row.reason || '') + '</div>' +
       '<div class="lyric">' + (lyrics || '<span class="muted">no lyric text</span>') + '</div>' +
       '<div>current <b>' + time(row.current_cs) + '</b> · auto ' + time(row.auto_cs) + ' · previous ' + adjacentText(previous) + ' · next ' + adjacentText(next) + '</div>' +
       (ordering ? '<div class="order-warning">warning: working time is outside adjacent line order</div>' : '') +
@@ -150,8 +177,11 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
       '<div class="meta">' + ((song.read_only || song.detail?.server_read_only) ? 'read-only: ' + esc(song.read_only_reason || (song.detail?.server_read_only ? 'server' : 'unknown')) : '') + '</div>';
     div.addEventListener('click', () => { select(item); render(); });
     div.querySelectorAll('.play').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); button.blur(); playAround(item, working(item), button.dataset.kind); }));
-    div.querySelectorAll('.chip').forEach(button => button.addEventListener('click', event => {
-      event.stopPropagation(); const candidate = row.candidates[Number(button.dataset.candidate)]; if (candidate && editable(song)) stageCandidate(item, candidate);
+    div.querySelectorAll('.candidate-play').forEach(button => button.addEventListener('click', event => {
+      event.stopPropagation(); button.blur(); const candidate = row.candidates[Number(button.dataset.candidate)]; if (candidate) playAround(item, candidate.cs);
+    }));
+    div.querySelectorAll('.candidate-apply').forEach(button => button.addEventListener('click', event => {
+      event.stopPropagation(); button.blur(); const candidate = row.candidates[Number(button.dataset.candidate)]; if (candidate && editable(song)) applyCandidate(item, candidate);
     }));
     return div;
   }
@@ -160,7 +190,7 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
       const previousEdits = new Map(state.edits);
       const list = await api('/api/songs');
       const details = await Promise.all(list.map(song => api('/api/song/' + song.index)));
-      state.songs = list.map((song,i) => Object.assign({}, song, {detail:details[i]}));
+      state.songs = list.map((song,i) => Object.assign({}, song, {has_flac:details[i].has_flac, has_stem:details[i].has_stem, detail:details[i]}));
       state.rows = [];
       state.songs.forEach(song => (song.detail.rows || []).forEach(row => state.rows.push({song,row})));
       state.rows.sort((a,b) => a.song.index - b.song.index || a.row.entry - b.row.entry);
@@ -254,7 +284,7 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
     }
     if (/^[1-9]$/.test(event.key)) {
       const candidate = item.row.candidates?.[Number(event.key) - 1];
-      if (candidate && editable(item.song)) stageCandidate(item, candidate);
+      if (candidate && editable(item.song) && !candidate.diagnostic_only) stageCandidate(item, candidate);
     }
   });
 

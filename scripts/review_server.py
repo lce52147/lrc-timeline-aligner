@@ -279,6 +279,11 @@ def _candidate_rows(assignment, current_cs, auto_cs):
         value = _candidate_time(item)
         if value is not None:
             raw.append((_seconds_cs(value), str(item.get("source", "candidate")), _number(item.get("score")) or 0.0, False))
+    precentral = assignment.get("precentral_candidate_recommendation")
+    if isinstance(precentral, dict):
+        value = _candidate_time(precentral)
+        if value is not None:
+            raw.append((_seconds_cs(value), str(precentral.get("source", "precentral-recommendation")), _number(precentral.get("score")) or 0.0, False))
     first = _number(assignment.get("ctc_first_token_start"))
     if first is not None:
         raw.append((_seconds_cs(first), "ctc-first-token", _number(assignment.get("ctc_first_token_score")) or 0.0, False))
@@ -290,12 +295,14 @@ def _candidate_rows(assignment, current_cs, auto_cs):
     merged = []
     for cs, source, score, rejected_flag in sorted(raw, key=lambda item: (-item[2], item[0], item[1])):
         match = next((item for item in merged if abs(item["cs"] - cs) <= 5), None)
+        diagnostic_only = source in {"raw_asr", "precentral-recommendation"}
         if match is None:
-            merged.append({"cs": cs, "label": source, "sources": [source], "score": score, "rejected": rejected_flag})
+            merged.append({"cs": cs, "label": source, "sources": [source], "score": score, "rejected": rejected_flag, "diagnostic_only": diagnostic_only})
         else:
             if source not in match["sources"]:
                 match["sources"].append(source)
             match["rejected"] = match["rejected"] and rejected_flag
+            match["diagnostic_only"] = match["diagnostic_only"] or diagnostic_only
     required = [item for item in merged if item["label"] in {"auto", "current"} or "auto" in item["sources"] or "current" in item["sources"]]
     rest = [item for item in sorted(merged, key=lambda item: (-item["score"], item["cs"])) if item not in required]
     return sorted((required + rest)[:9], key=lambda item: item["cs"])
