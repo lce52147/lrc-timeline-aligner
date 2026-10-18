@@ -117,6 +117,80 @@ class ReviewServerTests(unittest.TestCase):
         self.assertEqual(detail["rows"][4]["current_cs"], 6200)
         self.assertIn("base_sha256", detail)
 
+    def test_entry_key_survives_non_monotonic_timestamps_and_tsv_order(self) -> None:
+        output = self.root / "nonmonotonic.lrc"
+        output.write_bytes(b"[00:20.00]one\n[00:10.00]two\n[00:30.00]three\n")
+        report = self.root / "nonmonotonic.align-report.json"
+        report.write_text(json.dumps({
+            "audio_path": str(self.audio),
+            "ctc_audio_path": str(self.stem),
+            "output_path": str(output),
+            "display_lines": 3,
+            "timing_entries": 3,
+            "assignments": [
+                {"entry": 1, "lrc_tag": "[00:20.00]", "review_required": True, "verification_status": "review-required"},
+                {"entry": 2, "lrc_tag": "[00:10.00]", "review_required": True, "verification_status": "review-required"},
+                {"entry": 3, "lrc_tag": "[00:30.00]", "review_required": False, "verification_status": "unverified"},
+            ],
+        }), encoding="utf-8")
+        tsv = report.with_name(report.name.replace(".align-report.json", ".review.tsv"))
+        tsv.write_text(
+            "\ufeff# review_rows=2\n"
+            "entry\ttime\tlyric\tstatus\treason_codes\tseverity_rank\tseverity_score\tseverity_reasons\ttimestamp_status\tlrc_time\tprev_time\tnext_time\tcandidate_times\tcandidate_spread_s\n"
+            "2\t00:10.00\ttwo\tREVIEW\tflag\t1\t9\treview\t\t00:10.00\t\t\t\t\n"
+            "1\t00:20.00\tone\tREVIEW\tflag\t2\t3\treview\t\t00:20.00\t\t\t\t\n"
+            "3\t00:30.00\tthree\tUNTRUSTED\tunverified\t3\t0\tuntrusted\t\t00:30.00\t\t\t\t\n",
+            encoding="utf-8",
+        )
+        store = review_server.ReviewStore(self.root, [report])
+        rows = store.song(0)["rows"]
+        self.assertEqual(
+            [(row["entry"], row["lyric"], row["review"]) for row in rows],
+            [(1, "one", "REVIEW"), (2, "two", "REVIEW"), (3, "three", "UNTRUSTED")],
+        )
+
+    def test_page_keeps_lyric_order_when_severity_differs(self) -> None:
+        page = (SCRIPTS / "review_page" / "index.html").read_text(encoding="utf-8")
+        source = page.split("<script>", 1)[1].rsplit("</script>", 1)[0]
+        harness = r"""
+const vm = require('vm');
+const source = SOURCE;
+const elements = new Map();
+function element(id='') {
+  return {id, children:[], dataset:{}, className:'', textContent:'', disabled:false,
+    addEventListener(type, fn) { this['on' + type] = fn; },
+    appendChild(child) { this.children.push(child); },
+    querySelectorAll() { return []; }, blur() {},
+    set innerHTML(value) { this._html = value; this.children = []; },
+    get innerHTML() { return this._html || ''; }}; }
+global.document = {
+  getElementById(id) { if (!elements.has(id)) elements.set(id, element(id)); return elements.get(id); },
+  createElement() { return element(); },
+  addEventListener() {},
+};
+global.location = {search:'?t=test', hash:'', origin:'http://test'};
+global.addEventListener = () => {};
+const response = (data) => ({ok:true, status:200, statusText:'ok', json:async () => data});
+const rows = [
+  {entry:1, review:'REVIEW', current_cs:2000, auto_cs:2000, lyrics:['one'], candidates:[], severity_score:1, severity_rank:2, candidate_spread:null},
+  {entry:2, review:'REVIEW', current_cs:1000, auto_cs:1000, lyrics:['two'], candidates:[], severity_score:9, severity_rank:1, candidate_spread:null},
+];
+global.fetch = async (path) => {
+  if (path === '/api/songs') return response([{index:0, song:'song', read_only:false, has_flac:false, has_stem:false}]);
+  if (path === '/api/song/0') return response({base_sha256:'x', server_read_only:false, has_flac:true, has_stem:true, rows});
+  throw Error('unexpected fetch ' + path);
+};
+const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve => setImmediate(resolve)); };
+(async () => {
+  vm.runInThisContext(source);
+  await settle();
+  const queue = elements.get('queue');
+  console.log(JSON.stringify(queue.children[0].children.map(child => child.dataset.key)));
+})().catch(error => { console.error(error.stack); process.exitCode = 1; });
+""".replace("SOURCE", json.dumps(source))
+        result = subprocess.run(["node", "-"], input=harness, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), ["0:1", "0:2"])
     def test_acceptance_save_three_entries_and_second_save(self) -> None:
         detail = self._detail()
         first = {

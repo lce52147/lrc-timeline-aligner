@@ -9,6 +9,28 @@ import test_core_logic
 
 
 class PostCommitSummaryContractTests(unittest.TestCase):
+    def test_review_required_is_derived_from_reason_classes(self):
+        report = {
+            "timing_entries": 1,
+            "assignments": [{
+                "entry": 1,
+                "timestamp": 1.0,
+                "score": 0.9,
+                "manual_anchor_hint": True,
+                "flags": ["model-disagreement"],
+                "review_required": True,
+                "review_reason_classes": [],
+                "verification_status": "review-required",
+            }],
+        }
+        auto_lrc.update_report_confidence_metrics(report)
+        self.assertEqual(
+            report["assignments"][0]["review_reason_classes"],
+            ["actionable-suspicious-conflict"],
+        )
+        self.assertTrue(report["assignments"][0]["review_required"])
+        auto_lrc.assert_report_review_contract(report)
+
     def test_selected_central_summary_cannot_override_final_row_review_contract(self):
         fixture = test_core_logic.CentralTimingStateTests()
         candidate = fixture.candidate(12.0, fixture.coherent_spans(12.0), current=True)

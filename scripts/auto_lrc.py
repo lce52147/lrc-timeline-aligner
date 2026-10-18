@@ -28222,6 +28222,28 @@ def _silent_risk_rule_applies(assignments: list[object], index: int) -> bool:
     return 0.0 <= float(confidence) <= 0.8 and float(next_time) - float(current_time) >= 19.0
 
 
+def _review_reason_classes_from_trust(
+    decision: FinalLineTrustDecision,
+    assignment: dict[str, object],
+    suspicious_rows: list[dict[str, object]],
+) -> list[str]:
+    """Keep the review taxonomy derived from the final trust decision."""
+    reasons = set(decision.reason_codes)
+    classes: list[str] = []
+    if any(_timing_failure_requires_review(code) for code in reasons):
+        classes.append("actionable-timing-failure")
+    if any(
+        code in ACTIONABLE_SUSPICIOUS_FLAGS or code == "model-disagreement"
+        for code in reasons
+    ) or any(_suspicious_row_requires_review(row) for row in suspicious_rows):
+        classes.append("actionable-suspicious-conflict")
+    if "unresolved-material-alternative" in reasons:
+        classes.append("unresolved-material-alternative")
+    if isinstance(assignment.get("self_check_flags"), list) and assignment["self_check_flags"]:
+        classes.append("final-self-check")
+    return classes
+
+
 def update_report_confidence_metrics(
     report: dict[str, object], *, apply_silent_risk: bool = False
 ) -> None:
@@ -28299,6 +28321,11 @@ def update_report_confidence_metrics(
         content_trusted = content_flag(item)
         timing_trusted = decision.timing_trusted
         review_required = decision.review_required
+        if central_committed or "review_reason_classes" in item:
+            item["review_reason_classes"] = _review_reason_classes_from_trust(
+                decision, item, related_suspicious
+            )
+            review_required = bool(item["review_reason_classes"])
         item["content_trusted"] = content_trusted
         item["timing_audit_trusted"] = timing_trusted
         item["final_trust_reason_codes"] = list(decision.reason_codes)
@@ -28443,6 +28470,12 @@ def assert_report_review_contract(report: dict[str, object]) -> None:
         item for item in assignments
         if isinstance(item, dict) and item.get("verification_status") == "review-required"
     ]
+    for item in assignments:
+        if not isinstance(item, dict) or "review_reason_classes" not in item:
+            continue
+        classes = item.get("review_reason_classes")
+        if not isinstance(classes, list) or bool(item.get("review_required")) != bool(classes):
+            raise LrcError("Review reason classes diverged from review_required")
     row_count = len(review_rows)
     count = int(report.get("review_required_count", -1) or 0)
     percent = float(report.get("review_required_percent", -1.0) or 0.0)

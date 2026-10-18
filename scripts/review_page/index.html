@@ -163,10 +163,7 @@ button{font:inherit;padding:5px 8px;cursor:pointer}button:disabled{cursor:not-al
       state.songs = list.map((song,i) => Object.assign({}, song, {detail:details[i]}));
       state.rows = [];
       state.songs.forEach(song => (song.detail.rows || []).forEach(row => state.rows.push({song,row})));
-      state.rows.sort((a,b) => (b.row.severity_score ?? 0) - (a.row.severity_score ?? 0)
-        || (b.row.candidate_spread ?? -Infinity) - (a.row.candidate_spread ?? -Infinity)
-        || a.song.index - b.song.index
-        || (a.row.severity_rank ?? 999999) - (b.row.severity_rank ?? 999999));
+      state.rows.sort((a,b) => a.song.index - b.song.index || a.row.entry - b.row.entry);
       const currentRows = new Map(state.rows.map(item => [keyFor(item), item]));
       let dropped = 0;
       previousEdits.forEach((edit,key) => {
