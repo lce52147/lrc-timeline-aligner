@@ -352,6 +352,14 @@ class ReviewServerTests(unittest.TestCase):
         self.assertEqual(status, 200)
         payload = json.loads(body)
         self.assertEqual(payload["sample_rate"], 16000)
+        with mock.patch.object(review_server, "_song_payload", wraps=review_server._song_payload) as payload_builder:
+            self.assertEqual(
+                self._request(
+                    "GET", "/api/song/0/peaks?from=0&to=200&bins=20&t=test-token"
+                )[0],
+                200,
+            )
+            self.assertEqual(payload_builder.call_count, 0)
         self.assertGreater(payload["peaks"][10][1], .5)
         self.assertGreater(payload["peaks"][11][1], .5)
         self.assertEqual(payload["peaks"][12], [0.0, 0.0])
@@ -397,9 +405,7 @@ class ReviewServerTests(unittest.TestCase):
             self._request("GET", "/api/song/0/peaks?from=0&to=200&bins=601&t=test-token")[0],
             400,
         )
-        report = json.loads(self.report.read_text(encoding="utf-8"))
-        report["ctc_audio_path"] = str(self.root / "missing.wav")
-        self.report.write_text(json.dumps(report), encoding="utf-8")
+        self.server.store.songs[0]["ctc_audio_path"] = str(self.root / "missing.wav")
         self.assertEqual(
             self._request("GET", "/api/song/0/peaks?from=0&to=200&bins=20&t=test-token")[0],
             404,
@@ -410,8 +416,7 @@ class ReviewServerTests(unittest.TestCase):
             handle.setsampwidth(2)
             handle.setframerate(8000)
             handle.writeframes(b"\0\0" * 16)
-        report["ctc_audio_path"] = str(invalid)
-        self.report.write_text(json.dumps(report), encoding="utf-8")
+        self.server.store.songs[0]["ctc_audio_path"] = str(invalid)
         self.assertEqual(
             self._request("GET", "/api/song/0/peaks?from=0&to=200&bins=20&t=test-token")[0],
             415,
@@ -517,7 +522,8 @@ class ReviewServerTests(unittest.TestCase):
         self.assertIn("className = 'peaks'", page)
         self.assertIn("/peaks?from=", page)
         self.assertIn("Math.round((event.clientX - drag.startX) * 600 / stripPx())", page)
-        self.assertIn("stage(item, drag.previewCs, 'drag', 0)", page)
+        self.assertIn("stage(item, previewCs, 'drag', 0)", page)
+        self.assertIn("playAround(item, previewCs)", page)
         self.assertIn("R2 skipped:", page)
         self.assertIn("load error:", page)
         self.assertIn("const shownSongs = new Set()", page)

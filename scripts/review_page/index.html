@@ -34,7 +34,7 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
   const token = new URLSearchParams(location.search).get('t') || new URLSearchParams(location.hash.slice(1)).get('t');
   const queue = document.getElementById('queue');
   const status = document.getElementById('status');
-  const state = {songs:[], rows:[], edits:new Map(), dirty:false, selected:0, activeSong:null, showUntrusted:false, mode:'flac', player:{audio:new Map(), handlers:new Map(), seq:0, timer:null, active:null, ab:null}, error:''};
+  const state = {songs:[], rows:[], edits:new Map(), peaks:new Map(), dirty:false, selected:0, activeSong:null, showUntrusted:false, mode:'flac', player:{audio:new Map(), handlers:new Map(), seq:0, timer:null, active:null, ab:null}, error:''};
   const api = async (path, options={}) => {
     const headers = Object.assign({'X-Review-Token':token}, options.headers || {});
     const response = await fetch(path, Object.assign({}, options, {headers}));
@@ -223,11 +223,14 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
   function attachPeaks(item, canvas) {
     const startCs = working(item);
     if (startCs == null) return;
+    const fromCs = Math.max(0, startCs - 300), toCs = startCs + 300, bins = 120;
+    const cacheKey = [item.song.index, item.row.entry, fromCs, toCs, bins].join(':');
     canvas.width = 600; canvas.height = 64;
-    let payload = null, drag = null;
+    let payload = state.peaks.get(cacheKey) || null, drag = null;
     const paint = markerCs => paintPeaks(canvas, payload, markerCs);
-    api('/api/song/' + item.song.index + '/peaks?from=' + Math.max(0, startCs - 300) + '&to=' + (startCs + 300) + '&bins=120&t=' + encodeURIComponent(token))
-      .then(data => { payload = data; paint(startCs); })
+    if (payload) paint(startCs);
+    else api('/api/song/' + item.song.index + '/peaks?from=' + fromCs + '&to=' + toCs + '&bins=' + bins + '&t=' + encodeURIComponent(token))
+      .then(data => { state.peaks.set(cacheKey, data); payload = data; paint(startCs); })
       .catch(() => {});
     const stripPx = () => canvas.getBoundingClientRect?.().width || canvas.clientWidth || canvas.width || 1;
     const preview = event => {
@@ -244,7 +247,12 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
     const finish = event => {
       if (!drag) return;
       event.stopPropagation();
-      if (event.type === 'pointerup') { preview(event); stage(item, drag.previewCs, 'drag', 0); }
+      if (event.type === 'pointerup') {
+        preview(event);
+        const previewCs = drag.previewCs;
+        stage(item, previewCs, 'drag', 0);
+        playAround(item, previewCs);
+      }
       else paint(startCs);
       canvas.releasePointerCapture?.(event.pointerId); drag = null;
     };

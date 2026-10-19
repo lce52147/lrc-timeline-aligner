@@ -815,6 +815,12 @@ class ReviewStore:
                 self.songs[index] = current
             return current
 
+    def cached_song(self, index):
+        with self.lock:
+            if index < 0 or index >= len(self.songs):
+                return None
+            return self.songs[index]
+
 
 def _public_song(song, server_read_only=False):
     payload = {key: value for key, value in song.items() if key not in {"report_data", "output", "auto", "edits"}}
@@ -1032,7 +1038,7 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
         except ValueError as exc:
             self._json(400, {"error": str(exc)})
             return
-        song = self.server.store.song(index)
+        song = self.server.store.cached_song(index)
         if song is None:
             self._json(404, {"error": "not found"})
             return

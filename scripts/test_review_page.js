@@ -50,10 +50,11 @@ const row = {
   lyrics:['line'], candidates:[{cs:200, sources:['ctc-current'], diagnostic_only:false, rejected:false}],
 };
 const song={index:0,song:'demo',has_flac:true,has_stem:true,read_only:false,detail:{has_flac:true,has_stem:true,base_sha256:'base',rows:[row]}};
+let peakCalls = 0;
 async function fetchMock(url, options={}) {
   if (url === '/api/songs') return {ok:true,json:async()=>[song]};
   if (url === '/api/song/0') return {ok:true,json:async()=>song.detail};
-  if (url.startsWith('/api/song/0/peaks')) return {ok:true,json:async()=>({from_cs:0,to_cs:600,bins:120,sample_rate:16000,peaks:Array.from({length:120},()=>[0,0])})};
+  if (url.startsWith('/api/song/0/peaks')) { peakCalls++; return {ok:true,json:async()=>({from_cs:0,to_cs:600,bins:120,sample_rate:16000,peaks:Array.from({length:120},()=>[0,0])})}; }
   if (url === '/api/song/0/save') return {ok:true,json:async()=>song.detail};
   throw new Error('unexpected fetch '+url);
 }
@@ -114,7 +115,12 @@ vm.runInNewContext(script, context, {filename:'review_page/index.html'});
   assert.match(initialRendered, /class="ab-play"/, 'row renders A/B control');
   assert.match(initialRendered, /class="ab-play"[^>]*disabled/, 'A/B is disabled without a selected candidate');
   test.state.edits.clear(); test.state.dirty=false;
+  test.state.peaks.clear();
+  const peaksBefore = peakCalls;
   const canvas = new Element(); test.attachPeaks(item, canvas); await flush();
+  assert.equal(peakCalls, peaksBefore + 1, 'first peaks attach fetches the window');
+  test.attachPeaks(item, new Element()); await flush();
+  assert.equal(peakCalls, peaksBefore + 1, 'same peaks window uses page cache');
   canvas.dispatch('pointerdown',{button:0,clientX:100,pointerId:1});
   canvas.dispatch('pointermove',{clientX:400,pointerId:1});
   assert.equal(test.state.edits.size, 0, 'drag preview does not stage before pointerup');
@@ -122,6 +128,7 @@ vm.runInNewContext(script, context, {filename:'review_page/index.html'});
   const dragEdit = [...test.state.edits.values()][0];
   assert.equal(dragEdit.cs, 200, 'drag maps pixels to centiseconds');
   assert.equal(dragEdit.source, 'drag', 'drag commits through stage');
+  assert.ok(test.state.player.active, 'pointerup auto-previews the dropped timestamp');
 
   const rendered=test.rowElement(item).innerHTML;
   assert.match(rendered, /class="ab-play"/, 'row renders A/B control after drag');
