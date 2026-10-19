@@ -449,6 +449,12 @@ def _song_payload(report_path, report):
             auto_cs = line_time(auto_lines, line_indexes[0])
             lyrics = line_lyrics(current_lines, line_indexes)
             candidates, dropped_count = _candidate_rows(assignment, current_cs, auto_cs)
+            listed_row = listed.get(index + 1, {})
+            status = listed_row.get("status", feature.get("status", "UNTRUSTED"))
+            reason_codes = lrc_review_tsv.reason_codes_for(
+                listed_row if listed_row else assignment,
+                status,
+            )
             row = {
                 "entry": index + 1,
                 "lyrics": lyrics,
@@ -459,11 +465,12 @@ def _song_payload(report_path, report):
                 "auto": auto_cs / 100.0 if auto_cs is not None else None,
                 "previous": adjacent(index - 1),
                 "next": adjacent(index + 1),
-                "review": listed.get(index + 1, {}).get("status", feature.get("status", "UNTRUSTED")),
-                "severity_rank": listed.get(index + 1, {}).get("severity_rank"),
+                "review": status,
+                "severity_rank": listed_row.get("severity_rank"),
                 "severity_score": feature.get("severity_score", 0),
                 "candidate_spread": feature.get("candidate_spread_s"),
-                "reason": listed.get(index + 1, {}).get("reason_codes", ""),
+                "reason_codes": reason_codes,
+                "reason": ",".join(reason_codes),
                 "candidates": candidates,
                 "dropped_count": dropped_count,
             }

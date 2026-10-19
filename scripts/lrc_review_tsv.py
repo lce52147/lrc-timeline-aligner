@@ -51,6 +51,37 @@ def _clean_field(value: object) -> str:
     return str(value).replace("\t", " ").replace("\r", " ").replace("\n", " ")
 
 
+def _reason_code(value: object) -> str:
+    if isinstance(value, dict):
+        if "code" in value:
+            return _reason_code(value["code"])
+        if "reason" in value:
+            return _reason_code(value["reason"])
+    return str(value)
+
+
+def reason_codes_for(row: object, status: object) -> list[str]:
+    """Return stable, display-ready reason codes without changing classification."""
+    data = row if isinstance(row, dict) else {}
+    final_codes = data.get("final_trust_reason_codes")
+    if isinstance(final_codes, list) and final_codes:
+        values = final_codes
+    else:
+        flags = data.get("flags")
+        if isinstance(flags, list) and flags:
+            values = flags
+        else:
+            legacy = data.get("reason_codes")
+            values = [legacy] if legacy not in (None, "") and not isinstance(legacy, list) else (
+                legacy if isinstance(legacy, list) else []
+            )
+    reasons = [_reason_code(value) for value in values]
+    reasons = [reason for reason in reasons if reason != ""]
+    if not reasons:
+        reasons = ["review-required" if str(status) == "REVIEW" else "unverified"]
+    return reasons
+
+
 def _flatten_strings(value: object) -> list[str]:
     if isinstance(value, str):
         return [value]
@@ -262,13 +293,7 @@ def write_review_tsv(
         feature = features.get(int(row["entry"]), {})
         status = str(feature.get("status", "UNTRUSTED"))
         text = " / ".join(str(part) for part in entry.lines)
-        reason_codes = row.get("final_trust_reason_codes")
-        if isinstance(reason_codes, list):
-            reasons = [str(code) for code in reason_codes]
-        else:
-            reasons = [str(code) for code in row.get("flags", [])] if isinstance(row.get("flags"), list) else []
-        if not reasons:
-            reasons = ["review-required" if status == "REVIEW" else "unverified"]
+        reasons = reason_codes_for(row, status)
         candidate_values = feature.get("candidate_times", [])
         candidate_text = ",".join(_clock(value) for value in candidate_values[:6])
         spread = feature.get("candidate_spread_s")

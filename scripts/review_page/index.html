@@ -62,6 +62,36 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
     'ctc-vocal-activity-reentry':'voice re-entry candidate', 'ctc-vocal-onset-confirmed':'voice-onset candidate'
   }[source] || String(source || 'candidate').replace(/^ctc-/, 'CTC ').replace(/-/g, ' '));
   const sourceLabels = c => (c.sources || [c.label]).map(sourceLabel).join(', ');
+  const reasonLabels = {
+    'F1-vocal-absent':'人聲缺失', 'F3-compressed-or-nonmonotonic':'歌詞時間壓縮或非單調',
+    'F3-nonmonotonic':'歌詞時間非單調', 'F4-ctc-final-disagreement':'CTC 最終時間不一致',
+    'candidate_disagreement':'候選時間不一致', 'ctc_confidence_collapse':'CTC 信心塌陷',
+    'ctc_zero_gap_compressed_prefix':'CTC 零間隔壓縮前綴', 'duplicate_occurrence_offset_mismatch':'重複段落偏移不一致',
+    'group_placement_unsupported':'分組定位無法支援', 'insufficient-minimum-proof':'最低證據不足',
+    'model-disagreement':'模型結果不一致', 'no-strict-opening-proof':'缺少嚴格起音證據',
+    'nonmonotonic-line-start':'行起點非單調', 'phonetic_anchor_disagreement':'語音錨點不一致',
+    'previous-tail-overlap':'前行尾端重疊', 'previous-tail-ownership-unknown':'前行尾端歸屬不明',
+    'recurrence-uncorroborated':'重複段落未獲交叉驗證', 'silent-risk:selected-confidence-le-0.8-and-next-gap-ge-19':'低信心且後方間隔過大',
+    'tail-conflict-without-independent-current-opening':'尾端衝突且缺少目前行獨立起音', 'temporal-incoherence':'時間關係不一致',
+    'timing-evidence-unverified':'時間證據未驗證', 'unresolved-material-alternative':'仍有重大候選未解決',
+    'unresolved-precentral-disagreement':'前置模型仍有不一致', 'unresolved_raw_ctc_disagreement':'Raw ASR 與 CTC 仍有不一致',
+    'unverified':'尚未驗證'
+  };
+  const reasonText = (codes, row) => {
+    const values = Array.isArray(codes) ? codes : codes == null ? [] : [codes];
+    const sentences = values.map(value => {
+      if (value && typeof value === 'object') {
+        const key = typeof value.code === 'string' ? value.code : typeof value.reason === 'string' ? value.reason : '';
+        value = key || JSON.stringify(value);
+      }
+      const key = String(value ?? '').trim();
+      return key ? (reasonLabels[key] || '需要人工確認（' + key + '）') : '';
+    }).filter(Boolean);
+    if (!sentences.length) return '未標示原因';
+    const spread = Number(row?.candidate_spread ?? row?.candidate_spread_s);
+    if (Number.isFinite(spread)) sentences.push('候選相差 ' + spread.toFixed(2) + ' 秒');
+    return sentences.join('；');
+  };
   function setDirty() { state.dirty = state.edits.size > 0; }
   const serverReadOnly = () => state.songs.some(song => song.detail?.server_read_only);
   const editable = song => !song.read_only && !song.detail?.server_read_only;
@@ -208,7 +238,7 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
     div.className = 'row ' + String(row.review || 'UNTRUSTED').toLowerCase() + (conflict ? ' conflict' : '') + (visible()[state.selected] === item ? ' selected-row' : '');
     div.dataset.key = key;
     const severity = '<span class="severity-badge">severity ' + esc(row.severity_score ?? 0) + ' · rank ' + esc(row.severity_rank ?? '—') + '</span>';
-    div.innerHTML = '<div class="meta">' + esc(song.song) + ' · entry ' + row.entry + ' · ' + esc(row.review) + ' · ' + severity + ' · ' + esc(row.reason || '') + '</div>' +
+    div.innerHTML = '<div class="meta">' + esc(song.song) + ' · entry ' + row.entry + ' · ' + esc(row.review) + ' · ' + severity + ' · ' + esc(reasonText(row.reason_codes, row)) + '</div>' +
       '<div class="lyric">' + (lyrics || '<span class="muted">no lyric text</span>') + '</div>' +
       '<div>current <b>' + time(row.current_cs) + '</b> · auto ' + time(row.auto_cs) + ' · previous ' + adjacentText(previous) + ' · next ' + adjacentText(next) + '</div>' +
       (ordering ? '<div class="order-warning">warning: working time is outside adjacent line order</div>' : '') +

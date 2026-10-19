@@ -16,6 +16,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import review_server
+import lrc_review_tsv
 
 
 class ReviewServerTests(unittest.TestCase):
@@ -106,6 +107,44 @@ class ReviewServerTests(unittest.TestCase):
         return json.loads(self._request(
             "GET", "/api/song/0", **{"X-Review-Token": self.server.token}
         )[2])
+
+    def test_reason_codes_normalize_dicts_scalars_and_fallbacks(self) -> None:
+        self.assertEqual(
+            lrc_review_tsv.reason_codes_for(
+                {"final_trust_reason_codes": [{"code": "unknown-code"}, {"reason": "plain"}, 7]},
+                "REVIEW",
+            ),
+            ["unknown-code", "plain", "7"],
+        )
+        self.assertEqual(
+            lrc_review_tsv.reason_codes_for(
+                {"final_trust_reason_codes": [], "flags": ["candidate_disagreement"]},
+                "REVIEW",
+            ),
+            ["candidate_disagreement"],
+        )
+        self.assertEqual(lrc_review_tsv.reason_codes_for({"flags": []}, "REVIEW"), ["review-required"])
+        self.assertEqual(lrc_review_tsv.reason_codes_for(None, "UNTRUSTED"), ["unverified"])
+        self.assertEqual(lrc_review_tsv.reason_codes_for({"reason_codes": "legacy-code"}, "REVIEW"), ["legacy-code"])
+
+    def test_reason_code_union_is_mapped_and_unknowns_are_safe(self) -> None:
+        fixture = json.loads((SCRIPTS / "test_fixtures" / "reason_codes_b1_39.json").read_text(encoding="utf-8"))
+        page = (SCRIPTS / "review_page" / "index.html").read_text(encoding="utf-8")
+        for code in fixture["codes"]:
+            self.assertIn("'" + code + "'", page)
+        self.assertIn("需要人工確認（", page)
+        self.assertIn("JSON.stringify(value)", page)
+        self.assertIn("未標示原因", page)
+
+    def test_raw_assignment_reasons_survive_without_review_tsv(self) -> None:
+        data = json.loads(self.report.read_text(encoding="utf-8"))
+        data["assignments"][0]["final_trust_reason_codes"] = []
+        data["assignments"][0]["flags"] = [{"code": "candidate_disagreement"}]
+        self.assertFalse(self.report.with_name("song.review.tsv").exists())
+        detail = review_server._song_payload(self.report, data)
+        row = detail["rows"][0]
+        self.assertEqual(row["reason_codes"], ["candidate_disagreement"])
+        self.assertEqual(row["reason"], "candidate_disagreement")
 
     def test_selector_exposes_precentral_recommendation(self) -> None:
         candidates, dropped_count = review_server._candidate_rows(
