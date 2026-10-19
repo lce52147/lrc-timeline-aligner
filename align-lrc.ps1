@@ -434,6 +434,19 @@ if ($exitCode -eq 0) {
         if ($report.ctc_device) {
             Write-Host "CTC device: $($report.ctc_device)" -ForegroundColor Green
         }
+        if ($report.backend_participation) {
+            $participation = $report.backend_participation
+            Write-Host "Backends attempted: $([string]::Join(', ', @($participation.attempted)))" -ForegroundColor DarkGray
+            Write-Host "Backends available: $([string]::Join(', ', @($participation.available)))" -ForegroundColor DarkGray
+            foreach ($item in @($participation.unavailable)) {
+                if ($item.name) { Write-Host "Backend unavailable: $($item.name) ($($item.reason))" -ForegroundColor Yellow }
+            }
+            foreach ($item in @($participation.evidence_producers_failed)) {
+                if ($item.producer) { Write-Host "Evidence producer failed: $($item.producer) ($($item.error))" -ForegroundColor Yellow }
+            }
+            if ($participation.demucs_device) { Write-Host "Demucs device: $($participation.demucs_device)" -ForegroundColor DarkGray }
+            if ($participation.vocal_source) { Write-Host "Vocal source: $($participation.vocal_source)" -ForegroundColor DarkGray }
+        }
         if ($report.candidate_selection) {
             Write-Host "Auto selected: $($report.candidate_selection.selected_backend) (quality $($report.candidate_selection.selected_quality))" -ForegroundColor Green
             Write-Host "Selection reason: $($report.candidate_selection.selected_reason)" -ForegroundColor DarkGray

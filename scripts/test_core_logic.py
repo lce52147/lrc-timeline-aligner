@@ -14449,5 +14449,40 @@ class DemucsCacheIsolationTests(unittest.TestCase):
             self.assertFalse(auto_lrc._demucs_vocal_stem_valid(vocal,self.audio))
 
 
+class BackendParticipationTests(unittest.TestCase):
+    def test_writer_projects_backend_participation_and_hides_runtime_state(self) -> None:
+        with TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            report = {
+                "backend": "ctc",
+                "assignments": [],
+                auto_lrc._RUNTIME_BACKEND_PARTICIPATION_KEY: {
+                    "attempted": ["ctc"],
+                    "available": ["ctc"],
+                    "unavailable": [{"name": "whisperx", "reason": "missing"}],
+                    "evidence_producers_failed": [],
+                    "demucs_device": "cuda",
+                    "vocal_source": "vocal-stem",
+                },
+            }
+            path = root / "report.json"
+            auto_lrc.write_alignment_report(path, report)
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(payload["backend_participation"]["available"], ["ctc"])
+        self.assertNotIn(auto_lrc._RUNTIME_BACKEND_PARTICIPATION_KEY, payload)
+
+    def test_evidence_producer_failure_is_recorded(self) -> None:
+        report = {"assignments": [{}]}
+        entries = [LyricEntry(["test"])]
+        with mock.patch.object(auto_lrc, "analyze_audio", side_effect=auto_lrc.LrcError("sentinel")):
+            result = auto_lrc.apply_vocal_activity_reentry_hypotheses(
+                Path("missing.flac"), entries, [0.0], report, 1.0
+            )
+        self.assertEqual(result, [])
+        failures = report[auto_lrc._RUNTIME_BACKEND_PARTICIPATION_KEY]["evidence_producers_failed"]
+        self.assertEqual(failures[0]["producer"], "apply_vocal_activity_reentry_hypotheses")
+
+
+
 if __name__ == "__main__":
     unittest.main()

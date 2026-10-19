@@ -136,6 +136,104 @@ _RUNTIME_LOCAL_WHISPER_EVIDENCE_KEY = "_runtime_local_whisper_evidence"
 _RUNTIME_RAW_TIMING_DRIFT_FALSIFICATIONS_KEY = (
     "_runtime_raw_timing_drift_falsifications"
 )
+_RUNTIME_BACKEND_PARTICIPATION_KEY = "_runtime_backend_participation"
+
+
+def _new_backend_participation() -> dict[str, object]:
+    return {
+        "attempted": [],
+        "available": [],
+        "unavailable": [],
+        "evidence_producers_failed": [],
+        "demucs_device": None,
+        "vocal_source": None,
+    }
+
+
+def _backend_participation(report: dict[str, object]) -> dict[str, object]:
+    state = report.get(_RUNTIME_BACKEND_PARTICIPATION_KEY)
+    if not isinstance(state, dict):
+        state = _new_backend_participation()
+        report[_RUNTIME_BACKEND_PARTICIPATION_KEY] = state
+    return state
+
+
+def _record_backend_participation_failure(
+    report: dict[str, object], producer: str, exc: BaseException
+) -> None:
+    state = _backend_participation(report)
+    failures = state.setdefault("evidence_producers_failed", [])
+    if not isinstance(failures, list):
+        failures = []
+        state["evidence_producers_failed"] = failures
+    failures.append({"producer": producer, "error": f"{type(exc).__name__}: {exc}"})
+
+
+def _record_backend_unavailable(
+    state: dict[str, object], name: str, reason: str
+) -> None:
+    unavailable = state.setdefault("unavailable", [])
+    if not isinstance(unavailable, list):
+        unavailable = []
+        state["unavailable"] = unavailable
+    if not any(isinstance(item, dict) and item.get("name") == name for item in unavailable):
+        unavailable.append({"name": name, "reason": reason})
+
+
+def _record_backend_available(state: dict[str, object], name: str) -> None:
+    for key in ("attempted", "available"):
+        values = state.setdefault(key, [])
+        if not isinstance(values, list):
+            values = []
+            state[key] = values
+        if name not in values:
+            values.append(name)
+
+
+def _merge_backend_participation(
+    target_report: dict[str, object], source_report: dict[str, object]
+) -> None:
+    source = source_report.get(_RUNTIME_BACKEND_PARTICIPATION_KEY)
+    if not isinstance(source, dict):
+        return
+    target = _backend_participation(target_report)
+    for key in ("attempted", "available"):
+        values = target.setdefault(key, [])
+        if not isinstance(values, list):
+            values = []
+            target[key] = values
+        for value in source.get(key, []):
+            if value not in values:
+                values.append(value)
+    unavailable = target.setdefault("unavailable", [])
+    if not isinstance(unavailable, list):
+        unavailable = []
+        target["unavailable"] = unavailable
+    for item in source.get("unavailable", []):
+        if isinstance(item, dict) and not any(
+            isinstance(existing, dict) and existing.get("name") == item.get("name")
+            and existing.get("reason") == item.get("reason")
+            for existing in unavailable
+        ):
+            unavailable.append(copy.deepcopy(item))
+    failures = target.setdefault("evidence_producers_failed", [])
+    if not isinstance(failures, list):
+        failures = []
+        target["evidence_producers_failed"] = failures
+    for item in source.get("evidence_producers_failed", []):
+        if isinstance(item, dict) and item not in failures:
+            failures.append(copy.deepcopy(item))
+    for key in ("demucs_device", "vocal_source"):
+        value = source.get(key)
+        if value is not None:
+            target[key] = value
+
+
+def _backend_participation_projection(report: dict[str, object]) -> None:
+    state = report.get(_RUNTIME_BACKEND_PARTICIPATION_KEY)
+    if isinstance(state, dict):
+        report["backend_participation"] = copy.deepcopy(state)
+
 RAW_CTC_CONSENSUS_MIN_SCORE = 0.85
 RAW_CTC_CONSENSUS_MAX_DELTA_SECONDS = 0.18
 RAW_TIMING_DRIFT_MAX_MEDIAN_DELTA_SECONDS = 2.0
@@ -6627,7 +6725,10 @@ def apply_vocal_onset_confirmation_hypotheses(
     if features is None:
         try:
             features = analyze_vocal_onsets(alignment_audio_path, duration)
-        except LrcError:
+        except LrcError as exc:
+            _record_backend_participation_failure(
+                report, "apply_vocal_onset_confirmation_hypotheses", exc
+            )
             return []
     audio_revision = hashlib.sha256(Path(alignment_audio_path).read_bytes()).hexdigest()
     # A coherent line next to a collapsed path, or a clock that sits after
@@ -6769,7 +6870,10 @@ def apply_vocal_activity_reentry_hypotheses(
     try:
         activity = analyze_audio(alignment_audio_path, duration)
         audio_revision = _path_sha256(alignment_audio_path)
-    except (LrcError, OSError):
+    except (LrcError, OSError) as exc:
+        _record_backend_participation_failure(
+            report, "apply_vocal_activity_reentry_hypotheses", exc
+        )
         return []
     generated: list[dict[str, object]] = []
     for index, assignment in enumerate(assignments):
@@ -7469,7 +7573,10 @@ def apply_phonetic_onset_fusion_hypotheses(
     try:
         onset_features = analyze_vocal_onsets(alignment_audio_path, duration)
         audio_sha = _path_sha256(alignment_audio_path)
-    except (LrcError, OSError):
+    except (LrcError, OSError) as exc:
+        _record_backend_participation_failure(
+            report, "apply_phonetic_onset_fusion_hypotheses", exc
+        )
         return []
     generated: list[dict[str, object]] = []
     for index, assignment in enumerate(assignments):
@@ -7593,7 +7700,10 @@ def apply_mutual_acoustic_recurrence_hypotheses(
         features = acoustic_pitchclass_recurrence_features(alignment_audio_path)
         onset_features = analyze_vocal_onsets(alignment_audio_path, duration)
         audio_sha = _path_sha256(alignment_audio_path)
-    except (LrcError, OSError):
+    except (LrcError, OSError) as exc:
+        _record_backend_participation_failure(
+            report, "apply_mutual_acoustic_recurrence_hypotheses", exc
+        )
         return []
     groups: dict[str, list[int]] = {}
     for index, entry in enumerate(entries):
@@ -7756,7 +7866,10 @@ def apply_trusted_tail_release_onset_hypotheses(
     try:
         onset_features = analyze_vocal_onsets(alignment_audio_path, duration)
         audio_sha = _path_sha256(alignment_audio_path)
-    except (LrcError, OSError):
+    except (LrcError, OSError) as exc:
+        _record_backend_participation_failure(
+            report, "apply_trusted_tail_release_onset_hypotheses", exc
+        )
         return []
     generated: list[dict[str, object]] = []
     for index in range(1, len(entries)):
@@ -8587,7 +8700,10 @@ def apply_global_acoustic_recurrence_hypotheses(
     try:
         features = acoustic_recurrence_features(alignment_audio_path)
         onset_features = analyze_vocal_onsets(alignment_audio_path, duration)
-    except LrcError:
+    except LrcError as exc:
+        _record_backend_participation_failure(
+            report, "apply_global_acoustic_recurrence_hypotheses", exc
+        )
         return []
     audio_revision = hashlib.sha256(Path(alignment_audio_path).read_bytes()).hexdigest()
     groups: dict[str, list[int]] = {}
@@ -10161,6 +10277,10 @@ def run_ctc_alignment(
         "review_required": bool(ctc_review_entries),
         "note": "MMS/CTC forced alignment over the known lyric order.",
     }
+    participation = _backend_participation(report)
+    participation["vocal_source"] = audio_source
+    if audio_source == "vocal-stem":
+        participation["demucs_device"] = "cuda"
     capability_seed = create_bounded_retry_capability_seed(
         alignment_audio,
         audio_source,
@@ -12468,7 +12588,10 @@ def apply_ctc_forward_supported_prefix_recovery(
         return []
     try:
         features = analyze_audio(audio_path, duration)
-    except LrcError:
+    except LrcError as exc:
+        _record_backend_participation_failure(
+            report, "apply_ctc_forward_supported_prefix_recovery", exc
+        )
         return []
 
     changes: list[dict[str, object]] = []
@@ -14376,6 +14499,10 @@ def apply_vocal_onset_tiebreak(
     args: argparse.Namespace,
 ) -> tuple[list[float], dict[str, object], list[dict[str, object]]]:
     features, unavailable = vocal_onset_features(audio_path, duration, args)
+    if features is not None:
+        participation = _backend_participation(report)
+        participation["demucs_device"] = "cuda"
+        participation["vocal_source"] = "vocal-stem"
     if features is None:
         report["vocal_onset_refinement"] = {"status": "skipped", "reason": unavailable}
         return timestamps, report, []
@@ -14847,7 +14974,14 @@ def run_auto_backend_competition(
     raw_diagnostic_segments: list[AsrSegment] | None = None
     shared_whisper_wav: Path | None = None
     whisperx_evidence_candidates: list[tuple[list[float], dict[str, object], str]] = []
+    participation = _new_backend_participation()
     raw_asr_status = _raw_asr_backend_status(args)
+    if bool(raw_asr_status["available"]):
+        _record_backend_available(participation, "whispercpp_raw")
+    else:
+        _record_backend_unavailable(
+            participation, "whispercpp_raw", _raw_asr_warning(raw_asr_status)
+        )
     if not bool(raw_asr_status["available"]):
         if _model_cache_only(args):
             raise ModelCacheMiss(
@@ -14901,7 +15035,15 @@ def run_auto_backend_competition(
     raw_coverage = raw_asr_lyric_coverage(
         entries, raw_diagnostic_segments if raw_diagnostic_report is not None else None
     )
-    if default_ctc_ready():
+    ctc_ready = default_ctc_ready()
+    ctc_cache_miss_reason: str | None = None
+    if not ctc_ready:
+        reason = "ctc-python-or-helper-unavailable"
+        _record_backend_unavailable(participation, "ctc", reason)
+        ctc_cache_miss_reason = reason if _model_cache_only(args) else None
+        progress_log("WARNING: CTC backend unavailable; fallback=skip-ctc-candidate")
+    else:
+        _record_backend_available(participation, "ctc")
         progress_log("running CTC candidate")
         # Synthetic caller/test arguments may be immutable objects; only
         # argparse-style mutable namespaces carry optional raw ASR context.
@@ -15007,7 +15149,18 @@ def run_auto_backend_competition(
                     }
                 )
 
-    if bool(raw_asr_status["available"]) and _whisperx_python_available(args):
+    whisperx_ready = False
+    if bool(raw_asr_status["available"]):
+        whisperx_ready = _whisperx_python_available(args)
+        if whisperx_ready:
+            _record_backend_available(participation, "whisperx")
+        else:
+            _record_backend_unavailable(
+                participation, "whisperx", "whisperx-python-unavailable"
+            )
+    if ctc_cache_miss_reason is not None:
+        raise ModelCacheMiss("model-cache-miss:" + ctc_cache_miss_reason)
+    if whisperx_ready:
         _park_persistent_helper_mode("ctc", reason="before-global-whisperx")
         try:
             progress_log(
@@ -15446,6 +15599,15 @@ def run_auto_backend_competition(
         )
         break
 
+    selected_report[_RUNTIME_BACKEND_PARTICIPATION_KEY] = participation
+    for candidate in candidates:
+        candidate_report = candidate.get("report")
+        if isinstance(candidate_report, dict):
+            _merge_backend_participation(selected_report, candidate_report)
+    for record in preview_records:
+        preview_report = record.get("report")
+        if isinstance(preview_report, dict):
+            _merge_backend_participation(selected_report, preview_report)
     selected_report["generation_diagnostics"] = {
         **(
             selected_report.get("generation_diagnostics")
@@ -16231,7 +16393,10 @@ def apply_ctc_acoustic_backtrack(
 
     try:
         features = analyze_audio(audio_path, duration)
-    except LrcError:
+    except LrcError as exc:
+        _record_backend_participation_failure(
+            report, "apply_ctc_acoustic_backtrack", exc
+        )
         return []
 
     changes: list[dict[str, object]] = []
@@ -39019,6 +39184,7 @@ def write_alignment_report(report_path: Path, report: dict[str, object]) -> None
     report["algorithm_revision"] = LRC_ALGORITHM_REVISION
     _validate_backend_provenance_projection(report)
     _validate_unresolved_evidence_requirements_projection(report)
+    _backend_participation_projection(report)
     serializable_report = {
         key: value
         for key, value in report.items()
@@ -39044,6 +39210,7 @@ def write_alignment_report(report_path: Path, report: dict[str, object]) -> None
             _RUNTIME_CROSS_BACKEND_MATERIAL_CONFLICTS_KEY,
             _RUNTIME_CROSS_BACKEND_MATERIAL_CONFLICT_DETAILS_KEY,
             _RUNTIME_RAW_TIMING_DRIFT_FALSIFICATIONS_KEY,
+            _RUNTIME_BACKEND_PARTICIPATION_KEY,
         }
     }
     try:
