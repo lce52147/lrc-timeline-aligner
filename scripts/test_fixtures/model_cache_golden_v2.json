@@ -1,0 +1,175 @@
+{
+  "_comment": "Golden model-cache keys. MODEL_CACHE_KEY_REVISION=1 is frozen: changing any key algorithm requires regenerating this file and explaining why in the commit message.",
+  "cases": {
+    "crossline-joint-ctc": {
+      "expected_key": "c33712dc7e8360cc96c5905727608d6664cef0c3a8426c62710a6153a3ce15ac",
+      "identity": {
+        "helper_protocol_revision": "cl-proto",
+        "model_blob_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "model_revision": "cl-model",
+        "request": {
+          "context_entry_indexes": [
+            1,
+            2
+          ],
+          "transcript_digest": "td",
+          "window_end": 3.25,
+          "window_start": 1.5
+        },
+        "vocal_stem_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "key_function": "auto_lrc._crossline_retry_helper_cache_key",
+      "key_inputs": {
+        "alignment_audio_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "device": "cuda",
+        "helper_protocol_revision": "cl-proto",
+        "helper_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "model_blob_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "model_identity": "cl-model",
+        "transcript_digest": "td",
+        "window_end": 3.25,
+        "window_start": 1.5
+      }
+    },
+    "local-whisper": {
+      "expected_key": "local-whisper:21f702428880c4d57de1809612c9dd59be1e31e2bc19aa949febc5b41ea0a708",
+      "identity": {
+        "helper_protocol_revision": "lw-proto",
+        "model_blob_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "model_revision": "whispercpp-model:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "request": "lw-exec",
+        "vocal_stem_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "key_function": "auto_lrc._local_whisper_cache_key",
+      "key_inputs": {
+        "capability_revision": "cap-rev",
+        "protocol_revision": "lw-proto",
+        "request_revision": "lw-exec"
+      }
+    },
+    "local-window-ctc": {
+      "expected_key": "2765f9bfc34b3618310b44cc8b53c4a2f11aea76568951a0182b542b3ba25f1b",
+      "identity": {
+        "helper_protocol_revision": "ctc-proto",
+        "helper_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "model_blob_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "model_revision": "ctc-rev",
+        "request": {
+          "device": "cuda",
+          "end": 2.0,
+          "lyric_texts": [
+            "x"
+          ],
+          "start": 1.0
+        },
+        "vocal_stem_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "key_function": "key_from_identity"
+    },
+    "multimodel-consensus": {
+      "expected_key": "7ad69072d7e6c938ecc452928da88975098a3ab71e4ec99e120aa2169d5edc05",
+      "identity": {
+        "helper_protocol_revision": "mm-proto",
+        "model_blob_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "model_revision": "mm-rev",
+        "models": [
+          "m1",
+          "m2"
+        ]
+      },
+      "key_function": "auto_lrc._model_cache_key",
+      "key_inputs": {
+        "helper_protocol_revision": "mm-proto",
+        "kind": "multimodel-consensus",
+        "model_blob_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "model_revision": "mm-rev",
+        "request": {
+          "device": "cuda",
+          "models": [
+            "m1",
+            "m2"
+          ],
+          "protocol_revision": "mm-proto",
+          "windows": [
+            [
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        "stem_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    "r2-reviewer-sidecar": {
+      "expected_key": "da976510b2ef9a53d58f4d39a2d6e70b1d9090ea97efc8addc5b0e38a82f7086",
+      "identity": {
+        "device": "cuda",
+        "include_hub": true,
+        "payload_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "reviewers_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "whisper_cli_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "whisper_model_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "key_function": "key_from_identity"
+    },
+    "raw-asr": {
+      "expected_key": "3a518c4d61caee59cc19638a60cc4e4b14d08a2462ed6648e4fae9be8ad1e1d7",
+      "identity": {
+        "helper_protocol_revision": "whispercpp-json-transcription-v1",
+        "model_blob_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "model_revision": "whispercpp-cli:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "request": {
+          "audio_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "cli_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "language": "ja",
+          "suppress_nst": false
+        },
+        "vocal_stem_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "key_function": "key_from_identity",
+      "legacy_v1_key": "8f361317ab1bdc3dacbb5d3c3c20a489abbd7863c439246a82d853e1efbd0a33"
+    },
+    "whisperx-alignment": {
+      "expected_key": "cf282466fcbcdec9fb41e947efe15962d7c9991a82049333c8533162c56c3a3a",
+      "identity": {
+        "helper_protocol_revision": "wx-proto",
+        "helper_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "model_blob_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "model_revision": "wx-rev",
+        "request": {
+          "audio_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "device": "cuda",
+          "language": "ja",
+          "transcript": [
+            {
+              "text": "la"
+            }
+          ]
+        },
+        "vocal_stem_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "key_function": "key_from_identity"
+    },
+    "whole-ctc": {
+      "expected_key": "33b2dce5bbb8d603aef9e44a9132505a2cd6cfa215fa849c4449f215d8cdf606",
+      "identity": {
+        "helper_protocol_revision": "ctc-proto",
+        "helper_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "model_blob_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "model_revision": "ctc-rev",
+        "request": {
+          "device": "cuda",
+          "duration": 12.345679,
+          "entries": [
+            "a",
+            "b"
+          ],
+          "source": "vocal-stem"
+        },
+        "vocal_stem_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "key_function": "key_from_identity"
+    }
+  },
+  "key_revision": 1
+}

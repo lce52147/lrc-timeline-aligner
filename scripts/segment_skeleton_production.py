@@ -17,6 +17,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 from ctc_confidence import ctc_alignment_confidence
+import model_cache
 from segment_skeleton import plan_segment_skeleton,validate_local_ctc
 
 MAX_GPU_PASSAGES=64
@@ -121,6 +122,55 @@ def _revert_unsupported_groups(
     return entries
 
 
+def _segment_cache_api_available(audio_api:object)->bool:
+    return all(hasattr(audio_api,name) for name in (
+        '_stable_file_sha256','_BOUNDED_RETRY_MODEL_IDENTITY',
+        '_ctc_model_blob_sha256','_bounded_retry_protocol_revision',
+        '_model_cache_read','_model_cache_write'))
+
+
+def build_cached_helper(*,audio_api:object,ctc_helper:Path,device:str,
+    helper_runner:Callable[...,object],cache_args:object|None=None)->Callable[...,object]:
+    """Wrap ``helper_runner`` with the persistent local-window-ctc cache.
+
+    The cache policy comes from ``model_cache.policy_from_env_and_args``; in
+    cache-only mode a miss raises ``ModelCacheMiss`` instead of launching the
+    helper."""
+    cache_api=_segment_cache_api_available(audio_api)
+    cache_policy=model_cache.policy_from_env_and_args(cache_args)
+    def cached_helper(command,timeout):
+        if not cache_api:
+            return helper_runner(command,timeout=timeout)
+        try:
+            audio_index=command.index('--audio'); transcript_index=command.index('--transcript')
+            output_index=command.index('--output'); start_index=command.index('--start'); end_index=command.index('--end')
+            stem=Path(command[audio_index+1]); transcript=Path(command[transcript_index+1])
+            output=Path(command[output_index+1]); start=float(command[start_index+1]); end=float(command[end_index+1])
+            stem_sha=audio_api._stable_file_sha256(stem)
+            helper_sha=audio_api._stable_file_sha256(ctc_helper)
+            request={'lyric_texts':json.loads(transcript.read_text(encoding='utf8')),
+                'start':round(start,3),'end':round(end,3),'device':str(device)}
+            identity=model_cache.identity_local_window_ctc(
+                stem_sha256=stem_sha,
+                model_revision=audio_api._BOUNDED_RETRY_MODEL_IDENTITY,
+                model_blob_sha256=audio_api._ctc_model_blob_sha256(),
+                helper_protocol_revision=audio_api._bounded_retry_protocol_revision(helper_sha),
+                helper_sha256=helper_sha,request=request)
+            key=model_cache.key_from_identity('local-window-ctc',identity)
+            cached=audio_api._model_cache_read('local-window-ctc',key,identity,cache_policy)
+            if isinstance(cached,dict):
+                output.write_text(json.dumps(cached,ensure_ascii=False),encoding='utf8')
+                return SimpleNamespace(returncode=0,stderr='',stdout='')
+            result=helper_runner(command,timeout=timeout)
+            if result.returncode==0 and output.is_file():
+                payload=json.loads(output.read_text(encoding='utf8'))
+                audio_api._model_cache_write('local-window-ctc',key,identity,payload,cache_policy)
+            return result
+        except (OSError,ValueError,TypeError,KeyError,json.JSONDecodeError):
+            return helper_runner(command,timeout=timeout)
+    return cached_helper
+
+
 def run_segment_skeleton(
     *,
     report:dict[str,object],
@@ -136,6 +186,7 @@ def run_segment_skeleton(
     romanizer:Callable[[str],str|None]|None=None,
     raw_asr_events:Sequence[tuple[float,float,str]]=(),
     gate_override:str|None=None,
+    cache_args:object|None=None,
 )->tuple[list[float],dict[str,object],dict[str,object]]:
     """``gate_override`` ('segment'/'fallback') only resolves gates whose own
     verdict is near-edge (their diagnostics carry ``near_edge``). Clear
@@ -171,43 +222,10 @@ def run_segment_skeleton(
         row_to_passage=[a.passage_index for a in plan.assignments]
         boundary_diag={"status":"NOT_CHECKED"}
         dual_diag={"status":"NOT_CHECKED"}
-        cache_api=all(hasattr(audio_api,name) for name in (
-            '_stable_file_sha256','_BOUNDED_RETRY_MODEL_IDENTITY',
-            '_ctc_model_blob_sha256','_bounded_retry_protocol_revision',
-            '_model_cache_key','_model_cache_read','_model_cache_write',
-            '_model_cache_only_active'))
-        def cached_helper(command,timeout):
-            if not cache_api:
-                return helper_runner(command,timeout=timeout)
-            try:
-                audio_index=command.index('--audio'); transcript_index=command.index('--transcript')
-                output_index=command.index('--output'); start_index=command.index('--start'); end_index=command.index('--end')
-                stem=Path(command[audio_index+1]); transcript=Path(command[transcript_index+1])
-                output=Path(command[output_index+1]); start=float(command[start_index+1]); end=float(command[end_index+1])
-                stem_sha=audio_api._stable_file_sha256(stem)
-                helper_sha=audio_api._stable_file_sha256(ctc_helper)
-                request={'lyric_texts':json.loads(transcript.read_text(encoding='utf8')),
-                    'start':round(start,3),'end':round(end,3),'device':str(device)}
-                identity={'vocal_stem_sha256':stem_sha,
-                    'model_revision':audio_api._BOUNDED_RETRY_MODEL_IDENTITY,
-                    'model_blob_sha256':audio_api._ctc_model_blob_sha256(),
-                    'helper_protocol_revision':audio_api._bounded_retry_protocol_revision(helper_sha),
-                    'request':request,'helper_sha256':helper_sha}
-                key=audio_api._model_cache_key('local-window-ctc',str(stem_sha),identity['model_revision'],
-                    identity['model_blob_sha256'],identity['helper_protocol_revision'],request)
-                cached=audio_api._model_cache_read('local-window-ctc',key,identity,
-                    SimpleNamespace(model_cache=True,model_cache_only=audio_api._model_cache_only_active()))
-                if isinstance(cached,dict):
-                    output.write_text(json.dumps(cached,ensure_ascii=False),encoding='utf8')
-                    return SimpleNamespace(returncode=0,stderr='',stdout='')
-                result=helper_runner(command,timeout=timeout)
-                if result.returncode==0 and output.is_file():
-                    payload=json.loads(output.read_text(encoding='utf8'))
-                    audio_api._model_cache_write('local-window-ctc',key,identity,payload,
-                        SimpleNamespace(model_cache=True,model_cache_only=False))
-                return result
-            except (OSError,ValueError,TypeError,KeyError,json.JSONDecodeError):
-                return helper_runner(command,timeout=timeout)
+        cache_api=_segment_cache_api_available(audio_api)
+        cache_policy=model_cache.policy_from_env_and_args(cache_args)
+        cached_helper=build_cached_helper(audio_api=audio_api,ctc_helper=ctc_helper,
+            device=device,helper_runner=helper_runner,cache_args=cache_args)
         cache_key=(
             str(vocal_stem.resolve()),vocal_stem.stat().st_size,
             vocal_stem.stat().st_mtime_ns,str(ctc_helper.resolve()),
@@ -240,18 +258,14 @@ def run_segment_skeleton(
                     if cache_api:
                         stem_sha=audio_api._stable_file_sha256(vocal_stem)
                         helper_sha=audio_api._stable_file_sha256(ctc_helper)
-                        identity={
-                            'vocal_stem_sha256':stem_sha,
-                            'model_revision':audio_api._BOUNDED_RETRY_MODEL_IDENTITY,
-                            'model_blob_sha256':audio_api._ctc_model_blob_sha256(),
-                            'helper_protocol_revision':audio_api._bounded_retry_protocol_revision(helper_sha),
-                            'request':request,'helper_sha256':helper_sha,
-                        }
-                        key=audio_api._model_cache_key(
-                            'local-window-ctc',str(stem_sha),identity['model_revision'],
-                            identity['model_blob_sha256'],identity['helper_protocol_revision'],request)
-                        data=audio_api._model_cache_read('local-window-ctc',key,identity,
-                            SimpleNamespace(model_cache=True,model_cache_only=audio_api._model_cache_only_active()))
+                        identity=model_cache.identity_local_window_ctc(
+                            stem_sha256=stem_sha,
+                            model_revision=audio_api._BOUNDED_RETRY_MODEL_IDENTITY,
+                            model_blob_sha256=audio_api._ctc_model_blob_sha256(),
+                            helper_protocol_revision=audio_api._bounded_retry_protocol_revision(helper_sha),
+                            helper_sha256=helper_sha,request=request)
+                        key=model_cache.key_from_identity('local-window-ctc',identity)
+                        data=audio_api._model_cache_read('local-window-ctc',key,identity,cache_policy)
                     if not isinstance(data,dict):
                         lyric_file.write_text(json.dumps(
                            list(lyric_texts[start:end]),ensure_ascii=False),encoding='utf8')
@@ -266,8 +280,7 @@ def run_segment_skeleton(
                               detail=str(getattr(result,'stderr',''))[-300:])
                         data=json.loads(result_file.read_text(encoding='utf8'))
                         if cache_api:
-                            audio_api._model_cache_write('local-window-ctc',key,identity,data,
-                                SimpleNamespace(model_cache=True,model_cache_only=False))
+                            audio_api._model_cache_write('local-window-ctc',key,identity,data,cache_policy)
                     chunk=data.get('entries')
                     if not isinstance(chunk,list) or len(chunk)!=end-start:
                         return fallback('LOCAL_GPU_ROWS_WRONG',group=group_id)

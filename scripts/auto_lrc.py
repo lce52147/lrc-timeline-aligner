@@ -42,6 +42,8 @@ from ctc_confidence import ctc_alignment_confidence
 import arbiter as timing_arbiter
 import lrc_timestamp_pairs
 import runtime_paths
+import model_cache
+from model_cache import ModelCacheMiss
 from multimodel_consensus import (
     MODEL_SPECS,
     PROTOCOL_REVISION as MULTIMODEL_PROTOCOL_REVISION,
@@ -69,7 +71,7 @@ DEFAULT_REPORT_DIR = runtime_paths.reports_dir()
 DEFAULT_PROBE_DIR = runtime_paths.probes_dir()
 DEFAULT_VOCAL_CACHE_DIR = runtime_paths.vocal_cache_dir()
 DEFAULT_MODEL_CACHE_DIR = runtime_paths.model_cache_dir()
-MODEL_CACHE_SCHEMA = 1
+MODEL_CACHE_SCHEMA = model_cache.MODEL_CACHE_SCHEMA
 LRC_ALGORITHM_REVISION = "2026-09-28-lrc-v1.2-hubert-generalized-predecessor-tail"
 
 def _evidence_worker_count() -> int:
@@ -4996,17 +4998,8 @@ class LrcError(RuntimeError):
     pass
 
 
-class ModelCacheMiss(BaseException):
-    """The requested cache-only execution has no verified model output.
-
-    Deliberately not an LrcError/Exception: evidence collectors degrade on
-    ordinary helper failures, and a cache-only replay must never turn a miss
-    into "evidence unavailable" and still publish an LRC.
-    """
-
-
 def _model_cache_only_active() -> bool:
-    return os.environ.get("LRC_MODEL_CACHE_ONLY", "0").lower() in {"1", "true", "yes", "on"}
+    return model_cache.cache_only_active()
 
 
 def _refuse_model_launch_in_cache_only(site: str) -> None:
@@ -5029,18 +5022,16 @@ def _apply_model_cache_flags(args: argparse.Namespace) -> str:
     return "read-write" if enabled else "off"
 
 
+def _model_cache_policy(args: argparse.Namespace | None) -> model_cache.ModelCachePolicy:
+    return model_cache.policy_from_args(args)
+
+
 def _model_cache_enabled(args: argparse.Namespace) -> bool:
-    if os.environ.get("LRC_MODEL_CACHE", "1").lower() in {"0", "false", "no", "off"}:
-        return False
-    return bool(getattr(args, "model_cache", True)) and not bool(
-        getattr(args, "no_model_cache", False)
-    )
+    return _model_cache_policy(args).enabled
 
 
 def _model_cache_only(args: argparse.Namespace) -> bool:
-    return bool(getattr(args, "model_cache_only", False)) or os.environ.get(
-        "LRC_MODEL_CACHE_ONLY", "0"
-    ).lower() in {"1", "true", "yes", "on"}
+    return _model_cache_policy(args).cache_only
 
 
 def _model_cache_key(
@@ -5051,21 +5042,13 @@ def _model_cache_key(
     helper_protocol_revision: str,
     request: object,
 ) -> str:
-    return _timing_content_digest({
-        "schema": MODEL_CACHE_SCHEMA,
-        "kind": kind,
-        "vocal_stem_sha256": stem_sha256,
-        "model_revision": model_revision,
-        "model_blob_sha256": model_blob_sha256,
-        "helper_protocol_revision": helper_protocol_revision,
-        "request": request,
-    })
+    return model_cache.model_cache_key(
+        kind, stem_sha256, model_revision, model_blob_sha256, helper_protocol_revision, request
+    )
 
 
 def _model_cache_path(kind: str, key: str) -> Path:
-    safe_kind = re.sub(r"[^A-Za-z0-9_.-]", "_", kind)
-    safe_key = re.sub(r"[^A-Za-z0-9_.-]", "_", key)
-    return DEFAULT_MODEL_CACHE_DIR / safe_kind / f"{safe_key}.json"
+    return model_cache.cache_path(kind, key, DEFAULT_MODEL_CACHE_DIR)
 
 
 def _model_cache_read(
@@ -5074,24 +5057,7 @@ def _model_cache_read(
     identity: dict[str, object],
     args: argparse.Namespace,
 ) -> object | None:
-    if not _model_cache_enabled(args):
-        return None
-    path = _model_cache_path(kind, key)
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        if (
-            payload.get("schema") != MODEL_CACHE_SCHEMA
-            or payload.get("kind") != kind
-            or payload.get("key") != key
-            or payload.get("identity") != identity
-            or "payload" not in payload
-        ):
-            raise ValueError("identity-mismatch")
-        return payload["payload"]
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        if _model_cache_only(args):
-            raise ModelCacheMiss(f"model-cache-miss:{kind}:{key}")
-        return None
+    return model_cache.read(kind, key, identity, _model_cache_policy(args), DEFAULT_MODEL_CACHE_DIR)
 
 
 def _model_cache_write(
@@ -5101,20 +5067,7 @@ def _model_cache_write(
     payload: object,
     args: argparse.Namespace,
 ) -> None:
-    if not _model_cache_enabled(args) or _model_cache_only(args):
-        return
-    path = _model_cache_path(kind, key)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
-    envelope = {
-        "schema": MODEL_CACHE_SCHEMA,
-        "kind": kind,
-        "key": key,
-        "identity": identity,
-        "payload": payload,
-    }
-    temp.write_text(json.dumps(envelope, ensure_ascii=False, sort_keys=True), encoding="utf-8")
-    os.replace(temp, path)
+    model_cache.write(kind, key, identity, payload, _model_cache_policy(args), DEFAULT_MODEL_CACHE_DIR)
 
 
 def _apply_multimodel_consensus_runtime(
@@ -5184,12 +5137,12 @@ def _apply_multimodel_consensus_runtime(
     model_blob_sha = _timing_content_digest({
         spec: identity["model_blob_sha256"] for spec, identity in model_ids.items()
     })
-    cache_identity = {
-        "model_revision": model_revision,
-        "model_blob_sha256": model_blob_sha,
-        "helper_protocol_revision": MULTIMODEL_PROTOCOL_REVISION,
-        "models": list(MODEL_SPECS),
-    }
+    cache_identity = model_cache.identity_multimodel_consensus(
+        model_revision=model_revision,
+        model_blob_sha256=model_blob_sha,
+        protocol_revision=MULTIMODEL_PROTOCOL_REVISION,
+        models=list(MODEL_SPECS),
+    )
     cache_key = _model_cache_key(
         "multimodel-consensus",
         str(stem_sha),
@@ -9708,21 +9661,14 @@ def _whispercpp_cache_identity(
         # Unit callers may replace the subprocess before creating a real WAV;
         # production paths always decode a content-addressed file first.
         stem_sha = _timing_content_digest({"missing_wav_path": str(wav_path.resolve())})
-    request = {
-        "audio_sha256": stem_sha,
-        "language": str(args.whisper_language),
-        "suppress_nst": bool(suppress_nst),
-        "cli": str(cli),
-    }
-    identity = {
-        "vocal_stem_sha256": stem_sha,
-        "model_revision": f"whispercpp-cli:{cli_sha}",
-        "model_blob_sha256": model_sha,
-        "helper_protocol_revision": "whispercpp-json-transcription-v1",
-        "request": request,
-    }
-    key = _model_cache_key("raw-asr", stem_sha, identity["model_revision"], model_sha,
-                           identity["helper_protocol_revision"], request)
+    identity = model_cache.identity_raw_asr(
+        stem_sha256=stem_sha,
+        cli_sha256=cli_sha,
+        model_sha256=model_sha,
+        language=str(args.whisper_language),
+        suppress_nst=bool(suppress_nst),
+    )
+    key = model_cache.key_from_identity("raw-asr", identity)
     return key, identity
 
 
@@ -10005,22 +9951,17 @@ def run_whisperx_alignment(
     model_revision, model_blob = _whisperx_model_identity(
         python_exe, helper, str(args.whisper_language)
     )
-    request = {
-        "audio_sha256": stem_sha,
-        "transcript": transcript,
-        "language": str(args.whisper_language),
-        "device": str(args.whisperx_device),
-    }
-    identity = {
-        "vocal_stem_sha256": stem_sha,
-        "model_revision": model_revision,
-        "model_blob_sha256": model_blob,
-        "helper_protocol_revision": _WHISPERX_HELPER_PROTOCOL_REVISION,
-        "request": request,
-        "helper_sha256": helper_sha,
-    }
-    key = _model_cache_key("whisperx-alignment", stem_sha, identity["model_revision"],
-                           identity["model_blob_sha256"], _WHISPERX_HELPER_PROTOCOL_REVISION, request)
+    identity = model_cache.identity_whisperx_alignment(
+        stem_sha256=stem_sha,
+        model_revision=model_revision,
+        model_blob_sha256=model_blob,
+        helper_protocol_revision=_WHISPERX_HELPER_PROTOCOL_REVISION,
+        helper_sha256=helper_sha,
+        transcript=transcript,
+        language=str(args.whisper_language),
+        device=str(args.whisperx_device),
+    )
+    key = model_cache.key_from_identity("whisperx-alignment", identity)
     cached = _model_cache_read("whisperx-alignment", key, identity, args)
     if isinstance(cached, dict):
         return cached
@@ -10093,22 +10034,18 @@ def run_ctc_alignment(
 
     helper_sha = _stable_file_sha256(helper)
     model_blob = _ctc_model_blob_sha256()
-    request = {
-        "entries": [entry_sung_text(entry) for entry in entries],
-        "duration": round(float(duration), 6),
-        "device": str(args.whisperx_device),
-        "source": audio_source,
-    }
-    identity = {
-        "vocal_stem_sha256": vocal_stem_sha256,
-        "model_revision": _BOUNDED_RETRY_MODEL_IDENTITY,
-        "model_blob_sha256": model_blob,
-        "helper_protocol_revision": _bounded_retry_protocol_revision(helper_sha),
-        "request": request,
-        "helper_sha256": helper_sha,
-    }
-    key = _model_cache_key("whole-ctc", str(vocal_stem_sha256), identity["model_revision"],
-                           model_blob, identity["helper_protocol_revision"], request)
+    identity = model_cache.identity_whole_ctc(
+        stem_sha256=vocal_stem_sha256,
+        model_revision=_BOUNDED_RETRY_MODEL_IDENTITY,
+        model_blob_sha256=model_blob,
+        helper_protocol_revision=_bounded_retry_protocol_revision(helper_sha),
+        helper_sha256=helper_sha,
+        entries=[entry_sung_text(entry) for entry in entries],
+        duration=duration,
+        device=str(args.whisperx_device),
+        source=audio_source,
+    )
+    key = model_cache.key_from_identity("whole-ctc", identity)
     cached = _model_cache_read("whole-ctc", key, identity, args)
 
     if isinstance(cached, dict):
@@ -11081,19 +11018,15 @@ def apply_ctc_local_window_realign(
             except OSError:
                 window_stem_sha = "unresolved"
                 window_helper_sha = "unresolved"
-            window_identity = {
-                "vocal_stem_sha256": window_stem_sha,
-                "model_revision": _BOUNDED_RETRY_MODEL_IDENTITY,
-                "model_blob_sha256": _ctc_model_blob_sha256(),
-                "helper_protocol_revision": _bounded_retry_protocol_revision(window_helper_sha),
-                "request": window_request,
-                "helper_sha256": window_helper_sha,
-            }
-            window_digest = _model_cache_key(
-                "local-window-ctc", str(window_stem_sha),
-                window_identity["model_revision"], window_identity["model_blob_sha256"],
-                window_identity["helper_protocol_revision"], window_request,
+            window_identity = model_cache.identity_local_window_ctc(
+                stem_sha256=window_stem_sha,
+                model_revision=_BOUNDED_RETRY_MODEL_IDENTITY,
+                model_blob_sha256=_ctc_model_blob_sha256(),
+                helper_protocol_revision=_bounded_retry_protocol_revision(window_helper_sha),
+                helper_sha256=window_helper_sha,
+                request=window_request,
             )
+            window_digest = model_cache.key_from_identity("local-window-ctc", window_identity)
             if rows is None:
                 persisted_rows = _model_cache_read("local-window-ctc", window_digest, window_identity, args)
                 if isinstance(persisted_rows, list):
@@ -11994,6 +11927,7 @@ def try_ctc_candidate(
                     romanizer=japanese_romaji,
                     raw_asr_events=getattr(args,'_skeleton_raw_asr_events',()),
                     gate_override=getattr(args, SEGMENT_GATE_OVERRIDE_ATTR, None),
+                    cache_args=args,
                 )
                 _set_runtime_arg(args, SEGMENT_GATE_STATUS_ATTR, skeleton_details)
             else:
@@ -20197,13 +20131,12 @@ def execute_local_whisper_request(
     if runtime_stats is None:
         runtime_stats = {}
     cache_key = _local_whisper_cache_key(request, capability)
-    local_identity = {
-        "vocal_stem_sha256": capability.audio_sha256,
-        "model_revision": capability.whisper_model_path,
-        "model_blob_sha256": capability.whisper_model_sha256,
-        "helper_protocol_revision": capability.protocol_revision,
-        "request": _local_whisper_request_execution_revision(request),
-    }
+    local_identity = model_cache.identity_local_whisper(
+        audio_sha256=capability.audio_sha256,
+        whisper_model_sha256=capability.whisper_model_sha256,
+        protocol_revision=capability.protocol_revision,
+        request_revision=_local_whisper_request_execution_revision(request),
+    )
     persistent_cache_key = cache_key
     persistent_cache_identity = local_identity
     cached = cache.get(cache_key)
@@ -21980,6 +21913,7 @@ def invoke_crossline_retry(
     *,
     helper_cache: dict[str, tuple[str, object]] | None = None,
     timeout_seconds: float = 180.0,
+    cache_policy: "model_cache.ModelCachePolicy | None" = None,
 ) -> CrossLineRetryOutcome:
     def error_outcome(reason: str) -> CrossLineRetryOutcome:
         base = {
@@ -22000,22 +21934,20 @@ def invoke_crossline_retry(
     # ownership, and candidate semantics.
     cache_key = _crossline_retry_helper_cache_key(request, capability)
     cached = helper_cache.get(cache_key) if helper_cache is not None else None
-    cache_identity = {
-        "vocal_stem_sha256": request.alignment_audio_revision,
-        "model_revision": capability.model_identity,
-        "model_blob_sha256": _ctc_model_blob_sha256(),
-        "helper_protocol_revision": capability.helper_protocol_revision,
-        "request": {
-            "transcript_digest": request.transcript_digest,
-            "window_start": request.window_start,
-            "window_end": request.window_end,
-            "context_entry_indexes": list(request.context_entry_indexes),
-        },
-    }
+    cache_identity = model_cache.identity_crossline_joint_ctc(
+        alignment_audio_sha256=request.alignment_audio_revision,
+        model_identity=capability.model_identity,
+        model_blob_sha256=_ctc_model_blob_sha256(),
+        helper_protocol_revision=capability.helper_protocol_revision,
+        transcript_digest=request.transcript_digest,
+        window_start=request.window_start,
+        window_end=request.window_end,
+        context_entry_indexes=list(request.context_entry_indexes),
+    )
+    if cache_policy is None:
+        cache_policy = model_cache.policy_from_env_and_args(None)
     if cached is None:
-        persisted = _model_cache_read("crossline-joint-ctc", cache_key, cache_identity, argparse.Namespace(
-            model_cache=True, model_cache_only=False
-        ))
+        persisted = _model_cache_read("crossline-joint-ctc", cache_key, cache_identity, cache_policy)
         if persisted is not None and helper_cache is not None:
             if isinstance(persisted, dict) and persisted.get("kind") in {"payload", "error"}:
                 helper_cache[cache_key] = (str(persisted["kind"]), persisted.get("value"))
@@ -22074,7 +22006,7 @@ def invoke_crossline_retry(
             _model_cache_write(
                 "crossline-joint-ctc", cache_key, cache_identity,
                 {"kind": result[0], "value": result[1]},
-                argparse.Namespace(model_cache=True, model_cache_only=False),
+                cache_policy,
             )
         result_kind, result_value = result
         if result_kind == "error":
