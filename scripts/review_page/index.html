@@ -315,10 +315,10 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
     if (event.code === 'Space') { event.preventDefault(); playAround(item, working(item)); return; }
     if (event.key.toLowerCase() === 'p') { event.preventDefault(); if (item.row.previous) playAround(item, item.row.previous.cs); return; }
     if (event.key.toLowerCase() === 'n') { event.preventDefault(); if (item.row.next) playAround(item, item.row.next.cs); return; }
-    if (event.code === 'BracketLeft' || event.code === 'BracketRight') {
+    if (event.key === '[' || event.key === ']' || event.key === '{' || event.key === '}') {
       event.preventDefault();
       const delta = event.shiftKey ? 1 : 10;
-      const signedDelta = event.code === 'BracketLeft' ? -delta : delta;
+      const signedDelta = event.key === '[' || event.key === '{' ? -delta : delta;
       nudge(item, signedDelta);
       return;
     }
