@@ -396,11 +396,81 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         before_log = edits.read_bytes()
         song = self.server.store.song(0)
         body = {"base_sha256": hashlib.sha256(self.original).hexdigest(), "edits": [{"entry": 1, "cs": 150, "source": "ctc", "nudge_cs": 50}]}
-        with mock.patch.object(review_server.os, "replace", side_effect=PermissionError):
+        with mock.patch.object(review_server.os, "replace", side_effect=[PermissionError()] * 3) as replace:
             status, result = review_server._save_song(song, body)
         self.assertEqual(status, 423)
+        self.assertEqual(replace.call_count, 3)
         self.assertEqual(self.output.read_bytes(), self.original)
         self.assertEqual(edits.read_bytes(), before_log)
+        self.assertFalse(list(self.root.glob("*.stage")))
+
+    def test_fsync_failure_leaves_first_save_completely_unchanged(self) -> None:
+        song = self.server.store.song(0)
+        body = {"base_sha256": hashlib.sha256(self.original).hexdigest(), "edits": [{"entry": 1, "cs": 150, "source": "ctc", "nudge_cs": 50}]}
+        with mock.patch.object(review_server.os, "fsync", side_effect=OSError("disk full")):
+            status, result = review_server._save_song(song, body)
+        auto, edits = review_server.review_artifact_paths(self.report)
+        self.assertEqual(status, 500)
+        self.assertEqual(self.output.read_bytes(), self.original)
+        self.assertFalse(auto.exists())
+        self.assertFalse(edits.exists())
+        self.assertFalse(list(self.root.glob("*.stage")))
+
+    def test_first_save_auto_publish_failure_leaves_no_artifacts(self) -> None:
+        song = self.server.store.song(0)
+        body = {"base_sha256": hashlib.sha256(self.original).hexdigest(), "edits": [{"entry": 1, "cs": 150, "source": "ctc", "nudge_cs": 50}]}
+        with mock.patch.object(review_server.os, "replace", side_effect=PermissionError("locked")):
+            status, result = review_server._save_song(song, body)
+        auto, edits = review_server.review_artifact_paths(self.report)
+        self.assertEqual(status, 500)
+        self.assertEqual(self.output.read_bytes(), self.original)
+        self.assertFalse(auto.exists())
+        self.assertFalse(edits.exists())
+        self.assertFalse(list(self.root.glob("*.stage")))
+
+    def test_first_save_log_stage_failure_leaves_no_artifacts(self) -> None:
+        auto, edits_path = review_server.review_artifact_paths(self.report)
+        song = self.server.store.song(0)
+        body = {"base_sha256": hashlib.sha256(self.original).hexdigest(), "edits": [{"entry": 1, "cs": 150, "source": "ctc", "nudge_cs": 50}]}
+        real_stage = review_server._stage_bytes
+
+        def stage_or_fail(path, data):
+            if path.resolve() == edits_path.resolve():
+                raise OSError("log unavailable")
+            return real_stage(path, data)
+
+        with mock.patch.object(review_server, "_stage_bytes", side_effect=stage_or_fail):
+            status, result = review_server._save_song(song, body)
+        self.assertEqual(status, 500)
+        self.assertEqual(self.output.read_bytes(), self.original)
+        self.assertFalse(auto.exists())
+        self.assertFalse(edits_path.exists())
+        self.assertFalse(list(self.root.glob("*.stage")))
+
+    def test_postcommit_log_failure_reports_saved_lrc_and_preserves_old_log(self) -> None:
+        auto, edits_path = review_server.review_artifact_paths(self.report)
+        auto.write_bytes(self.original)
+        edits_path.write_text(json.dumps({"schema": 1, "auto_lrc_sha256": review_server._sha256_file(auto), "edits": []}), encoding="utf-8")
+        before_log = edits_path.read_bytes()
+        before_output = self.output.read_bytes()
+        song = self.server.store.song(0)
+        body = {"base_sha256": hashlib.sha256(before_output).hexdigest(), "edits": [{"entry": 1, "cs": 150, "source": "ctc", "nudge_cs": 50}]}
+        real_replace = review_server.os.replace
+        calls = 0
+
+        def replace_output_only(source, destination):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("log unavailable")
+            return real_replace(source, destination)
+
+        with mock.patch.object(review_server.os, "replace", side_effect=replace_output_only):
+            status, result = review_server._save_song(song, body)
+        self.assertEqual(status, 500)
+        self.assertTrue(result["lrc_saved"])
+        self.assertNotEqual(self.output.read_bytes(), before_output)
+        self.assertEqual(edits_path.read_bytes(), before_log)
         self.assertFalse(list(self.root.glob("*.stage")))
 
     def test_dump_summary_is_non_destructive(self) -> None:

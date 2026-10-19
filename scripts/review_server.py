@@ -519,10 +519,26 @@ def _json_bytes(payload):
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
-def _write_json_stage(path, payload):
+def _stage_bytes(path, data):
     stage = path.with_name(path.name + "." + uuid.uuid4().hex + ".stage")
-    stage.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    os.replace(stage, path)
+    try:
+        with stage.open("wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except Exception:
+        stage.unlink(missing_ok=True)
+        raise
+    return stage
+
+
+def _write_json_stage(path, payload):
+    stage = _stage_bytes(path, (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+    try:
+        os.replace(stage, path)
+    except Exception:
+        stage.unlink(missing_ok=True)
+        raise
 
 
 def _save_song(song, body):
@@ -567,22 +583,7 @@ def _save_song(song, body):
         return 200, _song_payload(pathlib.Path(song["report"]), song["report_data"])
     auto = song["auto"]
     edits_path = song["edits"]
-    created_auto = False
-    if not auto.exists():
-        try:
-            with auto.open("xb") as handle:
-                handle.write(current)
-                handle.flush()
-                os.fsync(handle.fileno())
-            created_auto = True
-            _write_json_stage(edits_path, {
-                "schema": 1, "report": pathlib.Path(song["report"]).name,
-                "lrc_name": output.name, "auto_lrc_sha256": _sha256_file(auto), "edits": []
-            })
-        except Exception:
-            if created_auto:
-                auto.unlink(missing_ok=True)
-            return 500, {"error": "cannot create review baseline"}
+    auto_bytes = auto.read_bytes() if auto.is_file() else current
     bom, trailing, lines = _split_lrc(current)
     for edit in edits:
         tag = _format_tag(edit["cs"])
@@ -590,34 +591,17 @@ def _save_song(song, body):
             match = _TAG_RE.match(lines[line_index])
             lines[line_index] = tag + lines[line_index][match.end():]
     updated = _join_lrc(bom, trailing, lines)
-    stage = output.with_name(output.name + "." + uuid.uuid4().hex + ".stage")
-    stage.write_bytes(updated)
-    with stage.open("ab") as handle:
-        handle.flush()
-        os.fsync(handle.fileno())
-    replaced = False
-    for attempt in range(3):
-        try:
-            os.replace(stage, output)
-            replaced = True
-            break
-        except PermissionError:
-            if attempt < 2:
-                threading.Event().wait(0.2)
-    if not replaced:
-        stage.unlink(missing_ok=True)
-        return 423, {"error": "LRC file is locked (close the player), then Save again"}
+    after_sha = _sha256_bytes(updated)
     payload = _read_log(edits_path) or {
         "schema": 1, "report": pathlib.Path(song["report"]).name,
-        "lrc_name": output.name, "auto_lrc_sha256": _sha256_file(auto), "edits": []
+        "lrc_name": output.name, "auto_lrc_sha256": _sha256_bytes(auto_bytes), "edits": []
     }
     payload.setdefault("schema", 1)
-    payload.setdefault("auto_lrc_sha256", _sha256_file(auto))
+    payload.setdefault("auto_lrc_sha256", _sha256_bytes(auto_bytes))
     payload.setdefault("edits", [])
     payload["report"] = pathlib.Path(song["report"]).name
     payload["lrc_name"] = output.name
-    after_sha = _sha256_file(output)
-    auto_lines = _split_lrc(auto.read_bytes())[2]
+    auto_lines = _split_lrc(auto_bytes)[2]
     payload["edits"].extend({
         "utc": datetime.now(timezone.utc).isoformat(),
         "entry": item["entry"], "auto_cs": _line_tag(auto_lines[mapping[item["entry"] - 1][0]]),
@@ -625,10 +609,62 @@ def _save_song(song, body):
         "nudge_cs": item["nudge_cs"], "lrc_sha256_after": after_sha
     } for item in edits)
     payload["last_lrc_sha256"] = after_sha
+
+    output_stage = None
+    auto_stage = None
+    log_stage = None
+    auto_published = False
     try:
-        _write_json_stage(edits_path, payload)
+        output_stage = _stage_bytes(output, updated)
+        if not auto.is_file():
+            auto_stage = _stage_bytes(auto, current)
+        log_stage = _stage_bytes(
+            edits_path,
+            (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
+        )
+    except Exception:
+        for stage_path in (output_stage, auto_stage, log_stage):
+            if stage_path is not None:
+                stage_path.unlink(missing_ok=True)
+        return 500, {"error": "cannot prepare review save"}
+
+    if auto_stage is not None:
+        try:
+            os.replace(auto_stage, auto)
+            auto_published = True
+            auto_stage = None
+        except Exception:
+            auto_stage.unlink(missing_ok=True)
+            log_stage.unlink(missing_ok=True)
+            output_stage.unlink(missing_ok=True)
+            return 500, {"error": "cannot create review baseline"}
+
+    replaced = False
+    for attempt in range(3):
+        try:
+            os.replace(output_stage, output)
+            replaced = True
+            break
+        except PermissionError:
+            if attempt < 2:
+                threading.Event().wait(0.2)
+        except OSError:
+            output_stage.unlink(missing_ok=True)
+            log_stage.unlink(missing_ok=True)
+            if auto_published:
+                auto.unlink(missing_ok=True)
+            return 500, {"error": "cannot publish LRC"}
+    if not replaced:
+        output_stage.unlink(missing_ok=True)
+        log_stage.unlink(missing_ok=True)
+        if auto_published:
+            auto.unlink(missing_ok=True)
+        return 423, {"error": "LRC file is locked (close the player), then Save again"}
+    try:
+        os.replace(log_stage, edits_path)
     except OSError:
-        return 500, {"error": "LRC saved, edit log not written"}
+        log_stage.unlink(missing_ok=True)
+        return 500, {"error": "LRC saved, edit log not written", "lrc_saved": True}
     return 200, _song_payload(pathlib.Path(song["report"]), song["report_data"])
 
 
