@@ -140,12 +140,12 @@ class ReviewServerTests(unittest.TestCase):
 
     def test_selector_skips_missing_timestamps_without_crashing(self) -> None:
         candidates, dropped_count = review_server._candidate_rows(
-            {"candidates": [{"source": "bad", "time": None}, "malformed"]},
+            {"candidates": [{"source": "bad", "time": None}, "malformed"], "ctc_first_token_start": None},
             None,
             100,
         )
         self.assertEqual([item["cs"] for item in candidates], [100])
-        self.assertEqual(dropped_count, 2)
+        self.assertEqual(dropped_count, 3)
 
     def test_selector_keeps_accepted_candidates_before_rejected_candidates(self) -> None:
         accepted = [
@@ -267,6 +267,7 @@ class ReviewServerTests(unittest.TestCase):
         self.assertIn("還有 ' + esc(row.dropped_count) + ' 個候選未顯示", page)
         self.assertIn("R2 skipped:", page)
         self.assertIn("load error:", page)
+        self.assertIn("const shownSongs = new Set()", page)
         self.assertIn("color-scheme:dark", page)
         source = page.split("<script>", 1)[1].rsplit("</script>", 1)[0]
         harness = r"""

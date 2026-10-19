@@ -304,6 +304,8 @@ def _candidate_rows(assignment, current_cs, auto_cs):
     first = _number(assignment.get("ctc_first_token_start"))
     if first is not None:
         add(first, "ctc-first-token", _number(assignment.get("ctc_first_token_score")) or 0.0)
+    elif "ctc_first_token_start" in assignment:
+        dropped_count += 1
     rejected = assignment.get("rejected_candidates")
     for item in rejected if isinstance(rejected, list) else []:
         value = _candidate_time(item)

@@ -162,19 +162,24 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
     queue.appendChild(tabs);
     const grouped = new Map();
     rows.forEach(item => { if (!grouped.has(item.song.index)) grouped.set(item.song.index, []); grouped.get(item.song.index).push(item); });
+    const shownSongs = new Set();
     grouped.forEach(items => {
       const box = document.createElement('section');
       box.className = 'song';
+      shownSongs.add(items[0].song.index);
       const r2 = items[0].song.detail?.r2;
       const r2Notice = r2?.skipped ? ' <span class="meta">R2 skipped: ' + esc(r2.reason || 'unknown') + '</span>' : '';
       box.innerHTML = '<h2>' + esc(items[0].song.song) + r2Notice + ' <span class="meta">' + items.length + ' flagged rows</span></h2>';
       items.forEach(item => box.appendChild(rowElement(item)));
       queue.appendChild(box);
     });
-    state.songs.filter(song => song.index === state.activeSong && song.detail?.load_error).forEach(song => {
+    state.songs.filter(song => song.index === state.activeSong && !shownSongs.has(song.index)).forEach(song => {
       const box = document.createElement('section');
       box.className = 'song';
-      box.innerHTML = '<h2>' + esc(song.song) + '</h2><div class="warning error-row">load error: ' + esc(song.detail.load_error) + '</div>';
+      const r2 = song.detail?.r2;
+      const r2Notice = r2?.skipped ? ' <span class="meta">R2 skipped: ' + esc(r2.reason || 'unknown') + '</span>' : '';
+      const error = song.detail?.load_error ? '<div class="warning error-row">load error: ' + esc(song.detail.load_error) + '</div>' : '';
+      box.innerHTML = '<h2>' + esc(song.song) + r2Notice + ' <span class="meta">0 flagged rows</span></h2>' + error;
       queue.appendChild(box);
     });
     const globalReadOnly = serverReadOnly();
