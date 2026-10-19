@@ -790,9 +790,33 @@ def prepare_final_args(backend_args: Sequence[str], evidence_path: Path) -> list
     return cleaned
 
 
+def prepare_final_fallback_args(backend_args: Sequence[str], evidence_path: Path) -> list[str]:
+    return _strip_options(
+        prepare_final_args(backend_args, evidence_path),
+        one_value={"--reviewer-evidence"},
+        flags=set(),
+    )
+
+
 def _run_backend(args: Sequence[str]) -> int:
     result = subprocess.run([sys.executable, str(AUTO_LRC), *args], cwd=PROJECT, check=False)
     return int(result.returncode)
+
+
+def _mark_r2_skipped_report(path: Path, reason: str) -> None:
+    report = json.loads(path.read_text(encoding="utf-8-sig"))
+    if not isinstance(report, dict):
+        raise ValueError("final report must be a JSON object")
+    report["r2"] = {
+        "skipped": True,
+        "reason": str(reason),
+        "arbiter": "reviewer-validity",
+        "reviewer_evidence": None,
+    }
+    path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _report_stage_total(path: Path | None) -> float | None:
@@ -955,11 +979,30 @@ def main(argv: list[str] | None = None) -> int:
             stages[1].update({"seconds": round(time.perf_counter() - stage_started, 6), "status": "skipped"})
             active_stage = 0
             print(f"WARNING: R2 skipped for this song: {exc}", file=sys.stderr, flush=True)
-            return _run_backend(
-                prepare_baseline_args(
-                    backend_args, output=final_output, report_dir=final_report_dir
-                )
+            active_stage = 3
+            fallback_started = time.perf_counter()
+            fallback_code = _run_backend(
+                prepare_final_fallback_args(backend_args, evidence_path)
             )
+            stages[2].update(
+                {
+                    "seconds": round(time.perf_counter() - fallback_started, 6),
+                    "status": "ok-no-reviewer" if fallback_code == 0 else "failed",
+                }
+            )
+            active_stage = 0
+            if fallback_code != 0:
+                return fallback_code
+            if not final_report_path.is_file():
+                print(f"ERROR: final report missing: {final_report_path}", file=sys.stderr)
+                return 1
+            try:
+                _mark_r2_skipped_report(final_report_path, str(exc))
+            except (OSError, TypeError, ValueError, json.JSONDecodeError) as marker_exc:
+                print(f"ERROR: unable to mark R2 skipped report: {marker_exc}", file=sys.stderr)
+                return 1
+            stages[3].update({"seconds": 0.0, "status": "skipped"})
+            return 3
         reviewers = summary.get("statuses", {}) if isinstance(summary, Mapping) else {}
         stages[1].update({"seconds": round(time.perf_counter() - stage_started, 6), "status": "ok"})
         print(stage_done_message(2, stages[1]["seconds"]), flush=True)

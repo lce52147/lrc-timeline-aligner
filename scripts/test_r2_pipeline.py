@@ -397,6 +397,80 @@ class R2PipelineTests(unittest.TestCase):
             ["--arbiter", "reviewer-validity", "--reviewer-evidence", str(Path("reviewers/song.json"))],
         )
 
+    def test_prepare_final_fallback_removes_only_reviewer_evidence(self) -> None:
+        fallback = r2_pipeline.prepare_final_fallback_args(
+            [
+                "--timing-source", "auto",
+                "--arbiter", "off",
+                "--reviewer-evidence", "old.json",
+                "--strict-review",
+                "song.flac",
+            ],
+            Path("reviewers/song.json"),
+        )
+        self.assertNotIn("--reviewer-evidence", fallback)
+        self.assertNotIn("old.json", fallback)
+        self.assertIn("--strict-review", fallback)
+        self.assertEqual(fallback[fallback.index("--arbiter") + 1], "reviewer-validity")
+        self.assertEqual(fallback[fallback.index("--stage-timings-pass") + 1], "final")
+        self.assertIn("song.flac", fallback)
+
+    def test_r2_skip_marks_report_and_returns_three_after_final_fallback(self) -> None:
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            audio = root / "song.flac"
+            output = root / "song.lrc"
+            report_dir = root / "reports"
+            audio.write_bytes(b"fake audio")
+            backend_calls: list[list[str]] = []
+
+            def fake_backend(args):
+                command = list(args)
+                backend_calls.append(command)
+                output_arg = Path(command[command.index("--output") + 1])
+                report_dir_arg = Path(command[command.index("--report-dir") + 1])
+                report_dir_arg.mkdir(parents=True, exist_ok=True)
+                report_path, _, _ = r2_pipeline.auto_lrc.report_artifact_paths(
+                    audio, output_arg, report_dir_arg
+                )
+                report_path.write_text('{"assignments": []}\n', encoding="utf-8")
+                return 0
+
+            argv = [
+                "--work-dir", str(root / "work"), "--",
+                "--output", str(output),
+                "--report-dir", str(report_dir),
+                str(audio),
+            ]
+            with mock.patch.object(
+                r2_pipeline,
+                "acquire_reviewer_evidence",
+                side_effect=r2_pipeline.MissingCurrentCandidateError("missing current"),
+            ), mock.patch.object(r2_pipeline, "_run_backend", side_effect=fake_backend):
+                result = r2_pipeline.main(argv)
+
+            self.assertEqual(result, 3)
+            self.assertEqual(len(backend_calls), 2)
+            fallback = backend_calls[1]
+            self.assertEqual(fallback[fallback.index("--stage-timings-pass") + 1], "final")
+            self.assertEqual(fallback[fallback.index("--arbiter") + 1], "reviewer-validity")
+            self.assertNotIn("--reviewer-evidence", fallback)
+            report_path, _, _ = r2_pipeline.auto_lrc.report_artifact_paths(
+                audio, output, report_dir
+            )
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                report["r2"],
+                {
+                    "skipped": True,
+                    "reason": "missing current",
+                    "arbiter": "reviewer-validity",
+                    "reviewer_evidence": None,
+                },
+            )
+
 
 
 class ReviewerCacheRegressionTests(unittest.TestCase):
