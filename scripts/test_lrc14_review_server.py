@@ -108,7 +108,7 @@ class ReviewServerTests(unittest.TestCase):
         )[2])
 
     def test_selector_exposes_precentral_recommendation(self) -> None:
-        candidates = review_server._candidate_rows(
+        candidates, dropped_count = review_server._candidate_rows(
             {
                 "candidates": [
                     {"time": 36.42, "source": "ctc-current", "score": .86},
@@ -121,6 +121,7 @@ class ReviewServerTests(unittest.TestCase):
             3642,
             3642,
         )
+        self.assertEqual(dropped_count, 0)
         self.assertIn(3700, [item["cs"] for item in candidates])
         diagnostic = next(item for item in candidates if item["cs"] == 3700)
         self.assertFalse(diagnostic["diagnostic_only"])
@@ -128,13 +129,61 @@ class ReviewServerTests(unittest.TestCase):
         self.assertIn("ctc-nearby", diagnostic["sources"])
 
     def test_selector_marks_raw_only_recommendation_diagnostic(self) -> None:
-        candidates = review_server._candidate_rows(
+        candidates, dropped_count = review_server._candidate_rows(
             {"precentral_candidate_recommendation": {"time": 37.0, "source": "raw_asr", "score": .98}},
             3642,
             3642,
         )
+        self.assertEqual(dropped_count, 0)
         diagnostic = next(item for item in candidates if item["cs"] == 3700)
         self.assertTrue(diagnostic["diagnostic_only"])
+
+    def test_selector_skips_missing_timestamps_without_crashing(self) -> None:
+        candidates, dropped_count = review_server._candidate_rows(
+            {"candidates": [{"source": "bad", "time": None}, "malformed"]},
+            None,
+            100,
+        )
+        self.assertEqual([item["cs"] for item in candidates], [100])
+        self.assertEqual(dropped_count, 2)
+
+    def test_selector_keeps_accepted_candidates_before_rejected_candidates(self) -> None:
+        accepted = [
+            {"time": 2.0 + index, "source": f"accepted-{index}", "score": 0.1 + index / 100}
+            for index in range(5)
+        ]
+        rejected = [
+            {"time": 20.0 + index, "source": f"rejected-{index}", "score": 0.99 - index / 100}
+            for index in range(5)
+        ]
+        candidates, dropped_count = review_server._candidate_rows(
+            {"candidates": accepted, "rejected_candidates": rejected},
+            100,
+            110,
+        )
+        self.assertEqual(dropped_count, 3)
+        nonrequired = [item for item in candidates if item["cs"] not in {100, 110}]
+        self.assertEqual(
+            [item["sources"][0] for item in nonrequired[:5]],
+            [f"accepted-{index}" for index in range(4, -1, -1)],
+        )
+        self.assertEqual(
+            {source for item in candidates for source in item["sources"] if source.startswith("accepted-")},
+            {f"accepted-{index}" for index in range(5)},
+        )
+
+    def test_one_line_report_with_missing_assignment_timestamp_stays_operable(self) -> None:
+        output = self.root / "one-line.lrc"
+        output.write_bytes(b"[00:01.00]one\n")
+        report = self.root / "one-line.align-report.json"
+        report.write_text(json.dumps({
+            "audio_path": str(self.audio), "ctc_audio_path": str(self.stem),
+            "output_path": str(output), "display_lines": 1, "timing_entries": 1,
+            "assignments": [{"entry": 1, "lrc_tag": "[00:01.00]", "candidates": [{"time": None}]}],
+        }), encoding="utf-8")
+        detail = review_server.ReviewStore(self.root, [report]).song(0)
+        self.assertEqual(len(detail["rows"]), 1)
+        self.assertEqual(detail["rows"][0]["candidates"][0]["cs"], 100)
 
     def test_mapping_payload_and_adjacent_lines(self) -> None:
         detail = self._detail()
@@ -145,6 +194,32 @@ class ReviewServerTests(unittest.TestCase):
         self.assertEqual(detail["rows"][2]["next"]["lyrics"], ["four"])
         self.assertEqual(detail["rows"][4]["current_cs"], 6200)
         self.assertIn("base_sha256", detail)
+
+    def test_song_load_failure_keeps_stub_in_api_song_list(self) -> None:
+        other = self.root / "z-song.align-report.json"
+        other.write_text(self.report.read_text(encoding="utf-8"), encoding="utf-8")
+        real_payload = review_server._song_payload
+
+        def payload_or_fail(path, report):
+            if path.name == self.report.name:
+                raise RuntimeError("payload exploded")
+            return real_payload(path, report)
+
+        with mock.patch.object(review_server, "_song_payload", side_effect=payload_or_fail):
+            store = review_server.ReviewStore(self.root, [self.report, other])
+            self.server.store = store
+            songs = json.loads(self._request("GET", "/api/songs", **{"X-Review-Token": self.server.token})[2])
+            failed = next(song for song in songs if song["song"] == "song")
+            healthy = next(song for song in songs if song["song"] == "z-song")
+            self.assertIn("load_error", failed)
+            self.assertTrue(failed["read_only"])
+            self.assertGreater(healthy["rows"], 0)
+            detail = json.loads(self._request(
+                "GET", f"/api/song/{failed['index']}", **{"X-Review-Token": self.server.token}
+            )[2])
+            self.assertEqual(detail["rows"], [])
+            self.assertTrue(detail["read_only"])
+            self.assertIn("payload exploded", detail["load_error"])
 
     def test_entry_key_survives_non_monotonic_timestamps_and_tsv_order(self) -> None:
         output = self.root / "nonmonotonic.lrc"
@@ -189,6 +264,9 @@ class ReviewServerTests(unittest.TestCase):
         self.assertIn("CTC first-sound (posterior)", page)
         self.assertIn("ASR diagnostic hint", page)
         self.assertIn("diagnostic only", page)
+        self.assertIn("還有 ' + esc(row.dropped_count) + ' 個候選未顯示", page)
+        self.assertIn("R2 skipped:", page)
+        self.assertIn("load error:", page)
         self.assertIn("color-scheme:dark", page)
         source = page.split("<script>", 1)[1].rsplit("</script>", 1)[0]
         harness = r"""

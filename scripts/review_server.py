@@ -271,41 +271,69 @@ def _seconds_cs(value):
 
 def _candidate_rows(assignment, current_cs, auto_cs):
     raw = []
+    dropped_count = 0
+
+    def add(value, source, score, rejected=False, required=False, already_cs=False):
+        number = _number(value)
+        cs = int(number) if already_cs and number is not None else _seconds_cs(value)
+        if cs is None:
+            return False
+        raw.append((cs, source, score, rejected, required))
+        return True
+
     if auto_cs is not None:
-        raw.append((auto_cs, "auto", 10000.0, False))
-    raw.append((current_cs, "current", 9999.0, False))
+        add(auto_cs, "auto", 10000.0, required=True, already_cs=True)
+    if current_cs is not None:
+        add(current_cs, "current", 9999.0, required=True, already_cs=True)
     candidates = assignment.get("candidates") if isinstance(assignment.get("candidates"), list) else []
     for item in candidates:
         value = _candidate_time(item)
-        if value is not None:
-            raw.append((_seconds_cs(value), str(item.get("source", "candidate")), _number(item.get("score")) or 0.0, False))
+        if not isinstance(item, dict) or not add(
+            value, str(item.get("source", "candidate")), _number(item.get("score")) or 0.0
+        ):
+            dropped_count += 1
     precentral = assignment.get("precentral_candidate_recommendation")
     if isinstance(precentral, dict):
         value = _candidate_time(precentral)
-        if value is not None:
-            raw.append((_seconds_cs(value), str(precentral.get("source", "precentral-recommendation")), _number(precentral.get("score")) or 0.0, False))
+        if not add(
+            value,
+            str(precentral.get("source", "precentral-recommendation")),
+            _number(precentral.get("score")) or 0.0,
+        ):
+            dropped_count += 1
     first = _number(assignment.get("ctc_first_token_start"))
     if first is not None:
-        raw.append((_seconds_cs(first), "ctc-first-token", _number(assignment.get("ctc_first_token_score")) or 0.0, False))
+        add(first, "ctc-first-token", _number(assignment.get("ctc_first_token_score")) or 0.0)
     rejected = assignment.get("rejected_candidates")
     for item in rejected if isinstance(rejected, list) else []:
         value = _candidate_time(item)
-        if value is not None:
-            raw.append((_seconds_cs(value), str(item.get("source", "rejected")), _number(item.get("score")) or 0.0, True))
+        if not isinstance(item, dict) or not add(
+            value, str(item.get("source", "rejected")), _number(item.get("score")) or 0.0, True
+        ):
+            dropped_count += 1
     merged = []
-    for cs, source, score, rejected_flag in sorted(raw, key=lambda item: (-item[2], item[0], item[1])):
+    for cs, source, score, rejected_flag, required in sorted(raw, key=lambda item: (-item[2], item[0], item[1])):
         match = next((item for item in merged if abs(item["cs"] - cs) <= 5), None)
         diagnostic_only = source in {"raw_asr", "precentral-recommendation"}
         if match is None:
-            merged.append({"cs": cs, "label": source, "sources": [source], "score": score, "rejected": rejected_flag, "diagnostic_only": diagnostic_only})
+            merged.append({"cs": cs, "label": source, "sources": [source], "score": score, "rejected": rejected_flag, "diagnostic_only": diagnostic_only, "required": required})
         else:
             if source not in match["sources"]:
                 match["sources"].append(source)
             match["rejected"] = match["rejected"] and rejected_flag
             match["diagnostic_only"] = match["diagnostic_only"] and diagnostic_only
-    required = [item for item in merged if item["label"] in {"auto", "current"} or "auto" in item["sources"] or "current" in item["sources"]]
-    rest = [item for item in sorted(merged, key=lambda item: (-item["score"], item["cs"])) if item not in required]
-    return sorted((required + rest)[:9], key=lambda item: item["cs"])
+            match["required"] = match["required"] or required
+    required_rows = [item for item in merged if item["required"]]
+    other_rows = sorted(
+        (item for item in merged if not item["required"]),
+        key=lambda item: (item["rejected"], -item["score"], item["cs"], item["label"]),
+    )
+    ordered = required_rows + other_rows
+    visible = ordered[:9]
+    dropped_count += max(0, len(ordered) - len(visible))
+    for item in visible:
+        item.pop("required", None)
+    return visible, dropped_count
 
 
 def _read_log(path):
@@ -420,6 +448,7 @@ def _song_payload(report_path, report):
             current_cs = line_time(current_lines, line_indexes[0])
             auto_cs = line_time(auto_lines, line_indexes[0])
             lyrics = line_lyrics(current_lines, line_indexes)
+            candidates, dropped_count = _candidate_rows(assignment, current_cs, auto_cs)
             row = {
                 "entry": index + 1,
                 "lyrics": lyrics,
@@ -435,7 +464,8 @@ def _song_payload(report_path, report):
                 "severity_score": feature.get("severity_score", 0),
                 "candidate_spread": feature.get("candidate_spread_s"),
                 "reason": listed.get(index + 1, {}).get("reason_codes", ""),
-                "candidates": _candidate_rows(assignment, current_cs, auto_cs),
+                "candidates": candidates,
+                "dropped_count": dropped_count,
             }
             rows.append(row)
     return {
@@ -452,8 +482,34 @@ def _song_payload(report_path, report):
         "output_path": str(output_path) if output_path else "",
         "base_sha256": _sha256_bytes(current_data),
         "duration_seconds": _number(report.get("duration_seconds")) or 0.0,
+        "r2": report.get("r2"),
         "report_data": report,
         "output": output_path,
+        "auto": auto_path,
+        "edits": edits_path,
+    }
+
+
+def _song_stub(report_path, error):
+    auto_path, edits_path = review_artifact_paths(report_path)
+    return {
+        "report": str(report_path),
+        "song": report_path.name.replace(".align-report.json", ""),
+        "load_error": f"{type(error).__name__}: {error}",
+        "rows": [],
+        "review_rows": 0,
+        "read_only": True,
+        "read_only_reason": "load-error",
+        "audio_path": "",
+        "ctc_audio_path": "",
+        "has_flac": False,
+        "has_stem": False,
+        "output_path": "",
+        "base_sha256": "",
+        "duration_seconds": 0.0,
+        "r2": None,
+        "report_data": {},
+        "output": None,
         "auto": auto_path,
         "edits": edits_path,
     }
@@ -594,8 +650,10 @@ class ReviewStore:
                 report = json.loads(path.read_text(encoding="utf-8-sig"))
                 if isinstance(report, dict):
                     self.songs.append(_song_payload(path, report))
-            except (OSError, ValueError, UnicodeError):
-                continue
+                else:
+                    raise ValueError("report must be a JSON object")
+            except Exception as exc:
+                self.songs.append(_song_stub(path, exc))
 
     def song(self, index):
         with self.lock:
@@ -608,8 +666,9 @@ class ReviewStore:
                 if isinstance(report, dict):
                     current = _song_payload(report_path, report)
                     self.songs[index] = current
-            except (OSError, ValueError, UnicodeError):
-                pass
+            except Exception as exc:
+                current = _song_stub(report_path, exc)
+                self.songs[index] = current
             return current
 
 
@@ -676,7 +735,7 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
                 self._send(403, b"forbidden\n", "text/plain; charset=utf-8")
                 return
             with self.server.store.lock:
-                payload = [{"index": index, "song": song["song"], "rows": len(song["rows"]), "review_rows": song["review_rows"], "read_only": song["read_only"], "read_only_reason": song["read_only_reason"], "server_read_only": self.server.store.read_only} for index, song in enumerate(self.server.store.songs)]
+                payload = [{"index": index, "song": song["song"], "rows": len(song["rows"]), "review_rows": song["review_rows"], "read_only": song["read_only"], "read_only_reason": song["read_only_reason"], "load_error": song.get("load_error"), "server_read_only": self.server.store.read_only} for index, song in enumerate(self.server.store.songs)]
             self._json(200, payload)
             return
         match = re.fullmatch(r"/api/song/(\d+)", parsed.path)

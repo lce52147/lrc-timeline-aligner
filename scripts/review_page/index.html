@@ -165,8 +165,16 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
     grouped.forEach(items => {
       const box = document.createElement('section');
       box.className = 'song';
-      box.innerHTML = '<h2>' + esc(items[0].song.song) + ' <span class="meta">' + items.length + ' flagged rows</span></h2>';
+      const r2 = items[0].song.detail?.r2;
+      const r2Notice = r2?.skipped ? ' <span class="meta">R2 skipped: ' + esc(r2.reason || 'unknown') + '</span>' : '';
+      box.innerHTML = '<h2>' + esc(items[0].song.song) + r2Notice + ' <span class="meta">' + items.length + ' flagged rows</span></h2>';
       items.forEach(item => box.appendChild(rowElement(item)));
+      queue.appendChild(box);
+    });
+    state.songs.filter(song => song.index === state.activeSong && song.detail?.load_error).forEach(song => {
+      const box = document.createElement('section');
+      box.className = 'song';
+      box.innerHTML = '<h2>' + esc(song.song) + '</h2><div class="warning error-row">load error: ' + esc(song.detail.load_error) + '</div>';
       queue.appendChild(box);
     });
     const globalReadOnly = serverReadOnly();
@@ -202,6 +210,7 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
       (conflict ? '<div class="order-warning">conflict: timestamp changed; repick a candidate or press U</div>' : '') +
       '<div class="audio"><button class="play" data-kind="flac" ' + (song.has_flac ? '' : 'disabled') + '>play FLAC</button><button class="play" data-kind="stem" ' + (song.has_stem ? '' : 'disabled') + '>play stem</button><span class="nudge"><button type="button" class="nudge-button" data-delta="-10"' + (editable(song) ? '' : ' disabled') + ' aria-label="move timestamp earlier by 0.1 seconds">-0.1</button><button type="button" class="nudge-button" data-delta="10"' + (editable(song) ? '' : ' disabled') + ' aria-label="move timestamp later by 0.1 seconds">+0.1</button></span>' + (song.has_flac ? '' : '<span class="muted">FLAC unavailable</span>') + (song.has_stem ? '' : '<span class="muted">stem unavailable</span>') + '</div>' +
       '<div>working <b>' + time(chosen) + '</b></div><div class="chips">' + (chips || '<span class="muted">no candidates</span>') + '</div>' +
+      (row.dropped_count ? '<div class="meta">還有 ' + esc(row.dropped_count) + ' 個候選未顯示</div>' : '') +
       '<div class="meta">' + ((song.read_only || song.detail?.server_read_only) ? 'read-only: ' + esc(song.read_only_reason || (song.detail?.server_read_only ? 'server' : 'unknown')) : '') + '</div>';
     div.addEventListener('click', () => { select(item); render(); });
     div.querySelectorAll('.play').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); button.blur(); playAround(item, working(item), button.dataset.kind); }));
@@ -220,7 +229,10 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
     try {
       const previousEdits = new Map(state.edits);
       const list = await api('/api/songs');
-      const details = await Promise.all(list.map(song => api('/api/song/' + song.index)));
+      const details = await Promise.all(list.map(async song => {
+        try { return await api('/api/song/' + song.index); }
+        catch (error) { return Object.assign({}, song, {rows:[], load_error:error.message, read_only:true}); }
+      }));
       state.songs = list.map((song,i) => Object.assign({}, song, {has_flac:details[i].has_flac, has_stem:details[i].has_stem, detail:details[i]}));
       state.rows = [];
       state.songs.forEach(song => (song.detail.rows || []).forEach(row => state.rows.push({song,row})));
