@@ -123,9 +123,18 @@ class ReviewServerTests(unittest.TestCase):
         )
         self.assertIn(3700, [item["cs"] for item in candidates])
         diagnostic = next(item for item in candidates if item["cs"] == 3700)
-        self.assertTrue(diagnostic["diagnostic_only"])
+        self.assertFalse(diagnostic["diagnostic_only"])
         self.assertIn("raw_asr", diagnostic["sources"])
         self.assertIn("ctc-nearby", diagnostic["sources"])
+
+    def test_selector_marks_raw_only_recommendation_diagnostic(self) -> None:
+        candidates = review_server._candidate_rows(
+            {"precentral_candidate_recommendation": {"time": 37.0, "source": "raw_asr", "score": .98}},
+            3642,
+            3642,
+        )
+        diagnostic = next(item for item in candidates if item["cs"] == 3700)
+        self.assertTrue(diagnostic["diagnostic_only"])
 
     def test_mapping_payload_and_adjacent_lines(self) -> None:
         detail = self._detail()
@@ -177,6 +186,7 @@ class ReviewServerTests(unittest.TestCase):
         self.assertIn("candidate-apply", page)
         self.assertIn("stage(item, candidate.cs", page)
         self.assertIn("CTC first-sound candidate", page)
+        self.assertIn("CTC first-sound (posterior)", page)
         self.assertIn("ASR diagnostic hint", page)
         self.assertIn("diagnostic only", page)
         self.assertIn("color-scheme:dark", page)

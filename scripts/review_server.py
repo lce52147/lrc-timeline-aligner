@@ -302,7 +302,7 @@ def _candidate_rows(assignment, current_cs, auto_cs):
             if source not in match["sources"]:
                 match["sources"].append(source)
             match["rejected"] = match["rejected"] and rejected_flag
-            match["diagnostic_only"] = match["diagnostic_only"] or diagnostic_only
+            match["diagnostic_only"] = match["diagnostic_only"] and diagnostic_only
     required = [item for item in merged if item["label"] in {"auto", "current"} or "auto" in item["sources"] or "current" in item["sources"]]
     rest = [item for item in sorted(merged, key=lambda item: (-item["score"], item["cs"])) if item not in required]
     return sorted((required + rest)[:9], key=lambda item: item["cs"])
