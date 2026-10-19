@@ -472,7 +472,7 @@ if ($exitCode -eq 0) {
 }
 
 $reviewBatchPath = [System.IO.Path]::GetFullPath((Join-Path $scriptDir "Review LRC.bat"))
-$reviewCommandText = 'cmd /c "{0}" --report-dir "{1}" --targets-file "{2}"' -f $reviewBatchPath, $ReportDirectory, $batchTargetsPath
+$reviewCommandText = '"{0}" --report-dir "{1}" --targets-file "{2}"' -f $reviewBatchPath, $ReportDirectory, $batchTargetsPath
 if ($env:LRC_NO_REVIEW -eq "1") {
     Write-Host "Review LRC: disabled by LRC_NO_REVIEW=1; not launching." -ForegroundColor DarkGray
 }
@@ -515,14 +515,12 @@ else {
             Write-Host "Review LRC command: $reviewCommandText" -ForegroundColor Yellow
             try {
                 $reviewArgs = @(
-                    "/c",
-                    ('"{0}"' -f $reviewBatchPath),
                     "--report-dir",
                     ('"{0}"' -f $ReportDirectory),
                     "--targets-file",
                     ('"{0}"' -f $batchTargetsPath)
                 )
-                Start-Process -FilePath "cmd.exe" -ArgumentList $reviewArgs -WorkingDirectory $scriptDir | Out-Null
+                Start-Process -FilePath $reviewBatchPath -ArgumentList $reviewArgs -WorkingDirectory $scriptDir | Out-Null
                 Write-Host "Review LRC: launched asynchronously." -ForegroundColor Green
             }
             catch {
