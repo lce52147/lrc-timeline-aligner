@@ -5276,13 +5276,17 @@ class CentralTimingStateTests(unittest.TestCase):
             {"commit": counts["commit"] + 1}
         )
         try:
-            timestamps, report, backend, selection = auto_lrc.run_auto_backend_competition(
-                Path("dummy.flac"),
-                [LyricEntry(["generic"])],
-                20.0,
-                object(),  # type: ignore[arg-type]
-                None,
-            )
+            # The bare ``object()`` args cannot drive a real WhisperX pass, so the
+            # python-availability probe is pinned off regardless of whether the
+            # machine running the tests has a .venv-asr.
+            with mock.patch.object(auto_lrc, "_whisperx_python_available", return_value=False):
+                timestamps, report, backend, selection = auto_lrc.run_auto_backend_competition(
+                    Path("dummy.flac"),
+                    [LyricEntry(["generic"])],
+                    20.0,
+                    object(),  # type: ignore[arg-type]
+                    None,
+                )
         finally:
             (
                 auto_lrc.default_ctc_ready,
