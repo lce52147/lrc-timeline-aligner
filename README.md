@@ -1,6 +1,16 @@
-# LRC Timeline Aligner — v1.3.1
+# LRC Timeline Aligner — v1.4.0
 
 Local LRC timestamp generation for Windows. The tool keeps lyric order fixed, generates timing evidence from the audio, lets Central arbitration choose the final line starts, and writes a same-name `.lrc` plus an audit report.
+
+## What's new in v1.4
+
+- Review page opens automatically after a batch alignment that produced review rows; `LRC_NO_REVIEW=1` disables it; install paths with spaces are supported.
+- Candidates can be listened to and applied by click or digit key; each chip shows how many other candidates agree within ±0.15 s; overflow candidates sit in a collapsible list.
+- A/B playback alternates the current and the selected candidate timestamps.
+- Vocal-stem waveform strip for the selected row with drag adjustment, plus visible ±0.1 s nudges and JIS-safe bracket keys.
+- Plain-language reason text for every review row.
+- Transactional save: the LRC, the first-save `.auto.lrc` and the edit log are staged and published together; a failed save leaves the files unchanged.
+- Timing and alignment algorithm unchanged from v1.3.1 (39-song cache-only replay byte-identical).
 
 ## What's new in v1.3
 
