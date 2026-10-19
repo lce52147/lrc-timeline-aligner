@@ -64,7 +64,7 @@ def reason_codes_for(row: object, status: object) -> list[str]:
     """Return stable, display-ready reason codes without changing classification."""
     data = row if isinstance(row, dict) else {}
     final_codes = data.get("final_trust_reason_codes")
-    if isinstance(final_codes, list) and final_codes:
+    if isinstance(final_codes, list):
         values = final_codes
     else:
         flags = data.get("flags")
@@ -72,10 +72,13 @@ def reason_codes_for(row: object, status: object) -> list[str]:
             values = flags
         else:
             legacy = data.get("reason_codes")
-            values = [legacy] if legacy not in (None, "") and not isinstance(legacy, list) else (
-                legacy if isinstance(legacy, list) else []
-            )
-    reasons = [_reason_code(value) for value in values]
+            if isinstance(legacy, str):
+                values = [value.strip() for value in legacy.split(",") if value.strip()]
+            else:
+                values = [legacy] if legacy is not None and not isinstance(legacy, list) else (
+                    legacy if isinstance(legacy, list) else []
+                )
+    reasons = [_reason_code(value).strip() for value in values]
     reasons = [reason for reason in reasons if reason != ""]
     if not reasons:
         reasons = ["review-required" if str(status) == "REVIEW" else "unverified"]

@@ -11,6 +11,7 @@ import tempfile
 import threading
 import unittest
 from contextlib import redirect_stderr
+from types import SimpleNamespace
 from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -123,11 +124,27 @@ class ReviewServerTests(unittest.TestCase):
                 {"final_trust_reason_codes": [], "flags": ["candidate_disagreement"]},
                 "REVIEW",
             ),
-            ["candidate_disagreement"],
+            ["review-required"],
         )
         self.assertEqual(lrc_review_tsv.reason_codes_for({"flags": []}, "REVIEW"), ["review-required"])
         self.assertEqual(lrc_review_tsv.reason_codes_for(None, "UNTRUSTED"), ["unverified"])
-        self.assertEqual(lrc_review_tsv.reason_codes_for({"reason_codes": "legacy-code"}, "REVIEW"), ["legacy-code"])
+        self.assertEqual(lrc_review_tsv.reason_codes_for({"reason_codes": "legacy-a, legacy-b"}, "REVIEW"), ["legacy-a", "legacy-b"])
+
+    def test_review_tsv_empty_final_codes_use_status_fallback(self) -> None:
+        path = self.root / "empty-final.review.tsv"
+        report = {
+            "assignments": [{
+                "entry": 1,
+                "timestamp": 1.0,
+                "review_required": True,
+                "verification_status": "review-required",
+                "final_trust_reason_codes": [],
+                "flags": ["candidate_disagreement"],
+            }],
+            "lyric_preflight": {"status": "OK"},
+        }
+        lrc_review_tsv.write_review_tsv(path, report, [SimpleNamespace(lines=["line"])])
+        self.assertEqual(path.read_text(encoding="utf-8").splitlines()[-1].split("\t")[4], "review-required")
 
     def test_reason_code_union_is_mapped_and_unknowns_are_safe(self) -> None:
         fixture = json.loads((SCRIPTS / "test_fixtures" / "reason_codes_b1_39.json").read_text(encoding="utf-8"))
@@ -140,13 +157,27 @@ class ReviewServerTests(unittest.TestCase):
 
     def test_raw_assignment_reasons_survive_without_review_tsv(self) -> None:
         data = json.loads(self.report.read_text(encoding="utf-8"))
-        data["assignments"][0]["final_trust_reason_codes"] = []
+        data["assignments"][0].pop("final_trust_reason_codes", None)
         data["assignments"][0]["flags"] = [{"code": "candidate_disagreement"}]
         self.assertFalse(self.report.with_name("song.review.tsv").exists())
         detail = review_server._song_payload(self.report, data)
         row = detail["rows"][0]
         self.assertEqual(row["reason_codes"], ["candidate_disagreement"])
         self.assertEqual(row["reason"], "candidate_disagreement")
+
+    def test_tsv_rows_use_assignment_reasons_without_stringifying_multiple_codes(self) -> None:
+        data = json.loads(self.report.read_text(encoding="utf-8"))
+        data["assignments"][0]["final_trust_reason_codes"] = ["candidate_disagreement", "low_confidence"]
+        tsv = self.report.with_name("song.review.tsv")
+        tsv.write_text(
+            "# review_rows=1\n"
+            "entry\ttime\tlyric\tstatus\treason_codes\tseverity_rank\tseverity_score\tseverity_reasons\ttimestamp_status\tlrc_time\tprev_time\tnext_time\tcandidate_times\tcandidate_spread_s\n"
+            "1\t00:01.00\tone\tREVIEW\tcandidate_disagreement,low_confidence\t1\t9\treview\t\t00:01.00\t\t\t\t\n",
+            encoding="utf-8",
+        )
+        row = review_server._song_payload(self.report, data)["rows"][0]
+        self.assertEqual(row["reason_codes"], ["candidate_disagreement", "low_confidence"])
+        self.assertEqual(row["reason"], "candidate_disagreement,low_confidence")
 
     def test_selector_exposes_precentral_recommendation(self) -> None:
         candidates, dropped_count = review_server._candidate_rows(
@@ -386,6 +417,29 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         self.assertEqual(auto.read_bytes(), self.original)
         self.assertEqual(len(json.loads(edits.read_text())["edits"]), 4)
         self.assertEqual(self.output.read_bytes().splitlines()[3], b"[00:01.10]one")
+
+    def test_successful_save_changes_only_review_output_whitelist(self) -> None:
+        before = {
+            path: (path.read_bytes(), path.stat().st_mtime_ns)
+            for path in self.root.rglob("*") if path.is_file()
+        }
+        detail = self._detail()
+        body = {
+            "base_sha256": detail["base_sha256"],
+            "edits": [{"entry": 1, "cs": 150, "source": "ctc", "nudge_cs": 50}],
+        }
+        self.assertEqual(self._json_request("POST", "/api/song/0/save", body)[0], 200)
+        after = {
+            path: (path.read_bytes(), path.stat().st_mtime_ns)
+            for path in self.root.rglob("*") if path.is_file()
+        }
+        changed = {
+            path.name for path in set(before) | set(after)
+            if before.get(path) != after.get(path)
+        }
+        auto, edits = review_server.review_artifact_paths(self.report)
+        self.assertEqual(changed, {self.output.name, auto.name, edits.name})
+        self.assertFalse(list(self.root.glob("*.stage")))
 
     def test_api_auth_security_and_read_only(self) -> None:
         self.assertEqual(self._request("GET", "/api/songs")[0], 403)

@@ -453,7 +453,7 @@ def _song_payload(report_path, report):
             listed_row = listed.get(index + 1, {})
             status = listed_row.get("status", feature.get("status", "UNTRUSTED"))
             reason_codes = lrc_review_tsv.reason_codes_for(
-                listed_row if listed_row else assignment,
+                assignment,
                 status,
             )
             row = {
