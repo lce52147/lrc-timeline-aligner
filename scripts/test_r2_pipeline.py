@@ -597,7 +597,10 @@ class ReviewerCacheRegressionTests(unittest.TestCase):
                 return 0
 
             with mock.patch.object(r2_pipeline, "_run_logged", side_effect=fake_run):
-                r2_pipeline.acquire_reviewer_evidence(report_path, result_path, work_dir)
+                r2_pipeline.acquire_reviewer_evidence(
+                    report_path, result_path, work_dir,
+                    cache_policy=r2_pipeline.model_cache.ModelCachePolicy(enabled=False),
+                )
 
             self.assertTrue(observed)
             self.assertEqual(observed[0], (False, False))

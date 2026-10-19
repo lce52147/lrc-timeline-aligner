@@ -25,6 +25,7 @@ REVIEWERS = ("HUBP", "WX", "XLSR")
 MIN_OFFSET_SAMPLES = 8
 
 import auto_lrc  # noqa: E402
+import model_cache  # noqa: E402
 from lrc_manual_edits import manual_edit_reason  # noqa: E402
 from lrc_publication import journal_path  # noqa: E402
 import reviewer_layer  # noqa: E402
@@ -639,6 +640,58 @@ def reviewer_step_status(name: str, exit_code: int, payload: Mapping[str, object
     return "FAILED"
 
 
+REVIEWER_SIDECAR_CACHE_KIND = "r2-reviewer-sidecar"
+_CACHEABLE_REVIEWER_STATUSES = frozenset({"OK", "MISSING_UNSUPPORTED"})
+
+
+def _sha256_or_missing(path: Path) -> str:
+    try:
+        return auto_lrc._stable_file_sha256(Path(path))
+    except OSError:
+        return "missing"
+
+
+def reviewers_source_sha256(reviewers_dir: Path = REVIEWERS_DIR) -> str:
+    """sha256 over the reviewer scripts, sorted by file name."""
+    digest = hashlib.sha256()
+    for path in sorted(Path(reviewers_dir).glob("*.py"), key=lambda item: item.name):
+        if path.name.startswith("test_"):
+            continue
+        digest.update(path.name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def reviewer_sidecar_identity(
+    payload: Mapping[str, object],
+    *,
+    device: str,
+    include_hub: bool,
+    reviewers_dir: Path = REVIEWERS_DIR,
+) -> dict[str, object]:
+    payload_text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    return model_cache.identity_r2_reviewer_sidecar(
+        payload_sha256=hashlib.sha256(payload_text.encode("utf-8")).hexdigest(),
+        reviewers_sha256=reviewers_source_sha256(reviewers_dir),
+        whisper_cli_sha256=_sha256_or_missing(runtime_paths.whisper_cli()),
+        whisper_model_sha256=_sha256_or_missing(runtime_paths.whisper_model()),
+        device=str(device),
+        include_hub=bool(include_hub),
+    )
+
+
+def _reviewer_statuses_cacheable(statuses: Mapping[str, object]) -> bool:
+    if not statuses:
+        return False
+    for state in statuses.values():
+        status = state.get("status") if isinstance(state, Mapping) else None
+        if status not in _CACHEABLE_REVIEWER_STATUSES:
+            return False
+    return True
+
+
 def acquire_reviewer_evidence(
     report_path: Path,
     output_path: Path,
@@ -647,6 +700,8 @@ def acquire_reviewer_evidence(
     reviewer_python: Path | None = None,
     device: str = "cuda",
     include_hub: bool = False,
+    cache_policy: model_cache.ModelCachePolicy | None = None,
+    cache_root: Path | None = None,
 ) -> dict[str, object]:
     report = json.loads(report_path.read_text(encoding="utf-8-sig"))
     if not isinstance(report, dict):
@@ -654,6 +709,32 @@ def acquire_reviewer_evidence(
     payload = build_reviewer_payload(report)
     work_dir.mkdir(parents=True, exist_ok=True)
     data_path = work_dir / "reviewer-data.json"
+    policy = cache_policy if cache_policy is not None else model_cache.policy_from_env_and_args(None)
+    cache_identity = reviewer_sidecar_identity(payload, device=device, include_hub=include_hub)
+    cache_key = model_cache.key_from_identity(REVIEWER_SIDECAR_CACHE_KIND, cache_identity)
+    cached = model_cache.read(REVIEWER_SIDECAR_CACHE_KIND, cache_key, cache_identity, policy, cache_root)
+    if isinstance(cached, Mapping) and isinstance(cached.get("sidecar"), str) and isinstance(cached.get("statuses"), Mapping):
+        # The sidecar is stored as its exact JSON text so a replay writes the
+        # same bytes the fill run wrote (the envelope itself is key-sorted).
+        sidecar_text = str(cached["sidecar"])
+        sidecar = json.loads(sidecar_text)
+        statuses = {
+            name: {**dict(state), "source": "cache"} if isinstance(state, Mapping) else state
+            for name, state in cached["statuses"].items()
+        }
+        _write_json(work_dir / "reviewer-status.json", {"schema": 1, "steps": statuses, "source": "cache"})
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(sidecar_text, encoding="utf-8")
+        return {
+            "evidence": str(output_path),
+            "statuses": statuses,
+            "hub_requested": include_hub,
+            "qualified_reviewers": sorted(sidecar["offsets"]),
+            "offset_sample_counts": sidecar["offset_sample_counts"],
+            "cache": {"status": "hit", "kind": REVIEWER_SIDECAR_CACHE_KIND, "key": cache_key},
+        }
+    if policy.cache_only:
+        raise model_cache.ModelCacheMiss(f"model-cache-miss:{REVIEWER_SIDECAR_CACHE_KIND}:{cache_key}")
     plan_path = work_dir / "hubp-plan.json"
     hubp_path = work_dir / "hubp-raw.json"
     log_path = work_dir / "reviewers.log"
@@ -718,12 +799,20 @@ def acquire_reviewer_evidence(
             hubp_payload = loaded_hubp
     sidecar = build_r2_sidecar(reviewer_payload, hubp_payload)
     _write_json(output_path, sidecar)
+    cache_state = "not-written"
+    if _reviewer_statuses_cacheable(statuses):
+        written = model_cache.write(
+            REVIEWER_SIDECAR_CACHE_KIND, cache_key, cache_identity,
+            {"sidecar": output_path.read_text(encoding="utf-8"), "statuses": statuses}, policy, cache_root,
+        )
+        cache_state = "written" if written else "disabled"
     return {
         "evidence": str(output_path),
         "statuses": statuses,
         "hub_requested": include_hub,
         "qualified_reviewers": sorted(sidecar["offsets"]),
         "offset_sample_counts": sidecar["offset_sample_counts"],
+        "cache": {"status": cache_state, "kind": REVIEWER_SIDECAR_CACHE_KIND, "key": cache_key},
     }
 
 
@@ -977,6 +1066,11 @@ def main(argv: list[str] | None = None) -> int:
                 device=args.reviewer_device,
                 include_hub=args.include_hub_reviewer,
             )
+        except model_cache.ModelCacheMiss as exc:
+            stages[1].update({"seconds": round(time.perf_counter() - stage_started, 6), "status": "cache-miss"})
+            active_stage = 0
+            print(f"ERROR: R2 reviewer evidence missing in cache-only mode: {exc}", file=sys.stderr, flush=True)
+            return 1
         except MissingCurrentCandidateError as exc:
             stages[1].update({"seconds": round(time.perf_counter() - stage_started, 6), "status": "skipped"})
             active_stage = 0
