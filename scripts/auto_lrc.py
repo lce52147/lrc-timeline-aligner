@@ -39963,6 +39963,9 @@ def main(argv: list[str] | None = None) -> int:
                 old_args.skeleton = "ctc"
                 old_args.option_a_rollback_reason = str(retry_reason)
                 process_audio(Path(raw_audio).expanduser().resolve(), old_args)
+        except ModelCacheMiss as exc:
+            failures += 1
+            print(f"ERROR: {raw_audio}: {exc}", file=sys.stderr)
         except LrcError as exc:
             failures += 1
             print(f"ERROR: {exc}", file=sys.stderr)

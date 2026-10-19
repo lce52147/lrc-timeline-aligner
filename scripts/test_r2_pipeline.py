@@ -471,6 +471,47 @@ class R2PipelineTests(unittest.TestCase):
                 },
             )
 
+    def test_r2_skip_fallback_failure_precedes_skip_exit_code(self) -> None:
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            audio = root / "song.flac"
+            output = root / "song.lrc"
+            report_dir = root / "reports"
+            audio.write_bytes(b"fake audio")
+            backend_calls: list[list[str]] = []
+
+            def fake_backend(args):
+                command = list(args)
+                backend_calls.append(command)
+                if len(backend_calls) == 1:
+                    output_arg = Path(command[command.index("--output") + 1])
+                    report_dir_arg = Path(command[command.index("--report-dir") + 1])
+                    report_dir_arg.mkdir(parents=True, exist_ok=True)
+                    report_path, _, _ = r2_pipeline.auto_lrc.report_artifact_paths(
+                        audio, output_arg, report_dir_arg
+                    )
+                    report_path.write_text('{"assignments": []}\n', encoding="utf-8")
+                    return 0
+                return 7
+
+            argv = [
+                "--work-dir", str(root / "work"), "--",
+                "--output", str(output),
+                "--report-dir", str(report_dir),
+                str(audio),
+            ]
+            with mock.patch.object(
+                r2_pipeline,
+                "acquire_reviewer_evidence",
+                side_effect=r2_pipeline.MissingCurrentCandidateError("missing current"),
+            ), mock.patch.object(r2_pipeline, "_run_backend", side_effect=fake_backend):
+                result = r2_pipeline.main(argv)
+
+            self.assertEqual(result, 7)
+            self.assertEqual(len(backend_calls), 2)
+
 
 
 class ReviewerCacheRegressionTests(unittest.TestCase):

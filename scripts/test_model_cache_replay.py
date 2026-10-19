@@ -201,6 +201,34 @@ class ModelCacheReplayTests(unittest.TestCase):
                     self.wavs[0][1], [LyricEntry(["text"])], 1.0, args
                 )
 
+    def test_cli_continues_after_model_cache_miss(self) -> None:
+        first = Path(self.td.name) / "first.flac"
+        second = Path(self.td.name) / "second.flac"
+        first.write_bytes(b"first")
+        second.write_bytes(b"second")
+
+        calls = [0]
+
+        def process(audio, _args):
+            calls[0] += 1
+            if calls[0] == 1:
+                raise ModelCacheMiss("model-cache-miss:test")
+            audio.with_suffix(".lrc").write_text("[00:01.00]second\n", encoding="utf-8")
+
+        stderr = io.StringIO()
+        with mock.patch.object(
+            auto_lrc,
+            "process_audio",
+            side_effect=process,
+        ) as process_mock, redirect_stderr(stderr):
+            result = auto_lrc.main([str(first), str(second)])
+
+        self.assertEqual(result, 1)
+        self.assertEqual(process_mock.call_count, 2)
+        self.assertIn("ERROR: ", stderr.getvalue())
+        self.assertIn("first.flac: model-cache-miss:test", stderr.getvalue())
+        self.assertTrue(second.with_suffix(".lrc").is_file())
+
     def test_ordinary_raw_backend_status_is_machine_readable_warning(self) -> None:
         args = argparse.Namespace(**vars(self.args))
         args.whisper_cli = str(Path(self.td.name) / "missing-cli")
