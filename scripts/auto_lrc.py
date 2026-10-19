@@ -9473,6 +9473,25 @@ def default_whisperx_ready() -> bool:
     return default_whisper_cli().exists() and default_whisper_model().exists() and default_whisperx_python().exists()
 
 
+def _effective_whisperx_python(args: argparse.Namespace) -> Path:
+    python_arg = getattr(args, "whisperx_python", None)
+    return Path(python_arg).expanduser().resolve() if python_arg else default_whisperx_python()
+
+
+def _whisperx_python_available(args: argparse.Namespace) -> bool:
+    python_exe = _effective_whisperx_python(args)
+    if python_exe.is_file():
+        return True
+    if _model_cache_only(args):
+        raise ModelCacheMiss("model-cache-miss:whisperx-python-unavailable:" + str(python_exe))
+    progress_log(
+        "WARNING: WhisperX Python unavailable: "
+        + str(python_exe)
+        + "; fallback=skip-whisperx-candidate"
+    )
+    return False
+
+
 def _effective_raw_asr_paths(args: argparse.Namespace) -> tuple[Path, Path]:
     cli_arg = getattr(args, "whisper_cli", None)
     model_arg = getattr(args, "whisper_model", None)
@@ -14928,7 +14947,7 @@ def run_auto_backend_competition(
             }
         )
 
-    if default_whisperx_ready():
+    if bool(raw_asr_status["available"]):
         ctc_candidate = next(
             (candidate for candidate in candidates if candidate.get("backend") == "ctc" and not candidate.get("error")),
             None,
@@ -14988,7 +15007,7 @@ def run_auto_backend_competition(
                     }
                 )
 
-    if default_whisperx_ready():
+    if bool(raw_asr_status["available"]) and _whisperx_python_available(args):
         _park_persistent_helper_mode("ctc", reason="before-global-whisperx")
         try:
             progress_log(

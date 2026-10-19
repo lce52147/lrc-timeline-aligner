@@ -129,6 +129,21 @@ class ModelCacheReplayTests(unittest.TestCase):
                             self.wavs[0][1], [], 1.0, args, None
                         )
 
+    def test_cache_only_missing_whisperx_python_fails_before_whisperx(self) -> None:
+        args = argparse.Namespace(**vars(self.args))
+        args.model_cache_only = True
+        args.whisperx_python = str(Path(self.td.name) / "missing-whisperx-python")
+        with mock.patch.object(
+            auto_lrc, "try_whispercpp_diagnostic_candidate",
+            return_value=([], {"assignments": []}, None, []),
+        ), mock.patch.object(auto_lrc, "default_ctc_ready", return_value=False), mock.patch.object(
+            auto_lrc, "decode_temp_wav", return_value=None
+        ):
+            with self.assertRaisesRegex(ModelCacheMiss, "whisperx-python-unavailable"):
+                auto_lrc.run_auto_backend_competition(
+                    self.wavs[0][1], [LyricEntry(["text"])], 1.0, args, None
+                )
+
     def test_cache_only_raw_execution_failure_is_model_cache_miss(self) -> None:
         args = argparse.Namespace(**vars(self.args))
         args.model_cache_only = True
