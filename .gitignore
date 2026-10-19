@@ -73,26 +73,10 @@ scripts/whispercpp_probe*.json
 scripts/whisperx_align_from_whispercpp*.json
 scripts/dragdrop-sandbox/
 
-# Keep source fixtures explicit if ever needed
-scripts/*
-!scripts/auto_lrc.py
-!scripts/check_public.py
-!scripts/ctc_align.py
-!scripts/doctor.py
-!scripts/evaluate_lrc.py
-!scripts/export_alignment_audit.py
-!scripts/japanese_ctc_align.py
-!scripts/persistent_helper_worker.py
-!scripts/quantify_alignment.py
-!scripts/r2_pipeline.py
-!scripts/prefetch_models.py
-!scripts/run_benchmarks.py
-!scripts/test_align_lrc_wrapper.py
-!scripts/test_core_logic.py
-!scripts/test_installation.py
-!scripts/test_evaluate_lrc.py
-!scripts/test_r2_pipeline.py
-!scripts/whisperx_refine.py
-docs/*
-!docs/existing-summary.md
+# Source under scripts/ and docs/ is tracked; only generated artifacts are ignored
+docs/*.json
+docs/*.tsv
+docs/*.html
+docs/*.png
+docs/*.jpg
 !README.md
