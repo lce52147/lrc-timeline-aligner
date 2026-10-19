@@ -4,12 +4,15 @@ import hashlib
 import http.client
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
+import struct
 import sys
 import tempfile
 import threading
 import unittest
+import wave
 from contextlib import redirect_stderr
 from types import SimpleNamespace
 from unittest import mock
@@ -327,6 +330,94 @@ class ReviewServerTests(unittest.TestCase):
         self.assertEqual(len(extra_count), 3)
         self.assertEqual([item["cs"] for item in many + extra_count], list(range(100, 1300, 100)))
 
+    def test_stem_peaks_endpoint_cache_and_validation(self) -> None:
+        samples = []
+        for index in range(40000):
+            seconds = index / 16000
+            samples.append(int(0.8 * 32767 * (1 if 1.0 <= seconds < 1.2 else 0)))
+        with io.BytesIO() as buffer:
+            with wave.open(buffer, "wb") as handle:
+                handle.setnchannels(1)
+                handle.setsampwidth(2)
+                handle.setframerate(16000)
+                handle.writeframes(b"".join(struct.pack("<h", sample) for sample in samples))
+            self.stem.write_bytes(buffer.getvalue())
+        before_lrc = self.output.read_bytes()
+        with review_server._PEAK_CACHE_LOCK:
+            review_server._PEAK_CACHE.clear()
+
+        status, _, body = self._request(
+            "GET", "/api/song/0/peaks?from=0&to=200&bins=20&t=test-token"
+        )
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload["sample_rate"], 16000)
+        self.assertGreater(payload["peaks"][10][1], .5)
+        self.assertGreater(payload["peaks"][11][1], .5)
+        self.assertEqual(payload["peaks"][12], [0.0, 0.0])
+
+        status, _, body = self._request(
+            "GET", "/api/song/0/peaks?from=50&to=250&bins=20&t=test-token"
+        )
+        self.assertEqual(status, 200)
+        shifted = json.loads(body)["peaks"]
+        self.assertGreater(shifted[5][1], .5)
+        self.assertGreater(shifted[6][1], .5)
+
+        with mock.patch.object(review_server.wave, "open", wraps=wave.open) as opened:
+            with review_server._PEAK_CACHE_LOCK:
+                review_server._PEAK_CACHE.clear()
+            review_server._read_stem_peaks(self.stem, 0, 200, 20)
+            review_server._read_stem_peaks(self.stem, 0, 200, 20)
+            self.assertEqual(opened.call_count, 1)
+            stat = self.stem.stat()
+            self.stem.touch()
+            os.utime(self.stem, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
+            review_server._read_stem_peaks(self.stem, 0, 200, 20)
+            self.assertEqual(opened.call_count, 2)
+            with review_server._PEAK_CACHE_LOCK:
+                review_server._PEAK_CACHE.clear()
+            for index in range(257):
+                review_server._read_stem_peaks(self.stem, index, index + 200, 20)
+            with review_server._PEAK_CACHE_LOCK:
+                self.assertEqual(len(review_server._PEAK_CACHE), 256)
+            calls = opened.call_count
+            review_server._read_stem_peaks(self.stem, 0, 200, 20)
+            self.assertEqual(opened.call_count, calls + 1)
+
+        self.assertEqual(
+            self._request("GET", "/api/song/0/peaks?from=0&to=200&bins=20")[0],
+            403,
+        )
+        self.assertEqual(
+            self._request("GET", "/api/song/0/peaks?from=0&to=801&bins=20&t=test-token")[0],
+            400,
+        )
+        self.assertEqual(
+            self._request("GET", "/api/song/0/peaks?from=0&to=200&bins=601&t=test-token")[0],
+            400,
+        )
+        report = json.loads(self.report.read_text(encoding="utf-8"))
+        report["ctc_audio_path"] = str(self.root / "missing.wav")
+        self.report.write_text(json.dumps(report), encoding="utf-8")
+        self.assertEqual(
+            self._request("GET", "/api/song/0/peaks?from=0&to=200&bins=20&t=test-token")[0],
+            404,
+        )
+        invalid = self.root / "invalid.wav"
+        with wave.open(str(invalid), "wb") as handle:
+            handle.setnchannels(1)
+            handle.setsampwidth(2)
+            handle.setframerate(8000)
+            handle.writeframes(b"\0\0" * 16)
+        report["ctc_audio_path"] = str(invalid)
+        self.report.write_text(json.dumps(report), encoding="utf-8")
+        self.assertEqual(
+            self._request("GET", "/api/song/0/peaks?from=0&to=200&bins=20&t=test-token")[0],
+            415,
+        )
+        self.assertEqual(self.output.read_bytes(), before_lrc)
+
     def test_one_line_report_with_missing_assignment_timestamp_stays_operable(self) -> None:
         output = self.root / "one-line.lrc"
         output.write_bytes(b"[00:01.00]one\n")
@@ -423,6 +514,10 @@ class ReviewServerTests(unittest.TestCase):
         self.assertIn('<details class="extra-candidates">', page)
         self.assertIn("data-candidate-list", page)
         self.assertIn("agree_count", page)
+        self.assertIn("className = 'peaks'", page)
+        self.assertIn("/peaks?from=", page)
+        self.assertIn("Math.round((event.clientX - drag.startX) * 600 / stripPx())", page)
+        self.assertIn("stage(item, drag.previewCs, 'drag', 0)", page)
         self.assertIn("R2 skipped:", page)
         self.assertIn("load error:", page)
         self.assertIn("const shownSongs = new Set()", page)

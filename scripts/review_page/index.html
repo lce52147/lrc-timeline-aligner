@@ -20,6 +20,7 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
 .candidate-info{min-width:300px;line-height:1.5}.candidate-source{color:#d4e2f2}.candidate-delta{color:#9fb8d4;font-variant-numeric:tabular-nums}.candidate-actions{display:flex;gap:4px}.candidate-action{padding:3px 6px}
 .dirty{background:#5d4b1d}.muted{color:#8291a5}.order-warning{color:#ff9b9b;font-weight:600}
 .selected-row{outline:2px solid #5da9ee;outline-offset:-2px}.row.conflict{background:#321d28;border-left-color:#ff6b6b}
+.peaks{display:block;width:100%;height:64px;margin-top:8px;background:#0d1726;border:1px solid #293852;border-radius:5px;touch-action:none}
 </style>
 </head>
 <body>
@@ -200,6 +201,57 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
     };
     next();
   }
+  function paintPeaks(canvas, payload, markerCs) {
+    const context = canvas.getContext?.('2d');
+    if (!context) return;
+    const width = canvas.width || 600, height = canvas.height || 64;
+    context.clearRect(0, 0, width, height);
+    context.strokeStyle = '#79b8ed';
+    context.lineWidth = 1;
+    const peaks = payload?.peaks || [];
+    peaks.forEach((peak, index) => {
+      const x = (index + .5) * width / Math.max(1, peaks.length);
+      context.beginPath(); context.moveTo(x, (1 - peak[1]) * height / 2); context.lineTo(x, (1 - peak[0]) * height / 2 + height / 2); context.stroke();
+    });
+    const span = Number(payload?.to_cs) - Number(payload?.from_cs);
+    if (Number.isFinite(span) && span > 0 && Number.isFinite(markerCs)) {
+      const x = (markerCs - payload.from_cs) * width / span;
+      context.strokeStyle = '#ffcf66';
+      context.beginPath(); context.moveTo(x, 0); context.lineTo(x, height); context.stroke();
+    }
+  }
+  function attachPeaks(item, canvas) {
+    const startCs = working(item);
+    if (startCs == null) return;
+    canvas.width = 600; canvas.height = 64;
+    let payload = null, drag = null;
+    const paint = markerCs => paintPeaks(canvas, payload, markerCs);
+    api('/api/song/' + item.song.index + '/peaks?from=' + Math.max(0, startCs - 300) + '&to=' + (startCs + 300) + '&bins=120&t=' + encodeURIComponent(token))
+      .then(data => { payload = data; paint(startCs); })
+      .catch(() => {});
+    const stripPx = () => canvas.getBoundingClientRect?.().width || canvas.clientWidth || canvas.width || 1;
+    const preview = event => {
+      const deltaCs = Math.round((event.clientX - drag.startX) * 600 / stripPx());
+      const cs = Math.max(0, Math.min(drag.startCs + 300, Math.max(drag.startCs - 300, drag.startCs + deltaCs)));
+      drag.previewCs = cs; paint(cs);
+    };
+    canvas.addEventListener('pointerdown', event => {
+      if (event.button !== 0 || startCs == null) return;
+      event.stopPropagation(); drag = {startX:event.clientX, startCs, previewCs:startCs};
+      canvas.setPointerCapture?.(event.pointerId);
+    });
+    canvas.addEventListener('pointermove', event => { if (drag) { event.stopPropagation(); preview(event); } });
+    const finish = event => {
+      if (!drag) return;
+      event.stopPropagation();
+      if (event.type === 'pointerup') { preview(event); stage(item, drag.previewCs, 'drag', 0); }
+      else paint(startCs);
+      canvas.releasePointerCapture?.(event.pointerId); drag = null;
+    };
+    canvas.addEventListener('pointerup', finish);
+    canvas.addEventListener('pointercancel', finish);
+    canvas.addEventListener('click', event => event.stopPropagation());
+  }
   function stage(item, cs, source, nudgeCs) {
     stopPlayer();
     if (!editable(item.song) || cs == null) return;
@@ -340,6 +392,13 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
     div.querySelectorAll('.nudge-button').forEach(button => button.addEventListener('click', event => {
       event.stopPropagation(); button.blur(); nudge(item, Number(button.dataset.delta));
     }));
+    if (visible()[state.selected] === item && song.has_stem && chosen != null) {
+      const canvas = document.createElement('canvas');
+      canvas.className = 'peaks';
+      canvas.setAttribute?.('aria-label', 'vocal stem waveform; drag to adjust timestamp');
+      div.appendChild(canvas);
+      attachPeaks(item, canvas);
+    }
     return div;
   }
   async function load() {

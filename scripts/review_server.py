@@ -4,7 +4,9 @@ import hashlib
 import http.server
 import math
 import json
+import struct
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from collections import OrderedDict
 import os
 import pathlib
 import re
@@ -14,6 +16,7 @@ import uuid
 import urllib.parse
 import webbrowser
 import sys
+import wave
 from datetime import datetime, timezone
 
 import lrc_review_tsv
@@ -23,6 +26,9 @@ _EXCLUDED_DIR_NAMES = ("lrc tools checked references", "lrc bk")
 _TAG_RE = re.compile(rb"^\[(\d{2,}):(\d{2})\.(\d{2})\]")
 _RANGE_RE = re.compile(r"^bytes=(\d*)-(\d*)$")
 _MAX_BODY = 256 * 1024
+_PEAK_CACHE = OrderedDict()
+_PEAK_CACHE_LOCK = threading.Lock()
+_PEAK_CACHE_LIMIT = 256
 
 
 def _sha256_bytes(data):
@@ -74,6 +80,68 @@ def _format_tag(cs):
     minutes, remainder = divmod(int(cs), 6000)
     seconds, centiseconds = divmod(remainder, 100)
     return f"[{minutes:02d}:{seconds:02d}.{centiseconds:02d}]".encode("ascii")
+
+
+def _read_stem_peaks(path, from_cs, to_cs, bins):
+    path = pathlib.Path(path).expanduser().resolve()
+    stat = path.stat()
+    key = (str(path), stat.st_mtime_ns, stat.st_size, from_cs, to_cs, bins)
+    with _PEAK_CACHE_LOCK:
+        cached = _PEAK_CACHE.get(key)
+        if cached is not None:
+            _PEAK_CACHE.move_to_end(key)
+            return cached
+    try:
+        with wave.open(str(path), "rb") as handle:
+            if handle.getnchannels() != 1 or handle.getsampwidth() != 2 or handle.getframerate() != 16000 or handle.getcomptype() != "NONE":
+                raise ValueError("stem must be 16 kHz mono signed-16 PCM")
+            start_sample = math.floor(from_cs * 160)
+            end_sample = math.floor(to_cs * 160)
+            total_samples = end_sample - start_sample
+            handle.setpos(min(start_sample, handle.getnframes()))
+            data = handle.readframes(max(0, total_samples))
+    except (wave.Error, EOFError, struct.error) as exc:
+        raise ValueError("stem must be 16 kHz mono signed-16 PCM") from exc
+    sample_count = len(data) // 2
+    samples = struct.unpack("<" + "h" * sample_count, data) if sample_count else ()
+    peaks = []
+    for index in range(bins):
+        left = (total_samples * index) // bins
+        right = (total_samples * (index + 1)) // bins
+        values = samples[left:right] if left < sample_count else ()
+        if not values:
+            peaks.append([0.0, 0.0])
+            continue
+        peaks.append([
+            round(max(-1.0, min(1.0, min(values) / 32768.0)), 3),
+            round(max(-1.0, min(1.0, max(values) / 32768.0)), 3),
+        ])
+    payload = {
+        "from_cs": from_cs,
+        "to_cs": to_cs,
+        "bins": bins,
+        "sample_rate": 16000,
+        "peaks": peaks,
+    }
+    with _PEAK_CACHE_LOCK:
+        _PEAK_CACHE[key] = payload
+        _PEAK_CACHE.move_to_end(key)
+        while len(_PEAK_CACHE) > _PEAK_CACHE_LIMIT:
+            _PEAK_CACHE.popitem(last=False)
+    return payload
+
+
+def _parse_peaks_query(query):
+    values = urllib.parse.parse_qs(query)
+    try:
+        from_cs = int(values["from"][0])
+        to_cs = int(values["to"][0])
+        bins = int(values["bins"][0])
+    except (KeyError, IndexError, TypeError, ValueError):
+        raise ValueError("from, to and bins are required integers")
+    if from_cs < 0 or to_cs <= from_cs or to_cs - from_cs > 600 or bins <= 0 or bins > 600:
+        raise ValueError("invalid peak range")
+    return from_cs, to_cs, bins
 
 
 def _split_lrc(data):
@@ -825,6 +893,10 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
             else:
                 self._json(200, _public_song(song, self.server.store.read_only))
             return
+        match = re.fullmatch(r"/api/song/(\d+)/peaks", parsed.path)
+        if match:
+            self._serve_peaks(int(match.group(1)), parsed.query)
+            return
         match = re.fullmatch(r"/audio/(\d+)/(flac|stem)", parsed.path)
         if match:
             self._serve_audio(int(match.group(1)), match.group(2), parsed.query, False)
@@ -950,6 +1022,33 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
                         remaining -= len(block)
         except (OSError, ConnectionResetError, BrokenPipeError):
             return
+
+    def _serve_peaks(self, index, query):
+        if not self._token_query_ok(query):
+            self._send(403, b"forbidden\n", "text/plain; charset=utf-8")
+            return
+        try:
+            from_cs, to_cs, bins = _parse_peaks_query(query)
+        except ValueError as exc:
+            self._json(400, {"error": str(exc)})
+            return
+        song = self.server.store.song(index)
+        if song is None:
+            self._json(404, {"error": "not found"})
+            return
+        path = pathlib.Path(song.get("ctc_audio_path", "")).expanduser()
+        if not path.is_file():
+            self._json(404, {"error": "stem not found"})
+            return
+        try:
+            payload = _read_stem_peaks(path, from_cs, to_cs, bins)
+        except ValueError as exc:
+            self._json(415, {"error": str(exc)})
+            return
+        except OSError:
+            self._json(404, {"error": "stem not found"})
+            return
+        self._json(200, payload)
 
 
 

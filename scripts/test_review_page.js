@@ -8,6 +8,11 @@ class Element {
   addEventListener(type, fn) { if (!this.listeners.has(type)) this.listeners.set(type, []); this.listeners.get(type).push(fn); }
   dispatch(type, event={}) { for (const fn of this.listeners.get(type) || []) fn(Object.assign({type,target:this,currentTarget:this,preventDefault(){},stopPropagation(){}}, event)); }
   appendChild() {}
+  setAttribute(name, value) { this[name] = value; }
+  getBoundingClientRect() { return {width:600}; }
+  setPointerCapture() {}
+  releasePointerCapture() {}
+  getContext() { return {clearRect(){}, beginPath(){}, moveTo(){}, lineTo(){}, stroke(){}}; }
   querySelectorAll() { return []; }
   querySelector() { return null; }
   closest() { return null; }
@@ -48,6 +53,7 @@ const song={index:0,song:'demo',has_flac:true,has_stem:true,read_only:false,deta
 async function fetchMock(url, options={}) {
   if (url === '/api/songs') return {ok:true,json:async()=>[song]};
   if (url === '/api/song/0') return {ok:true,json:async()=>song.detail};
+  if (url.startsWith('/api/song/0/peaks')) return {ok:true,json:async()=>({from_cs:0,to_cs:600,bins:120,sample_rate:16000,peaks:Array.from({length:120},()=>[0,0])})};
   if (url === '/api/song/0/save') return {ok:true,json:async()=>song.detail};
   throw new Error('unexpected fetch '+url);
 }
@@ -55,7 +61,7 @@ async function fetchMock(url, options={}) {
 let source = fs.readFileSync('scripts/review_page/index.html','utf8');
 const match = source.match(/<script>\r?\n([\s\S]*?)\r?\n<\/script>/);
 assert.ok(match, 'page script missing');
-const script = match[1].replace(/  load\(\);\r?\n\}\)\(\);/, '  globalThis.__reviewTest = {state, render, playAround, playAB, stopPlayer, select, stage, save, rowElement};\n  load();\n})();');
+const script = match[1].replace(/  load\(\);\r?\n\}\)\(\);/, '  globalThis.__reviewTest = {state, render, playAround, playAB, stopPlayer, select, stage, save, rowElement, attachPeaks};\n  load();\n})();');
 const context = {console, document:documentMock, addEventListener(){}, URLSearchParams: class { constructor(){ } get(){return 'token';} }, location:{search:'',hash:''}, fetch:fetchMock, Audio:AudioMock, setTimeout:fakeSetTimeout, clearTimeout:fakeClearTimeout, alert(){}, Promise, encodeURIComponent, Map, Set, Number, String, Math, JSON, Object, Error, RegExp};
 context.globalThis=context;
 vm.runInNewContext(script, context, {filename:'review_page/index.html'});
@@ -104,8 +110,21 @@ vm.runInNewContext(script, context, {filename:'review_page/index.html'});
   test.playAround(item,100,'flac'); await flush(); const beforeStage=test.state.player.seq; test.stage(item,120,'manual',0); assert.ok(test.state.player.seq>beforeStage,'stage invalidates playback');
   test.playAround(item,100,'flac'); await flush(); const beforeSave=test.state.player.seq; await test.save(); assert.ok(test.state.player.seq>beforeSave,'save invalidates playback');
 
+  const initialRendered=test.rowElement(item).innerHTML;
+  assert.match(initialRendered, /class="ab-play"/, 'row renders A/B control');
+  assert.match(initialRendered, /class="ab-play"[^>]*disabled/, 'A/B is disabled without a selected candidate');
+  test.state.edits.clear(); test.state.dirty=false;
+  const canvas = new Element(); test.attachPeaks(item, canvas); await flush();
+  canvas.dispatch('pointerdown',{button:0,clientX:100,pointerId:1});
+  canvas.dispatch('pointermove',{clientX:400,pointerId:1});
+  assert.equal(test.state.edits.size, 0, 'drag preview does not stage before pointerup');
+  canvas.dispatch('pointerup',{clientX:200,pointerId:1});
+  const dragEdit = [...test.state.edits.values()][0];
+  assert.equal(dragEdit.cs, 200, 'drag maps pixels to centiseconds');
+  assert.equal(dragEdit.source, 'drag', 'drag commits through stage');
+
   const rendered=test.rowElement(item).innerHTML;
-  assert.match(rendered, /class="ab-play"/, 'row renders A/B control');
-  assert.match(rendered, /class="ab-play"[^>]*disabled/, 'A/B is disabled without a selected candidate');
+  assert.match(rendered, /class="ab-play"/, 'row renders A/B control after drag');
+  assert.ok(!/class="ab-play"[^>]*disabled/.test(rendered), 'A/B enables after selecting a candidate');
   console.log('review page playback tests: PASS');
 })().catch(error => { console.error(error.stack || error); process.exitCode=1; });
