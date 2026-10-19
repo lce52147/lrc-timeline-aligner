@@ -33,7 +33,7 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
   const token = new URLSearchParams(location.search).get('t') || new URLSearchParams(location.hash.slice(1)).get('t');
   const queue = document.getElementById('queue');
   const status = document.getElementById('status');
-  const state = {songs:[], rows:[], edits:new Map(), dirty:false, selected:0, activeSong:null, showUntrusted:false, mode:'flac', player:null, error:''};
+  const state = {songs:[], rows:[], edits:new Map(), dirty:false, selected:0, activeSong:null, showUntrusted:false, mode:'flac', player:{audio:new Map(), handlers:new Map(), seq:0, timer:null, active:null, ab:null}, error:''};
   const api = async (path, options={}) => {
     const headers = Object.assign({'X-Review-Token':token}, options.headers || {});
     const response = await fetch(path, Object.assign({}, options, {headers}));
@@ -95,45 +95,113 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
   function setDirty() { state.dirty = state.edits.size > 0; }
   const serverReadOnly = () => state.songs.some(song => song.detail?.server_read_only);
   const editable = song => !song.read_only && !song.detail?.server_read_only;
+  function playerKey(item, kind) { return String(item.song.index) + ':' + kind; }
+  function unbindAudio(audio) {
+    (state.player.handlers.get(audio) || []).forEach(binding => audio.removeEventListener(binding.type, binding.fn));
+    state.player.handlers.delete(audio);
+  }
+  function bindAudio(audio, bindings) {
+    unbindAudio(audio);
+    bindings.forEach(binding => audio.addEventListener(binding.type, binding.fn, binding.options));
+    state.player.handlers.set(audio, bindings);
+  }
+  function cachedAudio(item, kind) {
+    const key = playerKey(item, kind);
+    let audio = state.player.audio.get(key);
+    if (!audio) {
+      audio = new Audio('/audio/' + item.song.index + '/' + kind + '?t=' + encodeURIComponent(token));
+      state.player.audio.set(key, audio);
+    }
+    return audio;
+  }
+  function stopPlayer() {
+    const player = state.player;
+    player.seq += 1;
+    if (player.timer != null) { clearTimeout(player.timer); player.timer = null; }
+    [...player.handlers.keys()].forEach(unbindAudio);
+    player.audio.forEach(audio => audio.pause());
+    player.active = null;
+    player.ab = null;
+  }
   function select(item) {
+    stopPlayer();
     const index = visible().indexOf(item);
     if (index >= 0) state.selected = index;
   }
-  function stopPlayer() {
-    if (state.player) { state.player.pause(); state.player.removeAttribute('src'); state.player.load(); state.player = null; }
+  function playbackFailure(message) {
+    stopPlayer();
+    state.error = message;
+    render();
+  }
+  function finishClip(audio, seq) {
+    if (seq !== state.player.seq) return;
+    unbindAudio(audio);
+    audio.pause();
+    if (state.player.timer != null) { clearTimeout(state.player.timer); state.player.timer = null; }
+    state.player.active = null;
   }
   async function playAround(item, targetCs, kind=state.mode) {
     if (!item || targetCs == null) return;
     const available = kind === 'stem' ? item.song.has_stem : item.song.has_flac;
     if (!available) { state.error = kind.toUpperCase() + ' audio is unavailable for this song'; render(); return; }
     stopPlayer();
-    const audio = new Audio('/audio/' + item.song.index + '/' + kind + '?t=' + encodeURIComponent(token));
+    const seq = state.player.seq;
+    const audio = cachedAudio(item, kind);
     const start = targetCs / 100;
     const stop = start + 2;
-    let started = false, active = true;
-    const cleanup = () => { if (!active) return; active = false; audio.pause(); audio.removeEventListener('timeupdate', check); if (state.player === audio) state.player = null; };
-    const check = () => { if (audio.currentTime >= stop) cleanup(); };
-    const seekAndPlay = async () => {
-      if (started || !active) return;
+    let started = false;
+    const active = () => seq === state.player.seq;
+    const check = () => { if (active() && audio.currentTime >= stop) finishClip(audio, seq); };
+    const fail = () => { if (active()) playbackFailure(kind.toUpperCase() + ' audio could not be loaded'); };
+    const seekAndPlay = () => {
+      if (started || !active()) return;
       started = true;
       audio.currentTime = start;
-      await new Promise(resolve => {
-        const done = () => { audio.removeEventListener('seeked', done); resolve(); };
-        if (Math.abs(audio.currentTime - start) < .02) done(); else audio.addEventListener('seeked', done, {once:true});
-      });
-      if (!active) return;
-      audio.addEventListener('timeupdate', check);
-      audio.addEventListener('ended', cleanup, {once:true});
-      audio.play().catch(() => { state.error = 'audio playback was blocked'; render(); });
-      setTimeout(check, Math.max(0, (stop - start) * 1000 + 250));
+      if (!active()) return;
+      bindAudio(audio, [{type:'timeupdate', fn:check}, {type:'ended', fn:() => finishClip(audio, seq)}, {type:'error', fn:fail}]);
+      state.player.active = audio;
+      Promise.resolve(audio.play()).catch(() => { if (active()) playbackFailure('audio playback was blocked'); });
+      state.player.timer = setTimeout(check, 2250);
     };
-    audio.addEventListener('loadedmetadata', seekAndPlay, {once:true});
-    audio.addEventListener('error', () => { state.error = kind.toUpperCase() + ' audio could not be loaded'; cleanup(); render(); }, {once:true});
-    state.player = audio;
-    audio.load();
-    if (audio.readyState >= 1) seekAndPlay();
+    bindAudio(audio, [{type:'loadedmetadata', fn:seekAndPlay}, {type:'error', fn:fail}]);
+    if (audio.readyState >= 1) seekAndPlay(); else audio.load();
+  }
+  function playAB(item, candidate) {
+    if (!item || !candidate || candidate.cs == null || candidate.diagnostic_only || item.row.current_cs == null) return;
+    const kind = state.mode;
+    const available = kind === 'stem' ? item.song.has_stem : item.song.has_flac;
+    if (!available) { state.error = kind.toUpperCase() + ' audio is unavailable for this song'; render(); return; }
+    stopPlayer();
+    const seq = state.player.seq;
+    const ab = {item, a_cs:item.row.current_cs, b_cs:candidate.cs, phase:0, kind};
+    state.player.ab = ab;
+    const active = () => seq === state.player.seq && state.player.ab === ab;
+    const next = () => {
+      if (!active() || ab.phase >= 8) { if (active()) stopPlayer(); return; }
+      const audio = cachedAudio(item, kind);
+      const start = (ab.phase % 2 ? ab.b_cs : ab.a_cs) / 100;
+      const begin = () => {
+        if (!active()) return;
+        audio.currentTime = start;
+        state.player.active = audio;
+        Promise.resolve(audio.play()).catch(() => { if (active()) playbackFailure('audio playback was blocked'); });
+        state.player.timer = setTimeout(() => {
+          if (!active()) return;
+          audio.pause();
+          unbindAudio(audio);
+          state.player.timer = null;
+          ab.phase += 1;
+          next();
+        }, 2000);
+      };
+      const fail = () => { if (active()) playbackFailure(kind.toUpperCase() + ' audio could not be loaded'); };
+      bindAudio(audio, [{type:'loadedmetadata', fn:begin}, {type:'error', fn:fail}]);
+      if (audio.readyState >= 1) begin(); else audio.load();
+    };
+    next();
   }
   function stage(item, cs, source, nudgeCs) {
+    stopPlayer();
     if (!editable(item.song) || cs == null) return;
     const key = keyFor(item), current = item.row.current_cs;
     if (current != null && cs === current) {
@@ -173,6 +241,7 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
     if (rows.length) { state.selected = Math.min(rows.length - 1, state.selected + 1); render(); }
   }
   function render() {
+    stopPlayer();
     if (state.activeSong == null && state.songs.length) state.activeSong = state.songs[0].index;
     if (state.activeSong != null && !state.songs.some(song => song.index === state.activeSong)) state.activeSong = state.songs[0]?.index ?? null;
     const rows = visible();
@@ -234,6 +303,7 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
         '<span class="candidate-actions"><button type="button" class="candidate-action candidate-play" data-candidate="' + i + '" aria-label="listen to candidate ' + (i+1) + '">listen</button>' +
         '<button type="button" class="candidate-action candidate-apply" data-candidate="' + i + '"' + (editable(song) && !c.diagnostic_only ? '' : ' disabled') + ' aria-label="apply candidate ' + (i+1) + '">apply</button></span></div>';
     }).join('');
+    const selectedCandidate = (row.candidates || []).find(candidate => candidate.cs === chosen && !candidate.diagnostic_only);
     const conflict = conflicted(item);
     div.className = 'row ' + String(row.review || 'UNTRUSTED').toLowerCase() + (conflict ? ' conflict' : '') + (visible()[state.selected] === item ? ' selected-row' : '');
     div.dataset.key = key;
@@ -243,7 +313,7 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
       '<div>current <b>' + time(row.current_cs) + '</b> · auto ' + time(row.auto_cs) + ' · previous ' + adjacentText(previous) + ' · next ' + adjacentText(next) + '</div>' +
       (ordering ? '<div class="order-warning">warning: working time is outside adjacent line order</div>' : '') +
       (conflict ? '<div class="order-warning">conflict: timestamp changed; repick a candidate or press U</div>' : '') +
-      '<div class="audio"><button class="play" data-kind="flac" ' + (song.has_flac ? '' : 'disabled') + '>play FLAC</button><button class="play" data-kind="stem" ' + (song.has_stem ? '' : 'disabled') + '>play stem</button><span class="nudge"><button type="button" class="nudge-button" data-delta="-10"' + (editable(song) ? '' : ' disabled') + ' aria-label="move timestamp earlier by 0.1 seconds">-0.1</button><button type="button" class="nudge-button" data-delta="10"' + (editable(song) ? '' : ' disabled') + ' aria-label="move timestamp later by 0.1 seconds">+0.1</button></span>' + (song.has_flac ? '' : '<span class="muted">FLAC unavailable</span>') + (song.has_stem ? '' : '<span class="muted">stem unavailable</span>') + '</div>' +
+      '<div class="audio"><button class="play" data-kind="flac" ' + (song.has_flac ? '' : 'disabled') + '>play FLAC</button><button class="play" data-kind="stem" ' + (song.has_stem ? '' : 'disabled') + '>play stem</button><button type="button" class="ab-play" data-candidate="' + (selectedCandidate ? row.candidates.indexOf(selectedCandidate) : '') + '"' + (selectedCandidate && (state.mode === 'stem' ? song.has_stem : song.has_flac) ? '' : ' disabled') + ' aria-label="alternate current and selected candidate">A/B</button><span class="nudge"><button type="button" class="nudge-button" data-delta="-10"' + (editable(song) ? '' : ' disabled') + ' aria-label="move timestamp earlier by 0.1 seconds">-0.1</button><button type="button" class="nudge-button" data-delta="10"' + (editable(song) ? '' : ' disabled') + ' aria-label="move timestamp later by 0.1 seconds">+0.1</button></span>' + (song.has_flac ? '' : '<span class="muted">FLAC unavailable</span>') + (song.has_stem ? '' : '<span class="muted">stem unavailable</span>') + '</div>' +
       '<div>working <b>' + time(chosen) + '</b></div><div class="chips">' + (chips || '<span class="muted">no candidates</span>') + '</div>' +
       (row.dropped_count ? '<div class="meta">還有 ' + esc(row.dropped_count) + ' 個候選未顯示</div>' : '') +
       '<div class="meta">' + ((song.read_only || song.detail?.server_read_only) ? 'read-only: ' + esc(song.read_only_reason || (song.detail?.server_read_only ? 'server' : 'unknown')) : '') + '</div>';
@@ -254,6 +324,9 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
     }));
     div.querySelectorAll('.candidate-apply').forEach(button => button.addEventListener('click', event => {
       event.stopPropagation(); button.blur(); const candidate = row.candidates[Number(button.dataset.candidate)]; if (candidate && editable(song)) applyCandidate(item, candidate);
+    }));
+    div.querySelectorAll('.ab-play').forEach(button => button.addEventListener('click', event => {
+      event.stopPropagation(); button.blur(); const candidate = row.candidates[Number(button.dataset.candidate)]; if (candidate) playAB(item, candidate);
     }));
     div.querySelectorAll('.nudge-button').forEach(button => button.addEventListener('click', event => {
       event.stopPropagation(); button.blur(); nudge(item, Number(button.dataset.delta));
@@ -285,6 +358,7 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
     return state.error;
   }
   async function save() {
+    stopPlayer();
     if (serverReadOnly()) { state.error = 'save disabled: server read-only'; render(); return; }
     if (!state.dirty) return;
     const bySong = new Map();
@@ -323,7 +397,7 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
 
   document.getElementById('save').addEventListener('click', event => { event.currentTarget.blur(); save(); });
   document.getElementById('untrusted').addEventListener('change', event => { state.showUntrusted = event.target.checked; render(); });
-  document.getElementById('mode').addEventListener('click', event => { event.currentTarget.blur(); state.mode = state.mode === 'flac' ? 'stem' : 'flac'; render(); });
+  document.getElementById('mode').addEventListener('click', event => { event.currentTarget.blur(); stopPlayer(); state.mode = state.mode === 'flac' ? 'stem' : 'flac'; render(); });
   document.addEventListener('keydown', event => {
     if (event.ctrlKey && !event.altKey && !event.metaKey && event.key.toLowerCase() === 's') { event.preventDefault(); save(); return; }
     if (event.altKey || event.metaKey || event.ctrlKey) return;
@@ -335,7 +409,7 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
     if (event.key === 'ArrowUp') { event.preventDefault(); state.selected = Math.max(0, state.selected - 1); render(); return; }
     if (event.key.toLowerCase() === 'k') { event.preventDefault(); state.edits.delete(keyFor(item)); setDirty(); nextRow(); return; }
     if (event.key.toLowerCase() === 'u') { event.preventDefault(); state.edits.delete(keyFor(item)); setDirty(); render(); return; }
-    if (event.key.toLowerCase() === 'v') { event.preventDefault(); state.mode = state.mode === 'flac' ? 'stem' : 'flac'; render(); return; }
+    if (event.key.toLowerCase() === 'v') { event.preventDefault(); stopPlayer(); state.mode = state.mode === 'flac' ? 'stem' : 'flac'; render(); return; }
     if (event.key === 'Enter') {
       event.preventDefault();
       if (!editFor(item) && working(item) != null && working(item) !== item.row.current_cs) stage(item, working(item), 'accepted', 0);
