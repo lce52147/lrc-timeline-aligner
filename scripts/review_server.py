@@ -272,14 +272,21 @@ def _seconds_cs(value):
 
 def _candidate_rows(assignment, current_cs, auto_cs):
     raw = []
-    dropped_count = 0
+    diagnostic_sources = {"raw_asr", "precentral-recommendation"}
 
     def add(value, source, score, rejected=False, required=False, already_cs=False):
         number = _number(value)
         cs = int(number) if already_cs and number is not None else _seconds_cs(value)
         if cs is None:
             return False
-        raw.append((cs, source, score, rejected, required))
+        raw.append({
+            "cs": cs,
+            "source": str(source),
+            "score": float(score),
+            "rejected": bool(rejected),
+            "required": bool(required),
+            "diagnostic": str(source) in diagnostic_sources,
+        })
         return True
 
     if auto_cs is not None:
@@ -311,18 +318,40 @@ def _candidate_rows(assignment, current_cs, auto_cs):
             value, str(item.get("source", "rejected")), _number(item.get("score")) or 0.0, True
         ):
             continue
-    merged = []
-    for cs, source, score, rejected_flag, required in sorted(raw, key=lambda item: (-item[2], item[0], item[1])):
-        match = next((item for item in merged if abs(item["cs"] - cs) <= 5), None)
-        diagnostic_only = source in {"raw_asr", "precentral-recommendation"}
-        if match is None:
-            merged.append({"cs": cs, "label": source, "sources": [source], "score": score, "rejected": rejected_flag, "diagnostic_only": diagnostic_only, "required": required})
+    groups = []
+    for member in sorted(raw, key=lambda item: (-item["score"], item["cs"], item["source"])):
+        group = next((item for item in groups if abs(item["anchor_cs"] - member["cs"]) <= 5), None)
+        if group is None:
+            groups.append({"anchor_cs": member["cs"], "members": [member]})
         else:
-            if source not in match["sources"]:
-                match["sources"].append(source)
-            match["rejected"] = match["rejected"] and rejected_flag
-            match["diagnostic_only"] = match["diagnostic_only"] and diagnostic_only
-            match["required"] = match["required"] or required
+            group["members"].append(member)
+
+    merged = []
+    for group in groups:
+        members = group["members"]
+        real_members = [member for member in members if not member["diagnostic"]]
+        selected = max(real_members or members, key=lambda item: (item["score"], -item["cs"], item["source"]))
+        timestamps = sorted({
+            member["cs"]
+            for member in raw
+            if not member["required"]
+            and not member["diagnostic"]
+            and member["cs"] != selected["cs"]
+            and abs(member["cs"] - selected["cs"]) <= 15
+        })
+        span_values = [selected["cs"], *timestamps]
+        merged.append({
+            "cs": selected["cs"] if real_members else group["anchor_cs"],
+            "label": selected["source"],
+            "sources": list(dict.fromkeys(member["source"] for member in members)),
+            "score": max(member["score"] for member in members),
+            "rejected": all(member["rejected"] for member in members),
+            "diagnostic_only": all(member["diagnostic"] for member in members),
+            "required": any(member["required"] for member in members),
+            "members": [dict(member) for member in members],
+            "agree_count": len(timestamps),
+            "agree_span_cs": max(span_values) - min(span_values) if timestamps else 0,
+        })
     required_rows = [item for item in merged if item["required"]]
     other_rows = sorted(
         (item for item in merged if not item["required"]),
@@ -330,11 +359,10 @@ def _candidate_rows(assignment, current_cs, auto_cs):
     )
     ordered = required_rows + other_rows
     visible = ordered[:9]
-    dropped_count += max(0, len(ordered) - len(visible))
+    extra = ordered[9:]
     visible.sort(key=lambda item: item["cs"])
-    for item in visible:
-        item.pop("required", None)
-    return visible, dropped_count
+    extra.sort(key=lambda item: item["cs"])
+    return visible, extra
 
 
 def _read_log(path):
@@ -449,7 +477,7 @@ def _song_payload(report_path, report):
             current_cs = line_time(current_lines, line_indexes[0])
             auto_cs = line_time(auto_lines, line_indexes[0])
             lyrics = line_lyrics(current_lines, line_indexes)
-            candidates, dropped_count = _candidate_rows(assignment, current_cs, auto_cs)
+            candidates, extra_candidates = _candidate_rows(assignment, current_cs, auto_cs)
             listed_row = listed.get(index + 1, {})
             status = listed_row.get("status", feature.get("status", "UNTRUSTED"))
             reason_codes = lrc_review_tsv.reason_codes_for(
@@ -473,7 +501,8 @@ def _song_payload(report_path, report):
                 "reason_codes": reason_codes,
                 "reason": ",".join(reason_codes),
                 "candidates": candidates,
-                "dropped_count": dropped_count,
+                "extra_candidates": extra_candidates,
+                "dropped_count": len(extra_candidates),
             }
             rows.append(row)
     return {

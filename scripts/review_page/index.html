@@ -293,17 +293,27 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
     const key = keyFor(item), previous = row.previous, next = row.next, previousCs = previous?.cs, nextCs = next?.cs;
     const ordering = chosen != null && ((previousCs != null && chosen <= previousCs) || (nextCs != null && chosen >= nextCs));
     const lyrics = (row.lyrics || [row.lyric || '']).map(esc).join('<br>');
-    const chips = (row.candidates || []).map((c,i) => {
+    const extraCandidates = row.extra_candidates || [];
+    const candidateMarkup = (c, i, listName, numbered) => {
       const delta = row.current_cs == null ? '—' : (c.cs - row.current_cs >= 0 ? '+' : '') + ((c.cs - row.current_cs) / 100).toFixed(2) + 's';
       const source = sourceLabels(c);
       const marker = c.cs === row.current_cs ? ' · current' : '';
       const diagnostic = c.diagnostic_only ? ' · diagnostic only' : '';
+      const agreement = c.agree_count ? ' · +' + c.agree_count + ' candidates within ±0.15s' : '';
+      const number = numbered ? (i + 1) + '. ' : '';
+      const label = numbered ? ' candidate ' + (i + 1) : ' candidate';
       return '<div class="candidate ' + (c.rejected ? 'rejected ' : '') + (c.cs === chosen ? 'selected' : '') + '">' +
-        '<span class="candidate-info"><b>' + (i+1) + '. ' + time(c.cs) + marker + '</b> · <span class="candidate-source">' + esc(source) + '</span><span class="candidate-delta"> · from current ' + esc(delta) + '</span>' + diagnostic + (c.rejected ? ' · rejected' : '') + '</span>' +
-        '<span class="candidate-actions"><button type="button" class="candidate-action candidate-play" data-candidate="' + i + '" aria-label="listen to candidate ' + (i+1) + '">listen</button>' +
-        '<button type="button" class="candidate-action candidate-apply" data-candidate="' + i + '"' + (editable(song) && !c.diagnostic_only ? '' : ' disabled') + ' aria-label="apply candidate ' + (i+1) + '">apply</button></span></div>';
-    }).join('');
-    const selectedCandidate = (row.candidates || []).find(candidate => candidate.cs === chosen && !candidate.diagnostic_only);
+        '<span class="candidate-info"><b>' + number + time(c.cs) + marker + '</b> · <span class="candidate-source">' + esc(source) + '</span><span class="candidate-delta"> · from current ' + esc(delta) + '</span>' + agreement + diagnostic + (c.rejected ? ' · rejected' : '') + '</span>' +
+        '<span class="candidate-actions"><button type="button" class="candidate-action candidate-play" data-candidate-list="' + listName + '" data-candidate="' + i + '" aria-label="listen to' + label + '">listen</button>' +
+        '<button type="button" class="candidate-action candidate-apply" data-candidate-list="' + listName + '" data-candidate="' + i + '"' + (editable(song) && !c.diagnostic_only ? '' : ' disabled') + ' aria-label="apply' + label + '">apply</button></span></div>';
+    };
+    const candidates = row.candidates || [];
+    const chips = candidates.map((c,i) => candidateMarkup(c, i, 'main', true)).join('');
+    const extras = extraCandidates.map((c,i) => candidateMarkup(c, i, 'extra', false)).join('');
+    const extraMarkup = extraCandidates.length ? '<details class="extra-candidates"><summary>還有 ' + extraCandidates.length + ' 個候選</summary><div class="chips">' + extras + '</div></details>' : '';
+    const selectedCandidate = [...candidates, ...extraCandidates].find(candidate => candidate.cs === chosen && candidate.cs !== row.current_cs && !candidate.diagnostic_only);
+    const selectedCandidateList = selectedCandidate && candidates.includes(selectedCandidate) ? 'main' : 'extra';
+    const selectedCandidateIndex = selectedCandidate ? (selectedCandidateList === 'main' ? candidates.indexOf(selectedCandidate) : extraCandidates.indexOf(selectedCandidate)) : '';
     const conflict = conflicted(item);
     div.className = 'row ' + String(row.review || 'UNTRUSTED').toLowerCase() + (conflict ? ' conflict' : '') + (visible()[state.selected] === item ? ' selected-row' : '');
     div.dataset.key = key;
@@ -313,20 +323,19 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
       '<div>current <b>' + time(row.current_cs) + '</b> · auto ' + time(row.auto_cs) + ' · previous ' + adjacentText(previous) + ' · next ' + adjacentText(next) + '</div>' +
       (ordering ? '<div class="order-warning">warning: working time is outside adjacent line order</div>' : '') +
       (conflict ? '<div class="order-warning">conflict: timestamp changed; repick a candidate or press U</div>' : '') +
-      '<div class="audio"><button class="play" data-kind="flac" ' + (song.has_flac ? '' : 'disabled') + '>play FLAC</button><button class="play" data-kind="stem" ' + (song.has_stem ? '' : 'disabled') + '>play stem</button><button type="button" class="ab-play" data-candidate="' + (selectedCandidate ? row.candidates.indexOf(selectedCandidate) : '') + '"' + (selectedCandidate && (state.mode === 'stem' ? song.has_stem : song.has_flac) ? '' : ' disabled') + ' aria-label="alternate current and selected candidate">A/B</button><span class="nudge"><button type="button" class="nudge-button" data-delta="-10"' + (editable(song) ? '' : ' disabled') + ' aria-label="move timestamp earlier by 0.1 seconds">-0.1</button><button type="button" class="nudge-button" data-delta="10"' + (editable(song) ? '' : ' disabled') + ' aria-label="move timestamp later by 0.1 seconds">+0.1</button></span>' + (song.has_flac ? '' : '<span class="muted">FLAC unavailable</span>') + (song.has_stem ? '' : '<span class="muted">stem unavailable</span>') + '</div>' +
-      '<div>working <b>' + time(chosen) + '</b></div><div class="chips">' + (chips || '<span class="muted">no candidates</span>') + '</div>' +
-      (row.dropped_count ? '<div class="meta">還有 ' + esc(row.dropped_count) + ' 個候選未顯示</div>' : '') +
+      '<div class="audio"><button class="play" data-kind="flac" ' + (song.has_flac ? '' : 'disabled') + '>play FLAC</button><button class="play" data-kind="stem" ' + (song.has_stem ? '' : 'disabled') + '>play stem</button><button type="button" class="ab-play" data-candidate-list="' + selectedCandidateList + '" data-candidate="' + selectedCandidateIndex + '"' + (selectedCandidate && (state.mode === 'stem' ? song.has_stem : song.has_flac) ? '' : ' disabled') + ' aria-label="alternate current and selected candidate">A/B</button><span class="nudge"><button type="button" class="nudge-button" data-delta="-10"' + (editable(song) ? '' : ' disabled') + ' aria-label="move timestamp earlier by 0.1 seconds">-0.1</button><button type="button" class="nudge-button" data-delta="10"' + (editable(song) ? '' : ' disabled') + ' aria-label="move timestamp later by 0.1 seconds">+0.1</button></span>' + (song.has_flac ? '' : '<span class="muted">FLAC unavailable</span>') + (song.has_stem ? '' : '<span class="muted">stem unavailable</span>') + '</div>' +
+      '<div>working <b>' + time(chosen) + '</b></div><div class="chips">' + (chips || '<span class="muted">no candidates</span>') + '</div>' + extraMarkup +
       '<div class="meta">' + ((song.read_only || song.detail?.server_read_only) ? 'read-only: ' + esc(song.read_only_reason || (song.detail?.server_read_only ? 'server' : 'unknown')) : '') + '</div>';
     div.addEventListener('click', () => { select(item); render(); });
     div.querySelectorAll('.play').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); button.blur(); playAround(item, working(item), button.dataset.kind); }));
     div.querySelectorAll('.candidate-play').forEach(button => button.addEventListener('click', event => {
-      event.stopPropagation(); button.blur(); const candidate = row.candidates[Number(button.dataset.candidate)]; if (candidate) playAround(item, candidate.cs);
+      event.stopPropagation(); button.blur(); const list = button.dataset.candidateList === 'extra' ? extraCandidates : candidates; const candidate = list[Number(button.dataset.candidate)]; if (candidate) playAround(item, candidate.cs);
     }));
     div.querySelectorAll('.candidate-apply').forEach(button => button.addEventListener('click', event => {
-      event.stopPropagation(); button.blur(); const candidate = row.candidates[Number(button.dataset.candidate)]; if (candidate && editable(song)) applyCandidate(item, candidate);
+      event.stopPropagation(); button.blur(); const list = button.dataset.candidateList === 'extra' ? extraCandidates : candidates; const candidate = list[Number(button.dataset.candidate)]; if (candidate && editable(song)) applyCandidate(item, candidate);
     }));
     div.querySelectorAll('.ab-play').forEach(button => button.addEventListener('click', event => {
-      event.stopPropagation(); button.blur(); const candidate = row.candidates[Number(button.dataset.candidate)]; if (candidate) playAB(item, candidate);
+      event.stopPropagation(); button.blur(); const list = button.dataset.candidateList === 'extra' ? extraCandidates : candidates; const candidate = list[Number(button.dataset.candidate)]; if (candidate) playAB(item, candidate);
     }));
     div.querySelectorAll('.nudge-button').forEach(button => button.addEventListener('click', event => {
       event.stopPropagation(); button.blur(); nudge(item, Number(button.dataset.delta));

@@ -180,7 +180,7 @@ class ReviewServerTests(unittest.TestCase):
         self.assertEqual(row["reason"], "candidate_disagreement,low_confidence")
 
     def test_selector_exposes_precentral_recommendation(self) -> None:
-        candidates, dropped_count = review_server._candidate_rows(
+        candidates, extra_candidates = review_server._candidate_rows(
             {
                 "candidates": [
                     {"time": 36.42, "source": "ctc-current", "score": .86},
@@ -193,31 +193,31 @@ class ReviewServerTests(unittest.TestCase):
             3642,
             3642,
         )
-        self.assertEqual(dropped_count, 0)
-        self.assertIn(3700, [item["cs"] for item in candidates])
-        diagnostic = next(item for item in candidates if item["cs"] == 3700)
+        self.assertEqual(extra_candidates, [])
+        self.assertIn(3701, [item["cs"] for item in candidates])
+        diagnostic = next(item for item in candidates if item["cs"] == 3701)
         self.assertFalse(diagnostic["diagnostic_only"])
         self.assertIn("raw_asr", diagnostic["sources"])
         self.assertIn("ctc-nearby", diagnostic["sources"])
 
     def test_selector_marks_raw_only_recommendation_diagnostic(self) -> None:
-        candidates, dropped_count = review_server._candidate_rows(
+        candidates, extra_candidates = review_server._candidate_rows(
             {"precentral_candidate_recommendation": {"time": 37.0, "source": "raw_asr", "score": .98}},
             3642,
             3642,
         )
-        self.assertEqual(dropped_count, 0)
+        self.assertEqual(extra_candidates, [])
         diagnostic = next(item for item in candidates if item["cs"] == 3700)
         self.assertTrue(diagnostic["diagnostic_only"])
 
     def test_selector_skips_missing_timestamps_without_crashing(self) -> None:
-        candidates, dropped_count = review_server._candidate_rows(
+        candidates, extra_candidates = review_server._candidate_rows(
             {"candidates": [{"source": "bad", "time": None}, "malformed"], "ctc_first_token_start": None},
             None,
             100,
         )
         self.assertEqual([item["cs"] for item in candidates], [100])
-        self.assertEqual(dropped_count, 0)
+        self.assertEqual(extra_candidates, [])
 
     def test_selector_keeps_accepted_candidates_before_rejected_candidates(self) -> None:
         accepted = [
@@ -228,12 +228,12 @@ class ReviewServerTests(unittest.TestCase):
             {"time": 20.0 + index, "source": f"rejected-{index}", "score": 0.99 - index / 100}
             for index in range(5)
         ]
-        candidates, dropped_count = review_server._candidate_rows(
+        candidates, extra_candidates = review_server._candidate_rows(
             {"candidates": accepted, "rejected_candidates": rejected},
             100,
             110,
         )
-        self.assertEqual(dropped_count, 3)
+        self.assertEqual(len(extra_candidates), 3)
         nonrequired = [item for item in candidates if item["cs"] not in {100, 110}]
         self.assertEqual(
             {item["sources"][0] for item in nonrequired[:5]},
@@ -244,6 +244,88 @@ class ReviewServerTests(unittest.TestCase):
             {source for item in candidates for source in item["sources"] if source.startswith("accepted-")},
             {f"accepted-{index}" for index in range(5)},
         )
+
+    def test_candidate_agreement_annotations_and_extras(self) -> None:
+        def candidates(items):
+            return review_server._candidate_rows({"candidates": items}, None, None)
+
+        merged, extras = candidates([
+            {"time": 1.00, "source": "a", "score": .9},
+            {"time": 1.04, "source": "b", "score": .8},
+        ])
+        self.assertEqual(extras, [])
+        self.assertEqual(merged[0]["cs"], 100)
+        self.assertEqual([member["cs"] for member in merged[0]["members"]], [100, 104])
+        self.assertEqual(merged[0]["agree_count"], 1)
+        self.assertEqual(merged[0]["agree_span_cs"], 4)
+
+        split, _ = candidates([
+            {"time": 1.00, "source": "a", "score": .9},
+            {"time": 1.06, "source": "b", "score": .8},
+        ])
+        self.assertEqual([item["cs"] for item in split], [100, 106])
+        self.assertEqual([item["agree_count"] for item in split], [1, 1])
+
+        annotated, _ = candidates([
+            {"time": 1.00, "source": "a", "score": .9},
+            {"time": 1.14, "source": "b", "score": .8},
+        ])
+        self.assertEqual([item["agree_count"] for item in annotated], [1, 1])
+        self.assertEqual([item["agree_span_cs"] for item in annotated], [14, 14])
+        no_annotation, _ = candidates([
+            {"time": 1.00, "source": "a", "score": .9},
+            {"time": 1.16, "source": "b", "score": .8},
+        ])
+        self.assertEqual([item["agree_count"] for item in no_annotation], [0, 0])
+
+        required, _ = review_server._candidate_rows(
+            {"candidates": [{"time": 1.04, "source": "raw_asr", "score": .98}]},
+            100,
+            100,
+        )
+        required_chip = next(item for item in required if item["cs"] == 100)
+        self.assertTrue(required_chip["required"])
+        self.assertTrue(next(member for member in required_chip["members"] if member["source"] == "raw_asr")["diagnostic"])
+        self.assertEqual(required_chip["agree_count"], 0)
+        self.assertTrue(required_chip["diagnostic_only"] is False)
+
+        diagnostic, _ = candidates([
+            {"time": 37.00, "source": "raw_asr", "score": .98},
+            {"time": 37.01, "source": "ctc", "score": .90},
+        ])
+        self.assertEqual(diagnostic[0]["cs"], 3701)
+        self.assertFalse(diagnostic[0]["diagnostic_only"])
+
+        mixed, _ = candidates([
+            {"time": 1.00, "source": "accepted", "score": .9},
+            {"time": 1.04, "source": "rejected", "score": .8},
+        ])
+        self.assertFalse(mixed[0]["rejected"])
+        shuffled, _ = candidates([
+            {"time": 1.04, "source": "b", "score": .8},
+            {"time": 1.00, "source": "a", "score": .9},
+        ])
+        ordered, _ = candidates([
+            {"time": 1.00, "source": "a", "score": .9},
+            {"time": 1.04, "source": "b", "score": .8},
+        ])
+        self.assertEqual(shuffled, ordered)
+
+        chain, _ = candidates([
+            {"time": 0.00, "source": "a", "score": .9},
+            {"time": 0.04, "source": "b", "score": .8},
+            {"time": 0.08, "source": "c", "score": .7},
+        ])
+        self.assertEqual([item["cs"] for item in chain], [0, 8])
+        self.assertEqual([len(item["members"]) for item in chain], [2, 1])
+
+        many, extra_count = candidates([
+            {"time": index, "source": f"candidate-{index}", "score": 1.0 - index / 100}
+            for index in range(1, 13)
+        ])
+        self.assertEqual(len(many), 9)
+        self.assertEqual(len(extra_count), 3)
+        self.assertEqual([item["cs"] for item in many + extra_count], list(range(100, 1300, 100)))
 
     def test_one_line_report_with_missing_assignment_timestamp_stays_operable(self) -> None:
         output = self.root / "one-line.lrc"
@@ -337,7 +419,10 @@ class ReviewServerTests(unittest.TestCase):
         self.assertIn("CTC first-sound (posterior)", page)
         self.assertIn("ASR diagnostic hint", page)
         self.assertIn("diagnostic only", page)
-        self.assertIn("還有 ' + esc(row.dropped_count) + ' 個候選未顯示", page)
+        self.assertIn("row.extra_candidates || []", page)
+        self.assertIn('<details class="extra-candidates">', page)
+        self.assertIn("data-candidate-list", page)
+        self.assertIn("agree_count", page)
         self.assertIn("R2 skipped:", page)
         self.assertIn("load error:", page)
         self.assertIn("const shownSongs = new Set()", page)
@@ -363,7 +448,7 @@ global.location = {search:'?t=test', hash:'', origin:'http://test'};
 global.addEventListener = () => {};
 const response = (data) => ({ok:true, status:200, statusText:'ok', json:async () => data});
 const rows = [
-  {entry:1, review:'REVIEW', current_cs:2000, auto_cs:2000, lyrics:['one'], candidates:[], severity_score:1, severity_rank:2, candidate_spread:null},
+  {entry:1, review:'REVIEW', current_cs:2000, auto_cs:2000, lyrics:['one'], candidates:Array.from({length:9}, (_,i) => ({cs:3000+i*100, sources:['ctc'], diagnostic_only:false})), extra_candidates:Array.from({length:3}, (_,i) => ({cs:4000+i*100, sources:['whisper'], diagnostic_only:false})), severity_score:1, severity_rank:2, candidate_spread:null},
   {entry:2, review:'REVIEW', current_cs:1000, auto_cs:1000, lyrics:['two'], candidates:[], severity_score:9, severity_rank:1, candidate_spread:null},
 ];
 global.fetch = async (path) => {
@@ -380,13 +465,14 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
     tabs: queue.children[0].children.map(child => child.textContent),
     keys: queue.children[1].children.map(child => child.dataset.key),
     audio: queue.children[1].children[1]._html.includes('data-kind="flac" >play FLAC'),
-    nudge: queue.children[1].children[0]._html.includes('data-delta="-10"')
+    nudge: queue.children[1].children[0]._html.includes('data-delta="-10"'),
+    extras: queue.children[1].children[0]._html.includes('<details class="extra-candidates">') && queue.children[1].children[0]._html.includes('data-candidate-list="extra"')
   }));
 })().catch(error => { console.error(error.stack); process.exitCode = 1; });
 """.replace("SOURCE", json.dumps(source))
         result = subprocess.run(["node", "-"], input=harness, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout), {"tabs": ["song (2)"], "keys": ["0:1", "0:2"], "audio": True, "nudge": True})
+        self.assertEqual(json.loads(result.stdout), {"tabs": ["song (2)"], "keys": ["0:1", "0:2"], "audio": True, "nudge": True, "extras": True})
 
     def test_acceptance_save_three_entries_and_second_save(self) -> None:
         detail = self._detail()
