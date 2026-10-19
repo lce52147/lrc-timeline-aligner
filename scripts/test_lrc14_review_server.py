@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import http.client
+import io
 import json
 from pathlib import Path
 import subprocess
@@ -9,6 +10,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from contextlib import redirect_stderr
 from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -693,6 +695,24 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         startup = output.call_args_list[-1].args[0]
         self.assertEqual(json.loads(startup)["excluded_files"], [bad.name])
 
+
+    def test_targets_file_deduplicates_and_warns_once_for_missing_paths(self) -> None:
+        missing = self.root / "missing.align-report.json"
+        targets = self.root / "batch-targets.txt"
+        targets.write_text(
+            f"{self.report}\n\n{missing}\n{missing}\n",
+            encoding="utf-8",
+        )
+        loaded = review_server._read_targets_file(targets)
+        self.assertEqual(loaded, [str(self.report), str(missing)])
+        errors = io.StringIO()
+        with redirect_stderr(errors):
+            review_server._warn_missing_targets(loaded + [str(missing)])
+        self.assertEqual(errors.getvalue().count("review target not found"), 1)
+        store = review_server.ReviewStore(
+            self.root, loaded, scan_report_dir=False
+        )
+        self.assertEqual([song["report"] for song in store.songs], [str(self.report.resolve())])
 
 if __name__ == "__main__":
     unittest.main()

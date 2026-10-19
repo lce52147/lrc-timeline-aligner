@@ -76,6 +76,13 @@ if (-not $ReportDirectory) {
     $ReportDirectory = $defaultReportDirectory
 }
 $ReportDirectory = [System.IO.Path]::GetFullPath($ReportDirectory)
+$batchSummaryPath = Join-Path $ReportDirectory "batch-summary.json"
+$batchTargetsPath = Join-Path $ReportDirectory "batch-targets.txt"
+foreach ($staleBatchArtifact in @($batchSummaryPath, $batchTargetsPath)) {
+    if (Test-Path -LiteralPath $staleBatchArtifact -PathType Leaf) {
+        Remove-Item -LiteralPath $staleBatchArtifact -Force
+    }
+}
 
 if (-not (Test-Path -LiteralPath $backend)) {
     throw "Backend not found: $backend"
@@ -351,7 +358,8 @@ if (Test-Path -LiteralPath $summaryScript -PathType Leaf) {
             $inputRoot,
             "--since", $runStartIso,
             "--report-dir", $ReportDirectory,
-            "--work-dir", $scriptDir
+            "--work-dir", $scriptDir,
+            "--json-out", $batchSummaryPath
         )
         & $pythonExe @summaryArgs
         $summaryExitCode = $LASTEXITCODE
@@ -464,6 +472,68 @@ if ($exitCode -eq 0) {
 }
 
 $reviewBatchPath = [System.IO.Path]::GetFullPath((Join-Path $scriptDir "Review LRC.bat"))
+$reviewCommandText = 'cmd /c "{0}" --report-dir "{1}" --targets-file "{2}"' -f $reviewBatchPath, $ReportDirectory, $batchTargetsPath
+if ($env:LRC_NO_REVIEW -eq "1") {
+    Write-Host "Review LRC: disabled by LRC_NO_REVIEW=1; not launching." -ForegroundColor DarkGray
+}
+elseif (-not (Test-Path -LiteralPath $batchSummaryPath -PathType Leaf)) {
+    Write-Host "Review LRC manual command: $reviewCommandText" -ForegroundColor Yellow
+}
+else {
+    $summaryData = $null
+    try {
+        $summaryData = Get-Content -LiteralPath $batchSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($null -eq $summaryData -or [int]$summaryData.schema -ne 1) {
+            throw "batch summary schema is not 1"
+        }
+        $summaryGeneratedAt = [DateTimeOffset]::Parse([string]$summaryData.generated_at)
+        $runStartedAt = [DateTimeOffset]::Parse($runStartIso)
+        if ($summaryGeneratedAt -lt $runStartedAt) {
+            throw "batch summary is older than this run"
+        }
+        $reviewRows = [int]$summaryData.total_review_rows
+        if ($reviewRows -le 0) {
+            # lrc_batch_summary already prints the single no-review line.
+        }
+        else {
+            $targetLines = @()
+            foreach ($song in @($summaryData.songs)) {
+                $reportPath = [string]$song.report_path
+                if ([string]::IsNullOrWhiteSpace($reportPath)) {
+                    continue
+                }
+                $absoluteReportPath = [System.IO.Path]::GetFullPath($reportPath)
+                if ($targetLines -notcontains $absoluteReportPath) {
+                    $targetLines += $absoluteReportPath
+                }
+            }
+            if ($targetLines.Count -eq 0) {
+                throw "batch summary has review rows but no report_path targets"
+            }
+            $utf8NoBom = New-Object System.Text.UTF8Encoding -ArgumentList $false
+            [System.IO.File]::WriteAllLines($batchTargetsPath, [string[]]$targetLines, $utf8NoBom)
+            Write-Host "Review LRC command: $reviewCommandText" -ForegroundColor Yellow
+            try {
+                $reviewArgs = @(
+                    "/c",
+                    ('"{0}"' -f $reviewBatchPath),
+                    "--report-dir",
+                    ('"{0}"' -f $ReportDirectory),
+                    "--targets-file",
+                    ('"{0}"' -f $batchTargetsPath)
+                )
+                Start-Process -FilePath "cmd.exe" -ArgumentList $reviewArgs -WorkingDirectory $scriptDir | Out-Null
+                Write-Host "Review LRC: launched asynchronously." -ForegroundColor Green
+            }
+            catch {
+                Write-Warning ("Review LRC launch failed; use the manual command: {0}" -f $reviewCommandText)
+            }
+        }
+    }
+    catch {
+        Write-Host "Review LRC manual command: $reviewCommandText" -ForegroundColor Yellow
+    }
+}
 Write-Host "Review LRC.bat: $reviewBatchPath" -ForegroundColor Yellow
 [Console]::OutputEncoding = $previousConsoleOutputEncoding
 $OutputEncoding = $previousOutputEncoding

@@ -13,6 +13,7 @@ import threading
 import uuid
 import urllib.parse
 import webbrowser
+import sys
 from datetime import datetime, timezone
 
 import lrc_review_tsv
@@ -160,11 +161,11 @@ def _load_report(path):
     return data if isinstance(data, dict) else None
 
 
-def _report_files(targets, report_dir):
+def _report_files(targets, report_dir, *, scan_report_dir=True):
     found = []
     excluded = []
     targets = list(targets or [])
-    if not targets:
+    if not targets and scan_report_dir:
         targets = [report_dir]
     for raw in targets:
         path = pathlib.Path(raw).expanduser().resolve()
@@ -676,9 +677,10 @@ def _save_song(song, body):
 
 
 class ReviewStore:
-    def __init__(self, report_dir, targets, read_only=False):
+    def __init__(self, report_dir, targets, read_only=False, scan_report_dir=True):
         self.report_dir = pathlib.Path(report_dir).expanduser().resolve()
         self.targets = list(targets)
+        self.scan_report_dir = bool(scan_report_dir)
         self.read_only = bool(read_only)
         self.lock = threading.RLock()
         self.songs = []
@@ -687,7 +689,9 @@ class ReviewStore:
 
     def reload(self):
         self.songs = []
-        reports, self.excluded = _report_files(self.targets, self.report_dir)
+        reports, self.excluded = _report_files(
+            self.targets, self.report_dir, scan_report_dir=self.scan_report_dir
+        )
         for path in reports:
             try:
                 report = json.loads(path.read_text(encoding="utf-8-sig"))
@@ -920,9 +924,51 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
 
 
 
-def run_server(targets, report_dir=None, port=0, no_browser=False, read_only=False, dump_summary=False):
+def _read_targets_file(path):
+    try:
+        lines = pathlib.Path(path).expanduser().read_text(encoding="utf-8-sig").splitlines()
+    except OSError as exc:
+        print(f"WARN: review targets file unavailable: {path} ({exc})", file=sys.stderr)
+        return []
+    targets = []
+    seen = set()
+    for line in lines:
+        value = line.strip()
+        if not value:
+            continue
+        key = value.casefold()
+        if key not in seen:
+            seen.add(key)
+            targets.append(value)
+    return targets
+
+
+def _warn_missing_targets(targets):
+    seen = set()
+    for raw in targets:
+        value = str(raw).strip()
+        if not value:
+            continue
+        key = value.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            exists = pathlib.Path(value).expanduser().exists()
+        except (OSError, ValueError):
+            exists = False
+        if not exists:
+            print(f"WARN: review target not found: {value}", file=sys.stderr)
+
+
+def run_server(targets, report_dir=None, port=0, no_browser=False, read_only=False, dump_summary=False, targets_file=None):
     report_dir = pathlib.Path(report_dir).expanduser().resolve() if report_dir else pathlib.Path(__file__).resolve().parents[1] / "outputs" / "reports"
-    store = ReviewStore(report_dir, targets, read_only=read_only)
+    explicit_targets = bool(targets) or targets_file is not None
+    target_list = list(targets or [])
+    if targets_file is not None:
+        target_list.extend(_read_targets_file(targets_file))
+    _warn_missing_targets(target_list)
+    store = ReviewStore(report_dir, target_list, read_only=read_only, scan_report_dir=not explicit_targets)
     if dump_summary:
         for song in store.songs:
             share = sum(len({item.get("cs") for item in row.get("candidates", [])}) >= 2 for row in song["rows"])
@@ -952,8 +998,9 @@ def main():
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--read-only", action="store_true")
     parser.add_argument("--dump-summary", action="store_true")
+    parser.add_argument("--targets-file", type=pathlib.Path)
     args = parser.parse_args()
-    return run_server(args.targets, args.report_dir, args.port, args.no_browser, args.read_only, args.dump_summary)
+    return run_server(args.targets, args.report_dir, args.port, args.no_browser, args.read_only, args.dump_summary, args.targets_file)
 
 
 if __name__ == "__main__":
