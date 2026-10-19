@@ -15,7 +15,10 @@ import time
 
 
 REPO = Path(__file__).resolve().parents[1]
-DEFAULT_REPORT_DIR = REPO / "outputs" / "reports"
+if str(REPO / "scripts") not in sys.path:
+    sys.path.insert(0, str(REPO / "scripts"))
+import runtime_paths  # noqa: E402
+DEFAULT_REPORT_DIR = runtime_paths.reports_dir()
 DEFAULT_WORK_DIR = REPO / "outputs" / "reviewer-work"
 REVIEW_SERVER = Path(__file__).resolve().with_name("review_server.py")
 _SONG_FIELDS = (

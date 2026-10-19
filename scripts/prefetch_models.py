@@ -15,6 +15,7 @@ SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
+import runtime_paths  # noqa: E402
 from multimodel_consensus import HF_MODEL_REVISIONS, MODEL_SPECS  # noqa: E402
 ENGLISH_XLSR_REPO = "jonatasgrosman/wav2vec2-large-xlsr-53-english"
 ENGLISH_XLSR_FILES = (
@@ -98,7 +99,7 @@ def _prefetch_hf() -> None:
     _download_snapshot(
         HUBP_REPO,
         HUBP_REVISION,
-        local_dir=ROOT / "models" / "hubert-phoneme-ctc",
+        local_dir=runtime_paths.project_root() / "models" / "hubert-phoneme-ctc",
     )
     _download_snapshot(KNOWN_HUBERT_REPO, KNOWN_HUBERT_REVISION)
 

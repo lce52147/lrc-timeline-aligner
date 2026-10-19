@@ -18,6 +18,10 @@ if ($Cuda -and $Cpu) {
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $venvDir = Join-Path $scriptDir ".venv-asr"
 $venvPython = Join-Path $venvDir "Scripts\python.exe"
+if ($env:LRC_VENV_PYTHON) {
+    $venvPython = $env:LRC_VENV_PYTHON
+    $venvDir = Split-Path -Parent (Split-Path -Parent $venvPython)
+}
 $downloadDir = Join-Path $scriptDir "tools\downloads"
 $ffmpegBin = Join-Path $scriptDir "tools\ffmpeg\bin"
 $doctorJson = Join-Path $scriptDir "outputs\setup-doctor.json"

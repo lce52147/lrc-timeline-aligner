@@ -15,6 +15,8 @@ from statistics import median
 from typing import Mapping, Sequence
 from functools import lru_cache
 
+import runtime_paths
+
 
 TAU_SECONDS = 0.10
 MIN_SHIFT_SECONDS = 0.50
@@ -52,15 +54,7 @@ def _sha256_file(path: Path) -> str:
 
 
 def _hf_snapshot(repo: str, revision: str | None = None) -> Path | None:
-    roots = []
-    for value in (
-        os.environ.get("HF_HUB_CACHE"),
-        os.environ.get("HF_HOME"),
-        str(Path.home() / ".cache" / "huggingface" / "hub"),
-    ):
-        if value:
-            root = Path(value)
-            roots.append(root / "hub" if root.name != "hub" else root)
+    roots = runtime_paths.hf_hub_cache_candidates()
     repo_dir_name = "models--" + repo.replace("/", "--")
     for root in dict.fromkeys(roots):
         repo_dir = root / repo_dir_name

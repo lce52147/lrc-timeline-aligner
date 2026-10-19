@@ -72,6 +72,9 @@ if ((Test-Path -LiteralPath (Join-Path $localFfmpegBin "ffmpeg.exe")) -and
     $env:PATH = "$localFfmpegBin;$env:PATH"
 }
 $defaultReportDirectory = Join-Path $scriptDir "outputs\reports"
+if (-not $ReportDirectory -and $env:LRC_REPORT_DIR) {
+    $ReportDirectory = $env:LRC_REPORT_DIR
+}
 if (-not $ReportDirectory) {
     $ReportDirectory = $defaultReportDirectory
 }
@@ -161,7 +164,9 @@ if ($Lyrics -and $Paths.Count -eq 1) {
 }
 
 $localPython = Join-Path $scriptDir ".venv-asr\Scripts\python.exe"
-if (Test-Path -LiteralPath $localPython -PathType Leaf) {
+if ($env:LRC_VENV_PYTHON -and (Test-Path -LiteralPath $env:LRC_VENV_PYTHON -PathType Leaf)) {
+    $pythonExe = $env:LRC_VENV_PYTHON
+} elseif (Test-Path -LiteralPath $localPython -PathType Leaf) {
     $pythonExe = $localPython
 } else {
     $pythonCommand = Get-Command python -ErrorAction SilentlyContinue

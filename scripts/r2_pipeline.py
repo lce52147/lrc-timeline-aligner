@@ -12,16 +12,17 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 
-PROJECT = Path(__file__).resolve().parents[1]
-SCRIPTS = PROJECT / "scripts"
+SCRIPTS = Path(__file__).resolve().parent
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+import runtime_paths  # noqa: E402
+
+PROJECT = runtime_paths.project_root()
 REVIEWERS_DIR = SCRIPTS / "reviewers"
 AUTO_LRC = SCRIPTS / "auto_lrc.py"
 DEFAULT_WORK_DIR = PROJECT / "outputs" / "reviewer-work"
 REVIEWERS = ("HUBP", "WX", "XLSR")
 MIN_OFFSET_SAMPLES = 8
-
-if str(SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS))
 
 import auto_lrc  # noqa: E402
 from lrc_manual_edits import manual_edit_reason  # noqa: E402
@@ -664,7 +665,7 @@ def acquire_reviewer_evidence(
         stale_path.unlink(missing_ok=True)
     _write_json(data_path, payload)
 
-    python_path = reviewer_python or auto_lrc.default_whisperx_python()
+    python_path = reviewer_python or runtime_paths.venv_python()
     song_id = str(payload["songs"][0]["id"])
     statuses: dict[str, object] = {}
     commands = build_reviewer_commands(
@@ -923,7 +924,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("R2 production pipeline does not support --probe")
     audio_path = Path(parsed.audio[0]).expanduser().resolve()
     final_output = Path(parsed.output).expanduser().resolve() if parsed.output else audio_path.with_suffix(".lrc")
-    final_report_dir = Path(parsed.report_dir).expanduser().resolve() if parsed.report_dir else auto_lrc.DEFAULT_REPORT_DIR
+    final_report_dir = Path(parsed.report_dir).expanduser().resolve() if parsed.report_dir else runtime_paths.reports_dir()
     final_report_path, _audit_path, _template_path = auto_lrc.report_artifact_paths(audio_path, final_output, final_report_dir)
     if parsed.overwrite and final_output.exists():
         edit_reason = manual_edit_reason(final_output, final_report_path)

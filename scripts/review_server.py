@@ -20,6 +20,7 @@ import wave
 from datetime import datetime, timezone
 
 import lrc_review_tsv
+import runtime_paths
 from lrc_manual_edits import review_artifact_paths
 
 _EXCLUDED_DIR_NAMES = ("lrc tools checked references", "lrc bk")
@@ -1096,7 +1097,7 @@ def _warn_missing_targets(targets):
 
 
 def run_server(targets, report_dir=None, port=0, no_browser=False, read_only=False, dump_summary=False, targets_file=None):
-    report_dir = pathlib.Path(report_dir).expanduser().resolve() if report_dir else pathlib.Path(__file__).resolve().parents[1] / "outputs" / "reports"
+    report_dir = pathlib.Path(report_dir).expanduser().resolve() if report_dir else runtime_paths.reports_dir()
     explicit_targets = bool(targets) or targets_file is not None
     target_list = list(targets or [])
     if targets_file is not None:

@@ -20,6 +20,8 @@ for path in (SCRIPTS, REVIEWERS):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
+import runtime_paths  # noqa: E402
+
 EXPECTED_PACKAGES = {
     "whisperx": ("whisperx", "3.8.6"),
     "demucs": ("demucs", "4.0.1"),
@@ -108,13 +110,8 @@ def _persistent_hf_environment(scope: str) -> dict[str, str | None]:
 
 
 def _hf_hub_path(values: dict[str, str | None]) -> Path:
-    if values.get("HF_HUB_CACHE"):
-        raw = str(values["HF_HUB_CACHE"])
-    elif values.get("HF_HOME"):
-        raw = str(Path(str(values["HF_HOME"])) / "hub")
-    else:
-        raw = str(Path.home() / ".cache" / "huggingface" / "hub")
-    return Path(os.path.expandvars(raw)).expanduser().resolve()
+    environ = {k: v for k, v in values.items() if v}
+    return runtime_paths.hf_hub_cache(environ)
 
 
 def check_hf_cache_environment() -> str:
@@ -209,6 +206,17 @@ def check_torch(expect_cuda: str) -> str:
     )
 
 
+def check_runtime_paths() -> str:
+    rows = runtime_paths.describe()
+    parts = []
+    for row in rows:
+        flags = "exists" if row["exists"] else "MISSING"
+        if row["junction"]:
+            flags += ",junction"
+        parts.append(f"{row['name']}={row['value']} [{row['source']}; {flags}]")
+    return "; ".join(parts)
+
+
 def check_command(name: str) -> str:
     path = shutil.which(name)
     if not path:
@@ -219,7 +227,7 @@ def check_command(name: str) -> str:
 
 
 def check_whisper_cli() -> str:
-    path = ROOT / "tools" / "whisper.cpp" / "Release" / "whisper-cli.exe"
+    path = runtime_paths.whisper_cli()
     if not path.is_file():
         raise RuntimeError(f"missing {path}")
     output = _run([str(path), "--help"], timeout=30.0)
@@ -227,7 +235,7 @@ def check_whisper_cli() -> str:
 
 
 def check_whisper_model() -> str:
-    path = ROOT / "models" / "whisper.cpp" / "ggml-large-v3.bin"
+    path = runtime_paths.whisper_model()
     if not path.is_file():
         raise RuntimeError(f"missing {path}")
     if path.stat().st_size != WHISPER_MODEL_SIZE:
@@ -339,7 +347,8 @@ def main() -> int:
     for dist, (module, expected) in EXPECTED_PACKAGES.items():
         doctor.check(f"package:{dist}", lambda d=dist, m=module, e=expected: check_package(d, m, e))
     doctor.check("torch", lambda: check_torch(args.expect_cuda))
-    doctor.check("ffmpeg", lambda: check_command("ffmpeg"))
+    doctor.check("runtime_paths", check_runtime_paths)
+    doctor.check("ffmpeg", lambda: check_command(runtime_paths.ffmpeg()))
     doctor.check("ffprobe", lambda: check_command("ffprobe"))
     doctor.check("whisper-cli", check_whisper_cli)
     doctor.check("whisper-model", check_whisper_model)

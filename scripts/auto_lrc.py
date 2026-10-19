@@ -41,6 +41,7 @@ import numpy as np
 from ctc_confidence import ctc_alignment_confidence
 import arbiter as timing_arbiter
 import lrc_timestamp_pairs
+import runtime_paths
 from multimodel_consensus import (
     MODEL_SPECS,
     PROTOCOL_REVISION as MULTIMODEL_PROTOCOL_REVISION,
@@ -64,10 +65,10 @@ TRUSTED_ALIGNMENT_SCORE = 0.62
 COLLAPSE_SEGMENT_SCORE = 0.30
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 _LOADED_SOURCE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
-DEFAULT_REPORT_DIR = PROJECT_ROOT / "outputs" / "reports"
-DEFAULT_PROBE_DIR = PROJECT_ROOT / "outputs" / "probes"
-DEFAULT_VOCAL_CACHE_DIR = PROJECT_ROOT / "outputs" / "cache" / "vocals"
-DEFAULT_MODEL_CACHE_DIR = PROJECT_ROOT / "outputs" / "cache" / "model-outputs"
+DEFAULT_REPORT_DIR = runtime_paths.reports_dir()
+DEFAULT_PROBE_DIR = runtime_paths.probes_dir()
+DEFAULT_VOCAL_CACHE_DIR = runtime_paths.vocal_cache_dir()
+DEFAULT_MODEL_CACHE_DIR = runtime_paths.model_cache_dir()
 MODEL_CACHE_SCHEMA = 1
 LRC_ALGORITHM_REVISION = "2026-09-28-lrc-v1.2-hubert-generalized-predecessor-tail"
 
@@ -5581,7 +5582,7 @@ def remove_generated_title_cards(entries: list[LyricEntry], audio_path: Path) ->
 def decode_audio(audio_path: Path) -> np.ndarray:
     proc = subprocess.run(
         [
-            "ffmpeg",
+            runtime_paths.ffmpeg(),
             "-v",
             "error",
             "-i",
@@ -9579,15 +9580,15 @@ def remove_instrumental_markers(entries: list[LyricEntry]) -> tuple[list[LyricEn
 
 
 def default_whisper_cli() -> Path:
-    return Path(__file__).resolve().parents[1] / "tools" / "whisper.cpp" / "Release" / "whisper-cli.exe"
+    return runtime_paths.whisper_cli()
 
 
 def default_whisper_model() -> Path:
-    return Path(__file__).resolve().parents[1] / "models" / "whisper.cpp" / "ggml-large-v3.bin"
+    return runtime_paths.whisper_model()
 
 
 def default_whisperx_python() -> Path:
-    return Path(__file__).resolve().parents[1] / ".venv-asr" / "Scripts" / "python.exe"
+    return runtime_paths.venv_python()
 
 
 def default_ctc_python() -> Path:
@@ -9667,7 +9668,7 @@ def decode_temp_wav(audio_path: Path) -> Path:
     wav_path = temp_dir / "input.wav"
     proc = subprocess.run(
         [
-            "ffmpeg",
+            runtime_paths.ffmpeg(),
             "-y",
             "-v",
             "error",
@@ -9954,7 +9955,7 @@ def decode_temp_wav_window(audio_path: Path, start: float, end: float) -> Path:
     wav_path = temp_dir / "input.wav"
     proc = subprocess.run(
         [
-            "ffmpeg", "-y", "-v", "error",
+            runtime_paths.ffmpeg(), "-y", "-v", "error",
             "-i", str(audio_path),
             "-ss", f"{start:.6f}",
             "-t", f"{end - start:.6f}",
@@ -14221,7 +14222,7 @@ def demucs_cache_key_lock(cache_dir: Path, *, timeout_seconds: float = 300.0):
         yield
 
 
-WHISPERCPP_GPU_LOCK_PATH = PROJECT_ROOT / "outputs" / "cache" / ".whispercpp_gpu.lock"
+WHISPERCPP_GPU_LOCK_PATH = runtime_paths.gpu_lock_dir() / ".whispercpp_gpu.lock"
 
 
 @contextlib.contextmanager
@@ -14261,7 +14262,7 @@ def whispercpp_gpu_lock():
 
 # One lock file per process that has CTC/WhisperX/HuBERT/Demucs work on the
 # GPU; whisper.cpp waits until no other process holds its file.
-GPU_COMPUTE_LOCK_DIR = PROJECT_ROOT / "outputs" / "cache" / ".gpu_compute"
+GPU_COMPUTE_LOCK_DIR = runtime_paths.gpu_lock_dir() / ".gpu_compute"
 _WHISPERCPP_HELD_HERE = threading.Event()
 _GPU_COMPUTE_STATE: dict[str, object] = {"depth": 0, "stack": None}
 _GPU_COMPUTE_STATE_LOCK = threading.Lock()
