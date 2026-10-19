@@ -145,7 +145,7 @@ class ReviewServerTests(unittest.TestCase):
             100,
         )
         self.assertEqual([item["cs"] for item in candidates], [100])
-        self.assertEqual(dropped_count, 3)
+        self.assertEqual(dropped_count, 0)
 
     def test_selector_keeps_accepted_candidates_before_rejected_candidates(self) -> None:
         accepted = [
@@ -164,9 +164,10 @@ class ReviewServerTests(unittest.TestCase):
         self.assertEqual(dropped_count, 3)
         nonrequired = [item for item in candidates if item["cs"] not in {100, 110}]
         self.assertEqual(
-            [item["sources"][0] for item in nonrequired[:5]],
-            [f"accepted-{index}" for index in range(4, -1, -1)],
+            {item["sources"][0] for item in nonrequired[:5]},
+            {f"accepted-{index}" for index in range(5)},
         )
+        self.assertEqual([item["cs"] for item in candidates], sorted(item["cs"] for item in candidates))
         self.assertEqual(
             {source for item in candidates for source in item["sources"] if source.startswith("accepted-")},
             {f"accepted-{index}" for index in range(5)},

@@ -291,28 +291,25 @@ def _candidate_rows(assignment, current_cs, auto_cs):
         if not isinstance(item, dict) or not add(
             value, str(item.get("source", "candidate")), _number(item.get("score")) or 0.0
         ):
-            dropped_count += 1
+            continue
     precentral = assignment.get("precentral_candidate_recommendation")
     if isinstance(precentral, dict):
         value = _candidate_time(precentral)
-        if not add(
+        add(
             value,
             str(precentral.get("source", "precentral-recommendation")),
             _number(precentral.get("score")) or 0.0,
-        ):
-            dropped_count += 1
+        )
     first = _number(assignment.get("ctc_first_token_start"))
     if first is not None:
         add(first, "ctc-first-token", _number(assignment.get("ctc_first_token_score")) or 0.0)
-    elif "ctc_first_token_start" in assignment:
-        dropped_count += 1
     rejected = assignment.get("rejected_candidates")
     for item in rejected if isinstance(rejected, list) else []:
         value = _candidate_time(item)
         if not isinstance(item, dict) or not add(
             value, str(item.get("source", "rejected")), _number(item.get("score")) or 0.0, True
         ):
-            dropped_count += 1
+            continue
     merged = []
     for cs, source, score, rejected_flag, required in sorted(raw, key=lambda item: (-item[2], item[0], item[1])):
         match = next((item for item in merged if abs(item["cs"] - cs) <= 5), None)
@@ -333,6 +330,7 @@ def _candidate_rows(assignment, current_cs, auto_cs):
     ordered = required_rows + other_rows
     visible = ordered[:9]
     dropped_count += max(0, len(ordered) - len(visible))
+    visible.sort(key=lambda item: item["cs"])
     for item in visible:
         item.pop("required", None)
     return visible, dropped_count
