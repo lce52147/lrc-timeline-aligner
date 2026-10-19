@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import argparse
+import io
 import hashlib
 import json
 import os
 import subprocess
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
@@ -143,6 +145,52 @@ class ModelCacheReplayTests(unittest.TestCase):
                 auto_lrc.run_auto_backend_competition(
                     self.wavs[0][1], [LyricEntry(["text"])], 1.0, args, None
                 )
+
+    def test_cache_only_missing_ctc_backend_is_model_cache_miss(self) -> None:
+        args = argparse.Namespace(**vars(self.args))
+        args.model_cache_only = True
+        with mock.patch.object(auto_lrc, "default_ctc_ready", return_value=False), \
+                mock.patch.object(auto_lrc, "_whisperx_python_available", return_value=False), \
+                mock.patch.object(auto_lrc, "decode_temp_wav", return_value=None), \
+                mock.patch.object(
+                    auto_lrc,
+                    "try_whispercpp_diagnostic_candidate",
+                    return_value=([], {"assignments": []}, None, []),
+                ):
+            with self.assertRaisesRegex(ModelCacheMiss, "ctc-python-or-helper-unavailable"):
+                auto_lrc.run_auto_backend_competition(
+                    self.wavs[0][1], [LyricEntry(["text"])], 1.0, args, None
+                )
+
+    def test_normal_missing_ctc_warns_and_records_unavailable_backend(self) -> None:
+        args = argparse.Namespace(**vars(self.args))
+        seen_states = []
+        original_record = auto_lrc._record_backend_unavailable
+
+        def record(state, name, reason):
+            original_record(state, name, reason)
+            if name == "ctc":
+                seen_states.append(state)
+
+        stderr = io.StringIO()
+        with mock.patch.object(auto_lrc, "default_ctc_ready", return_value=False), \
+                mock.patch.object(auto_lrc, "_whisperx_python_available", return_value=False), \
+                mock.patch.object(auto_lrc, "decode_temp_wav", return_value=None), \
+                mock.patch.object(
+                    auto_lrc,
+                    "try_whispercpp_diagnostic_candidate",
+                    return_value=([], {"assignments": []}, None, []),
+                ), \
+                mock.patch.object(auto_lrc, "_record_backend_unavailable", side_effect=record), \
+                redirect_stderr(stderr):
+            with self.assertRaisesRegex(auto_lrc.LrcError, "No usable alignment candidate"):
+                auto_lrc.run_auto_backend_competition(
+                    self.wavs[0][1], [LyricEntry(["text"])], 1.0, args, None
+                )
+        self.assertIn("WARNING: CTC backend unavailable", stderr.getvalue())
+        self.assertEqual(len(seen_states), 1)
+        self.assertIn("ctc", seen_states[0]["attempted"])
+        self.assertEqual(seen_states[0]["unavailable"][0]["name"], "ctc")
 
     def test_cache_only_raw_execution_failure_is_model_cache_miss(self) -> None:
         args = argparse.Namespace(**vars(self.args))

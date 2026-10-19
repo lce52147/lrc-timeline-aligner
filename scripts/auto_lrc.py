@@ -147,6 +147,7 @@ def _new_backend_participation() -> dict[str, object]:
         "evidence_producers_failed": [],
         "demucs_device": None,
         "vocal_source": None,
+        "onset_stem_used": False,
     }
 
 
@@ -172,6 +173,12 @@ def _record_backend_participation_failure(
 def _record_backend_unavailable(
     state: dict[str, object], name: str, reason: str
 ) -> None:
+    attempted = state.setdefault("attempted", [])
+    if not isinstance(attempted, list):
+        attempted = []
+        state["attempted"] = attempted
+    if name not in attempted:
+        attempted.append(name)
     unavailable = state.setdefault("unavailable", [])
     if not isinstance(unavailable, list):
         unavailable = []
@@ -227,6 +234,8 @@ def _merge_backend_participation(
         value = source.get(key)
         if value is not None:
             target[key] = value
+    if source.get("onset_stem_used"):
+        target["onset_stem_used"] = True
 
 
 def _backend_participation_projection(report: dict[str, object]) -> None:
@@ -14502,7 +14511,7 @@ def apply_vocal_onset_tiebreak(
     if features is not None:
         participation = _backend_participation(report)
         participation["demucs_device"] = "cuda"
-        participation["vocal_source"] = "vocal-stem"
+        participation["onset_stem_used"] = True
     if features is None:
         report["vocal_onset_refinement"] = {"status": "skipped", "reason": unavailable}
         return timestamps, report, []
@@ -15599,7 +15608,14 @@ def run_auto_backend_competition(
         )
         break
 
+    selected_participation = copy.deepcopy(
+        _backend_participation(selected_report)
+    )
     selected_report[_RUNTIME_BACKEND_PARTICIPATION_KEY] = participation
+    _merge_backend_participation(
+        selected_report,
+        {_RUNTIME_BACKEND_PARTICIPATION_KEY: selected_participation},
+    )
     for candidate in candidates:
         candidate_report = candidate.get("report")
         if isinstance(candidate_report, dict):
