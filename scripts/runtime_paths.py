@@ -40,7 +40,12 @@ ENV_REPORT_DIR = "LRC_REPORT_DIR"
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-def _env_path(name: str, environ: "os._Environ[str] | dict[str, str] | None" = None) -> Path | None:
+def _env_path(
+    name: str,
+    environ: "os._Environ[str] | dict[str, str] | None" = None,
+    *,
+    resolve: bool = True,
+) -> Path | None:
     env = os.environ if environ is None else environ
     raw = env.get(name)
     if raw is None:
@@ -48,7 +53,8 @@ def _env_path(name: str, environ: "os._Environ[str] | dict[str, str] | None" = N
     raw = str(raw).strip()
     if not raw:
         return None
-    return Path(os.path.expandvars(raw)).expanduser().resolve()
+    path = Path(os.path.expandvars(raw)).expanduser()
+    return path.resolve() if resolve else path
 
 
 def project_root() -> Path:
@@ -84,27 +90,37 @@ def ffmpeg() -> str:
     return "ffmpeg"
 
 
-def hf_hub_cache(environ: "os._Environ[str] | dict[str, str] | None" = None) -> Path:
+def hf_hub_cache(
+    environ: "os._Environ[str] | dict[str, str] | None" = None,
+    *,
+    resolve: bool = True,
+) -> Path:
     """The Hugging Face hub cache directory.
 
     ``HF_HUB_CACHE`` is used as given; otherwise ``HF_HOME/hub``; otherwise
     ``~/.cache/huggingface/hub``.  A value that already ends in ``hub`` is not
     suffixed again, so ``.../huggingface`` and ``.../huggingface/hub`` map to
-    the same directory.
+    the same directory.  ``resolve=False`` keeps the path exactly as the
+    environment spelled it (no symlink or 8.3 short-name expansion), which is
+    what snapshot lookups use so results match the 1.4 behaviour.
     """
     env = os.environ if environ is None else environ
-    hub = _env_path(ENV_HF_HUB_CACHE, env)
+    hub = _env_path(ENV_HF_HUB_CACHE, env, resolve=resolve)
     if hub is not None:
         return hub
-    home = _env_path(ENV_HF_HOME, env)
+    home = _env_path(ENV_HF_HOME, env, resolve=resolve)
     if home is not None:
         return home if home.name == "hub" else home / "hub"
-    return (Path.home() / ".cache" / "huggingface" / "hub").resolve()
+    default = Path.home() / ".cache" / "huggingface" / "hub"
+    return default.resolve() if resolve else default
 
 
 def hf_hub_cache_candidates() -> list[Path]:
-    """``hf_hub_cache()`` first, then the user default, without duplicates."""
-    candidates = [hf_hub_cache(), (Path.home() / ".cache" / "huggingface" / "hub").resolve()]
+    """Lookup roots for snapshots: the configured hub first, then the user default.
+
+    Unresolved on purpose (see ``hf_hub_cache``).
+    """
+    candidates = [hf_hub_cache(resolve=False), Path.home() / ".cache" / "huggingface" / "hub"]
     return list(dict.fromkeys(candidates))
 
 
