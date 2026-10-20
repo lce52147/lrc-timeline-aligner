@@ -5,9 +5,10 @@ Usage: report_diff.py BEFORE.json AFTER.json [--allow-changed KEY,KEY] [--json]
 Path-typed keys are never compared by value: the keys listed in
 ``auto_lrc._GENERATION_DIAGNOSTIC_LOCATOR_KEYS``, ``review_tsv_path``,
 ``multimodel_consensus.cache_path`` and any sub-dictionary named ``paths``.
-Source digests (``algorithm_source_sha256``), digest-derived ``*revision``
-keys and ``stage_timings`` clocks change on every edit or run and are skipped
-unless ``--strict`` is given.
+Source digests (``algorithm_source_sha256``, ``selection_binding``),
+digest-derived ``*revision``/``*revisions`` keys and everything under
+``stage_timings`` change on every edit or run and are skipped unless
+``--strict`` is given.
 Exit status is 0 when AFTER only adds keys, 1 when a key was removed or a
 value changed without being listed in ``--allow-changed``, 2 on usage errors.
 """
@@ -41,7 +42,8 @@ PATH_SUBTREES = frozenset({"paths"})
 # Values that change on every source edit or every run without meaning a
 # behavioural change: source digests, digest-derived revisions, wall-clock
 # stage timings.  Skipped unless --strict is given.
-VOLATILE_SUFFIXES = ("_revision", "revision")
+VOLATILE_SUFFIXES = ("_revision", "revision", "_revisions", "revisions")
+VOLATILE_DIGEST_LEAVES = frozenset({"algorithm_source_sha256", "selection_binding"})
 
 
 def _is_path_key(path: tuple[str, ...]) -> bool:
@@ -58,10 +60,12 @@ def _is_volatile_key(path: tuple[str, ...]) -> bool:
     if not path:
         return False
     leaf = path[-1]
-    if leaf == "algorithm_source_sha256":
+    if leaf in VOLATILE_DIGEST_LEAVES:
+        return True
+    if "stage_timings" in path[:-1]:
         return True
     if leaf in ("start_s", "seconds"):
-        return "stage_timings" in path or "stages" in path
+        return "stages" in path
     return leaf.endswith(VOLATILE_SUFFIXES)
 
 

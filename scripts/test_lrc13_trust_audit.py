@@ -132,9 +132,19 @@ class UnifiedFinalTrustRegressionTests(unittest.TestCase):
 
     def test_final_self_check_is_review_even_without_preexisting_boolean(self) -> None:
         report = verified_report()
-        report["assignments"][0]["self_check_flags"] = ["F4-ctc-final-disagreement"]
+        report["assignments"][0]["self_check_flags"] = ["F3-nonmonotonic"]
         auto_lrc.update_report_confidence_metrics(report)
         self.assert_bound(report, trusted=False, review=True)
+
+    def test_f4_self_check_alone_no_longer_forces_review(self) -> None:
+        # LRC 1.5 W6: F4-ctc-final-disagreement is UNTRUSTED-class, so a row
+        # carrying only F4 follows its timing evidence (trusted here) and is
+        # not review-required; the code still appears in the reason codes.
+        report = verified_report()
+        report["assignments"][0]["self_check_flags"] = ["F4-ctc-final-disagreement"]
+        auto_lrc.update_report_confidence_metrics(report)
+        self.assert_bound(report, trusted=True, review=False)
+        self.assertIn("F4-ctc-final-disagreement", report["assignments"][0]["final_trust_reason_codes"])
 
     def test_final_trust_classification_table_and_idempotence(self) -> None:
         self.assertTrue(callable(auto_lrc.final_line_trust))

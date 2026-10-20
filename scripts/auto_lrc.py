@@ -27783,7 +27783,7 @@ def commit_final_timing_state(
             review_reason_classes.append("actionable-suspicious-conflict")
         if material_conflict_review:
             review_reason_classes.append("unresolved-material-alternative")
-        if row_self_check:
+        if self_check_flags_require_review(row_self_check):
             review_reason_classes.append("final-self-check")
         review_required = bool(review_reason_classes)
         raw_assignment["review_reason_classes"] = review_reason_classes
@@ -28349,6 +28349,9 @@ FINAL_LINE_TRUST_CLASSIFICATION: dict[str, str] = {
     }},
     **{code: "UNTRUSTED" for code in NON_ACTIONABLE_VERIFICATION_FAILURES | {
         "timing-evidence-unverified", "insufficient-minimum-proof",
+        # LRC 1.5 W6 (R1 audit): a CTC/final disagreement alone no longer
+        # forces human review; the row's status follows its timing evidence.
+        "F4-ctc-final-disagreement",
     }},
     **{code: "REVIEW" for code in ACTIONABLE_TIMING_FAILURES
        | ACTIONABLE_SUSPICIOUS_FLAGS
@@ -28356,9 +28359,16 @@ FINAL_LINE_TRUST_CLASSIFICATION: dict[str, str] = {
           "unresolved-material-alternative", "F1-vocal-absent",
           "F1-vocal-check-unavailable",
           "F3-compressed-or-nonmonotonic", "F3-nonmonotonic",
-          "F4-ctc-final-disagreement", "model-disagreement",
+          "model-disagreement",
           SILENT_RISK_REVIEW_FLAG}},
 }
+
+
+def self_check_flags_require_review(flags: object) -> bool:
+    """True when any final self-check flag is classified REVIEW (W6)."""
+    if not isinstance(flags, list):
+        return False
+    return any(FINAL_LINE_TRUST_CLASSIFICATION.get(str(flag)) == "REVIEW" for flag in flags)
 
 
 @dataclass(frozen=True)
@@ -28442,7 +28452,7 @@ def _review_reason_classes_from_trust(
         classes.append("actionable-suspicious-conflict")
     if "unresolved-material-alternative" in reasons:
         classes.append("unresolved-material-alternative")
-    if isinstance(assignment.get("self_check_flags"), list) and assignment["self_check_flags"]:
+    if self_check_flags_require_review(assignment.get("self_check_flags")):
         classes.append("final-self-check")
     return classes
 

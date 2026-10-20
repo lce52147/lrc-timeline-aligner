@@ -122,5 +122,33 @@
       "          SILENT_RISK_REVIEW_FLAG}},",
       "}"
     ]
-  }
+  },
+  "classification": {
+    "F1-vocal-absent": "REVIEW",
+    "F3-compressed-or-nonmonotonic": "REVIEW",
+    "F3-nonmonotonic": "REVIEW",
+    "F4-ctc-final-disagreement": "UNTRUSTED",
+    "candidate_disagreement": "REVIEW",
+    "ctc_confidence_collapse": "REVIEW",
+    "ctc_zero_gap_compressed_prefix": "REVIEW",
+    "duplicate_occurrence_offset_mismatch": "REVIEW",
+    "group_placement_unsupported": "REVIEW",
+    "insufficient-minimum-proof": "UNTRUSTED",
+    "model-disagreement": "REVIEW",
+    "no-strict-opening-proof": "UNTRUSTED",
+    "nonmonotonic-line-start": "REVIEW",
+    "phonetic_anchor_disagreement": "REVIEW",
+    "previous-tail-overlap": "REVIEW",
+    "previous-tail-ownership-unknown": "UNTRUSTED",
+    "recurrence-uncorroborated": "REVIEW",
+    "silent-risk:selected-confidence-le-0.8-and-next-gap-ge-19": "REVIEW",
+    "tail-conflict-without-independent-current-opening": "UNTRUSTED",
+    "temporal-incoherence": "REVIEW",
+    "timing-evidence-unverified": "UNTRUSTED",
+    "unresolved-material-alternative": "REVIEW",
+    "unresolved-precentral-disagreement": "REVIEW",
+    "unresolved_raw_ctc_disagreement": "REVIEW",
+    "unverified": "INFO"
+  },
+  "classification_note": "LRC 1.5 W6: F4-ctc-final-disagreement demoted REVIEW -> UNTRUSTED"
 }

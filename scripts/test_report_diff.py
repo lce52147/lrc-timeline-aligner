@@ -54,21 +54,24 @@ class ReportDiffTests(unittest.TestCase):
             "algorithm_source_sha256": "a",
             "backend_provenance_projection": {"evaluation_revision": "r1", "n": 1},
             "candidate_selection": {"generation_diagnostics_revision": "g1"},
-            "stage_timings": {"stages": [{"name": "s", "start_s": 0.1, "seconds": 1.0}]},
+            "stage_timings": {"stages": [{"name": "s", "start_s": 0.1, "seconds": 1.0}], "total_seconds": 1.0},
+            "probe": {"clusters": {"projection_revisions": ["a"]}, "selection_binding": "x"},
             "seconds": 5,
         }
         after = {
             "algorithm_source_sha256": "b",
             "backend_provenance_projection": {"evaluation_revision": "r2", "n": 1},
             "candidate_selection": {"generation_diagnostics_revision": "g2"},
-            "stage_timings": {"stages": [{"name": "s", "start_s": 0.2, "seconds": 2.0}]},
+            "stage_timings": {"stages": [{"name": "s", "start_s": 0.2, "seconds": 2.0}], "total_seconds": 2.0},
+            "probe": {"clusters": {"projection_revisions": ["b"]}, "selection_binding": "y"},
             "seconds": 6,
         }
         self.assertEqual(report_diff.diff_reports(before, after)["changed"], ["seconds"])
         strict = report_diff.diff_reports(before, after, strict=True)["changed"]
         self.assertIn("algorithm_source_sha256", strict)
         self.assertIn("stage_timings.stages.[0].seconds", strict)
-        self.assertEqual(len(strict), 6)
+        self.assertIn("probe.selection_binding", strict)
+        self.assertEqual(len(strict), 9)
 
     def test_cli_exit_codes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
