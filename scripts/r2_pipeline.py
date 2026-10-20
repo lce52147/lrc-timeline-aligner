@@ -692,6 +692,23 @@ def _reviewer_statuses_cacheable(statuses: Mapping[str, object]) -> bool:
     return True
 
 
+def _reviewer_cache_payload_complete(cached: object) -> bool:
+    """A cached sidecar entry must carry every file stage 4 re-reads.
+
+    Entries written before reviewer_data was cached are treated as misses so a
+    fill run recomputes and overwrites them (cache-only mode then reports the
+    miss instead of failing later in stage 4).
+    """
+    if not isinstance(cached, Mapping):
+        return False
+    if not isinstance(cached.get("sidecar"), str) or not isinstance(cached.get("statuses"), Mapping):
+        return False
+    if not isinstance(cached.get("reviewer_data"), str):
+        return False
+    hubp = cached.get("hubp_raw")
+    return hubp is None or isinstance(hubp, str)
+
+
 def acquire_reviewer_evidence(
     report_path: Path,
     output_path: Path,
@@ -713,9 +730,10 @@ def acquire_reviewer_evidence(
     cache_identity = reviewer_sidecar_identity(payload, device=device, include_hub=include_hub)
     cache_key = model_cache.key_from_identity(REVIEWER_SIDECAR_CACHE_KIND, cache_identity)
     cached = model_cache.read(REVIEWER_SIDECAR_CACHE_KIND, cache_key, cache_identity, policy, cache_root)
-    if isinstance(cached, Mapping) and isinstance(cached.get("sidecar"), str) and isinstance(cached.get("statuses"), Mapping):
-        # The sidecar is stored as its exact JSON text so a replay writes the
-        # same bytes the fill run wrote (the envelope itself is key-sorted).
+    if _reviewer_cache_payload_complete(cached):
+        # Files are stored as their exact text so a replay writes the same
+        # bytes the fill run wrote (the envelope itself is key-sorted). Stage 4
+        # re-reads reviewer-data.json / hubp-raw.json, so they are restored too.
         sidecar_text = str(cached["sidecar"])
         sidecar = json.loads(sidecar_text)
         statuses = {
@@ -723,6 +741,13 @@ def acquire_reviewer_evidence(
             for name, state in cached["statuses"].items()
         }
         _write_json(work_dir / "reviewer-status.json", {"schema": 1, "steps": statuses, "source": "cache"})
+        data_path.write_text(str(cached["reviewer_data"]), encoding="utf-8")
+        hubp_cached = cached.get("hubp_raw")
+        hubp_restore = work_dir / "hubp-raw.json"
+        if isinstance(hubp_cached, str):
+            hubp_restore.write_text(hubp_cached, encoding="utf-8")
+        else:
+            hubp_restore.unlink(missing_ok=True)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(sidecar_text, encoding="utf-8")
         return {
@@ -803,7 +828,13 @@ def acquire_reviewer_evidence(
     if _reviewer_statuses_cacheable(statuses):
         written = model_cache.write(
             REVIEWER_SIDECAR_CACHE_KIND, cache_key, cache_identity,
-            {"sidecar": output_path.read_text(encoding="utf-8"), "statuses": statuses}, policy, cache_root,
+            {
+                "sidecar": output_path.read_text(encoding="utf-8"),
+                "statuses": statuses,
+                "reviewer_data": data_path.read_text(encoding="utf-8"),
+                "hubp_raw": hubp_path.read_text(encoding="utf-8") if hubp_path.is_file() else None,
+            },
+            policy, cache_root,
         )
         cache_state = "written" if written else "disabled"
     return {

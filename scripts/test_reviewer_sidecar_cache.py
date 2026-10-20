@@ -84,6 +84,11 @@ class ReviewerSidecarCacheTests(unittest.TestCase):
         first_sidecar = (self.root / "work-evidence.json").read_bytes()
         second_sidecar = (self.root / "replay-evidence.json").read_bytes()
         self.assertEqual(first_sidecar, second_sidecar)
+        # Stage 4 of the pipeline re-reads reviewer-data.json from the work dir.
+        self.assertEqual(
+            (self.root / "work" / "reviewer-data.json").read_bytes(),
+            (self.root / "replay" / "reviewer-data.json").read_bytes(),
+        )
 
         third, calls3 = self._acquire(model_cache.ModelCachePolicy(enabled=True, read_only=True), work="cacheonly")
         self.assertEqual(calls3, [])
@@ -132,6 +137,23 @@ class ReviewerSidecarCacheTests(unittest.TestCase):
         self.assertTrue(calls)
         self.assertEqual(summary["cache"]["status"], "disabled")
         self.assertFalse(self.cache_root.exists())
+
+    def test_legacy_payload_without_reviewer_data_is_a_miss(self) -> None:
+        rw = model_cache.ModelCachePolicy(enabled=True, read_only=False)
+        first, _ = self._acquire(rw)
+        key = first["cache"]["key"]
+        path = model_cache.cache_path(r2_pipeline.REVIEWER_SIDECAR_CACHE_KIND, key, self.cache_root)
+        envelope = json.loads(path.read_text(encoding="utf-8"))
+        envelope["payload"].pop("reviewer_data")
+        envelope["payload"].pop("hubp_raw", None)
+        path.write_text(json.dumps(envelope, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+
+        with self.assertRaises(model_cache.ModelCacheMiss):
+            self._acquire(model_cache.ModelCachePolicy(enabled=True, read_only=True), work="cacheonly")
+        second, calls = self._acquire(rw, work="refill")
+        self.assertTrue(calls, "a legacy entry must be recomputed")
+        self.assertEqual(second["cache"]["status"], "written")
+        self.assertTrue((self.root / "refill" / "reviewer-data.json").is_file())
 
 
 if __name__ == "__main__":
