@@ -20,6 +20,7 @@ import wave
 from datetime import datetime, timezone
 
 import lrc_review_tsv
+import review_presentation
 import runtime_paths
 from lrc_manual_edits import review_artifact_paths
 
@@ -553,8 +554,12 @@ def _song_payload(report_path, report):
                 assignment,
                 status,
             )
+            options = review_presentation.present_options(candidates, extra_candidates, current_cs)
+            alternatives = sum(option.get("kind") != "keep" for option in options)
             row = {
                 "entry": index + 1,
+                "options": options,
+                "reason_text": review_presentation.reason_sentence(reason_codes, options_count=alternatives),
                 "lyrics": lyrics,
                 "lyric": "\n".join(lyrics),
                 "current_cs": current_cs,
