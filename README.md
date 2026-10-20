@@ -1,6 +1,29 @@
-# LRC Timeline Aligner — v1.4.0
+# LRC Timeline Aligner — v1.5.0
 
 Local LRC timestamp generation for Windows. The tool keeps lyric order fixed, generates timing evidence from the audio, lets Central arbitration choose the final line starts, and writes a same-name `.lrc` plus an audit report.
+
+## What's new in v1.5
+
+Architecture update: reproducible runs on any install path, visible reviewer health, less review noise. Line timing policy unchanged.
+
+- **Portable model cache (schema 2).** Cache identities no longer embed absolute paths or machine-specific strings, so a cache copied to another folder or drive replays byte-identically. `scripts/migrate_model_cache.py --src --dst` upgrades an existing cache (add-only; the source is never modified). The r2 reviewer sidecars are now cached too, so a cache-only replay reproduces the full reviewer-validity run instead of silently degrading.
+- **`scripts/runtime_paths.py`** is the single source of runtime locations, with environment overrides: `LRC_VENV_PYTHON`, `LRC_WHISPER_CLI`, `LRC_WHISPER_MODEL`, `LRC_FFMPEG`, `HF_HUB_CACHE`/`HF_HOME`, `LRC_MODEL_CACHE_DIR`, `LRC_REPORT_DIR`. `doctor.py` reports them.
+- **Reviewer status on every report.** `report["reviewer_status"]` lists each reviewer step with its exit code and status (`OK`, `FAILED`, `MISSING_UNSUPPORTED`, `SKIPPED_DEPENDENCY`, `TIMEOUT`, `LAUNCH_ERROR`); the batch summary shows reviewers OK/total. `--strict-reviewers` makes r2 exit 4 when a step is not acceptable. Subprocesses honour `LRC_SUBPROCESS_TIMEOUT_SECONDS` (default 7200) and GPU lock waits honour `LRC_LOCK_TIMEOUT_SECONDS` (default 1800); the persistent helper workers exit when their parent process disappears.
+- **Single writer for the review summary.** `review_required`, its count/percent and `verification_counts` are derived in one place and checked against the per-row reason classes; `scripts/report_diff.py` compares two reports key by key for regression gates.
+- **Review noise: F4 demoted.** `F4-ctc-final-disagreement` alone no longer forces a row into REVIEW (audit: it never pointed at a line that needed a human). The code is still recorded; the row's status follows its timing evidence. On the validation pool REVIEW rows drop from 596 to 574 with no change to TRUSTED rows.
+- **Repository hygiene.** All `scripts/*.py` and docs are tracked (the old `.gitignore` pattern dropped scripts silently).
+
+Measured on the 39-song / 1487-line validation pool (v1.5 baseline B2, cache-only replay byte-identical 39/39):
+
+| Measure | v1.4.0 (B1) | v1.5.0 (B2) |
+|---|---|---|
+| Lines within 0.2 s (PCO@0.2) | 1362 / 1487 | 1360 / 1487 |
+| Lines off by more than 0.5 s | 59 | 60 |
+| Lines off by more than 1 s | 40 | 40 |
+| TRUSTED lines off by more than 1 s | 0 | 0 |
+| REVIEW / UNTRUSTED / TRUSTED rows | 584 / 390 / 513 | 574 / 329 / 584 |
+
+The small timing difference comes from the r2 reviewers now running (and being cached) on every song; in v1.4 a reviewer failure degraded silently. 19 of 39 LRCs differ from v1.4.0 by at least one line; 5 lines move by more than 0.2 s.
 
 ## What's new in v1.4
 

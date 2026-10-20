@@ -343,5 +343,45 @@ class MigrationTests(unittest.TestCase):
             self.assertFalse((Path(td) / "dst").exists())
 
 
+    def test_in_place_migration_backs_up_overwritten_schema1_files(self) -> None:
+        golden = json.loads(GOLDEN.read_text(encoding="utf-8"))["cases"]
+        lw_identity = dict(golden["local-whisper"]["identity"])
+        lw_identity["model_revision"] = "D:\\lrc\\models\\whisper.cpp\\ggml-large-v3.bin"
+        raw_identity = json.loads(json.dumps(golden["raw-asr"]["identity"]))
+        legacy_request = dict(raw_identity["request"])
+        legacy_request.pop("cli_sha256")
+        legacy_request["cli"] = "D:\\lrc\\tools\\whisper.cpp\\Release\\whisper-cli.exe"
+        raw_identity["request"] = legacy_request
+        with TemporaryDirectory() as td:
+            root = Path(td) / "cache"
+            lw_key = golden["local-whisper"]["expected_key"]
+            lw_path = mc.cache_path("local-whisper", lw_key, root)
+            lw_path.parent.mkdir(parents=True, exist_ok=True)
+            lw_path.write_text(json.dumps(self._legacy("local-whisper", lw_key, lw_identity, {"v": 1}), sort_keys=True), encoding="utf-8")
+            lw_bytes = lw_path.read_bytes()
+            raw_path = mc.cache_path("raw-asr", golden["raw-asr"]["legacy_v1_key"], root)
+            raw_path.parent.mkdir(parents=True, exist_ok=True)
+            raw_path.write_text(json.dumps(self._legacy("raw-asr", golden["raw-asr"]["legacy_v1_key"], raw_identity, [1])), encoding="utf-8")
+            raw_bytes = raw_path.read_bytes()
+            with self.assertRaises(SystemExit):
+                migrate_model_cache.migrate_directory(root, root)
+
+            summary = migrate_model_cache.migrate_directory(root, root, in_place=True)
+
+            self.assertEqual(summary["total_written"], 2)
+            self.assertEqual(summary["schema1_backed_up"], 1)
+            # local-whisper keeps its key: rewritten in place, original backed up byte-exact.
+            migrated = json.loads(lw_path.read_text(encoding="utf-8"))
+            self.assertEqual(migrated["schema"], mc.MODEL_CACHE_SCHEMA)
+            self.assertTrue(migrated["identity"]["model_revision"].startswith("whispercpp-model:"))
+            backup = root / migrate_model_cache.BACKUP_DIRNAME / lw_path.relative_to(root)
+            self.assertEqual(backup.read_bytes(), lw_bytes)
+            # raw-asr gets a new key: new file added, schema-1 file untouched.
+            self.assertEqual(raw_path.read_bytes(), raw_bytes)
+            self.assertTrue(mc.cache_path("raw-asr", golden["raw-asr"]["expected_key"], root).is_file())
+            # Second pass is a no-op (already schema 2 / dst exists), backup folder ignored.
+            again = migrate_model_cache.migrate_directory(root, root, in_place=True)
+            self.assertEqual(again["total_written"], 0)
+            self.assertEqual(json.loads(lw_path.read_text(encoding="utf-8")), migrated)
 if __name__ == "__main__":
     unittest.main()
