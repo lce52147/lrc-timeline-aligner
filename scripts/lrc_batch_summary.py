@@ -25,8 +25,23 @@ _SONG_FIELDS = (
     "index", "audio", "name", "status", "lrc_exists", "report_path",
     "review_tsv_path", "seconds", "seconds_source",
     "stage_timings_total_seconds", "r2_total_seconds", "review_rows",
-    "untrusted_rows", "model_disagreement_rows", "max_severity_score", "notes",
+    "untrusted_rows", "model_disagreement_rows", "max_severity_score",
+    "reviewers_ok", "reviewers_total", "reviewers_source", "notes",
 )
+
+
+def _reviewer_counts(report):
+    """(ok, total, source) from ``report["reviewer_status"]`` or (None, None, None)."""
+    block = report.get("reviewer_status")
+    if not isinstance(block, dict):
+        return None, None, None
+    steps = block.get("steps")
+    if not isinstance(steps, list):
+        return None, None, block.get("source")
+    acceptable = {"OK", "MISSING_UNSUPPORTED", "SKIPPED_DEPENDENCY"}
+    total = sum(1 for step in steps if isinstance(step, dict))
+    ok = sum(1 for step in steps if isinstance(step, dict) and str(step.get("status")) in acceptable)
+    return ok, total, block.get("source")
 
 
 def report_path(audio, output, report_dir):
@@ -135,6 +150,9 @@ def _record(audio, index, report_dir, work_dir, since_stamp, since_text):
         "untrusted_rows": None,
         "model_disagreement_rows": None,
         "max_severity_score": None,
+        "reviewers_ok": None,
+        "reviewers_total": None,
+        "reviewers_source": None,
         "notes": [],
         "_work_dir": str(Path(work_dir).expanduser().resolve()),
         "_since": since_text,
@@ -162,6 +180,7 @@ def _record(audio, index, report_dir, work_dir, since_stamp, since_text):
     timings = report.get("stage_timings")
     if isinstance(timings, dict):
         record["stage_timings_total_seconds"] = _rounded(timings.get("total_seconds"))
+    record["reviewers_ok"], record["reviewers_total"], record["reviewers_source"] = _reviewer_counts(report)
 
     raw_tsv = report.get("review_tsv_path")
     if isinstance(raw_tsv, str) and raw_tsv:
@@ -285,6 +304,8 @@ def summarize(records, *, report_dir, review_server_path, python_exe, targets, n
         "total_known_seconds": round(sum(known), 3),
         "total_review_rows": sum(row.get("review_rows") or 0 for row in records),
         "total_untrusted_rows": sum(row.get("untrusted_rows") or 0 for row in records),
+        "total_reviewers_ok": sum(row.get("reviewers_ok") or 0 for row in records),
+        "total_reviewers": sum(row.get("reviewers_total") or 0 for row in records),
         "songs": songs,
         "attention": attention_json,
         "review_command": [
@@ -306,7 +327,16 @@ def format_console(summary):
         f"time {_duration(summary['total_known_seconds'])} "
         f"(known for {sum(row.get('seconds') is not None for row in summary['songs'])}/{summary['n_songs']}) | "
         f"review rows={summary['total_review_rows']} (untrusted={summary['total_untrusted_rows']})"
+        + (
+            f" | reviewers OK={summary.get('total_reviewers_ok', 0)}/{summary.get('total_reviewers', 0)}"
+            if summary.get("total_reviewers") else ""
+        )
     ]
+    lines.extend(
+        f"  REVIEWERS {row['name']}: {row['reviewers_ok']}/{row['reviewers_total']} OK ({row.get('reviewers_source')})"
+        for row in summary["songs"]
+        if isinstance(row.get("reviewers_total"), int) and row.get("reviewers_ok") != row.get("reviewers_total")
+    )
     lines.extend(
         f"  MISSING {row['name']}: {row['status']}"
         for row in summary["songs"] if row["status"] != "ok"

@@ -12,8 +12,11 @@ import contextlib
 import gc
 import io
 import json
+import os
 import runpy
 import sys
+import threading
+import time
 import traceback
 from pathlib import Path
 from typing import Any
@@ -155,11 +158,62 @@ def _run_helper(helper: Path, argv: list[str]) -> dict[str, object]:
     }
 
 
+PARENT_WATCH_INTERVAL_SECONDS = 5.0
+
+
+def parent_alive(pid: int) -> bool:
+    """True while process ``pid`` exists (and, on POSIX, is still our parent)."""
+    if os.name == "nt":
+        import ctypes
+        SYNCHRONIZE = 0x00100000
+        WAIT_TIMEOUT = 0x00000102
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        handle = kernel32.OpenProcess(SYNCHRONIZE, False, int(pid))
+        if not handle:
+            return False
+        try:
+            return kernel32.WaitForSingleObject(handle, 0) == WAIT_TIMEOUT
+        finally:
+            kernel32.CloseHandle(handle)
+    if os.getppid() != pid:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def watch_parent(pid: int, on_exit, *, interval: float = PARENT_WATCH_INTERVAL_SECONDS) -> threading.Thread:
+    """Daemon thread: call ``on_exit()`` once the parent process is gone."""
+    def loop() -> None:
+        while True:
+            time.sleep(interval)
+            if not parent_alive(pid):
+                on_exit()
+                return
+    thread = threading.Thread(target=loop, name="parent-watch", daemon=True)
+    thread.start()
+    return thread
+
+
+def _exit_orphaned() -> None:
+    try:
+        print(json.dumps({"type": "fatal", "error": "parent-exited"}), flush=True)
+    finally:
+        os._exit(0)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=("ctc", "whisperx"), required=True)
     parser.add_argument("--helper", required=True)
+    parser.add_argument("--parent-pid", type=int, default=None, help="exit when this process disappears")
     args = parser.parse_args()
+    if args.parent_pid:
+        watch_parent(args.parent_pid, _exit_orphaned)
     helper = Path(args.helper).resolve()
     if not helper.is_file():
         print(json.dumps({"type": "fatal", "error": "helper-not-found"}), flush=True)

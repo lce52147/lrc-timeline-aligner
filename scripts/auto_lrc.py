@@ -291,7 +291,7 @@ class _PersistentHelperClient:
         self.stderr_tail: collections.deque[str] = collections.deque(maxlen=32)
         self.request_counter = 0
         self.process = subprocess.Popen(
-            [str(python_exe), str(worker_script), "--mode", mode, "--helper", str(helper)],
+            [str(python_exe), str(worker_script), "--mode", mode, "--helper", str(helper), "--parent-pid", str(os.getpid())],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -14064,6 +14064,21 @@ def _demucs_write_error(cache_dir: Path, detail: str) -> str:
         return "unavailable"
 
 
+DEFAULT_LOCK_TIMEOUT_SECONDS = 1800.0
+
+
+def _lock_timeout_seconds(environ: Mapping[str, str] | None = None) -> float | None:
+    """``LRC_LOCK_TIMEOUT_SECONDS`` (default 1800); ``0`` waits forever."""
+    raw = (environ if environ is not None else os.environ).get("LRC_LOCK_TIMEOUT_SECONDS", "")
+    if not str(raw).strip():
+        return DEFAULT_LOCK_TIMEOUT_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        return DEFAULT_LOCK_TIMEOUT_SECONDS
+    return value if value > 0 else None
+
+
 @contextlib.contextmanager
 def _exclusive_file_lock(path: Path, *, timeout_seconds: float | None, busy_message: str):
     """Exclusive lock across *processes*, including Windows.
@@ -14071,7 +14086,8 @@ def _exclusive_file_lock(path: Path, *, timeout_seconds: float | None, busy_mess
     The lock file persists, but OS byte-range locks are automatically released
     on process termination, even after a hard crash. Never delete a live lock
     file: replacing an inode could permit simultaneous holders.
-    ``timeout_seconds=None`` waits indefinitely.
+    ``timeout_seconds=None`` waits indefinitely; a timeout raises
+    ``LrcError("lock-timeout:PATH")`` so the song fails like any other error.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a+b", buffering=0) as handle:
@@ -14088,7 +14104,7 @@ def _exclusive_file_lock(path: Path, *, timeout_seconds: float | None, busy_mess
                     break
                 except OSError as exc:
                     if deadline is not None and time.monotonic() >= deadline:
-                        raise TimeoutError(f"{busy_message}: {path}") from exc
+                        raise LrcError(f"lock-timeout:{path} ({busy_message})") from exc
                     time.sleep(0.1)
             try:
                 yield
@@ -14103,7 +14119,7 @@ def _exclusive_file_lock(path: Path, *, timeout_seconds: float | None, busy_mess
                     break
                 except BlockingIOError as exc:
                     if deadline is not None and time.monotonic() >= deadline:
-                        raise TimeoutError(f"{busy_message}: {path}") from exc
+                        raise LrcError(f"lock-timeout:{path} ({busy_message})") from exc
                     time.sleep(0.1)
             try:
                 yield
@@ -14183,7 +14199,7 @@ def whispercpp_gpu_lock():
         return
     with _exclusive_file_lock(
         WHISPERCPP_GPU_LOCK_PATH,
-        timeout_seconds=None,
+        timeout_seconds=_lock_timeout_seconds(),
         busy_message="whisper.cpp GPU lock busy",
     ):
         _WHISPERCPP_HELD_HERE.set()
@@ -14290,7 +14306,7 @@ def _enter_gpu_compute() -> None:
             stack.enter_context(
                 _exclusive_file_lock(
                     GPU_COMPUTE_LOCK_DIR / f"{os.getpid()}.lock",
-                    timeout_seconds=None,
+                    timeout_seconds=_lock_timeout_seconds(),
                     busy_message="GPU compute marker busy",
                 )
             )

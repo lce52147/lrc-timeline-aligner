@@ -542,30 +542,104 @@ def build_sparse_reviewer_notice(
         f"（有值 reviewer {len(reviewers_with_values)}/3；有值行 {rows_with_values}/{row_count}）。"
     )
 
-def _run_logged(command: Sequence[str], log_path: Path) -> int:
+EXIT_TIMEOUT = 124
+EXIT_LAUNCH_ERROR = 127
+EXIT_STRICT_REVIEWERS = 4
+DEFAULT_SUBPROCESS_TIMEOUT_SECONDS = 7200.0
+
+
+def subprocess_timeout_seconds(environ: Mapping[str, str] | None = None) -> float | None:
+    """``LRC_SUBPROCESS_TIMEOUT_SECONDS`` (default 7200); ``0`` disables the limit."""
+    raw = (environ if environ is not None else os.environ).get("LRC_SUBPROCESS_TIMEOUT_SECONDS", "")
+    if not str(raw).strip():
+        return DEFAULT_SUBPROCESS_TIMEOUT_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        return DEFAULT_SUBPROCESS_TIMEOUT_SECONDS
+    return value if value > 0 else None
+
+
+def _popen_group_kwargs() -> dict[str, object]:
+    if os.name == "nt":
+        return {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
+    return {"start_new_session": True}
+
+
+def kill_process_tree(process: subprocess.Popen[object]) -> None:
+    """Kill ``process`` and everything it spawned (taskkill /T on Windows, the
+    session/process group elsewhere)."""
+    if process.poll() is not None:
+        return
+    try:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(process.pid)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+            )
+        else:
+            import signal
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    finally:
+        try:
+            process.kill()
+        except OSError:
+            pass
+        try:
+            process.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            pass
+
+
+def _run_with_timeout(
+    command: Sequence[str],
+    *,
+    timeout: float | None,
+    log=None,
+    env: Mapping[str, str] | None = None,
+) -> int:
+    """Run ``command`` to completion, returning its exit code, ``EXIT_TIMEOUT``
+    (124) after killing the whole tree on timeout, or ``EXIT_LAUNCH_ERROR``
+    (127) when it could not be started."""
+    def note(text: str) -> None:
+        if log is not None:
+            log.write(text + "\n")
+            log.flush()
+    try:
+        process = subprocess.Popen(
+            list(command),
+            cwd=PROJECT,
+            env=dict(env) if env is not None else None,
+            stdout=log if log is not None else None,
+            stderr=subprocess.STDOUT if log is not None else None,
+            **_popen_group_kwargs(),
+        )
+    except OSError as exc:
+        note(f"launch-error: {type(exc).__name__}: {exc}")
+        return EXIT_LAUNCH_ERROR
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        kill_process_tree(process)
+        note(f"timeout: killed pid {process.pid} after {timeout}s")
+        return EXIT_TIMEOUT
+    return int(process.returncode)
+
+
+def _run_logged(command: Sequence[str], log_path: Path, *, timeout: float | None = None) -> int:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
+    if timeout is None:
+        timeout = subprocess_timeout_seconds()
     with log_path.open("a", encoding="utf-8", errors="replace") as log:
         log.write("\n$ " + json.dumps(list(command), ensure_ascii=False) + "\n")
         log.flush()
-        try:
-            result = subprocess.run(
-                list(command),
-                cwd=PROJECT,
-                env=env,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                check=False,
-            )
-            return int(result.returncode)
-        except OSError as exc:
-            log.write(f"launch-error: {type(exc).__name__}: {exc}\n")
-            return 127
+        return _run_with_timeout(command, timeout=timeout, log=log, env=env)
 
 
 def build_reviewer_commands(
@@ -621,9 +695,19 @@ def build_reviewer_commands(
     return commands
 
 
+REVIEWER_STATUSES = (
+    "OK", "FAILED", "MISSING_UNSUPPORTED", "SKIPPED_DEPENDENCY", "TIMEOUT", "LAUNCH_ERROR",
+)
+REVIEWER_ACCEPTABLE_STATUSES = frozenset({"OK", "MISSING_UNSUPPORTED", "SKIPPED_DEPENDENCY"})
+
+
 def reviewer_step_status(name: str, exit_code: int, payload: Mapping[str, object] | None = None) -> str:
     if exit_code == 0:
         return "OK"
+    if exit_code == EXIT_TIMEOUT:
+        return "TIMEOUT"
+    if exit_code == EXIT_LAUNCH_ERROR:
+        return "LAUNCH_ERROR"
     if name == "HUB" and exit_code == 2 and isinstance(payload, Mapping):
         songs = payload.get("songs")
         if isinstance(songs, list) and songs:
@@ -920,25 +1004,90 @@ def prepare_final_fallback_args(backend_args: Sequence[str], evidence_path: Path
     )
 
 
-def _run_backend(args: Sequence[str]) -> int:
-    result = subprocess.run([sys.executable, str(AUTO_LRC), *args], cwd=PROJECT, check=False)
-    return int(result.returncode)
+def _run_backend(args: Sequence[str], *, timeout: float | None = None) -> int:
+    if timeout is None:
+        timeout = subprocess_timeout_seconds()
+    return _run_with_timeout([sys.executable, str(AUTO_LRC), *args], timeout=timeout)
 
 
-def _mark_r2_skipped_report(path: Path, reason: str) -> None:
+def reviewer_status_rows(statuses: Mapping[str, object], log_path: Path | None) -> list[dict[str, object]]:
+    """Flatten the per-step status mapping into report rows
+    ``{name, exit_code, status, log_path, elapsed_s}``."""
+    rows: list[dict[str, object]] = []
+    for name, state in statuses.items():
+        if not isinstance(state, Mapping):
+            continue
+        rows.append({
+            "name": str(name),
+            "exit_code": state.get("exit_code"),
+            "status": str(state.get("status")),
+            "log_path": str(log_path) if log_path is not None else None,
+            "elapsed_s": state.get("seconds"),
+        })
+    return rows
+
+
+def reviewer_status_source(statuses: Mapping[str, object]) -> str:
+    states = [state for state in statuses.values() if isinstance(state, Mapping)]
+    if states and all(state.get("source") == "cache" for state in states):
+        return "cache"
+    return "r2"
+
+
+def strict_reviewers_exit_code(rows: Sequence[Mapping[str, object]]) -> int:
+    """``--strict-reviewers``: 4 when any step is outside the acceptable set."""
+    for row in rows:
+        if str(row.get("status")) not in REVIEWER_ACCEPTABLE_STATUSES:
+            return EXIT_STRICT_REVIEWERS
+    return 0
+
+
+def _rewrite_report(path: Path, mutate) -> dict[str, object]:
     report = json.loads(path.read_text(encoding="utf-8-sig"))
     if not isinstance(report, dict):
         raise ValueError("final report must be a JSON object")
-    report["r2"] = {
-        "skipped": True,
-        "reason": str(reason),
-        "arbiter": "reviewer-validity",
-        "reviewer_evidence": None,
-    }
+    mutate(report)
     path.write_text(
         json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
         encoding="utf-8",
     )
+    return report
+
+
+def attach_reviewer_status(path: Path, rows: Sequence[Mapping[str, object]], source: str) -> dict[str, object]:
+    """Add ``report["reviewer_status"]`` to an already written final report.
+
+    The sidecar text is cached byte-exact (W3b), so the status block lives on
+    the report rather than inside the sidecar."""
+    def mutate(report: dict[str, object]) -> None:
+        report["reviewer_status"] = {"source": source, "steps": [dict(row) for row in rows]}
+    return _rewrite_report(path, mutate)
+
+
+def _mark_r2_skipped_report(
+    path: Path, reason: str, reviewer_rows: Sequence[Mapping[str, object]] = ()
+) -> None:
+    def mutate(report: dict[str, object]) -> None:
+        report["r2"] = {
+            "skipped": True,
+            "reason": str(reason),
+            "arbiter": "reviewer-validity",
+            "reviewer_evidence": None,
+        }
+        report["reviewer_status"] = {"source": "r2-fallback", "steps": [dict(row) for row in reviewer_rows]}
+    _rewrite_report(path, mutate)
+
+
+def _load_reviewer_status_rows(run_dir: Path) -> list[dict[str, object]]:
+    status_path = run_dir / "reviewers" / "reviewer-status.json"
+    try:
+        payload = json.loads(status_path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return []
+    steps = payload.get("steps") if isinstance(payload, Mapping) else None
+    if not isinstance(steps, Mapping):
+        return []
+    return reviewer_status_rows(steps, run_dir / "reviewers" / "reviewers.log")
 
 
 def _report_stage_total(path: Path | None) -> float | None:
@@ -1023,6 +1172,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--reviewer-python", type=Path)
     parser.add_argument("--reviewer-device", choices=("cuda", "cpu", "auto"), default="cuda")
     parser.add_argument("--include-hub-reviewer", action="store_true")
+    parser.add_argument(
+        "--strict-reviewers",
+        action="store_true",
+        help="exit 4 (after writing the LRC and report) when any reviewer step is not OK / MISSING_UNSUPPORTED / SKIPPED_DEPENDENCY",
+    )
     parser.add_argument(
         "--reviewer-profile",
         choices=tuple(reviewer_layer.TRUST_PROFILES),
@@ -1124,7 +1278,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"ERROR: final report missing: {final_report_path}", file=sys.stderr)
                 return 1
             try:
-                _mark_r2_skipped_report(final_report_path, str(exc))
+                _mark_r2_skipped_report(final_report_path, str(exc), _load_reviewer_status_rows(run_dir))
             except (OSError, TypeError, ValueError, json.JSONDecodeError) as marker_exc:
                 print(f"ERROR: unable to mark R2 skipped report: {marker_exc}", file=sys.stderr)
                 return 1
@@ -1160,9 +1314,8 @@ def main(argv: list[str] | None = None) -> int:
             loaded_hubp = json.loads(hubp_path.read_text(encoding="utf-8-sig"))
             if isinstance(loaded_hubp, dict):
                 hubp_payload = loaded_hubp
-        final_report = json.loads(final_report_path.read_text(encoding="utf-8-sig"))
-        if not isinstance(final_report, Mapping):
-            raise ValueError("final report must be a JSON object")
+        reviewer_rows = reviewer_status_rows(reviewers, run_dir / "reviewers" / "reviewers.log")
+        final_report = attach_reviewer_status(final_report_path, reviewer_rows, reviewer_status_source(reviewers))
         trust_report = build_reviewer_trust_report(reviewer_payload, hubp_payload, final_times_from_report(final_report_path), profile=args.reviewer_profile)
         trust_path = run_dir / "reviewer-trust.json"
         _write_json(trust_path, trust_report)
@@ -1175,6 +1328,12 @@ def main(argv: list[str] | None = None) -> int:
         sparse_notice = build_sparse_reviewer_notice(reviewer_payload, hubp_payload)
         if sparse_notice:
             print(sparse_notice, flush=True)
+        if args.strict_reviewers:
+            strict_code = strict_reviewers_exit_code(reviewer_rows)
+            if strict_code:
+                bad = [f"{row['name']}={row['status']}" for row in reviewer_rows if str(row.get("status")) not in REVIEWER_ACCEPTABLE_STATUSES]
+                print(f"ERROR: --strict-reviewers: reviewer steps not acceptable: {', '.join(bad)}", file=sys.stderr, flush=True)
+                return strict_code
         return 0
     except BaseException as exc:
         if 1 <= active_stage <= 4:
