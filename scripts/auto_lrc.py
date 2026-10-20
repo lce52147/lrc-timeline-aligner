@@ -28431,6 +28431,45 @@ def _review_reason_classes_from_trust(
     return classes
 
 
+def finalize_review_summary(report: dict[str, object]) -> None:
+    """Single writer of the report-level review summary (LRC 1.5 W4).
+
+    ``review_required``, ``review_required_count``, ``review_required_percent``
+    and ``verification_counts`` are derived here, and only here, from the
+    per-row ``review_required`` flags.  Row flags themselves are owned by
+    ``update_report_confidence_metrics`` (``final_line_trust`` +
+    ``_review_reason_classes_from_trust``); any row whose reason classes
+    disagree with its flag is a contract violation.
+    """
+    assignments = report.get("assignments")
+    if not isinstance(assignments, list):
+        raise LrcError("Review summary requires report assignments")
+    timing_entries = int(report.get("timing_entries", len(assignments)) or len(assignments))
+    review_required_count = 0
+    trusted_count = 0
+    unverified_count = 0
+    for item in assignments:
+        if not isinstance(item, dict):
+            continue
+        required = bool(item.get("review_required"))
+        if "review_reason_classes" in item:
+            classes = item.get("review_reason_classes")
+            if not isinstance(classes, list) or required != bool(classes):
+                raise LrcError("Review reason classes diverged from review_required")
+        review_required_count += required
+        status = item.get("verification_status")
+        trusted_count += status == "trusted"
+        unverified_count += status == "unverified"
+    report["review_required_count"] = review_required_count
+    report["review_required_percent"] = ratio_percent(review_required_count, timing_entries)
+    report["review_required"] = review_required_count > 0
+    report["verification_counts"] = {
+        "trusted": trusted_count,
+        "unverified": unverified_count,
+        "review_required": review_required_count,
+    }
+
+
 def update_report_confidence_metrics(
     report: dict[str, object], *, apply_silent_risk: bool = False
 ) -> None:
@@ -28599,7 +28638,6 @@ def update_report_confidence_metrics(
     trusted_entries = len(trusted_indices)
     low_confidence_count = len(untrusted_indices)
     unverified_count = len(unverified_indices)
-    review_required_count = len(review_indices)
     report["assigned_entries"] = assigned_entries
     report["assigned_percent"] = ratio_percent(assigned_entries, timing_entries)
     report["content_trusted_entries"] = content_trusted_entries
@@ -28616,14 +28654,7 @@ def update_report_confidence_metrics(
     report["low_confidence_percent"] = ratio_percent(low_confidence_count, timing_entries)
     report["unverified_count"] = unverified_count
     report["unverified_percent"] = ratio_percent(unverified_count, timing_entries)
-    report["review_required_count"] = review_required_count
-    report["review_required_percent"] = ratio_percent(review_required_count, timing_entries)
-    report["review_required"] = review_required_count > 0
-    report["verification_counts"] = {
-        "trusted": trusted_entries,
-        "unverified": unverified_count,
-        "review_required": review_required_count,
-    }
+    finalize_review_summary(report)
     report["final_line_trust_classification"] = dict(sorted(FINAL_LINE_TRUST_CLASSIFICATION.items()))
     report["trust_metric_semantics"] = {
         "schema_version": 2,
@@ -37015,9 +37046,7 @@ def apply_central_summary_to_report(
     report["matched_percent"] = summary.overall_trusted_percent
     report["unverified_count"] = summary.unverified_count
     report["unverified_percent"] = summary.unverified_percent
-    report["review_required_count"] = summary.review_required_count
-    report["review_required_percent"] = summary.review_required_percent
-    report["review_required"] = summary.review_required
+    finalize_review_summary(report)
     report["final_line_trust_classification"] = dict(sorted(FINAL_LINE_TRUST_CLASSIFICATION.items()))
     report["trust_metric_semantics"] = {
         "schema_version": 2,
@@ -37093,10 +37122,6 @@ def _apply_evaluated_backend_projection(
     # Sync only aggregate review fields here: private replays must preserve
     # their immutable Central row timing decisions until the final-output audit.
     committed_assignments = report.get("assignments", [])
-    final_review_count = sum(
-        bool(row.get("review_required"))
-        for row in committed_assignments if isinstance(row, dict)
-    )
     final_trusted_count = sum(
         row.get("verification_status") == "trusted"
         for row in committed_assignments if isinstance(row, dict)
@@ -37106,9 +37131,6 @@ def _apply_evaluated_backend_projection(
         for row in committed_assignments if isinstance(row, dict)
     )
     total = len(committed_assignments)
-    report["review_required_count"] = final_review_count
-    report["review_required_percent"] = ratio_percent(final_review_count, total)
-    report["review_required"] = final_review_count > 0
     report["unverified_count"] = final_unverified_count
     report["unverified_percent"] = ratio_percent(final_unverified_count, total)
     report["low_confidence_count"] = total - final_trusted_count
@@ -37116,11 +37138,7 @@ def _apply_evaluated_backend_projection(
     for key in ("trusted", "overall_trusted", "authority_trusted", "matched"):
         report[key + "_entries"] = final_trusted_count
         report[key + "_percent"] = ratio_percent(final_trusted_count, total)
-    report["verification_counts"] = {
-        "trusted": final_trusted_count,
-        "unverified": final_unverified_count,
-        "review_required": final_review_count,
-    }
+    finalize_review_summary(report)
     if isinstance(projection_seed, dict):
         report[_BACKEND_PROVENANCE_PROJECTION_KEY] = _finalize_backend_provenance_projection(
             report,
@@ -37278,10 +37296,6 @@ def apply_anchor_hints(
             "low": sum(1 for item in suspicious_items if isinstance(item, dict) and item.get("severity") == "low"),
         }
         report["suspicious_alignment_severity_counts"] = severity_counts
-        report["review_required_count"] = sum(
-            1 for item in suspicious_items if isinstance(item, dict) and item.get("review_required")
-        )
-        report["review_required"] = int(report["review_required_count"]) > 0
     update_report_confidence_metrics(report)
     selection = report.get("candidate_selection")
     if isinstance(selection, dict):
@@ -37606,9 +37620,7 @@ def add_alignment_diagnostics(
         "medium": sum(1 for item in suspicious if item.get("severity") == "medium"),
         "low": sum(1 for item in suspicious if item.get("severity") == "low"),
     }
-    review_required_count = sum(1 for item in suspicious if item.get("review_required"))
     report["suspicious_alignment_count"] = len(suspicious)
-    report["review_required_count"] = review_required_count
     report["suspicious_alignment_severity_counts"] = severity_counts
     report["suspicious_alignments"] = suspicious
     report["lyric_anchor_profiles"] = anchor_profiles
@@ -37625,7 +37637,6 @@ def add_alignment_diagnostics(
             "reason": "No reliable vocal-region detector is wired yet.",
         },
     )
-    report["review_required"] = review_required_count > 0
     update_report_confidence_metrics(report)
 
 
@@ -38710,10 +38721,6 @@ def score_line_timing_candidates(
             }
         )
     report["suspicious_alignment_count"] = len(risks)
-    report["review_required_count"] = sum(
-        1 for item in risks if isinstance(item, dict) and item.get("review_required")
-    )
-    report["review_required"] = bool(report["review_required_count"])
     report["suspicious_alignment_severity_counts"] = {
         "high": sum(1 for item in risks if isinstance(item, dict) and item.get("severity") == "high"),
         "medium": sum(1 for item in risks if isinstance(item, dict) and item.get("severity") == "medium"),
@@ -39514,6 +39521,7 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
         )
         assert_report_timestamp_equality(report, final_timing_state)
         update_report_confidence_metrics(report, apply_silent_risk=True)
+        finalize_review_summary(report)
         projection_seed = report.get(_RUNTIME_BACKEND_PROVENANCE_PROJECTION_SEED_KEY)
         if isinstance(projection_seed, dict):
             report[_BACKEND_PROVENANCE_PROJECTION_KEY] = _finalize_backend_provenance_projection(
