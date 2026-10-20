@@ -1,40 +1,99 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-Hant">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer"><title>LRC review</title>
 <style>
-:root{font:14px system-ui,sans-serif;color:#e5edf7;background:#0b1220;color-scheme:dark}
-body{margin:0;min-height:100vh;background:#0b1220}header{position:sticky;top:0;background:#101a2b;border-bottom:1px solid #293852;padding:10px 16px;z-index:2}
-button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#17253a;border:1px solid #3a4d6b;border-radius:5px}button:hover:not(:disabled){background:#203653}button:disabled{cursor:not-allowed;opacity:.45}
-.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.status{color:#a9bad0}.warning{color:#ff9b9b}
-.queue{max-width:1100px;margin:12px auto}.song{background:#111c2e;border:1px solid #293852;border-radius:8px;margin:10px 0;overflow:hidden;box-shadow:0 6px 20px #05091466}
-.song-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0}.song-tab.active{background:#285987;border-color:#8cc7f7}
-.song h2{font-size:15px;margin:0;padding:10px;background:#17243a}.row{padding:10px;border-top:1px solid #25344c}
-.row.review{border-left:4px solid #ff6b6b}.row.untrusted{border-left:4px solid #e4ad45}
-.meta{color:#9fb0c7;font-size:12px}.lyric{font-size:16px;margin:4px 0 8px;white-space:pre-wrap;color:#f4f7fb}
-.severity-badge{display:inline-block;padding:1px 5px;border:1px solid #49617e;border-radius:10px;background:#20324b;color:#c8dbf1;font-size:11px}
-.chips,.audio{display:flex;gap:5px;flex-wrap:wrap;align-items:center;margin:6px 0}
-.candidate{display:flex;gap:8px;align-items:center;flex-wrap:wrap;border:1px solid #3a4d6b;border-radius:6px;padding:6px 8px;background:#142136}
-.candidate.selected{background:#163d62;border-color:#5da9ee}.candidate.rejected{text-decoration:line-through;color:#8291a5}
-.candidate-info{min-width:300px;line-height:1.5}.candidate-source{color:#d4e2f2}.candidate-delta{color:#9fb8d4;font-variant-numeric:tabular-nums}.candidate-actions{display:flex;gap:4px}.candidate-action{padding:3px 6px}
-.dirty{background:#5d4b1d}.muted{color:#8291a5}.order-warning{color:#ff9b9b;font-weight:600}
-.selected-row{outline:2px solid #5da9ee;outline-offset:-2px}.row.conflict{background:#321d28;border-left-color:#ff6b6b}
-.peaks{display:block;width:100%;height:64px;margin-top:8px;background:#0d1726;border:1px solid #293852;border-radius:5px;touch-action:none}
+:root{--bg:#0f141c;--panel:#161d28;--panel-2:#1c2533;--line:#2a3647;--fg:#e6ecf4;--fg-2:#9fb0c6;--fg-3:#6b7d95;--accent:#f2b84b;--accent-ink:#1a1304;--ok:#5ed39a;--warn:#f2b84b;--bad:#ef7a7a;--wave:#4f9be6;
+  font:14px/1.5 system-ui,-apple-system,"Noto Sans TC","Microsoft JhengHei",sans-serif;color:var(--fg);background:var(--bg);color-scheme:dark}
+html,body{height:100%}body{margin:0;background:var(--bg);display:flex;flex-direction:column}
+button{font:inherit;padding:6px 10px;cursor:pointer;color:var(--fg);background:var(--panel-2);border:1px solid var(--line);border-radius:6px}
+button:hover:not(:disabled){border-color:var(--fg-3)}button:disabled{cursor:not-allowed;opacity:.45}button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.num{font-family:ui-monospace,Consolas,monospace;font-variant-numeric:tabular-nums}
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:2}
+header .song-name{font-weight:600;font-size:15px}header .muted,.muted{color:var(--fg-3)}header .spacer{flex:1}
+.bar{height:6px;width:140px;background:var(--panel-2);border-radius:3px;overflow:hidden;display:inline-block;vertical-align:middle}.bar i{display:block;height:100%;background:var(--ok)}
+.status{color:var(--fg-2)}.status.dirty{color:var(--accent)}.warning{color:var(--bad)}
+.pill{font-size:12px;padding:2px 8px;border-radius:999px;background:var(--panel-2);color:var(--fg-2)}
+.layout{flex:1;display:grid;grid-template-columns:240px minmax(0,1fr);min-height:0}
+@media (max-width:760px){.layout{grid-template-columns:1fr}.rail{display:none}}
+.rail{border-right:1px solid var(--line);background:var(--panel);overflow:auto;padding:8px}
+.rail h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-3);margin:8px 8px 4px;font-weight:500}
+.song-tab{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:6px 8px;border:0;background:transparent;border-radius:6px;color:var(--fg-2)}
+.song-tab:hover{background:var(--panel-2)}.song-tab.active{background:var(--panel-2);color:var(--fg)}
+.song-tab .dot{width:8px;height:8px;border-radius:50%;background:var(--fg-3);flex:none}.song-tab.todo .dot{background:var(--warn)}.song-tab.done .dot{background:var(--ok)}
+.song-tab .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.song-tab .n{color:var(--fg-3);font-size:12px}
+.work{display:flex;flex-direction:column;min-width:0;padding:14px 16px;gap:14px;overflow:auto}
+.row{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:flex;flex-direction:column;gap:12px}
+.row.conflict{border-color:var(--bad)}
+.meta{display:flex;gap:10px;align-items:center;color:var(--fg-3);font-size:12px;flex-wrap:wrap}
+.lyric{font-size:22px;line-height:1.35;font-weight:600;white-space:pre-wrap;text-wrap:balance}
+.why{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:8px;background:var(--panel-2)}
+.why .ic{width:18px;height:18px;border-radius:50%;background:var(--warn);color:var(--accent-ink);font-weight:600;font-size:12px;display:grid;place-items:center;flex:none;margin-top:2px}.why.ok .ic{background:var(--ok)}
+.wavebox{position:relative}.peaks{display:block;width:100%;height:96px;border-radius:8px;background:var(--panel-2);border:1px solid var(--line);touch-action:none;cursor:ew-resize}
+.wavenote{position:absolute;right:10px;top:8px;font-size:11px;color:var(--fg-3);pointer-events:none}
+.options{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+.option{display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:10px 12px;border-radius:8px;border:1px solid var(--line);background:var(--panel-2);text-align:left;min-width:0}
+.option .k{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--fg-3)}.option .l{font-weight:600;font-size:15px}.option .t{color:var(--fg-2);font-size:12px}
+.option.selected{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}.option.keep .l::before{content:"● ";color:var(--ok)}
+.actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.actions .primary{background:var(--accent);color:var(--accent-ink);border-color:transparent;font-weight:600}
+.nudge{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}.nudge button{border:0;border-radius:0}.nudge span{padding:6px 10px;background:var(--panel);color:var(--fg-2)}
+.hint{color:var(--fg-3);font-size:12px;margin-left:auto}.order-warning{color:var(--bad);font-weight:600}
+details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointer;color:var(--fg-3)}
+.candidate{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:4px 0;border-top:1px solid var(--line)}
+.candidate.selected{color:var(--fg)}.candidate.rejected{text-decoration:line-through;color:var(--fg-3)}.candidate-action{padding:2px 6px;font-size:12px}
+.queue-list h3{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-3);font-weight:500;margin:4px 0}
+.q{display:grid;grid-template-columns:36px 76px minmax(0,1fr) auto;gap:12px;align-items:center;padding:6px 10px;border-radius:6px;cursor:pointer;color:var(--fg-2)}
+.q:hover{background:var(--panel)}.q.cur{background:var(--panel);color:var(--fg);box-shadow:inset 3px 0 0 var(--accent)}
+.q .ly{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.q .st{font-size:12px;color:var(--fg-3)}.q.done .st{color:var(--ok)}.q.done .ly{opacity:.6}
+.help[hidden]{display:none}.help{position:fixed;inset:0;background:rgba(0,0,0,.55);display:grid;place-items:center;padding:16px;z-index:5}
+.help .box{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 22px;max-width:440px;width:100%}
+.help table{width:100%;font-size:13px}.help td{padding:4px 6px}.help td:first-child{font-family:ui-monospace,Consolas,monospace;color:var(--accent);width:100px}
+.help label{display:block;margin-top:10px;color:var(--fg-2)}
 </style>
 </head>
 <body>
 <header>
-  <div class="toolbar"><button id="save">Save</button><span id="server-mode" class="muted"></span><label><input id="untrusted" type="checkbox"> show UNTRUSTED</label><button id="mode">V: FLAC</button><span id="status" class="status">loading</span></div>
-  <div class="meta">Keys: Up/Down row · 1-9 pick/play · [ ] nudge · Space play · P/N adjacent line · V audio · Enter accept/next · K keep/next · U undo · Ctrl+S save</div>
+  <span class="song-name" id="song-name">LRC review</span>
+  <span class="muted">第 <b class="num" id="pos">0</b> / <span class="num" id="pos-total">0</span> 筆</span>
+  <span class="bar"><i id="pos-bar" style="width:0%"></i></span>
+  <span class="muted">本首剩 <b class="num" id="left-song">0</b> · 全部剩 <b class="num" id="left-all">0</b></span>
+  <span class="spacer"></span>
+  <span id="status" class="status">loading</span>
+  <span id="server-mode" class="muted"></span>
+  <button id="mode">音源: FLAC</button>
+  <button id="save">儲存 <span class="num">Ctrl+S</span></button>
+  <button id="help-button" aria-label="快捷鍵與設定">?</button>
 </header>
-<main id="queue" class="queue"></main>
+<div class="layout">
+  <nav class="rail" id="rail"></nav>
+  <main id="queue" class="work"></main>
+</div>
+<div class="help" id="help" hidden><div class="box">
+  <b>快捷鍵</b>
+  <table>
+    <tr><td>空白</td><td>播放目前時間點起 2 秒</td></tr>
+    <tr><td>1 / 2 / 3</td><td>選 A / B / 維持並播放</td></tr>
+    <tr><td>← → 或 [ ]</td><td>−0.1 / +0.1 秒（Shift：0.01 秒）</td></tr>
+    <tr><td>Enter</td><td>接受目前值，跳下一筆</td></tr>
+    <tr><td>K</td><td>維持原值，跳下一筆</td></tr>
+    <tr><td>U</td><td>復原這筆</td></tr>
+    <tr><td>↑ / ↓</td><td>上一筆 / 下一筆</td></tr>
+    <tr><td>P / N</td><td>播上一句 / 下一句開頭</td></tr>
+    <tr><td>B</td><td>A/B 交替比較目前值與選定值</td></tr>
+    <tr><td>V</td><td>切換 FLAC / 人聲 stem</td></tr>
+    <tr><td>Tab</td><td>展開 / 收起詳細</td></tr>
+    <tr><td>Ctrl+S</td><td>儲存</td></tr>
+  </table>
+  <label><input id="untrusted" type="checkbox"> 也顯示未標記為需審的句子（UNTRUSTED）</label>
+  <div style="margin-top:12px;text-align:right"><button id="help-close">關閉</button></div>
+</div></div>
 <script>
 (() => {
   const token = new URLSearchParams(location.search).get('t') || new URLSearchParams(location.hash.slice(1)).get('t');
   const queue = document.getElementById('queue');
   const status = document.getElementById('status');
-  const state = {songs:[], rows:[], edits:new Map(), peaks:new Map(), dirty:false, selected:0, activeSong:null, showUntrusted:false, mode:'flac', player:{audio:new Map(), handlers:new Map(), seq:0, timer:null, active:null, ab:null}, error:''};
+  const state = {songs:[], rows:[], edits:new Map(), peaks:new Map(), decoded:new Map(), done:new Set(), dirty:false, selected:0, activeSong:null, showUntrusted:false, mode:'flac', details:false, player:{audio:new Map(), handlers:new Map(), seq:0, timer:null, active:null, ab:null}, error:'', notice:''};
   const api = async (path, options={}) => {
     const headers = Object.assign({'X-Review-Token':token}, options.headers || {});
     const response = await fetch(path, Object.assign({}, options, {headers}));
@@ -50,7 +109,10 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
   const editFor = item => state.edits.get(keyFor(item));
   const conflicted = item => { const edit = editFor(item); return !!edit && edit.base_cs !== item.row.current_cs; };
   const working = item => editFor(item)?.cs ?? item.row.current_cs;
-  const adjacentText = value => value ? time(value.cs) + ' · ' + esc(value.lyric || '') : '—';
+  const isDone = item => state.done.has(keyFor(item));
+  const pendingOf = song => state.rows.filter(item => item.song.index === song.index && item.row.review === 'REVIEW').length;
+  const leftOf = song => state.rows.filter(item => item.song.index === song.index && item.row.review === 'REVIEW' && !isDone(item)).length;
+  const deltaText = delta => (delta < 0 ? '提早 ' : '延後 ') + Math.abs(delta / 100).toFixed(1) + ' 秒';
   const sourceText = c => (c.sources || [c.label]).join(',');
   const sourceLabel = source => ({
     'audio-validated-current':'audio-checked result', auto:'current result', current:'current result',
@@ -92,6 +154,14 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
     const spread = Number(row?.candidate_spread ?? row?.candidate_spread_s);
     if (Number.isFinite(spread)) sentences.push('候選相差 ' + spread.toFixed(2) + ' 秒');
     return sentences.join('；');
+  };
+  const optionsOf = row => {
+    if (Array.isArray(row.options) && row.options.length) return row.options;
+    // Older servers: fold the raw candidate list into at most two alternatives plus keep.
+    const alternatives = (row.candidates || []).filter(c => !c.rejected && !c.diagnostic_only && row.current_cs != null && Math.abs(c.cs - row.current_cs) > 15)
+      .sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 2).sort((a, b) => a.cs - b.cs)
+      .map((c, i) => ({cs:c.cs, kind:c.cs < row.current_cs ? 'earlier' : 'later', label:'AB'[i], delta_s:(c.cs - row.current_cs) / 100, support:1 + (c.agree_count || 0), sources:c.sources || [c.label]}));
+    return row.current_cs == null ? alternatives : [...alternatives, {cs:row.current_cs, kind:'keep', label:'維持', delta_s:0, support:0, sources:['current']}].sort((a, b) => a.cs - b.cs);
   };
   function setDirty() { state.dirty = state.edits.size > 0; }
   const serverReadOnly = () => state.songs.some(song => song.detail?.server_read_only);
@@ -201,37 +271,92 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
     };
     next();
   }
-  function paintPeaks(canvas, payload, markerCs) {
+  // ---- waveform ----
+  function cssVar(name, fallback) { try { return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback; } catch (error) { return fallback; } }
+  function paintPeaks(canvas, payload, markerCs, marks, message) {
     const context = canvas.getContext?.('2d');
     if (!context) return;
-    const width = canvas.width || 600, height = canvas.height || 64;
-    context.clearRect(0, 0, width, height);
-    context.strokeStyle = '#79b8ed';
-    context.lineWidth = 1;
-    const peaks = payload?.peaks || [];
-    peaks.forEach((peak, index) => {
-      const x = (index + .5) * width / Math.max(1, peaks.length);
-      context.beginPath(); context.moveTo(x, (1 - peak[1]) * height / 2); context.lineTo(x, (1 - peak[0]) * height / 2 + height / 2); context.stroke();
-    });
-    const span = Number(payload?.to_cs) - Number(payload?.from_cs);
-    if (Number.isFinite(span) && span > 0 && Number.isFinite(markerCs)) {
-      const x = (markerCs - payload.from_cs) * width / span;
-      context.strokeStyle = '#ffcf66';
-      context.beginPath(); context.moveTo(x, 0); context.lineTo(x, height); context.stroke();
+    const width = canvas.width || 600, height = canvas.height || 96;
+    try {
+      context.clearRect(0, 0, width, height);
+      const span = Number(payload?.to_cs) - Number(payload?.from_cs);
+      const x = cs => (cs - payload.from_cs) * width / span;
+      const ok = Number.isFinite(span) && span > 0;
+      const peaks = payload?.peaks || [];
+      const bottom = height - 14;
+      if (ok && context.fillRect) {
+        context.fillStyle = cssVar('--line', '#2a3647');
+        for (let t = Math.ceil(payload.from_cs / 50) * 50; t <= payload.to_cs; t += 50) context.fillRect(x(t), bottom - (t % 100 ? 3 : 6), 1, t % 100 ? 3 : 6);
+        if (context.fillText) {
+          context.fillStyle = cssVar('--fg-3', '#6b7d95'); context.font = '10px ui-monospace, Consolas, monospace'; context.textAlign = 'center';
+          for (let t = Math.ceil(payload.from_cs / 100) * 100; t <= payload.to_cs; t += 100) context.fillText(time(t).slice(0, 5), x(t), height - 3);
+        }
+      }
+      context.strokeStyle = cssVar('--wave', '#4f9be6');
+      context.lineWidth = 1;
+      const mid = bottom / 2;
+      peaks.forEach((peak, index) => {
+        const px = (index + .5) * width / Math.max(1, peaks.length);
+        context.beginPath(); context.moveTo(px, (1 - peak[1]) * mid); context.lineTo(px, (1 - peak[0]) * mid); context.stroke();
+      });
+      if (ok) {
+        const mark = (cs, color, label, dash) => {
+          if (cs == null || cs < payload.from_cs || cs > payload.to_cs) return;
+          context.strokeStyle = color; context.lineWidth = 2; context.setLineDash?.(dash || []);
+          context.beginPath(); context.moveTo(x(cs), 0); context.lineTo(x(cs), bottom); context.stroke(); context.setLineDash?.([]);
+          if (label && context.fillText) { context.fillStyle = color; context.font = '600 11px ui-monospace, Consolas, monospace'; context.textAlign = 'left'; context.fillText(label, x(cs) + 4, 13); }
+        };
+        (marks || []).forEach(m => mark(m.cs, m.color, m.label, m.dash));
+        mark(markerCs, cssVar('--accent', '#f2b84b'), '現在');
+      }
+      if (message && context.fillText) { context.fillStyle = cssVar('--fg-2', '#9fb0c6'); context.font = '12px system-ui, sans-serif'; context.textAlign = 'center'; context.fillText(message, width / 2, height / 2); }
+    } catch (error) { /* drawing is best-effort; the controls below the canvas still work */ }
+  }
+  async function flacPeaks(item, fromCs, toCs, bins) {
+    const AudioContextClass = globalThis.AudioContext || globalThis.webkitAudioContext;
+    if (!AudioContextClass || !item.song.has_flac) throw Error('no decoder');
+    let buffer = state.decoded.get(item.song.index);
+    if (!buffer) {
+      const response = await fetch('/audio/' + item.song.index + '/flac?t=' + encodeURIComponent(token), {headers:{'X-Review-Token':token}});
+      if (!response.ok) throw Error('FLAC ' + response.status);
+      const context = new AudioContextClass();
+      try { buffer = await context.decodeAudioData(await response.arrayBuffer()); } finally { context.close?.(); }
+      state.decoded.set(item.song.index, buffer);
     }
+    const data = buffer.getChannelData(0), rate = buffer.sampleRate;
+    const start = Math.floor(fromCs / 100 * rate), end = Math.min(data.length, Math.floor(toCs / 100 * rate));
+    const peaks = [];
+    for (let bin = 0; bin < bins; bin++) {
+      const left = start + Math.floor((end - start) * bin / bins), right = start + Math.floor((end - start) * (bin + 1) / bins);
+      let low = 0, high = 0;
+      for (let i = left; i < right; i += 4) { const v = data[i]; if (v < low) low = v; if (v > high) high = v; }
+      peaks.push([low, high]);
+    }
+    return {from_cs:fromCs, to_cs:toCs, bins, sample_rate:rate, peaks, source:'flac'};
   }
   function attachPeaks(item, canvas) {
     const startCs = working(item);
     if (startCs == null) return;
     const fromCs = Math.max(0, startCs - 300), toCs = startCs + 300, bins = 120;
     const cacheKey = [item.song.index, item.row.entry, fromCs, toCs, bins].join(':');
-    canvas.width = 600; canvas.height = 64;
-    let payload = state.peaks.get(cacheKey) || null, drag = null;
-    const paint = markerCs => paintPeaks(canvas, payload, markerCs);
+    canvas.width = 600; canvas.height = 96;
+    let payload = state.peaks.get(cacheKey) || null, drag = null, message = '';
+    const marks = [];
+    if (item.row.previous?.cs != null) marks.push({cs:item.row.previous.cs, color:cssVar('--fg-3', '#6b7d95'), label:'上一句', dash:[2, 4]});
+    if (item.row.next?.cs != null) marks.push({cs:item.row.next.cs, color:cssVar('--fg-3', '#6b7d95'), label:'下一句', dash:[2, 4]});
+    optionsOf(item.row).filter(option => option.kind !== 'keep').forEach(option => marks.push({cs:option.cs, color:cssVar('--fg-2', '#9fb0c6'), label:option.label, dash:[6, 4]}));
+    const paint = markerCs => paintPeaks(canvas, payload || {from_cs:fromCs, to_cs:toCs, peaks:[]}, markerCs, marks, message);
     if (payload) paint(startCs);
-    else api('/api/song/' + item.song.index + '/peaks?from=' + fromCs + '&to=' + toCs + '&bins=' + bins + '&t=' + encodeURIComponent(token))
-      .then(data => { state.peaks.set(cacheKey, data); payload = data; paint(startCs); })
-      .catch(() => {});
+    else {
+      paint(startCs);
+      const stemPeaks = item.song.has_stem
+        ? api('/api/song/' + item.song.index + '/peaks?from=' + fromCs + '&to=' + toCs + '&bins=' + bins + '&t=' + encodeURIComponent(token))
+        : Promise.reject(Error('stem not found'));
+      stemPeaks
+        .catch(stemError => flacPeaks(item, fromCs, toCs, bins).catch(flacError => { throw Error(stemError.message + (item.song.has_flac ? '；FLAC 解碼失敗：' + flacError.message : '')); }))
+        .then(data => { state.peaks.set(cacheKey, data); payload = data; paint(startCs); })
+        .catch(error => { message = '無法顯示波形：' + error.message; paint(startCs); });
+    }
     const stripPx = () => canvas.getBoundingClientRect?.().width || canvas.clientWidth || canvas.width || 1;
     const preview = event => {
       const deltaCs = Math.round((event.clientX - drag.startX) * 600 / stripPx());
@@ -260,6 +385,7 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
     canvas.addEventListener('pointercancel', finish);
     canvas.addEventListener('click', event => event.stopPropagation());
   }
+  // ---- editing ----
   function stage(item, cs, source, nudgeCs) {
     stopPlayer();
     if (!editable(item.song) || cs == null) return;
@@ -283,10 +409,18 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
     select(item);
     stage(item, candidate.cs, sourceText(candidate), 0);
   }
+  function pickOption(item, option) {
+    if (!option || !editable(item.song)) return;
+    select(item);
+    if (option.kind === 'keep') { state.edits.delete(keyFor(item)); setDirty(); render(); playAround(item, option.cs); return; }
+    stage(item, option.cs, 'option:' + sourceText(option), 0);
+    playAround(item, option.cs);
+  }
   function nudge(item, deltaCs) {
     if (!editable(item.song)) return;
     if (conflicted(item)) {
-      alert('This timestamp changed after staging. Repick a candidate or press U before nudging.');
+      state.error = '這筆的時間在暫存後被改過，請重新選一個選項或按 U 復原再微調。';
+      render();
       return;
     }
     const before = working(item) || 0;
@@ -296,97 +430,147 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
     stage(item, cs, existing?.source || 'nudge', (existing?.nudge_cs || 0) + actualDelta);
     playAround(item, cs);
   }
+  function markDone(item) { state.done.add(keyFor(item)); }
   function nextRow() {
     const rows = visible();
-    if (rows.length) { state.selected = Math.min(rows.length - 1, state.selected + 1); render(); }
+    if (!rows.length) return;
+    const after = rows.findIndex((row, index) => index > state.selected && !isDone(row));
+    const any = rows.findIndex(row => !isDone(row));
+    if (after >= 0) state.selected = after;
+    else if (any >= 0) state.selected = any;
+    else { state.notice = '本首已審完，可以到下一首。'; state.selected = Math.min(rows.length - 1, state.selected + 1); }
+    render();
   }
+  function accept(item) {
+    if (!editFor(item) && working(item) != null && working(item) !== item.row.current_cs) stage(item, working(item), 'accepted', 0);
+    markDone(item);
+    nextRow();
+  }
+  function keep(item) {
+    state.edits.delete(keyFor(item)); setDirty();
+    markDone(item);
+    nextRow();
+  }
+  // ---- rendering ----
   function render() {
     stopPlayer();
-    if (state.activeSong == null && state.songs.length) state.activeSong = state.songs[0].index;
+    if (state.activeSong == null && state.songs.length) {
+      const first = state.songs.find(song => leftOf(song) > 0) || state.songs[0];
+      state.activeSong = first.index;
+    }
     if (state.activeSong != null && !state.songs.some(song => song.index === state.activeSong)) state.activeSong = state.songs[0]?.index ?? null;
     const rows = visible();
     state.selected = Math.min(state.selected, Math.max(0, rows.length - 1));
-    queue.innerHTML = '';
-    const tabs = document.createElement('nav');
-    tabs.className = 'song-tabs';
-    state.songs.forEach(song => {
-      const pending = state.rows.filter(item => item.song.index === song.index && item.row.review === 'REVIEW').length;
+    const song = state.songs.find(item => item.index === state.activeSong);
+    const current = rows[state.selected];
+    // header
+    document.getElementById('song-name').textContent = song ? song.song : 'LRC review';
+    document.getElementById('pos').textContent = rows.length ? state.selected + 1 : 0;
+    document.getElementById('pos-total').textContent = rows.length;
+    const doneHere = rows.filter(isDone).length;
+    document.getElementById('pos-bar').setAttribute?.('style', 'width:' + (rows.length ? 100 * doneHere / rows.length : 0) + '%');
+    document.getElementById('left-song').textContent = song ? leftOf(song) : 0;
+    document.getElementById('left-all').textContent = state.songs.reduce((sum, item) => sum + leftOf(item), 0);
+    // rail
+    const rail = document.getElementById('rail');
+    rail.innerHTML = '<h2>歌曲</h2>';
+    state.songs.forEach(item => {
+      const pending = pendingOf(item), left = leftOf(item);
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = 'song-tab' + (song.index === state.activeSong ? ' active' : '');
-      button.textContent = song.song + ' (' + pending + ')';
-      button.addEventListener('click', () => { state.activeSong = song.index; state.selected = 0; render(); });
-      tabs.appendChild(button);
+      button.className = 'song-tab' + (item.index === state.activeSong ? ' active' : '') + (left ? ' todo' : ' done');
+      button.innerHTML = '<span class="dot"></span><span class="t">' + esc(item.song) + '</span><span class="n num">' + (left ? left + '/' + pending : '✓') + '</span>';
+      button.addEventListener('click', () => { state.activeSong = item.index; state.selected = 0; state.notice = ''; render(); });
+      rail.appendChild(button);
     });
-    queue.appendChild(tabs);
-    const grouped = new Map();
-    rows.forEach(item => { if (!grouped.has(item.song.index)) grouped.set(item.song.index, []); grouped.get(item.song.index).push(item); });
-    const shownSongs = new Set();
-    grouped.forEach(items => {
-      const box = document.createElement('section');
-      box.className = 'song';
-      shownSongs.add(items[0].song.index);
-      const r2 = items[0].song.detail?.r2;
-      const r2Notice = r2?.skipped ? ' <span class="meta">R2 skipped: ' + esc(r2.reason || 'unknown') + '</span>' : '';
-      box.innerHTML = '<h2>' + esc(items[0].song.song) + r2Notice + ' <span class="meta">' + items.length + ' flagged rows</span></h2>';
-      items.forEach(item => box.appendChild(rowElement(item)));
-      queue.appendChild(box);
-    });
-    state.songs.filter(song => song.index === state.activeSong && !shownSongs.has(song.index)).forEach(song => {
-      const box = document.createElement('section');
-      box.className = 'song';
+    // work area
+    queue.innerHTML = '';
+    if (song) {
       const r2 = song.detail?.r2;
-      const r2Notice = r2?.skipped ? ' <span class="meta">R2 skipped: ' + esc(r2.reason || 'unknown') + '</span>' : '';
-      const error = song.detail?.load_error ? '<div class="warning error-row">load error: ' + esc(song.detail.load_error) + '</div>' : '';
-      box.innerHTML = '<h2>' + esc(song.song) + r2Notice + ' <span class="meta">0 flagged rows</span></h2>' + error;
-      queue.appendChild(box);
+      const notes = [];
+      if (r2?.skipped) notes.push('R2 skipped: ' + esc(r2.reason || 'unknown'));
+      if (song.detail?.load_error) notes.push('load error: ' + esc(song.detail.load_error));
+      if (song.read_only || song.detail?.server_read_only) notes.push('唯讀：' + esc(song.read_only_reason || (song.detail?.server_read_only ? 'server' : 'unknown')));
+      if (state.notice) notes.push(esc(state.notice));
+      if (notes.length) { const note = document.createElement('div'); note.className = 'meta'; note.innerHTML = notes.join(' · '); queue.appendChild(note); }
+    }
+    if (current) queue.appendChild(rowElement(current));
+    else { const empty = document.createElement('div'); empty.className = 'meta'; empty.textContent = song ? '這首沒有需要審的句子。' : '沒有歌曲。'; queue.appendChild(empty); }
+    const list = document.createElement('section');
+    list.className = 'queue-list';
+    list.innerHTML = '<h3>本首待審</h3>';
+    rows.forEach((item, index) => {
+      const row = item.row, edit = editFor(item), done = isDone(item);
+      const line = document.createElement('div');
+      line.className = 'q' + (index === state.selected ? ' cur' : '') + (done ? ' done' : '');
+      const options = optionsOf(row).filter(option => option.kind !== 'keep');
+      const hint = done ? (edit ? '已改 ' + deltaText(edit.cs - row.current_cs) : '已確認') : edit ? '暫存 ' + deltaText(edit.cs - row.current_cs) : options.length ? (options.every(o => o.kind === 'earlier') ? '提早?' : options.every(o => o.kind === 'later') ? '延後?' : '不一致') : '確認';
+      line.innerHTML = '<span class="num">' + row.entry + '</span><span class="num">' + time(working(item)) + '</span><span class="ly">' + esc((row.lyrics || [row.lyric || ''])[0]) + '</span><span class="st">' + hint + '</span>';
+      line.addEventListener('click', () => { select(item); state.notice = ''; render(); });
+      list.appendChild(line);
     });
+    queue.appendChild(list);
     const globalReadOnly = serverReadOnly();
-    status.textContent = state.error || rows.length + ' visible / ' + state.rows.length + ' total' + (state.dirty ? ' · unsaved' : '') + ' · ' + state.mode;
+    status.textContent = state.error || (state.dirty ? state.edits.size + ' 筆已改，未儲存' : '未變更');
     status.className = state.error ? 'warning' : state.dirty ? 'status dirty' : 'status';
     document.getElementById('save').disabled = globalReadOnly || !state.dirty;
     document.getElementById('server-mode').textContent = globalReadOnly ? 'server read-only' : '';
-    document.getElementById('mode').textContent = 'V: ' + state.mode.toUpperCase();
+    document.getElementById('mode').textContent = '音源: ' + (state.mode === 'stem' ? '人聲' : 'FLAC');
   }
   function rowElement(item) {
     const song = item.song, row = item.row, edit = editFor(item), chosen = working(item), div = document.createElement('article');
     const key = keyFor(item), previous = row.previous, next = row.next, previousCs = previous?.cs, nextCs = next?.cs;
     const ordering = chosen != null && ((previousCs != null && chosen <= previousCs) || (nextCs != null && chosen >= nextCs));
     const lyrics = (row.lyrics || [row.lyric || '']).map(esc).join('<br>');
-    const extraCandidates = row.extra_candidates || [];
-    const candidateMarkup = (c, i, listName, numbered) => {
-      const delta = row.current_cs == null ? '—' : (c.cs - row.current_cs >= 0 ? '+' : '') + ((c.cs - row.current_cs) / 100).toFixed(2) + 's';
-      const source = sourceLabels(c);
-      const marker = c.cs === row.current_cs ? ' · current' : '';
-      const diagnostic = c.diagnostic_only ? ' · diagnostic only' : '';
-      const agreement = c.agree_count ? ' · +' + c.agree_count + ' candidates within ±0.15s' : '';
-      const number = numbered ? (i + 1) + '. ' : '';
-      const label = numbered ? ' candidate ' + (i + 1) : ' candidate';
-      return '<div class="candidate ' + (c.rejected ? 'rejected ' : '') + (c.cs === chosen ? 'selected' : '') + '">' +
-        '<span class="candidate-info"><b>' + number + time(c.cs) + marker + '</b> · <span class="candidate-source">' + esc(source) + '</span><span class="candidate-delta"> · from current ' + esc(delta) + '</span>' + agreement + diagnostic + (c.rejected ? ' · rejected' : '') + '</span>' +
-        '<span class="candidate-actions"><button type="button" class="candidate-action candidate-play" data-candidate-list="' + listName + '" data-candidate="' + i + '" aria-label="listen to' + label + '">listen</button>' +
-        '<button type="button" class="candidate-action candidate-apply" data-candidate-list="' + listName + '" data-candidate="' + i + '"' + (editable(song) && !c.diagnostic_only ? '' : ' disabled') + ' aria-label="apply' + label + '">apply</button></span></div>';
-    };
     const candidates = row.candidates || [];
-    const chips = candidates.map((c,i) => candidateMarkup(c, i, 'main', true)).join('');
-    const extras = extraCandidates.map((c,i) => candidateMarkup(c, i, 'extra', false)).join('');
-    const extraMarkup = extraCandidates.length ? '<details class="extra-candidates"><summary>還有 ' + extraCandidates.length + ' 個候選</summary><div class="chips">' + extras + '</div></details>' : '';
-    const selectedCandidate = [...candidates, ...extraCandidates].find(candidate => candidate.cs === chosen && candidate.cs !== row.current_cs && !candidate.diagnostic_only);
-    const selectedCandidateList = selectedCandidate && candidates.includes(selectedCandidate) ? 'main' : 'extra';
-    const selectedCandidateIndex = selectedCandidate ? (selectedCandidateList === 'main' ? candidates.indexOf(selectedCandidate) : extraCandidates.indexOf(selectedCandidate)) : '';
+    const extraCandidates = row.extra_candidates || [];
+    const options = optionsOf(row);
+    const alternatives = options.filter(option => option.kind !== 'keep');
+    const selectedCandidate = chosen != null && chosen !== row.current_cs ? {cs:chosen, diagnostic_only:false} : null;
     const conflict = conflicted(item);
+    const canEdit = editable(song);
     div.className = 'row ' + String(row.review || 'UNTRUSTED').toLowerCase() + (conflict ? ' conflict' : '') + (visible()[state.selected] === item ? ' selected-row' : '');
     div.dataset.key = key;
-    const severity = '<span class="severity-badge">severity ' + esc(row.severity_score ?? 0) + ' · rank ' + esc(row.severity_rank ?? '—') + '</span>';
-    div.innerHTML = '<div class="meta">' + esc(song.song) + ' · entry ' + row.entry + ' · ' + esc(row.review) + ' · ' + severity + ' · ' + esc(reasonText(row.reason_codes, row)) + '</div>' +
+    const sentence = row.reason_text || (alternatives.length ? '需要人工確認。' : '候選一致，只需確認。');
+    const optionMarkup = options.map((option, index) => {
+      const keyLabel = option.kind === 'keep' ? '3' : option.label === 'A' ? '1' : '2';
+      const selected = option.kind === 'keep' ? chosen === row.current_cs : chosen === option.cs;
+      const support = option.kind === 'keep' ? '' : ' · ' + option.support + ' 個偵測同意';
+      return '<button type="button" class="option ' + (option.kind === 'keep' ? 'keep' : '') + (selected ? ' selected' : '') + '" data-option="' + index + '"' + (canEdit ? '' : ' disabled') + ' aria-label="option ' + esc(option.label) + '">' +
+        '<span class="k">' + keyLabel + '</span><span class="l">' + (option.kind === 'keep' ? '維持' : deltaText(option.cs - row.current_cs)) + '</span>' +
+        '<span class="t num">' + time(option.cs) + support + '</span></button>';
+    }).join('');
+    const candidateMarkup = (c, i, listName) => {
+      const delta = row.current_cs == null ? '—' : (c.cs - row.current_cs >= 0 ? '+' : '') + ((c.cs - row.current_cs) / 100).toFixed(2) + 's';
+      const agreement = c.agree_count ? ' · +' + c.agree_count + ' within ±0.15s' : '';
+      return '<div class="candidate ' + (c.rejected ? 'rejected ' : '') + (c.cs === chosen ? 'selected' : '') + '">' +
+        '<span class="num">' + time(c.cs) + '</span><span class="num">' + esc(delta) + '</span><span>' + esc(sourceLabels(c)) + agreement + (c.diagnostic_only ? ' · diagnostic only' : '') + (c.rejected ? ' · rejected' : '') + '</span>' +
+        '<button type="button" class="candidate-action candidate-play" data-candidate-list="' + listName + '" data-candidate="' + i + '">listen</button>' +
+        '<button type="button" class="candidate-action candidate-apply" data-candidate-list="' + listName + '" data-candidate="' + i + '"' + (canEdit && !c.diagnostic_only ? '' : ' disabled') + '>apply</button></div>';
+    };
+    const details = '<details class="more"' + (state.details ? ' open' : '') + '><summary>詳細（' + (candidates.length + extraCandidates.length) + ' 個候選、系統代碼）</summary>' +
+      '<div class="meta">entry ' + row.entry + ' · ' + esc(row.review) + ' · severity ' + esc(row.severity_score ?? 0) + ' · rank ' + esc(row.severity_rank ?? '—') + ' · auto ' + time(row.auto_cs) + '</div>' +
+      '<div class="meta">' + esc(reasonText(row.reason_codes, row)) + '</div>' +
+      candidates.map((c, i) => candidateMarkup(c, i, 'main')).join('') + extraCandidates.map((c, i) => candidateMarkup(c, i, 'extra')).join('') + '</details>';
+    const showWave = song.has_stem || song.has_flac;
+    div.innerHTML = '<div class="meta"><span class="num">#' + row.entry + '</span><span>·</span><span class="num">目前 ' + time(chosen) + '</span>' +
+      (edit ? '<span class="pill num">原 ' + time(row.current_cs) + '</span>' : '') + (isDone(item) ? '<span class="pill">已確認</span>' : '') + '</div>' +
       '<div class="lyric">' + (lyrics || '<span class="muted">no lyric text</span>') + '</div>' +
-      '<div>current <b>' + time(row.current_cs) + '</b> · auto ' + time(row.auto_cs) + ' · previous ' + adjacentText(previous) + ' · next ' + adjacentText(next) + '</div>' +
-      (ordering ? '<div class="order-warning">warning: working time is outside adjacent line order</div>' : '') +
-      (conflict ? '<div class="order-warning">conflict: timestamp changed; repick a candidate or press U</div>' : '') +
-      '<div class="audio"><button class="play" data-kind="flac" ' + (song.has_flac ? '' : 'disabled') + '>play FLAC</button><button class="play" data-kind="stem" ' + (song.has_stem ? '' : 'disabled') + '>play stem</button><button type="button" class="ab-play" data-candidate-list="' + selectedCandidateList + '" data-candidate="' + selectedCandidateIndex + '"' + (selectedCandidate && (state.mode === 'stem' ? song.has_stem : song.has_flac) ? '' : ' disabled') + ' aria-label="alternate current and selected candidate">A/B</button><span class="nudge"><button type="button" class="nudge-button" data-delta="-10"' + (editable(song) ? '' : ' disabled') + ' aria-label="move timestamp earlier by 0.1 seconds">-0.1</button><button type="button" class="nudge-button" data-delta="10"' + (editable(song) ? '' : ' disabled') + ' aria-label="move timestamp later by 0.1 seconds">+0.1</button></span>' + (song.has_flac ? '' : '<span class="muted">FLAC unavailable</span>') + (song.has_stem ? '' : '<span class="muted">stem unavailable</span>') + '</div>' +
-      '<div>working <b>' + time(chosen) + '</b></div><div class="chips">' + (chips || '<span class="muted">no candidates</span>') + '</div>' + extraMarkup +
-      '<div class="meta">' + ((song.read_only || song.detail?.server_read_only) ? 'read-only: ' + esc(song.read_only_reason || (song.detail?.server_read_only ? 'server' : 'unknown')) : '') + '</div>';
+      '<div class="why' + (alternatives.length ? '' : ' ok') + '"><span class="ic">' + (alternatives.length ? '!' : '✓') + '</span><span>' + esc(sentence) + '</span></div>' +
+      (ordering ? '<div class="order-warning">注意：目前時間超出前後句的順序。</div>' : '') +
+      (conflict ? '<div class="order-warning">conflict: 這筆時間在暫存後被改過，請重新選一個選項或按 U。</div>' : '') +
+      (showWave ? '<div class="wavebox"><span class="wavenote">' + (song.has_stem ? '人聲 stem' : 'FLAC') + ' · ±3 秒 · 拖曳可微調</span></div>' : '') +
+      '<div class="options">' + (optionMarkup || '<span class="muted">no candidates</span>') + '</div>' +
+      '<div class="actions"><button type="button" class="play" data-kind="' + state.mode + '"' + ((state.mode === 'stem' ? song.has_stem : song.has_flac) ? '' : ' disabled') + '>▶ 播放 <span class="num">空白</span></button>' +
+      '<button type="button" class="ab-play"' + (selectedCandidate && (state.mode === 'stem' ? song.has_stem : song.has_flac) ? '' : ' disabled') + ' aria-label="alternate current and selected candidate">A/B</button>' +
+      '<span class="nudge"><button type="button" class="nudge-button" data-delta="-10"' + (canEdit ? '' : ' disabled') + ' aria-label="move timestamp earlier by 0.1 seconds">−0.1</button><span class="num">' + time(chosen) + '</span><button type="button" class="nudge-button" data-delta="10"' + (canEdit ? '' : ' disabled') + ' aria-label="move timestamp later by 0.1 seconds">+0.1</button></span>' +
+      '<button type="button" class="primary accept"' + (canEdit ? '' : ' disabled') + '>接受，下一筆 <span class="num">Enter</span></button>' +
+      '<button type="button" class="keep-next">維持 <span class="num">K</span></button>' +
+      '<button type="button" class="undo"' + (edit ? '' : ' disabled') + '>復原 <span class="num">U</span></button>' +
+      '<span class="hint">上一句 ' + (previous ? time(previous.cs) + ' ' + esc(previous.lyric || '') : '—') + ' · 下一句 ' + (next ? time(next.cs) + ' ' + esc(next.lyric || '') : '—') + '</span></div>' +
+      details;
     div.addEventListener('click', () => { select(item); render(); });
+    div.querySelectorAll('.option').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); button.blur(); pickOption(item, options[Number(button.dataset.option)]); }));
     div.querySelectorAll('.play').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); button.blur(); playAround(item, working(item), button.dataset.kind); }));
     div.querySelectorAll('.candidate-play').forEach(button => button.addEventListener('click', event => {
       event.stopPropagation(); button.blur(); const list = button.dataset.candidateList === 'extra' ? extraCandidates : candidates; const candidate = list[Number(button.dataset.candidate)]; if (candidate) playAround(item, candidate.cs);
@@ -394,17 +578,18 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
     div.querySelectorAll('.candidate-apply').forEach(button => button.addEventListener('click', event => {
       event.stopPropagation(); button.blur(); const list = button.dataset.candidateList === 'extra' ? extraCandidates : candidates; const candidate = list[Number(button.dataset.candidate)]; if (candidate && editable(song)) applyCandidate(item, candidate);
     }));
-    div.querySelectorAll('.ab-play').forEach(button => button.addEventListener('click', event => {
-      event.stopPropagation(); button.blur(); const list = button.dataset.candidateList === 'extra' ? extraCandidates : candidates; const candidate = list[Number(button.dataset.candidate)]; if (candidate) playAB(item, candidate);
-    }));
-    div.querySelectorAll('.nudge-button').forEach(button => button.addEventListener('click', event => {
-      event.stopPropagation(); button.blur(); nudge(item, Number(button.dataset.delta));
-    }));
-    if (visible()[state.selected] === item && song.has_stem && chosen != null) {
+    div.querySelectorAll('.ab-play').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); button.blur(); if (selectedCandidate) playAB(item, selectedCandidate); }));
+    div.querySelectorAll('.nudge-button').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); button.blur(); nudge(item, Number(button.dataset.delta)); }));
+    div.querySelectorAll('.accept').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); button.blur(); accept(item); }));
+    div.querySelectorAll('.keep-next').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); button.blur(); keep(item); }));
+    div.querySelectorAll('.undo').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); button.blur(); state.edits.delete(key); setDirty(); render(); }));
+    div.querySelectorAll('details').forEach(node => node.addEventListener('toggle', () => { state.details = !!node.open; }));
+    if (visible()[state.selected] === item && showWave && chosen != null) {
       const canvas = document.createElement('canvas');
       canvas.className = 'peaks';
-      canvas.setAttribute?.('aria-label', 'vocal stem waveform; drag to adjust timestamp');
-      div.appendChild(canvas);
+      canvas.setAttribute?.('aria-label', 'waveform; drag to adjust timestamp');
+      const box = div.querySelector?.('.wavebox');
+      (box || div).appendChild(canvas);
       attachPeaks(item, canvas);
     }
     return div;
@@ -474,37 +659,41 @@ button{font:inherit;padding:5px 8px;cursor:pointer;color:#e5edf7;background:#172
   document.getElementById('save').addEventListener('click', event => { event.currentTarget.blur(); save(); });
   document.getElementById('untrusted').addEventListener('change', event => { state.showUntrusted = event.target.checked; render(); });
   document.getElementById('mode').addEventListener('click', event => { event.currentTarget.blur(); stopPlayer(); state.mode = state.mode === 'flac' ? 'stem' : 'flac'; render(); });
+  document.getElementById('help-button').addEventListener('click', () => { document.getElementById('help').hidden = false; });
+  document.getElementById('help-close').addEventListener('click', () => { document.getElementById('help').hidden = true; });
   document.addEventListener('keydown', event => {
     if (event.ctrlKey && !event.altKey && !event.metaKey && event.key.toLowerCase() === 's') { event.preventDefault(); save(); return; }
     if (event.altKey || event.metaKey || event.ctrlKey) return;
+    if (event.key === 'Escape') { document.getElementById('help').hidden = true; return; }
+    if (event.key === '?') { event.preventDefault(); document.getElementById('help').hidden = false; return; }
     if (event.target?.closest?.('input,textarea,select,[contenteditable]') && event.target?.type !== 'checkbox') return;
     if (event.target?.closest?.('button') && (event.key === 'Enter' || event.code === 'Space')) return;
     const rows = visible(), item = rows[state.selected];
     if (!item) return;
     if (event.key === 'ArrowDown' || event.key.toLowerCase() === 'j') { event.preventDefault(); state.selected = Math.min(rows.length - 1, state.selected + 1); render(); return; }
     if (event.key === 'ArrowUp') { event.preventDefault(); state.selected = Math.max(0, state.selected - 1); render(); return; }
-    if (event.key.toLowerCase() === 'k') { event.preventDefault(); state.edits.delete(keyFor(item)); setDirty(); nextRow(); return; }
+    if (event.key.toLowerCase() === 'k') { event.preventDefault(); keep(item); return; }
     if (event.key.toLowerCase() === 'u') { event.preventDefault(); state.edits.delete(keyFor(item)); setDirty(); render(); return; }
     if (event.key.toLowerCase() === 'v') { event.preventDefault(); stopPlayer(); state.mode = state.mode === 'flac' ? 'stem' : 'flac'; render(); return; }
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      if (!editFor(item) && working(item) != null && working(item) !== item.row.current_cs) stage(item, working(item), 'accepted', 0);
-      nextRow();
-      return;
-    }
+    if (event.key.toLowerCase() === 'b') { event.preventDefault(); const chosen = working(item); if (chosen != null && chosen !== item.row.current_cs) playAB(item, {cs:chosen, diagnostic_only:false}); return; }
+    if (event.key === 'Tab') { event.preventDefault(); state.details = !state.details; render(); return; }
+    if (event.key === 'Enter') { event.preventDefault(); accept(item); return; }
     if (event.code === 'Space') { event.preventDefault(); playAround(item, working(item)); return; }
     if (event.key.toLowerCase() === 'p') { event.preventDefault(); if (item.row.previous) playAround(item, item.row.previous.cs); return; }
     if (event.key.toLowerCase() === 'n') { event.preventDefault(); if (item.row.next) playAround(item, item.row.next.cs); return; }
-    if (event.key === '[' || event.key === ']' || event.key === '{' || event.key === '}') {
+    if (event.key === '[' || event.key === ']' || event.key === '{' || event.key === '}' || event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
       event.preventDefault();
       const delta = event.shiftKey ? 1 : 10;
-      const signedDelta = event.key === '[' || event.key === '{' ? -delta : delta;
+      const earlier = event.key === '[' || event.key === '{' || event.key === 'ArrowLeft';
+      const signedDelta = earlier ? -delta : delta;
       nudge(item, signedDelta);
       return;
     }
-    if (/^[1-9]$/.test(event.key)) {
-      const candidate = item.row.candidates?.[Number(event.key) - 1];
-      if (candidate && editable(item.song) && !candidate.diagnostic_only) stageCandidate(item, candidate);
+    if (/^[1-3]$/.test(event.key)) {
+      event.preventDefault();
+      const options = optionsOf(item.row);
+      const option = event.key === '3' ? options.find(o => o.kind === 'keep') : options.filter(o => o.kind !== 'keep')[Number(event.key) - 1];
+      if (option) pickOption(item, option);
     }
   });
 

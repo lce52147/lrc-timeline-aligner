@@ -506,8 +506,12 @@ class ReviewServerTests(unittest.TestCase):
 
     def test_page_keeps_lyric_order_when_severity_differs(self) -> None:
         page = (SCRIPTS / "review_page" / "index.html").read_text(encoding="utf-8")
-        self.assertIn("severity-badge", page)
         self.assertIn("a.song.index - b.song.index || a.row.entry - b.row.entry", page)
+        # 1.6: the main card shows at most two alternatives plus keep; raw candidates live in the details fold.
+        self.assertIn("optionsOf(row)", page)
+        self.assertIn("row.options", page)
+        self.assertIn("row.reason_text", page)
+        self.assertIn('class="option ', page)
         self.assertIn("candidate-play", page)
         self.assertIn("candidate-apply", page)
         self.assertIn("stage(item, candidate.cs", page)
@@ -516,17 +520,19 @@ class ReviewServerTests(unittest.TestCase):
         self.assertIn("ASR diagnostic hint", page)
         self.assertIn("diagnostic only", page)
         self.assertIn("row.extra_candidates || []", page)
-        self.assertIn('<details class="extra-candidates">', page)
+        self.assertIn('<details class="more"', page)
         self.assertIn("data-candidate-list", page)
         self.assertIn("agree_count", page)
         self.assertIn("className = 'peaks'", page)
         self.assertIn("/peaks?from=", page)
+        self.assertIn("flacPeaks(item, fromCs, toCs, bins)", page)
+        self.assertIn("無法顯示波形：", page)
         self.assertIn("Math.round((event.clientX - drag.startX) * 600 / stripPx())", page)
         self.assertIn("stage(item, previewCs, 'drag', 0)", page)
         self.assertIn("playAround(item, previewCs)", page)
         self.assertIn("R2 skipped:", page)
         self.assertIn("load error:", page)
-        self.assertIn("const shownSongs = new Set()", page)
+        self.assertIn("這首沒有需要審的句子。", page)
         self.assertIn("color-scheme:dark", page)
         source = page.split("<script>", 1)[1].rsplit("</script>", 1)[0]
         harness = r"""
@@ -561,19 +567,24 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
 (async () => {
   vm.runInThisContext(source);
   await settle();
-  const queue = elements.get('queue');
+  const queue = elements.get('queue'), rail = elements.get('rail');
+  const card = queue.children.find(child => String(child.className).startsWith('row '));
+  const list = queue.children.find(child => child.className === 'queue-list');
+  const html = card._html;
   console.log(JSON.stringify({
-    tabs: queue.children[0].children.map(child => child.textContent),
-    keys: queue.children[1].children.map(child => child.dataset.key),
-    audio: queue.children[1].children[1]._html.includes('data-kind="flac" >play FLAC'),
-    nudge: queue.children[1].children[0]._html.includes('data-delta="-10"'),
-    extras: queue.children[1].children[0]._html.includes('<details class="extra-candidates">') && queue.children[1].children[0]._html.includes('data-candidate-list="extra"')
+    tabs: rail.children.map(child => child._html.includes('song') && child._html.includes('2/2')),
+    key: card.dataset.key,
+    queue: list.children.map(child => child.className),
+    audio: html.includes('class="play" data-kind="flac"'),
+    nudge: html.includes('data-delta="-10"'),
+    options: (html.match(/aria-label="option /g) || []).length,
+    extras: html.includes('<details class="more"') && html.includes('data-candidate-list="extra"')
   }));
 })().catch(error => { console.error(error.stack); process.exitCode = 1; });
 """.replace("SOURCE", json.dumps(source))
         result = subprocess.run(["node", "-"], input=harness, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout), {"tabs": ["song (2)"], "keys": ["0:1", "0:2"], "audio": True, "nudge": True, "extras": True})
+        self.assertEqual(json.loads(result.stdout), {"tabs": [True], "key": "0:1", "queue": ["q cur", "q"], "audio": True, "nudge": True, "options": 3, "extras": True})
 
     def test_acceptance_save_three_entries_and_second_save(self) -> None:
         detail = self._detail()
@@ -796,15 +807,16 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
                        "base_cs:item.row.current_cs", "candidate.cs, sourceText(candidate), 0", "actualDelta = cs - before",
                        "dropped staged edit", "edit.base_cs !== item.row.current_cs", "button.blur()",
                        "event.target?.type !== 'checkbox'", "const conflict = conflicted(item)",
-                       "const loadMessage = await load()", "alert('This timestamp changed after staging"):
+                       "const loadMessage = await load()", "這筆的時間在暫存後被改過"):
             self.assertIn(marker, page)
-        self.assertIn("item.row.candidates?.[Number(event.key) - 1]", page)
+        self.assertNotIn("alert(", page)
+        self.assertIn("/^[1-3]$/.test(event.key)", page)
         self.assertIn("const start = targetCs / 100;", page)
         self.assertIn("const stop = start + 2;", page)
         self.assertNotIn("targetCs / 100 - 2", page)
-        self.assertIn("className = 'song-tabs'", page)
+        self.assertIn("className = 'song-tab'", page)
         self.assertIn("state.activeSong", page)
-        self.assertIn("song.song + ' (' + pending + ')'", page)
+        self.assertIn("leftOf(song) > 0", page)
         self.assertIn('class="nudge-button"', page)
         self.assertIn('data-delta="-10"', page)
         self.assertIn('data-delta="10"', page)
