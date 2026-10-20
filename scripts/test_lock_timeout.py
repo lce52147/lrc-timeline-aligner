@@ -52,6 +52,15 @@ class LockTimeoutTests(unittest.TestCase):
             finally:
                 holder.kill()
                 holder.wait(timeout=10)
+                if holder.stdout is not None:
+                    holder.stdout.close()
+                # Windows keeps the lock file busy briefly after the holder dies.
+                for _ in range(100):
+                    try:
+                        lock_path.unlink(missing_ok=True)
+                        break
+                    except PermissionError:
+                        time.sleep(0.05)
 
 
 if __name__ == "__main__":

@@ -14104,6 +14104,7 @@ def _exclusive_file_lock(path: Path, *, timeout_seconds: float | None, busy_mess
                     break
                 except OSError as exc:
                     if deadline is not None and time.monotonic() >= deadline:
+                        handle.close()
                         raise LrcError(f"lock-timeout:{path} ({busy_message})") from exc
                     time.sleep(0.1)
             try:
@@ -14119,6 +14120,7 @@ def _exclusive_file_lock(path: Path, *, timeout_seconds: float | None, busy_mess
                     break
                 except BlockingIOError as exc:
                     if deadline is not None and time.monotonic() >= deadline:
+                        handle.close()
                         raise LrcError(f"lock-timeout:{path} ({busy_message})") from exc
                     time.sleep(0.1)
             try:
