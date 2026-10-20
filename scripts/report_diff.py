@@ -5,6 +5,9 @@ Usage: report_diff.py BEFORE.json AFTER.json [--allow-changed KEY,KEY] [--json]
 Path-typed keys are never compared by value: the keys listed in
 ``auto_lrc._GENERATION_DIAGNOSTIC_LOCATOR_KEYS``, ``review_tsv_path``,
 ``multimodel_consensus.cache_path`` and any sub-dictionary named ``paths``.
+Source digests (``algorithm_source_sha256``), digest-derived ``*revision``
+keys and ``stage_timings`` clocks change on every edit or run and are skipped
+unless ``--strict`` is given.
 Exit status is 0 when AFTER only adds keys, 1 when a key was removed or a
 value changed without being listed in ``--allow-changed``, 2 on usage errors.
 """
@@ -35,6 +38,10 @@ except Exception:  # pragma: no cover - import failure only
 PATH_KEYS = frozenset(_LOCATOR_KEYS) | {"review_tsv_path"}
 PATH_DOTTED = frozenset({"multimodel_consensus.cache_path"})
 PATH_SUBTREES = frozenset({"paths"})
+# Values that change on every source edit or every run without meaning a
+# behavioural change: source digests, digest-derived revisions, wall-clock
+# stage timings.  Skipped unless --strict is given.
+VOLATILE_SUFFIXES = ("_revision", "revision")
 
 
 def _is_path_key(path: tuple[str, ...]) -> bool:
@@ -47,8 +54,19 @@ def _is_path_key(path: tuple[str, ...]) -> bool:
     return any(dotted == item or dotted.endswith("." + item) for item in PATH_DOTTED)
 
 
+def _is_volatile_key(path: tuple[str, ...]) -> bool:
+    if not path:
+        return False
+    leaf = path[-1]
+    if leaf == "algorithm_source_sha256":
+        return True
+    if leaf in ("start_s", "seconds"):
+        return "stage_timings" in path or "stages" in path
+    return leaf.endswith(VOLATILE_SUFFIXES)
+
+
 def diff_reports(
-    before: object, after: object, *, prefix: tuple[str, ...] = ()
+    before: object, after: object, *, prefix: tuple[str, ...] = (), strict: bool = False
 ) -> dict[str, list[str]]:
     """Return {"added": [...], "removed": [...], "changed": [...]} dotted keys."""
     result: dict[str, list[str]] = {"added": [], "removed": [], "changed": []}
@@ -57,18 +75,20 @@ def diff_reports(
             path = prefix + (str(key),)
             if _is_path_key(path):
                 continue
+            if not strict and _is_volatile_key(path) and key in before and key in after:
+                continue
             if key not in before:
                 result["added"].append(".".join(path))
             elif key not in after:
                 result["removed"].append(".".join(path))
             else:
-                sub = diff_reports(before[key], after[key], prefix=path)
+                sub = diff_reports(before[key], after[key], prefix=path, strict=strict)
                 for name in result:
                     result[name].extend(sub[name])
         return result
     if isinstance(before, list) and isinstance(after, list) and len(before) == len(after):
         for index, (left, right) in enumerate(zip(before, after)):
-            sub = diff_reports(left, right, prefix=prefix + (f"[{index}]",))
+            sub = diff_reports(left, right, prefix=prefix + (f"[{index}]",), strict=strict)
             for name in result:
                 result[name].extend(sub[name])
         return result
@@ -102,6 +122,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("after", type=Path)
     parser.add_argument("--allow-changed", default="", help="comma-separated keys whose value may change")
     parser.add_argument("--json", action="store_true", help="print the diff as JSON")
+    parser.add_argument("--strict", action="store_true", help="also compare source digests, revisions and stage timings")
     args = parser.parse_args(argv)
     try:
         before = _load(args.before)
@@ -109,7 +130,7 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
-    diff = diff_reports(before, after)
+    diff = diff_reports(before, after, strict=args.strict)
     bad = unexpected_changes(diff, args.allow_changed.split(","))
     if args.json:
         print(json.dumps({**diff, "unexpected": bad}, ensure_ascii=False, indent=2))
