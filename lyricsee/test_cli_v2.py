@@ -422,6 +422,43 @@ class LyricseeV2CliTests(unittest.TestCase):
             self.assertIsNone(reports)
             self.assertFalse((output_root / "report").exists())
 
+    def test_run_persists_incremental_reports_after_each_row(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bk = root / "bk"
+            bk.mkdir()
+            audio_paths = [root / "Song1.flac", root / "Song2.flac"]
+            for audio in audio_paths:
+                audio.write_bytes(b"")
+            output_root = root / "out"
+            playlist = root / "list.m3u8"
+            playlist.write_text("Song1.flac\nSong2.flac\n", encoding="utf-8")
+            args = cli.build_parser().parse_args([
+                "--bk-dir", str(bk),
+                "--output-root", str(output_root),
+                str(playlist),
+            ])
+            snapshots = []
+            original_write = cli._write_run_reports
+
+            def tracked_write(reports, rows):
+                original_write(reports, rows)
+                snapshots.append(json.loads(reports[0].read_text(encoding="utf-8")))
+
+            def fake_process(index, path, *, config, no_translate, replace_existing, client):
+                return cli._base_row(index, path, status="original_only")
+
+            with (
+                mock.patch.object(cli, "HttpClient", return_value=object()),
+                mock.patch.object(cli, "_process_track", side_effect=fake_process),
+                mock.patch.object(cli, "_write_run_reports", side_effect=tracked_write),
+            ):
+                rows, reports = cli.run(args)
+
+            self.assertEqual([len(snapshot) for snapshot in snapshots], [0, 1, 2, 2])
+            self.assertEqual(len(json.loads(reports[0].read_text(encoding="utf-8"))), 2)
+            self.assertEqual(len(rows), 2)
+
     def test_output_root_is_passed_to_track_processing_and_run_reports(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "chosen"

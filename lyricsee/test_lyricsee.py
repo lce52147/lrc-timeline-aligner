@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from unittest import mock
 
 
@@ -370,12 +370,16 @@ class LyricseeCoreTests(unittest.TestCase):
                 self.headless_calls = 0
                 self.google_headers = None
                 self.ddg_headers = None
+                self.google_retries = None
+                self.ddg_retries = None
 
-            def get_text(self, url, params=None, headers=None):
+            def get_text(self, url, params=None, headers=None, retries=None):
                 if "google.com/search" in url:
+                    self.google_retries = retries
                     self.google_headers = headers
                     return '<a href="https://support.google.com/websearch">blocked</a>'
                 if "duckduckgo.com/html" in url:
+                    self.ddg_retries = retries
                     self.ddg_headers = headers
                     return '<a class="result__a" href="https://lyrics.example/song">result</a>'
                 return "<html><head><title>Song - Lyrics</title></head><body><p>君の声<br>你的聲音<br>夜を越える<br>跨越黑夜</p></body></html>"
@@ -392,6 +396,8 @@ class LyricseeCoreTests(unittest.TestCase):
         self.assertEqual(client.headless_calls, 0)
         self.assertTrue(client.google_headers["User-Agent"].startswith("Mozilla/5.0"))
         self.assertTrue(client.ddg_headers["User-Agent"].startswith("Mozilla/5.0"))
+        self.assertEqual(client.google_retries, 2)
+        self.assertEqual(client.ddg_retries, 2)
         self.assertEqual(client.google_headers["Accept-Language"], "zh-TW,ja;q=0.8")
         self.assertEqual(client.ddg_headers["Accept-Language"], "zh-TW,ja;q=0.8")
         self.assertEqual(len(result.candidates), 1)
@@ -402,7 +408,7 @@ class LyricseeCoreTests(unittest.TestCase):
         class Client:
             user_agent = "test-agent"
 
-            def get_text(self, url, params=None, headers=None):
+            def get_text(self, url, params=None, headers=None, retries=None):
                 if "google.com/search" in url:
                     return "<html></html>"
                 if "duckduckgo.com/html" in url:
@@ -430,7 +436,7 @@ class LyricseeCoreTests(unittest.TestCase):
                 self.search_params = None
                 self.search_headers = None
 
-            def get_text(self, url, params=None, headers=None):
+            def get_text(self, url, params=None, headers=None, retries=None):
                 if "google.com/search" in url:
                     self.search_params = params
                     self.search_headers = headers
@@ -452,7 +458,7 @@ class LyricseeCoreTests(unittest.TestCase):
         core = load_core()
 
         class Client:
-            def get_text(self, url, params=None, headers=None):
+            def get_text(self, url, params=None, headers=None, retries=None):
                 if "google.com/search" in url:
                     return '<a href="https://lyrics.example/wrong-song">result</a>'
                 return """
@@ -492,7 +498,7 @@ class LyricseeCoreTests(unittest.TestCase):
         core = load_core()
 
         class Client:
-            def get_text(self, url, params=None, headers=None):
+            def get_text(self, url, params=None, headers=None, retries=None):
                 if "google.com/search" in url:
                     return '<a href="https://lyrics.example/song">result</a>'
                 return """
@@ -664,6 +670,24 @@ class LyricseeCoreTests(unittest.TestCase):
             core.time, "sleep"
         ) as sleep, self.assertRaises(HTTPError):
             core.HttpClient().get_text("https://example.com")
+        self.assertEqual(urlopen.call_count, 4)
+        self.assertEqual(sleep.call_args_list, [mock.call(1.0), mock.call(2.0), mock.call(4.0)])
+
+    def test_http_retry_scope_can_disable_search_page_retries_but_keep_lrclib_retries(self):
+        core = load_core()
+        failures = [URLError("offline")]
+        with mock.patch.object(core, "urlopen", side_effect=failures) as urlopen, mock.patch.object(
+            core.time, "sleep"
+        ) as sleep, self.assertRaises(URLError):
+            core.HttpClient().get_text("https://lyrics.example/page", retries=1)
+        self.assertEqual(urlopen.call_count, 1)
+        self.assertEqual(sleep.call_args_list, [])
+
+        failures = [URLError("offline") for _ in range(4)]
+        with mock.patch.object(core, "urlopen", side_effect=failures) as urlopen, mock.patch.object(
+            core.time, "sleep"
+        ) as sleep, self.assertRaises(URLError):
+            core.HttpClient().get_json("https://lrclib.net/api/search", retries=4)
         self.assertEqual(urlopen.call_count, 4)
         self.assertEqual(sleep.call_args_list, [mock.call(1.0), mock.call(2.0), mock.call(4.0)])
 
