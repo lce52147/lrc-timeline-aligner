@@ -213,6 +213,7 @@ def _expand_inputs(values: list[str]) -> list[Path]:
 
 def _bk_stems(bk_dir: Path) -> set[str]:
     if not bk_dir.is_dir():
+        print(f"BK dir not found: {bk_dir}", file=sys.stderr)
         return set()
     return {path.stem.casefold() for path in bk_dir.glob("*.lrc") if path.is_file()}
 

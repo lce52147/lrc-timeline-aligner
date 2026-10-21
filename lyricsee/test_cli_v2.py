@@ -186,6 +186,13 @@ class LyricseeV2CliTests(unittest.TestCase):
             self.assertTrue(reports[0].is_file())
             self.assertTrue(reports[1].is_file())
 
+    def test_missing_bk_dir_warns_on_stderr(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "missing-bk"
+            with redirect_stderr(StringIO()) as stderr:
+                self.assertEqual(cli._bk_stems(missing), set())
+            self.assertEqual(stderr.getvalue(), f"BK dir not found: {missing}\n")
+
     def test_m3u8_duplicate_is_reported_without_second_processing(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
