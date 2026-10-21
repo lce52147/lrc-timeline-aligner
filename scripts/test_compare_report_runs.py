@@ -55,6 +55,20 @@ class CompareReportRunsTest(unittest.TestCase):
             self.assertEqual(result["totals"]["run"]["songs"], 1)
             self.assertEqual(result["totals"]["run"]["within_20cs"], 1)
 
+    def test_bilingual_bk_counts_each_timestamp_once_and_matches_loosely(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run, bk = root / "run", root / "bk"
+            run.mkdir(); bk.mkdir()
+            (bk / "07. Ever Be My Love.lrc").write_text(
+                "[00:00.00]title\n" + "\n".join(f"{tag(t)} orig\n{tag(t)} 翻譯" for t in (100, 200, 300)), encoding="utf-8")
+            self._report(run, "07. Ever be my love--8140201fbb", (0, 100, 200, 330), ("trusted",) * 4,
+                         root / "o.lrc", root / "07. Ever be my love.flac")
+            result = crr.compare(run, run, bk)
+            self.assertEqual(result["skipped"], [])
+            self.assertEqual(result["totals"]["run"]["lines"], 4)
+            self.assertEqual(result["totals"]["run"]["within_20cs"], 3)
+
     def test_ambiguous_bk_without_folder_hint_is_skipped(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -72,12 +72,24 @@ def times_of(report: dict) -> list[int | None]:
 
 
 def lrc_times(path: Path) -> list[int]:
-    times = []
+    """Timestamps of a checked LRC, one per sung line.
+
+    Checked references are bilingual: the translation repeats the original line's
+    timestamp on the next line, so consecutive lines with the same tag count once.
+    """
+    times: list[int] = []
     for line in path.read_text(encoding="utf-8-sig", errors="replace").splitlines():
         cs = tag_cs(line)
-        if cs is not None:
-            times.append(cs)
+        if cs is None or (times and times[-1] == cs):
+            continue
+        times.append(cs)
     return times
+
+
+def loose_key(name: str) -> str:
+    """Case/punctuation-insensitive key for matching a BK file name."""
+    stem = name[:-4] if name.lower().endswith(".lrc") else name
+    return re.sub(r"[\W_]+", "", stem, flags=re.UNICODE).casefold()
 
 
 def reference_names(report: dict, report_name: str) -> list[str]:
@@ -97,8 +109,12 @@ def find_reference(report: dict, report_name: str, bk_index: dict[str, list[Path
     expected = len(report["assignments"])
     audio = report.get("audio_path")
     folder = Path(audio).parent.name if isinstance(audio, str) and audio else ""
+    loose_index: dict[str, list[Path]] = {}
+    for paths in bk_index.values():
+        for path in paths:
+            loose_index.setdefault(loose_key(path.name), []).append(path)
     for name in reference_names(report, report_name):
-        candidates = bk_index.get(name, [])
+        candidates = bk_index.get(name) or loose_index.get(loose_key(name), [])
         if not candidates:
             continue
         if len(candidates) > 1:
