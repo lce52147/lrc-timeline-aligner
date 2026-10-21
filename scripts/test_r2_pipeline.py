@@ -556,6 +556,18 @@ class R2PipelineTests(unittest.TestCase):
 
 
 
+class TrackLabelFallbackTests(unittest.TestCase):
+    def test_missing_ffprobe_falls_back_to_stem(self) -> None:
+        import auto_lrc
+        from unittest import mock
+
+        def missing(args, **kwargs):
+            raise auto_lrc.LrcError(f"Command not found: {args[0]}")
+
+        with mock.patch.object(auto_lrc, "run_command", side_effect=missing):
+            self.assertEqual(auto_lrc.audio_track_labels(Path("x/song name.flac")), ("", "song name"))
+
+
 class ReviewerCacheRegressionTests(unittest.TestCase):
     def test_same_title_different_audio_directories_have_distinct_work_dirs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

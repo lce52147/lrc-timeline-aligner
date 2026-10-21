@@ -5473,19 +5473,26 @@ def probe_duration(audio_path: Path) -> float:
 
 
 def audio_track_labels(audio_path: Path) -> tuple[str, str]:
-    """Read display-safe artist/title labels from FLAC metadata when present."""
-    proc = run_command(
-        [
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "format_tags=TITLE,ARTIST",
-            "-of",
-            "json",
-            str(audio_path),
-        ]
-    )
+    """Read display-safe artist/title labels from FLAC metadata when present.
+
+    The labels only drive title-card removal, so a missing ffprobe degrades to
+    the file stem exactly like a failed probe instead of aborting the run.
+    """
+    try:
+        proc = run_command(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format_tags=TITLE,ARTIST",
+                "-of",
+                "json",
+                str(audio_path),
+            ]
+        )
+    except LrcError:
+        return "", audio_path.stem
     if proc.returncode != 0:
         return "", audio_path.stem
     try:
