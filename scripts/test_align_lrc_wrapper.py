@@ -17,6 +17,8 @@ class AlignLrcWrapperSafetyTests(unittest.TestCase):
         self.assertIn("songs queued", source)
         self.assertIn("Format-Elapsed", source)
         self.assertIn('$summaryScript = Join-Path $scriptDir "scripts\\lrc_batch_summary.py"', source)
+        self.assertIn('"--paths-file", $summaryPathsFile', source)
+        self.assertNotIn("$inputRoot", source)
         self.assertIn('"--since", $runStartIso', source)
         self.assertIn('"--report-dir", $ReportDirectory', source)
         self.assertIn('"--work-dir", $scriptDir', source)

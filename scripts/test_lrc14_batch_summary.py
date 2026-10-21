@@ -511,6 +511,24 @@ class BatchSummaryTests(unittest.TestCase):
         code, _stdout, _stderr = self._main([str(empty), "--no-json"])
         self.assertEqual(code, 2)
 
+    def test_10b_paths_file_limits_summary_to_queued_songs(self) -> None:
+        album = self.root / "queued"
+        album.mkdir()
+        queued = self._audio("queued/song.flac")
+        self._audio("queued/other.flac")
+        self._report(queued)
+        listing = self.root / "inputs.txt"
+        listing.write_text("\ufeff" + str(queued) + "\n\n", encoding="utf-8")
+        json_out = self.root / "queued.batch-summary.json"
+        code, _stdout, _stderr = self._main([
+            "--paths-file", str(listing),
+            "--report-dir", str(self.report_dir), "--work-dir", str(self.work_dir),
+            "--json-out", str(json_out),
+        ])
+        self.assertEqual(code, 0)
+        payload = json.loads(json_out.read_text(encoding="utf-8"))
+        self.assertEqual([row["audio"] for row in payload["songs"]], [str(queued.resolve())])
+
     def test_11_eta_empty_and_median(self) -> None:
         batch = _module()
         self.assertEqual(batch.format_eta([], 9), "n/a")

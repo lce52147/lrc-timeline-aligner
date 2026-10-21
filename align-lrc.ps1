@@ -270,7 +270,6 @@ elseif ($FailOnReviewRequired -or $MinTrustedPercent -ge 0) {
     Write-Host "Strict gate: fail-on-review=$FailOnReviewRequired min-trusted=$MinTrustedPercent" -ForegroundColor Yellow
 }
 
-$inputRoot = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($Paths[0]))
 $runStartIso = [DateTimeOffset]::UtcNow.ToString("o")
 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 $songCount = $Paths.Count
@@ -358,9 +357,12 @@ if (Test-Path -LiteralPath $summaryScript -PathType Leaf) {
     try {
         $ErrorActionPreference = "Continue"
         $PSNativeCommandUseErrorActionPreference = $false
+        # Summarize only the songs queued in this run, not every FLAC beside them.
+        $summaryPathsFile = Join-Path $ReportDirectory "batch-summary-inputs.txt"
+        [System.IO.File]::WriteAllLines($summaryPathsFile, [string[]]@($Paths | ForEach-Object { [System.IO.Path]::GetFullPath($_) }), [System.Text.UTF8Encoding]::new($false))
         $summaryArgs = @(
             $summaryScript,
-            $inputRoot,
+            "--paths-file", $summaryPathsFile,
             "--since", $runStartIso,
             "--report-dir", $ReportDirectory,
             "--work-dir", $scriptDir,

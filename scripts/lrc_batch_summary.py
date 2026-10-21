@@ -442,7 +442,11 @@ def build_parser():
         description="Summarize existing per-song LRC reports without modifying them.",
         epilog="Default output is each FLAC with .lrc; wrapper -Output runs are out of scope.",
     )
-    parser.add_argument("paths", metavar="PATH", nargs="+")
+    parser.add_argument("paths", metavar="PATH", nargs="*")
+    parser.add_argument(
+        "--paths-file", type=Path,
+        help="UTF-8 file with one queued FLAC path per line (used by align-lrc.ps1).",
+    )
     parser.add_argument("--report-dir", type=Path, default=DEFAULT_REPORT_DIR)
     parser.add_argument("--work-dir", type=Path, default=DEFAULT_WORK_DIR)
     parser.add_argument("--since", type=_parse_since)
@@ -456,9 +460,20 @@ def main(argv=None):
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is not None:
             reconfigure(errors="replace")
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    paths = list(args.paths)
+    if args.paths_file is not None:
+        try:
+            listed = args.paths_file.read_text(encoding="utf-8-sig").splitlines()
+        except OSError as exc:
+            print(f"ERROR: cannot read --paths-file: {exc}", file=sys.stderr)
+            return 2
+        paths.extend(line.strip() for line in listed if line.strip())
+    elif not paths:
+        parser.error("give PATH arguments or --paths-file")
     try:
-        audios = _expand_inputs(args.paths)
+        audios = _expand_inputs(paths)
         if not audios:
             print("ERROR: no FLAC inputs", file=sys.stderr)
             return 2
