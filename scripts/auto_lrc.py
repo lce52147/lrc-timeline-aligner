@@ -28270,7 +28270,7 @@ def assignment_timing_is_trusted(item: object) -> bool:
     # content confidence is checked separately by assignment_is_trusted().
     if item.get("timing_trusted"):
         return True
-    return not bool(item.get("review_required"))
+    return not bool(item.get("review_required")) and not bool(item.get("weak_review_evidence"))
 
 
 
@@ -28416,6 +28416,7 @@ class FinalLineTrustDecision:
     timing_trusted: bool
     review_required: bool
     reason_codes: tuple[str, ...]
+    weak_evidence: bool = False
 
 
 def final_line_trust(
@@ -28456,7 +28457,7 @@ def final_line_trust(
     trusted = bool(assignment_timing_is_trusted(assignment) and not review and not weak)
     if not trusted and not reasons:
         reasons.append("timing-evidence-unverified")
-    return FinalLineTrustDecision(trusted, review, tuple(reasons))
+    return FinalLineTrustDecision(trusted, review, tuple(reasons), weak)
 
 
 def _silent_risk_rule_applies(assignments: list[object], index: int) -> bool:
@@ -28625,6 +28626,9 @@ def update_report_confidence_metrics(
         item["content_trusted"] = content_trusted
         item["timing_audit_trusted"] = timing_trusted
         item["final_trust_reason_codes"] = list(decision.reason_codes)
+        # WEAK evidence keeps the row untrusted for every later pass exactly as
+        # the old REVIEW flag did, so Central/consensus inputs do not change.
+        item["weak_review_evidence"] = decision.weak_evidence
         if central_committed:
             if not isinstance(central_rows, list) or not isinstance(central_rows[index], dict):
                 raise LrcError("Verified Central report lost its timing row")
@@ -37072,7 +37076,10 @@ def _validate_backend_provenance_projection(
                 if not 0 <= entry_index < len(assignments):
                     raise LrcError("Cross-backend material review entry is out of range")
                 assignment = assignments[entry_index]
-                if not isinstance(assignment, dict) or not assignment.get("review_required"):
+                if not isinstance(assignment, dict) or not (
+                    assignment.get("review_required")
+                    or "unresolved-material-alternative" in (assignment.get("final_trust_reason_codes") or [])
+                ):
                     raise LrcError("Cross-backend material review was not propagated")
 
 
