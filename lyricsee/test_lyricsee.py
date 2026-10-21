@@ -421,53 +421,98 @@ class LyricseeCoreTests(unittest.TestCase):
         self.assertEqual(candidates[0].title, "Song - Lyrics Site")
         self.assertEqual(candidates[0].artist, "")
 
-    def test_google_discovery_uses_logged_in_chrome_when_http_results_are_blocked(self):
-        core = load_core()
-
-        class Client:
-            def get_text(self, url, params=None):
-                if "google.com/search" in url:
-                    return '<a href="https://support.google.com/websearch">blocked</a>'
-                return "<p>君の声<br>你的聲音<br>夜を越える<br>跨越黑夜</p>"
-
-            def google_search_urls(self, identity):
-                return ["https://lyrics.example/from-chrome"]
-
-        urls, candidates = core.fetch_google_candidates(core.TrackIdentity("Song", "Artist"), Client())
-        self.assertEqual(urls, ["https://lyrics.example/from-chrome"])
-        self.assertEqual(len(candidates), 1)
-
-    def test_parse_chrome_snapshot_extracts_external_result_urls(self):
-        core = load_core()
-        snapshot = """
-        - link "result" [ref=e43, url=https://home.example/song]
-        - link "google" [ref=e44, url=https://www.google.com/search?q=song]
-        - link "result duplicate" [ref=e45, url=https://home.example/song]
-        """
-        self.assertEqual(core.parse_chrome_snapshot_urls(snapshot), ["https://home.example/song"])
-
-    def test_chrome_google_does_not_capture_child_output_with_pipes(self):
+    def test_google_search_uses_isolated_headless_chrome_and_cleans_profile(self):
         core = load_core()
         calls = []
+        profiles = []
 
         def runner(args, **kwargs):
             calls.append((args, kwargs))
-            if "snapshot" in args:
-                kwargs["stdout"].write(
-                    b'- link "result" [ref=e1, url=https://lyrics.example/song]\n'
-                )
-                kwargs["stdout"].flush()
-            return subprocess.CompletedProcess(args, 0)
+            profile_arg = next(arg for arg in args if arg.startswith("--user-data-dir="))
+            profile = Path(profile_arg.split("=", 1)[1])
+            profiles.append(profile)
+            self.assertTrue(profile.is_dir())
+            return subprocess.CompletedProcess(
+                args,
+                0,
+                stdout=b'<a href="https://lyrics.example/song">result</a>',
+            )
 
         client = core.HttpClient()
-        with mock.patch.object(core.shutil, "which", return_value="chrome-use"), mock.patch.object(
-            core.subprocess, "run", side_effect=runner
-        ):
+        with mock.patch.dict(core.os.environ, {"LYRICSEE_CHROME": r"C:\fake\chrome.exe"}, clear=False), mock.patch.object(
+            core.Path, "is_file", return_value=True
+        ), mock.patch.object(core.subprocess, "run", side_effect=runner):
             urls = client.google_search_urls(core.TrackIdentity("Song", "Artist"))
 
         self.assertEqual(urls, ["https://lyrics.example/song"])
-        self.assertIs(calls[0][1]["stdout"], subprocess.DEVNULL)
-        self.assertIsNot(calls[1][1]["stdout"], subprocess.PIPE)
+        self.assertEqual(len(calls), 1)
+        args, kwargs = calls[0]
+        self.assertIn("--headless=new", args)
+        self.assertIn("--dump-dom", args)
+        self.assertTrue(any(arg.startswith("--user-data-dir=") for arg in args))
+        self.assertIs(kwargs["stdout"], subprocess.PIPE)
+        self.assertIs(kwargs["stderr"], subprocess.DEVNULL)
+        self.assertEqual(kwargs["timeout"], 30)
+        self.assertFalse(kwargs["check"])
+        joined = "\n".join(args)
+        for forbidden in (
+            "--remote-debugging-port",
+            "--remote-debugging-address",
+            "chrome-use",
+            r"Google\Chrome\User Data",
+            "DCTEST",
+        ):
+            self.assertNotIn(forbidden, joined)
+        self.assertEqual(len(profiles), 1)
+        self.assertFalse(profiles[0].exists())
+
+    def test_google_search_returns_empty_without_chrome(self):
+        core = load_core()
+        client = core.HttpClient()
+        with mock.patch.dict(core.os.environ, {}, clear=True), mock.patch.object(
+            core.Path, "is_file", return_value=False
+        ), mock.patch.object(core.shutil, "which", return_value=None), mock.patch.object(
+            core.subprocess, "run"
+        ) as runner:
+            self.assertEqual(client.google_search_urls(core.TrackIdentity("Song", "Artist")), [])
+        runner.assert_not_called()
+
+    def test_google_search_returns_empty_on_timeout_or_failed_chrome(self):
+        core = load_core()
+        client = core.HttpClient()
+        identity = core.TrackIdentity("Song", "Artist")
+        common = [
+            mock.patch.dict(core.os.environ, {"LYRICSEE_CHROME": r"C:\fake\chrome.exe"}, clear=False),
+            mock.patch.object(core.Path, "is_file", return_value=True),
+        ]
+        with common[0], common[1], mock.patch.object(
+            core.subprocess,
+            "run",
+            side_effect=subprocess.TimeoutExpired(cmd="chrome", timeout=30),
+        ):
+            self.assertEqual(client.google_search_urls(identity), [])
+        with mock.patch.dict(core.os.environ, {"LYRICSEE_CHROME": r"C:\fake\chrome.exe"}, clear=False), mock.patch.object(
+            core.Path, "is_file", return_value=True
+        ), mock.patch.object(
+            core.subprocess,
+            "run",
+            return_value=subprocess.CompletedProcess(["chrome"], 1, stdout=b"ignored"),
+        ):
+            self.assertEqual(client.google_search_urls(identity), [])
+
+    def test_collect_candidates_marks_google_search_blocked_when_no_urls(self):
+        core = load_core()
+
+        def lrclib(identity, client):
+            raise RuntimeError("offline")
+
+        result = core.collect_candidates(
+            core.TrackIdentity("Song", "Artist"),
+            object(),
+            lrclib_fetcher=lrclib,
+            google_fetcher=lambda identity, client: ([], []),
+        )
+        self.assertIn("google: search_blocked", result.errors)
 
     def test_http_client_decompresses_gzip_response_before_decoding(self):
         core = load_core()

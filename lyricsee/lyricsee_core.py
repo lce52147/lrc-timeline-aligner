@@ -197,18 +197,6 @@ def parse_google_results(document: str) -> list[str]:
     return results
 
 
-def parse_chrome_snapshot_urls(snapshot: str) -> list[str]:
-    results: list[str] = []
-    seen: set[str] = set()
-    for match in re.finditer(r"\burl=(https?://[^\]\s]+)", snapshot):
-        target = _google_target(match.group(1).rstrip(","))
-        if not target or target in seen:
-            continue
-        seen.add(target)
-        results.append(target)
-    return results
-
-
 class _VisibleTextParser(HTMLParser):
     _BREAK_TAGS = {
         "br",
@@ -768,6 +756,8 @@ def collect_candidates(
     try:
         google_urls, google_candidates = google_fetcher(identity, client)
         candidates.extend(google_candidates)
+        if not google_urls:
+            errors.append("google: search_blocked")
     except Exception as exc:
         errors.append(f"google: {exc}")
 
@@ -1165,36 +1155,41 @@ class HttpClient:
         return result
 
     def google_search_urls(self, identity: TrackIdentity) -> list[str]:
-        executable = shutil.which("chrome-use")
+        configured = os.environ.get("LYRICSEE_CHROME", "").strip()
+        executable: str | None = None
+        if configured and Path(configured).is_file():
+            executable = configured
+        else:
+            default = Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
+            if default.is_file():
+                executable = str(default)
+            else:
+                executable = shutil.which("chrome")
         if not executable:
             return []
+
         search_url = google_search_url(identity)
-        session = "lyricsee-google"
         try:
-            opened = subprocess.run(
-                [executable, "open", search_url, "--session", session],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=30,
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            return []
-        if opened.returncode != 0:
-            return []
-        with tempfile.TemporaryFile(mode="w+b") as output:
-            try:
-                snapshot = subprocess.run(
-                    [executable, "snapshot", "-i", "-u", "--session", session],
-                    stdout=output,
+            with tempfile.TemporaryDirectory(prefix="lyricsee-chrome-") as profile:
+                completed = subprocess.run(
+                    [
+                        executable,
+                        "--headless=new",
+                        f"--user-data-dir={profile}",
+                        "--no-first-run",
+                        "--no-default-browser-check",
+                        "--disable-gpu",
+                        "--dump-dom",
+                        search_url,
+                    ],
+                    stdout=subprocess.PIPE,
                     stderr=subprocess.DEVNULL,
                     timeout=30,
                     check=False,
                 )
-            except (OSError, subprocess.TimeoutExpired):
-                return []
-            if snapshot.returncode != 0:
-                return []
-            output.seek(0)
-            snapshot_text = output.read().decode("utf-8", errors="replace")
-        return parse_chrome_snapshot_urls(snapshot_text)
+                if completed.returncode != 0:
+                    return []
+                document = (completed.stdout or b"").decode("utf-8", errors="replace")
+                return parse_google_results(document)
+        except (OSError, subprocess.TimeoutExpired):
+            return []
