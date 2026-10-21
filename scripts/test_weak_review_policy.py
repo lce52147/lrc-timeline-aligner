@@ -39,11 +39,12 @@ def _report() -> dict[str, object]:
         _row(2, [WEAK, STRONG], review=True),
         _row(3, [WEAK, "insufficient-minimum-proof"], review=True),
         _row(4, [], review=False),
+        _row(5, [WEAK, "no-strict-opening-proof"], review=True),
     ]
     rows[3]["verification_status"] = "trusted"
     rows[3]["overall_trusted"] = True
     report: dict[str, object] = {
-        "timing_entries": 4,
+        "timing_entries": 5,
         "assignments": rows,
         "suspicious_alignments": [
             {"entry": 1, "flags": [WEAK], "severity": "medium", "review_required": True},
@@ -68,7 +69,7 @@ class WeakReviewPolicyTests(unittest.TestCase):
 
     def test_only_weak_only_rows_are_demoted(self) -> None:
         report = _report()
-        self.assertEqual(report["review_required_count"], 3)
+        self.assertEqual(report["review_required_count"], 4)
         demoted = auto_lrc.apply_weak_review_policy(report)
         self.assertEqual(demoted, [1, 3])
         rows = report["assignments"]
@@ -79,8 +80,10 @@ class WeakReviewPolicyTests(unittest.TestCase):
         self.assertEqual(rows[1]["verification_status"], "review-required")
         self.assertEqual(rows[2]["verification_status"], "unverified")
         self.assertEqual(rows[3]["verification_status"], "trusted")
-        self.assertEqual(report["review_required_count"], 1)
-        self.assertEqual(report["verification_counts"], {"trusted": 1, "unverified": 2, "review_required": 1})
+        # a non-weak companion code (outside the chosen cut) keeps the row in REVIEW
+        self.assertEqual(rows[4]["verification_status"], "review-required")
+        self.assertEqual(report["review_required_count"], 2)
+        self.assertEqual(report["verification_counts"], {"trusted": 1, "unverified": 2, "review_required": 2})
         self.assertEqual(report["unverified_count"], 2)
         self.assertFalse(report["suspicious_alignments"][0]["review_required"])
         self.assertTrue(report["suspicious_alignments"][1]["review_required"])
@@ -104,7 +107,7 @@ class WeakReviewPolicyTests(unittest.TestCase):
             path = Path(tmp) / "x.align-report.json"
             auto_lrc.write_alignment_report(path, report)
             saved = json.loads(path.read_text(encoding="utf-8"))
-        self.assertEqual(saved["review_required_count"], 1)
+        self.assertEqual(saved["review_required_count"], 2)
         self.assertEqual(saved["assignments"][0]["verification_status"], "unverified")
         self.assertEqual(saved[auto_lrc.WEAK_REVIEW_POLICY_KEY]["demoted_entries"], [1, 3])
 

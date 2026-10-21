@@ -28523,6 +28523,14 @@ WEAK_REVIEW_CODES = frozenset({
     "recurrence-uncorroborated",
     "previous-tail-overlap",
 })
+# Non-review codes that sat on the ladder's chosen side of the cut.  The ladder
+# demotes a row only when EVERY reason code it carries is on that side, so a
+# row with a weak REVIEW code plus e.g. no-strict-opening-proof stays in REVIEW.
+WEAK_COMPANION_CODES = frozenset({
+    "F4-ctc-final-disagreement",
+    "insufficient-minimum-proof",
+    "previous-tail-ownership-unknown",
+})
 WEAK_REVIEW_POLICY_KEY = "weak_review_policy"
 
 
@@ -28530,13 +28538,10 @@ def _weak_review_demotes(item: dict[str, object]) -> bool:
     if item.get("verification_status") != "review-required" and not item.get("review_required"):
         return False
     codes = item.get("final_trust_reason_codes")
-    if not isinstance(codes, list):
+    if not isinstance(codes, list) or not codes:
         return False
-    review_codes = {
-        str(code) for code in codes
-        if FINAL_LINE_TRUST_CLASSIFICATION.get(str(code)) == "REVIEW"
-    }
-    return bool(review_codes) and review_codes <= WEAK_REVIEW_CODES
+    code_set = {str(code) for code in codes}
+    return bool(code_set & WEAK_REVIEW_CODES) and code_set <= WEAK_REVIEW_CODES | WEAK_COMPANION_CODES
 
 
 def apply_weak_review_policy(report: dict[str, object]) -> list[int]:
@@ -28595,7 +28600,7 @@ def apply_weak_review_policy(report: dict[str, object]) -> list[int]:
     previous = policy.get("demoted_entries") if isinstance(policy, dict) else []
     report[WEAK_REVIEW_POLICY_KEY] = {
         "schema": 1,
-        "weak_codes": sorted(WEAK_REVIEW_CODES),
+        "weak_codes": sorted(WEAK_REVIEW_CODES | WEAK_COMPANION_CODES),
         "demoted_entries": sorted(set(previous if isinstance(previous, list) else []) | entries),
     }
     finalize_review_summary(report)
