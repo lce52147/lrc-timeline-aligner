@@ -309,13 +309,20 @@ def _existing_row(index: int, audio_path: Path, output_root: Path, status: str, 
 
 
 def _oogg_error(exc: Exception) -> str:
-    if isinstance(exc, HTTPError):
-        url = str(getattr(exc, "url", "") or getattr(exc, "filename", ""))
-        if url.rstrip("/").endswith("/v1/models"):
+    current: BaseException | None = exc
+    for _ in range(5):
+        if isinstance(current, HTTPError):
+            url = str(getattr(current, "url", "") or getattr(current, "filename", ""))
+            if url.rstrip("/").endswith("/v1/models"):
+                return "oogg_unreachable"
+            if current is exc:
+                return f"oogg_http_{current.code}"
+        elif isinstance(current, (URLError, ConnectionError, TimeoutError, ConnectionResetError)):
             return "oogg_unreachable"
-        return f"oogg_http_{exc.code}"
-    if isinstance(exc, (URLError, ConnectionError, TimeoutError)):
-        return "oogg_unreachable"
+        next_exc = current.__cause__ or current.__context__ if current is not None else None
+        if next_exc is None or next_exc is current:
+            break
+        current = next_exc
     return f"{type(exc).__name__}: {str(exc)[:240]}"
 
 
@@ -353,6 +360,22 @@ def _clear_oogg_endpoint_cache(client: HttpClient, endpoints: tuple[str, ...]) -
     cache = getattr(client, "_lyricsee_oogg_target_cache", None)
     if isinstance(cache, dict):
         cache.pop(endpoints, None)
+
+
+def _maybe_reprobe_oogg(
+    index: int,
+    client: HttpClient,
+    endpoints: tuple[str, ...],
+    state: dict[str, object],
+) -> None:
+    if not state.get("disabled") or index % 10 != 0:
+        return
+    _clear_oogg_endpoint_cache(client, endpoints)
+    target = _select_oogg_endpoint(client, endpoints)
+    if target is not None:
+        state["disabled"] = False
+        state["consecutive_failures"] = 0
+        print(f"OOGG back online: {target.endpoint}", file=sys.stderr)
 
 
 def _process_track(
@@ -427,6 +450,7 @@ def _process_track(
             validate_output(original, selected, require_translation=False)
             attach_verification(selected, evidence, translation_method="none")
         else:
+            _maybe_reprobe_oogg(index, client, config.oogg_endpoints, oogg_state)
             try:
                 selected = choose_verified_web_translation(identity, original, collected.candidates)
                 validate_output(original, selected, require_translation=True)
@@ -614,7 +638,14 @@ def render_markdown(rows: list[dict]) -> str:
 
 
 def _save_run_reports(output_root: Path, rows: list[dict]) -> tuple[Path, Path]:
+    reports = _new_run_report_paths(output_root)
+    _write_run_reports(reports, rows)
+    return reports
+
+
+def _new_run_report_paths(output_root: Path) -> tuple[Path, Path]:
     runs_dir = output_root / "report" / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     json_path = runs_dir / f"{stamp}_run.json"
     md_path = runs_dir / f"{stamp}_run.md"
@@ -623,9 +654,13 @@ def _save_run_reports(output_root: Path, rows: list[dict]) -> tuple[Path, Path]:
         json_path = runs_dir / f"{stamp}_{suffix:02d}_run.json"
         md_path = runs_dir / f"{stamp}_{suffix:02d}_run.md"
         suffix += 1
+    return json_path, md_path
+
+
+def _write_run_reports(reports: tuple[Path, Path], rows: list[dict]) -> None:
+    json_path, md_path = reports
     _atomic_write_text(json_path, json.dumps(rows, ensure_ascii=False, indent=2) + "\n")
     _atomic_write_text(md_path, render_markdown(rows))
-    return json_path, md_path
 
 
 def run(args: argparse.Namespace) -> tuple[list[dict], tuple[Path, Path] | None]:
@@ -637,12 +672,20 @@ def run(args: argparse.Namespace) -> tuple[list[dict], tuple[Path, Path] | None]
     eligible = 0
     client: HttpClient | None = None
     oogg_state: dict[str, object] = {"consecutive_failures": 0, "disabled": False}
+    reports = None if args.dry_run else _new_run_report_paths(config.output_root)
+    if reports is not None:
+        _write_run_reports(reports, rows)
+
+    def append_row(row: dict) -> None:
+        rows.append(row)
+        if reports is not None:
+            _write_run_reports(reports, rows)
 
     for index, raw_path in enumerate(tracks, start=1):
         path = raw_path.expanduser()
         key = str(path.resolve()).casefold()
         if key in seen:
-            rows.append(
+            append_row(
                 _base_row(
                     index,
                     path,
@@ -654,7 +697,7 @@ def run(args: argparse.Namespace) -> tuple[list[dict], tuple[Path, Path] | None]
         seen[key] = index
 
         if path.stem.casefold() in bk_stems:
-            rows.append(_base_row(index, path, status="skipped_bk"))
+            append_row(_base_row(index, path, status="skipped_bk"))
             continue
 
         existing_status, payload, replace_existing = _inspect_existing(
@@ -664,7 +707,7 @@ def run(args: argparse.Namespace) -> tuple[list[dict], tuple[Path, Path] | None]
             no_translate=args.no_translate,
         )
         if existing_status:
-            rows.append(_existing_row(index, path, config.output_root, existing_status, payload))
+            append_row(_existing_row(index, path, config.output_root, existing_status, payload))
             continue
 
         if args.limit is not None and eligible >= args.limit:
@@ -672,7 +715,7 @@ def run(args: argparse.Namespace) -> tuple[list[dict], tuple[Path, Path] | None]
         eligible += 1
 
         if args.dry_run:
-            rows.append(_base_row(index, path, status="pending"))
+            append_row(_base_row(index, path, status="pending"))
             continue
 
         if client is None:
@@ -689,14 +732,15 @@ def run(args: argparse.Namespace) -> tuple[list[dict], tuple[Path, Path] | None]
             replace_existing=replace_existing,
             client=client,
         )
-        rows.append(row)
-        print(f"{index}/{len(tracks)} {row['status']} {path}")
+        append_row(row)
+        print(f"{index}/{len(tracks)} {row['status']} {path}", flush=True)
 
     if args.dry_run:
         print(render_markdown(rows), end="")
         return rows, None
 
-    reports = _save_run_reports(config.output_root, rows)
+    assert reports is not None
+    _write_run_reports(reports, rows)
     print(f"Run JSON: {reports[0]}")
     print(f"Run Markdown: {reports[1]}")
     return rows, reports

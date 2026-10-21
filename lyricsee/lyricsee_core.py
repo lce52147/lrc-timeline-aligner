@@ -800,6 +800,7 @@ def fetch_google_candidates(
         search_document = client.get_text(
             "https://www.google.com/search",
             params={"q": query, "udm": "14"},
+            retries=2,
             headers={
                 "User-Agent": SEARCH_USER_AGENT,
                 "Accept-Language": "zh-TW,ja;q=0.8",
@@ -818,6 +819,7 @@ def fetch_google_candidates(
         try:
             ddg_document = client.get_text(
                 ddg_url,
+                retries=2,
                 headers={
                     "User-Agent": SEARCH_USER_AGENT,
                     "Accept-Language": "zh-TW,ja;q=0.8",
@@ -843,7 +845,7 @@ def fetch_google_candidates(
     candidates: list[LyricCandidate] = []
     for url in urls[:max_pages]:
         try:
-            document = client.get_text(url)
+            document = client.get_text(url, retries=1)
             page_title = _page_title(document)
             if not _page_matches_identity(identity, page_title):
                 continue
@@ -1261,7 +1263,10 @@ class HttpClient:
         payload: dict | None = None,
         timeout: float = 30,
         headers: dict[str, str] | None = None,
+        retries: int = 4,
     ) -> str:
+        if retries < 1:
+            raise ValueError("retries must be at least 1")
         if params:
             separator = "&" if "?" in url else "?"
             url = url + separator + urlencode(params)
@@ -1273,7 +1278,7 @@ class HttpClient:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             request_headers["Content-Type"] = "application/json"
         request = Request(url, data=body, headers=request_headers, method="POST" if body else "GET")
-        for attempt in range(4):
+        for attempt in range(retries):
             self._throttle()
             try:
                 with urlopen(request, timeout=timeout) as response:
@@ -1285,7 +1290,7 @@ class HttpClient:
                     return raw.decode(charset, errors="replace")
             except HTTPError as exc:
                 self._last_request = time.monotonic()
-                if attempt < 3 and exc.code in (429, 502, 503, 504):
+                if attempt < retries - 1 and exc.code in (429, 502, 503, 504):
                     retry_after = exc.headers.get("Retry-After")
                     if retry_after is not None:
                         try:
@@ -1300,7 +1305,7 @@ class HttpClient:
                 raise
             except (URLError, TimeoutError):
                 self._last_request = time.monotonic()
-                if attempt < 3:
+                if attempt < retries - 1:
                     time.sleep(float(2**attempt))
                     self._last_request = time.monotonic() - 0.25
                     continue
@@ -1312,16 +1317,19 @@ class HttpClient:
         url: str,
         params: dict | None = None,
         headers: dict[str, str] | None = None,
+        timeout: float = 20,
+        retries: int = 1,
     ) -> str:
-        return self._request(url, params=params, headers=headers)
+        return self._request(url, params=params, timeout=timeout, headers=headers, retries=retries)
 
     def get_json(
         self,
         url: str,
         params: dict | None = None,
         timeout: float = 30,
+        retries: int = 4,
     ) -> dict | list:
-        return json.loads(self._request(url, params=params, timeout=timeout))
+        return json.loads(self._request(url, params=params, timeout=timeout, retries=retries))
 
     def post_json(self, url: str, payload: dict, timeout: float) -> dict:
         result = json.loads(self._request(url, payload=payload, timeout=timeout))
