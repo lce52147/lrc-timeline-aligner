@@ -80,21 +80,36 @@ def lrc_times(path: Path) -> list[int]:
     return times
 
 
-def find_reference(report: dict, bk_index: dict[str, list[Path]]) -> tuple[Path | None, str]:
+def reference_names(report: dict, report_name: str) -> list[str]:
+    """Candidate BK file names, most specific first: audio stem, report base name, output name."""
+    names = []
+    audio = report.get("audio_path")
+    if isinstance(audio, str) and audio:
+        names.append(Path(audio).stem + ".lrc")
+    names.append(base_name(report_name) + ".lrc")
     output = report.get("output_path")
-    if not isinstance(output, str) or not output:
-        return None, "no-output-path"
-    candidates = bk_index.get(Path(output).name, [])
-    if not candidates:
-        return None, "no-bk-match"
-    if len(candidates) == 1:
-        return candidates[0], "ok"
+    if isinstance(output, str) and output:
+        names.append(Path(output).name)
+    return list(dict.fromkeys(names))
+
+
+def find_reference(report: dict, report_name: str, bk_index: dict[str, list[Path]]) -> tuple[Path | None, str]:
+    expected = len(report["assignments"])
     audio = report.get("audio_path")
     folder = Path(audio).parent.name if isinstance(audio, str) and audio else ""
-    narrowed = [path for path in candidates if path.parent.name == folder]
-    if len(narrowed) == 1:
-        return narrowed[0], "ok"
-    return None, "ambiguous-bk-match"
+    for name in reference_names(report, report_name):
+        candidates = bk_index.get(name, [])
+        if not candidates:
+            continue
+        if len(candidates) > 1:
+            narrowed = [path for path in candidates if path.parent.name == folder]
+            if not narrowed:
+                narrowed = [path for path in candidates if len(lrc_times(path)) == expected]
+            if len(narrowed) != 1:
+                return None, "ambiguous-bk-match:" + name
+            candidates = narrowed
+        return candidates[0], "ok"
+    return None, "no-bk-match:" + "|".join(reference_names(report, report_name))
 
 
 def bucket_counts(deltas: list[int]) -> dict[str, int]:
@@ -147,7 +162,7 @@ def compare(ref_dir: Path, run_dir: Path, bk_dir: Path) -> dict:
     totals = {"ref": empty_totals(), "run": empty_totals()}
     songs, skipped, moved = [], [], []
     for name, ref_report, run_report in pair_reports(ref_reports, run_reports):
-        reference, why = find_reference(run_report, bk_index)
+        reference, why = find_reference(run_report, name, bk_index)
         if reference is None:
             skipped.append({"report": name, "reason": why})
             continue
@@ -155,7 +170,7 @@ def compare(ref_dir: Path, run_dir: Path, bk_dir: Path) -> dict:
         run_score = score(run_report, reference_times)
         ref_score = score(ref_report, reference_times) if ref_report is not None else None
         if run_score is None:
-            skipped.append({"report": name, "reason": "line-count-mismatch-with-bk"})
+            skipped.append({"report": name, "reason": f"line-count-mismatch-with-bk (report {len(run_report['assignments'])} vs bk {len(reference_times)}: {reference})"})
             continue
         entry = {"report": name, "bk": str(reference), "run": {k: v for k, v in run_score.items() if k != "deltas"}}
         totals["run"]["songs"] += 1

@@ -39,9 +39,21 @@ class CompareReportRunsTest(unittest.TestCase):
             self.assertEqual(len(result["moved_lines"]), 1)
             self.assertEqual(result["moved_lines"][0]["shift_cs"], -140)
             self.assertEqual(result["moved_better"], 1)
-            self.assertEqual([item["reason"] for item in result["skipped"]], ["no-bk-match"])
+            self.assertTrue(result["skipped"][0]["reason"].startswith("no-bk-match:02. other.lrc"))
             text = crr.markdown(result)
             self.assertIn("| lines within 0.20 s of BK | 1 | 2 |", text)
+
+    def test_generic_output_name_matches_bk_by_audio_stem(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run, bk = root / "run", root / "bk" / "TUYU"
+            run.mkdir(); bk.mkdir(parents=True)
+            (bk / "01. ふり.lrc").write_text("\n".join(tag(t) + " x" for t in (100, 200)), encoding="utf-8")
+            self._report(run, "01. ふり--c4063ef9f2", (100, 230), ("trusted", "trusted"),
+                         root / "B2_outputs" / "song1" / "song1.lrc", root / "input" / "01. ふり.flac")
+            result = crr.compare(run, run, root / "bk")
+            self.assertEqual(result["totals"]["run"]["songs"], 1)
+            self.assertEqual(result["totals"]["run"]["within_20cs"], 1)
 
     def test_ambiguous_bk_without_folder_hint_is_skipped(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -53,7 +65,7 @@ class CompareReportRunsTest(unittest.TestCase):
                 (bk / sub / "s.lrc").write_text(tag(100) + " a", encoding="utf-8")
             self._report(run, "s--111111", (100,), ("trusted",), root / "s.lrc", root / "s.flac")
             result = crr.compare(run, run, bk)
-            self.assertEqual(result["skipped"][0]["reason"], "ambiguous-bk-match")
+            self.assertTrue(result["skipped"][0]["reason"].startswith("ambiguous-bk-match"))
 
 
 if __name__ == "__main__":
