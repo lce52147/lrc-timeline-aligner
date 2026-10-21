@@ -800,6 +800,10 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         self.assertEqual(len(store.songs), 1)
         payload = json.loads(self._request("GET", "/api/songs", **{"X-Review-Token": self.server.token})[2])
         self.assertNotIn(str(self.root), json.dumps(payload))
+        excluded = json.loads(self._request("GET", "/api/excluded", **{"X-Review-Token": self.server.token})[2])
+        self.assertEqual(set(excluded), {"excluded_files"})
+        self.assertNotIn(str(self.root), json.dumps(excluded))
+        self.assertEqual(self._request("GET", "/api/excluded")[0], 403)
 
     def test_isolation_and_page_contract(self) -> None:
         code = "import sys;sys.path.insert(0,%r);import review_server;print('numpy' in sys.modules,'auto_lrc' in sys.modules)" % str(SCRIPTS)
@@ -815,7 +819,7 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
                        "base_cs:item.row.current_cs", "candidate.cs, sourceText(candidate), 0", "actualDelta = cs - before",
                        "dropped staged edit", "edit.base_cs !== item.row.current_cs", "button.blur()",
                        "event.target?.type !== 'checkbox'", "const conflict = conflicted(item)",
-                       "const loadMessage = await load()", "這筆的時間在暫存後被改過"):
+                       "const loadMessage = await load()", "這筆的時間在暫存後被改過", "/api/excluded", "emptyText()"):
             self.assertIn(marker, page)
         self.assertNotIn("alert(", page)
         self.assertIn("/^[1-3]$/.test(event.key)", page)

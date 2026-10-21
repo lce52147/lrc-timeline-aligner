@@ -561,7 +561,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       if (notes.length) { const note = document.createElement('div'); note.className = 'meta'; note.innerHTML = notes.join(' · '); queue.appendChild(note); }
     }
     if (current) queue.appendChild(rowElement(current));
-    else { const empty = document.createElement('div'); empty.className = 'meta'; empty.textContent = song ? (unreachable(song) ? unreachableText(song) : '這首沒有需要審的句子。') : '沒有歌曲。'; queue.appendChild(empty); }
+    else { const empty = document.createElement('div'); empty.className = 'meta'; empty.textContent = song ? (unreachable(song) ? unreachableText(song) : '這首沒有需要審的句子。') : emptyText(); queue.appendChild(empty); }
     const list = document.createElement('section');
     list.className = 'queue-list glass';
     list.innerHTML = '<h3>本首待審</h3>';
@@ -663,10 +663,17 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     }
     return div;
   }
+  function emptyText() {
+    const skipped = state.excluded || [];
+    if (!skipped.length) return '沒有歌曲：這次沒有找到對齊報告。';
+    return '沒有可審的歌曲：' + skipped.length + ' 份報告被略過（放在 LRC bk 資料夾或報告損壞）：' + skipped.join('、');
+  }
   async function load() {
     try {
       const previousEdits = new Map(state.edits);
       const list = await api('/api/songs');
+      state.excluded = [];
+      if (!list.length) { try { state.excluded = (await api('/api/excluded')).excluded_files || []; } catch (error) { state.excluded = []; } }
       const details = await Promise.all(list.map(async song => {
         try { return await api('/api/song/' + song.index); }
         catch (error) { return Object.assign({}, song, {rows:[], load_error:error.message, read_only:true}); }

@@ -898,6 +898,14 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
                 payload = [{"index": index, "song": song["song"], "rows": len(song["rows"]), "review_rows": song["review_rows"], "read_only": song["read_only"], "read_only_reason": song["read_only_reason"], "load_error": song.get("load_error"), "server_read_only": self.server.store.read_only} for index, song in enumerate(self.server.store.songs)]
             self._json(200, payload)
             return
+        if parsed.path == "/api/excluded":
+            if not self._token_header_ok():
+                self._send(403, b"forbidden\n", "text/plain; charset=utf-8")
+                return
+            with self.server.store.lock:
+                payload = {"excluded_files": [path.name for path in self.server.store.excluded]}
+            self._json(200, payload)
+            return
         match = re.fullmatch(r"/api/song/(\d+)", parsed.path)
         if match:
             if not self._token_header_ok():
