@@ -89,6 +89,7 @@ def lrc_times(path: Path) -> list[int]:
 def loose_key(name: str) -> str:
     """Case/punctuation-insensitive key for matching a BK file name."""
     stem = name[:-4] if name.lower().endswith(".lrc") else name
+    stem = re.sub(r"^\s*\d{1,3}[\s._-]+", "", stem)  # leading track number
     return re.sub(r"[\W_]+", "", stem, flags=re.UNICODE).casefold()
 
 
