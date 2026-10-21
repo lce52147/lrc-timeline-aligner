@@ -59,14 +59,31 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
 .help .box{padding:18px 22px;max-width:440px;width:100%}
 .help table{width:100%;font-size:13px}.help td{padding:4px 6px}.help td:first-child{font-family:ui-monospace,Consolas,monospace;color:var(--accent-2);width:100px}
 .help label{display:block;margin-top:10px;color:var(--fg-2)}
+
+.work{display:flex;flex-direction:column;min-width:0;padding:22px 24px 90px 12px;overflow:auto;align-items:center}
+.column{width:100%;max-width:1120px;display:flex;flex-direction:column;gap:18px}
+.stack{display:flex;flex-direction:column;gap:18px}
+.tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+@media (max-width:900px){.tiles{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.tile{display:flex;align-items:center;gap:14px;padding:16px 18px;border-radius:14px}
+.tile .ico{width:36px;height:36px;border-radius:10px;background:rgba(109,124,255,.18);color:var(--accent-2);display:grid;place-items:center;font-size:15px;flex:none}
+.tile .lbl{font-size:12px;color:var(--fg-3)}.tile .val{font-size:22px;font-weight:600;line-height:1.2}
+.tile .bar{width:100%;margin-top:8px;height:4px}
+.row{padding:24px 26px;gap:16px}
+.lyric{font-size:24px}
+.options{gap:12px}.option{padding:14px 16px}
+.actions{padding-top:4px}
+.queue-list{padding:16px 18px 14px}
+.queue-list h3{margin:0 6px 10px}
+.queue-list .list{display:flex;flex-direction:column;gap:6px}
+.q{padding:10px 14px;border-radius:12px;background:rgba(0,0,0,.22);border:1px solid transparent;grid-template-columns:40px 84px minmax(0,1fr) auto}
+.q:hover{background:rgba(0,0,0,.3)}.q.cur{background:rgba(109,124,255,.14);border-color:rgba(154,166,255,.35);box-shadow:none}
+.q .st{padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.06)}
 </style>
 </head>
 <body>
 <header>
   <span class="song-name" id="song-name">LRC review</span>
-  <span class="tile"><span class="lbl">第</span><span class="val num"><span id="pos">0</span><span class="muted">/</span><span id="pos-total">0</span></span><span class="bar"><i id="pos-bar" style="width:0%"></i></span></span>
-  <span class="tile"><span class="lbl">本首剩</span><span class="val num" id="left-song">0</span></span>
-  <span class="tile"><span class="lbl">全部剩</span><span class="val num" id="left-all">0</span></span>
   <span class="spacer"></span>
   <span id="status" class="status">loading</span>
   <span id="server-mode" class="muted"></span>
@@ -76,7 +93,15 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
 </header>
 <div class="layout">
   <nav class="rail" id="rail"></nav>
-  <main id="queue" class="work"></main>
+  <main class="work"><div class="column">
+    <section class="tiles" id="tiles">
+      <div class="tile glass"><span class="ico">▶</span><div><div class="lbl">這首進度</div><div class="val num"><span id="pos">0</span><span class="muted"> / </span><span id="pos-total">0</span></div><div class="bar"><i id="pos-bar" style="width:0%"></i></div></div></div>
+      <div class="tile glass"><span class="ico">♪</span><div><div class="lbl">本首剩餘</div><div class="val num" id="left-song">0</div></div></div>
+      <div class="tile glass"><span class="ico">☰</span><div><div class="lbl">全部剩餘</div><div class="val num" id="left-all">0</div></div></div>
+      <div class="tile glass"><span class="ico">✎</span><div><div class="lbl">未儲存</div><div class="val num" id="unsaved">0</div></div></div>
+    </section>
+    <div id="queue" class="stack"></div>
+  </div></main>
 </div>
 <div class="playbar glass" id="playbar" hidden><span class="led"></span><span id="playbar-text">播放中</span></div>
 <div class="help" id="help" hidden><div class="box glass">
@@ -486,6 +511,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     document.getElementById('pos-bar').setAttribute?.('style', 'width:' + (rows.length ? 100 * doneHere / rows.length : 0) + '%');
     document.getElementById('left-song').textContent = song ? leftOf(song) : 0;
     document.getElementById('left-all').textContent = state.songs.reduce((sum, item) => sum + leftOf(item), 0);
+    document.getElementById('unsaved').textContent = state.edits.size;
     // rail
     const rail = document.getElementById('rail');
     rail.innerHTML = '<h2>歌曲</h2>';
@@ -514,6 +540,8 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     const list = document.createElement('section');
     list.className = 'queue-list glass';
     list.innerHTML = '<h3>本首待審</h3>';
+    const wrap = document.createElement('div');
+    wrap.className = 'list';
     rows.forEach((item, index) => {
       const row = item.row, edit = editFor(item), done = isDone(item);
       const line = document.createElement('div');
@@ -522,8 +550,9 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       const hint = done ? (edit ? '已改 ' + deltaText(edit.cs - row.current_cs) : '已確認') : edit ? '暫存 ' + deltaText(edit.cs - row.current_cs) : options.length ? (options.every(o => o.kind === 'earlier') ? '提早?' : options.every(o => o.kind === 'later') ? '延後?' : '不一致') : '確認';
       line.innerHTML = '<span class="num">' + row.entry + '</span><span class="num">' + time(working(item)) + '</span><span class="ly">' + esc((row.lyrics || [row.lyric || ''])[0]) + '</span><span class="st">' + hint + '</span>';
       line.addEventListener('click', () => { select(item); state.notice = ''; render(); });
-      list.appendChild(line);
+      wrap.appendChild(line);
     });
+    list.appendChild(wrap);
     queue.appendChild(list);
     const globalReadOnly = serverReadOnly();
     status.textContent = state.error || (state.dirty ? state.edits.size + ' 筆已改，未儲存' : '未變更');

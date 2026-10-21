@@ -574,7 +574,7 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
   console.log(JSON.stringify({
     tabs: rail.children.map(child => child._html.includes('song') && child._html.includes('2/2')),
     key: card.dataset.key,
-    queue: list.children.map(child => child.className),
+    queue: (list.children.find(child => child.className === 'list') || list).children.map(child => child.className),
     audio: html.includes('class="play" data-kind="flac"'),
     nudge: html.includes('data-delta="-10"'),
     options: (html.match(/aria-label="option /g) || []).length,
