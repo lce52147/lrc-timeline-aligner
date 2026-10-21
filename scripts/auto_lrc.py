@@ -28540,8 +28540,9 @@ def _weak_review_demotes(item: dict[str, object]) -> bool:
     codes = item.get("final_trust_reason_codes")
     if not isinstance(codes, list) or not codes:
         return False
-    code_set = {str(code) for code in codes}
-    return bool(code_set & WEAK_REVIEW_CODES) and code_set <= WEAK_REVIEW_CODES | WEAK_COMPANION_CODES
+    # Same rule as the ladder: every code on the row is inside the chosen cut.
+    # (Rows held in REVIEW by Central with only F4 also fall inside it.)
+    return {str(code) for code in codes} <= WEAK_REVIEW_CODES | WEAK_COMPANION_CODES
 
 
 def apply_weak_review_policy(report: dict[str, object]) -> list[int]:

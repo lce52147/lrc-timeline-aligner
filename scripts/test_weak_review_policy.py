@@ -40,11 +40,12 @@ def _report() -> dict[str, object]:
         _row(3, [WEAK, "insufficient-minimum-proof"], review=True),
         _row(4, [], review=False),
         _row(5, [WEAK, "no-strict-opening-proof"], review=True),
+        _row(6, ["F4-ctc-final-disagreement"], review=True),
     ]
     rows[3]["verification_status"] = "trusted"
     rows[3]["overall_trusted"] = True
     report: dict[str, object] = {
-        "timing_entries": 5,
+        "timing_entries": 6,
         "assignments": rows,
         "suspicious_alignments": [
             {"entry": 1, "flags": [WEAK], "severity": "medium", "review_required": True},
@@ -69,9 +70,9 @@ class WeakReviewPolicyTests(unittest.TestCase):
 
     def test_only_weak_only_rows_are_demoted(self) -> None:
         report = _report()
-        self.assertEqual(report["review_required_count"], 4)
+        self.assertEqual(report["review_required_count"], 5)
         demoted = auto_lrc.apply_weak_review_policy(report)
-        self.assertEqual(demoted, [1, 3])
+        self.assertEqual(demoted, [1, 3, 6])
         rows = report["assignments"]
         self.assertEqual(rows[0]["verification_status"], "unverified")
         self.assertFalse(rows[0]["review_required"])
@@ -83,14 +84,14 @@ class WeakReviewPolicyTests(unittest.TestCase):
         # a non-weak companion code (outside the chosen cut) keeps the row in REVIEW
         self.assertEqual(rows[4]["verification_status"], "review-required")
         self.assertEqual(report["review_required_count"], 2)
-        self.assertEqual(report["verification_counts"], {"trusted": 1, "unverified": 2, "review_required": 2})
-        self.assertEqual(report["unverified_count"], 2)
+        self.assertEqual(report["verification_counts"], {"trusted": 1, "unverified": 3, "review_required": 2})
+        self.assertEqual(report["unverified_count"], 3)
         self.assertFalse(report["suspicious_alignments"][0]["review_required"])
         self.assertTrue(report["suspicious_alignments"][1]["review_required"])
         self.assertEqual([row["entry"] for row in report["timing_review_entries"]], [2])
         self.assertEqual(report["low_confidence_entries"][0]["trust_failures"], ["timing-untrusted"])
-        self.assertEqual([row["entry"] for row in report["unverified_entries"]], [1, 3])
-        self.assertEqual(report[auto_lrc.WEAK_REVIEW_POLICY_KEY]["demoted_entries"], [1, 3])
+        self.assertEqual([row["entry"] for row in report["unverified_entries"]], [1, 3, 6])
+        self.assertEqual(report[auto_lrc.WEAK_REVIEW_POLICY_KEY]["demoted_entries"], [1, 3, 6])
 
     def test_policy_is_idempotent_and_never_trusts(self) -> None:
         report = _report()
@@ -109,7 +110,7 @@ class WeakReviewPolicyTests(unittest.TestCase):
             saved = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(saved["review_required_count"], 2)
         self.assertEqual(saved["assignments"][0]["verification_status"], "unverified")
-        self.assertEqual(saved[auto_lrc.WEAK_REVIEW_POLICY_KEY]["demoted_entries"], [1, 3])
+        self.assertEqual(saved[auto_lrc.WEAK_REVIEW_POLICY_KEY]["demoted_entries"], [1, 3, 6])
 
 
 if __name__ == "__main__":
