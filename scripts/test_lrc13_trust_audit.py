@@ -50,9 +50,9 @@ class StaleResolutionRegressionTests(unittest.TestCase):
     def test_final_actionable_defect_invalidates_older_resolution(self) -> None:
         report = verified_report()
         self.assertTrue(auto_lrc.report_has_verified_central_commit(report))
-        report["assignments"][0]["flags"] = ["previous-tail-overlap"]
+        report["assignments"][0]["flags"] = ["temporal-incoherence"]
         report["suspicious_alignments"] = [{
-            "entry": 1, "flags": ["candidate_disagreement"],
+            "entry": 1, "flags": ["ctc_confidence_collapse"],
             "severity": "resolved",
             "resolution": "superseded-by-verified-central-decision",
             "review_required": False,
@@ -108,8 +108,40 @@ class UnifiedFinalTrustRegressionTests(unittest.TestCase):
 
     def test_actionable_review_is_untrusted_and_consistent(self) -> None:
         report = verified_report()
-        report["assignments"][0]["flags"] = ["previous-tail-overlap"]
+        report["assignments"][0]["flags"] = ["temporal-incoherence"]
         auto_lrc.update_report_confidence_metrics(report)
+        self.assert_bound(report, trusted=False, review=True)
+
+    def test_weak_code_alone_is_untrusted_but_not_review(self) -> None:
+        # LRC 1.7: WEAK codes (B2 ladder, 92-100% already right on their own)
+        # block trust but no longer make the row a human review task.
+        for code in sorted(auto_lrc.WEAK_REVIEW_CODES):
+            report = verified_report()
+            if code in auto_lrc.ACTIONABLE_SUSPICIOUS_FLAGS:
+                # suspicious diagnostics reach the verdict through their row, not the flag list
+                report["suspicious_alignments"] = [{"entry": 1, "flags": [code], "severity": "medium"}]
+            else:
+                report["assignments"][0]["flags"] = [code]
+            auto_lrc.update_report_confidence_metrics(report)
+            self.assert_bound(report, trusted=False, review=False)
+            self.assertIn(code, report["assignments"][0]["final_trust_reason_codes"])
+            self.assertEqual(report["assignments"][0]["verification_status"], "unverified")
+        report = verified_report()
+        report["assignments"][0]["flags"] = ["previous-tail-overlap", "temporal-incoherence"]
+        auto_lrc.update_report_confidence_metrics(report)
+        self.assert_bound(report, trusted=False, review=True)
+
+    def test_weak_only_suspicious_row_is_not_review(self) -> None:
+        report = verified_report()
+        report["suspicious_alignments"] = [{
+            "entry": 1, "flags": ["unresolved_raw_ctc_disagreement"], "severity": "medium",
+        }]
+        auto_lrc.update_report_confidence_metrics(report)
+        self.assertFalse(report["suspicious_alignments"][0]["review_required"])
+        self.assert_bound(report, trusted=False, review=False)
+        report["suspicious_alignments"][0]["flags"].append("ctc_confidence_collapse")
+        auto_lrc.update_report_confidence_metrics(report)
+        self.assertTrue(report["suspicious_alignments"][0]["review_required"])
         self.assert_bound(report, trusted=False, review=True)
 
     def test_info_diagnostic_does_not_change_trust(self) -> None:
@@ -149,7 +181,8 @@ class UnifiedFinalTrustRegressionTests(unittest.TestCase):
     def test_final_trust_classification_table_and_idempotence(self) -> None:
         self.assertTrue(callable(auto_lrc.final_line_trust))
         table = auto_lrc.FINAL_LINE_TRUST_CLASSIFICATION
-        self.assertEqual(table["previous-tail-overlap"], "REVIEW")
+        self.assertEqual(table["previous-tail-overlap"], "WEAK")
+        self.assertEqual(table["temporal-incoherence"], "REVIEW")
         self.assertEqual(table["previous-tail-ownership-unknown"], "UNTRUSTED")
         self.assertEqual(table["manual_anchor_resolved"], "INFO")
         report = verified_report()

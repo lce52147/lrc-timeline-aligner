@@ -498,7 +498,9 @@ class TimingTrustTests(unittest.TestCase):
 
         flag_unresolved_raw_ctc_disagreements(timestamps, report, raw_report)
 
-        self.assertEqual(report["review_required_count"], 1)
+        # LRC 1.7: a raw/CTC disagreement is WEAK (92% already right on B2):
+        # recorded as evidence, blocks trust, but no longer a review task.
+        self.assertEqual(report["review_required_count"], 0)
         risk = report["suspicious_alignments"][0]  # type: ignore[index]
         self.assertEqual(risk["entry"], 2)  # type: ignore[index]
         self.assertEqual(risk["candidate_timestamps"]["output"], 20.0)  # type: ignore[index]
@@ -897,7 +899,7 @@ class TimingTrustTests(unittest.TestCase):
         score_line_timing_candidates(entries, [10.0, 20.0, 28.0], report, 32.0)
 
         assignment = report["assignments"][1]  # type: ignore[index]
-        self.assertTrue(assignment["review_required"])
+        self.assertFalse(assignment["review_required"])  # candidate_disagreement is WEAK (LRC 1.7)
         self.assertIn("long_line_disagreement", assignment["flags"])
         self.assertIn("split_suggestion", assignment)
 
@@ -978,7 +980,7 @@ class TimingTrustTests(unittest.TestCase):
         self.assertAlmostEqual(result[1], 261.701, places=3)
         assignment = report["assignments"][1]  # type: ignore[index]
         self.assertAlmostEqual(assignment["timestamp"], 261.701, places=3)  # type: ignore[arg-type]
-        self.assertTrue(assignment["review_required"])
+        self.assertFalse(assignment["review_required"])  # candidate_disagreement is WEAK (LRC 1.7)
         self.assertIn("candidate_disagreement", assignment["flags"])  # type: ignore[operator]
         repeated = [
             item for item in assignment["candidates"]  # type: ignore[index]
@@ -1438,8 +1440,9 @@ class TimingTrustTests(unittest.TestCase):
         self.assertFalse(assignments[1]["timing_trusted"])  # type: ignore[index]
         suspicious = report["suspicious_alignments"]  # type: ignore[assignment]
         self.assertEqual(suspicious[0]["severity"], "high")  # type: ignore[index]
-        self.assertTrue(suspicious[0]["review_required"])  # type: ignore[index]
-        self.assertEqual(report["review_required_count"], 1)
+        # LRC 1.7: the diagnostic survives refinement but, being WEAK, is not a review task.
+        self.assertFalse(suspicious[0]["review_required"])  # type: ignore[index]
+        self.assertEqual(report["review_required_count"], 0)
 
 
 class CtcAcousticBacktrackTests(unittest.TestCase):
@@ -2331,7 +2334,7 @@ class WhisperxAcousticBoundaryTests(unittest.TestCase):
             self.assertFalse(assignments[1]["timing_trusted"])  # type: ignore[index]
             suspicious = refined_report["suspicious_alignments"]  # type: ignore[assignment]
             self.assertEqual(suspicious[0]["severity"], "low")  # type: ignore[index]
-            self.assertTrue(suspicious[0]["review_required"])  # type: ignore[index]
+            self.assertFalse(suspicious[0]["review_required"])  # type: ignore[index]  # WEAK (LRC 1.7)
         finally:
             auto_lrc.analyze_audio = original_analyze_audio  # type: ignore[assignment]
 
@@ -5456,7 +5459,7 @@ class CentralTimingStateTests(unittest.TestCase):
         self.assertEqual(report["review_required_count"], 0)
 
         actionable = copy.deepcopy(report)
-        actionable["assignments"][0]["flags"] = ["previous-tail-overlap"]  # type: ignore[index]
+        actionable["assignments"][0]["flags"] = ["temporal-incoherence"]  # type: ignore[index]
         auto_lrc.update_report_confidence_metrics(actionable)
         self.assertTrue(actionable["review_required"])
         self.assertEqual(actionable["review_required_count"], 1)
@@ -6788,7 +6791,7 @@ class CandidateGenerationCleanupTests(unittest.TestCase):
         self.assertFalse(assignment["precentral_candidate_recommendation"]["authoritative"])
 
         actionable = copy.deepcopy(report)
-        actionable["suspicious_alignments"][0]["flags"] = ["unresolved_raw_ctc_disagreement"]  # type: ignore[index]
+        actionable["suspicious_alignments"][0]["flags"] = ["ctc_confidence_collapse"]  # type: ignore[index]
         score_line_timing_candidates(entries, [10.0, 20.0, 25.0], actionable, 30.0)
         self.assertTrue(actionable["assignments"][1]["review_required"])  # type: ignore[index]
         self.assertEqual(actionable["review_required_count"], 1)

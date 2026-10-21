@@ -25747,6 +25747,18 @@ def _suspicious_row_requires_review(row: object) -> bool:
     return any(str(flag) in ACTIONABLE_SUSPICIOUS_FLAGS for flag in flags)
 
 
+def _suspicious_row_requires_human_review(row: object) -> bool:
+    """Final verdict only: an unresolved row whose flags are all WEAK is not a review task."""
+    if not _suspicious_row_requires_review(row):
+        return False
+    flags = row.get("flags") if isinstance(row, dict) else None
+    return any(
+        str(flag) in ACTIONABLE_SUSPICIOUS_FLAGS
+        and FINAL_LINE_TRUST_CLASSIFICATION.get(str(flag)) == "REVIEW"
+        for flag in (flags if isinstance(flags, list) else [])
+    )
+
+
 
 
 CENTRAL_RESOLVABLE_SUSPICIOUS_FLAGS = frozenset({
@@ -28349,6 +28361,23 @@ def report_has_verified_central_commit(report: dict[str, object]) -> bool:
 # A single, declarative authority for final-line defect classification.
 # Unknown diagnostics are INFO until an owner explicitly classifies them.
 SILENT_RISK_REVIEW_FLAG = "silent-risk:selected-confidence-le-0.8-and-next-gap-ge-19"
+# LRC 1.7 (B2 ladder, 39 songs vs BK, EvanOG chose the middle cut): these
+# codes were 92–100% "already right" on their own.  A row carrying only WEAK
+# codes is no longer a human review task; it stays UNTRUSTED (never TRUSTED)
+# so the reviewer still sees it as unverified.  Any REVIEW-class code on the
+# same row still forces review.  Central's own use of the actionable sets is
+# untouched; only the final human-review verdict changes.
+WEAK_REVIEW_CODES = frozenset({
+    "phonetic_anchor_disagreement",
+    "nonmonotonic-line-start",
+    "candidate_disagreement",
+    "unresolved_raw_ctc_disagreement",
+    "unresolved-precentral-disagreement",
+    "unresolved-material-alternative",
+    "recurrence-uncorroborated",
+    "previous-tail-overlap",
+})
+
 FINAL_LINE_TRUST_CLASSIFICATION: dict[str, str] = {
     **{code: "INFO" for code in {
         "manual_anchor_resolved", "central-selected", "central-provisional",
@@ -28371,6 +28400,7 @@ FINAL_LINE_TRUST_CLASSIFICATION: dict[str, str] = {
           "F3-compressed-or-nonmonotonic", "F3-nonmonotonic",
           "model-disagreement",
           SILENT_RISK_REVIEW_FLAG}},
+    **{code: "WEAK" for code in WEAK_REVIEW_CODES},
 }
 
 
@@ -28422,7 +28452,8 @@ def final_line_trust(
         (central_committed and assignment.get("review_required"))
         or any(FINAL_LINE_TRUST_CLASSIFICATION.get(code) == "REVIEW" for code in reasons)
     )
-    trusted = bool(assignment_timing_is_trusted(assignment) and not review)
+    weak = any(FINAL_LINE_TRUST_CLASSIFICATION.get(code) == "WEAK" for code in reasons)
+    trusted = bool(assignment_timing_is_trusted(assignment) and not review and not weak)
     if not trusted and not reasons:
         reasons.append("timing-evidence-unverified")
     return FinalLineTrustDecision(trusted, review, tuple(reasons))
@@ -28451,14 +28482,17 @@ def _review_reason_classes_from_trust(
     suspicious_rows: list[dict[str, object]],
 ) -> list[str]:
     """Keep the review taxonomy derived from the final trust decision."""
-    reasons = set(decision.reason_codes)
+    reasons = {
+        code for code in decision.reason_codes
+        if FINAL_LINE_TRUST_CLASSIFICATION.get(code) == "REVIEW"
+    }
     classes: list[str] = []
     if any(_timing_failure_requires_review(code) for code in reasons):
         classes.append("actionable-timing-failure")
     if any(
         code in ACTIONABLE_SUSPICIOUS_FLAGS or code == "model-disagreement"
         for code in reasons
-    ) or any(_suspicious_row_requires_review(row) for row in suspicious_rows):
+    ) or any(_suspicious_row_requires_human_review(row) for row in suspicious_rows):
         classes.append("actionable-suspicious-conflict")
     if "unresolved-material-alternative" in reasons:
         classes.append("unresolved-material-alternative")
@@ -28537,7 +28571,7 @@ def update_report_confidence_metrics(
                     if row.get("severity") == "resolved":
                         prior = row.get("original_severity")
                         row["severity"] = prior if prior in {"high", "medium", "low"} else "medium"
-        row["review_required"] = _suspicious_row_requires_review(row)
+        row["review_required"] = _suspicious_row_requires_human_review(row)
     report["suspicious_alignment_count"] = len(suspicious_rows)
     severity_counts = {"high": 0, "medium": 0, "low": 0}
     for row in suspicious_rows:
