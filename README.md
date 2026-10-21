@@ -1,4 +1,4 @@
-# LRC Timeline Aligner — v1.6.0
+# LRC Timeline Aligner — v1.6.1
 
 Local LRC timestamp generation for Windows. The tool keeps lyric order fixed, generates timing evidence from the audio, lets Central arbitration choose the final line starts, and writes a same-name `.lrc` plus an audit report.
 
@@ -19,6 +19,8 @@ The v1.6 review page, running read-only on a demo report (synthetic timing data,
 *`?` lists the keys. Everything on the page can be done without the mouse: play, pick, nudge, accept, keep, undo, save.*
 
 ## What's new in v1.6
+
+v1.6.1: songs whose LRC no longer exists (`lrc-missing`, typically reports left behind by old test runs) are no longer shown as finished; the song list folds them into one "另有 N 首找不到 LRC" line and the page says why they cannot be reviewed. `scripts/archive_stale_reports.py` lists those reports and, with `--apply`, moves them and their sidecars into `outputs/reports/_archive/`. Alignment unchanged.
 
 Review page redesign. Line timing policy, report format and the save flow are unchanged; v1.6 only changes how a review row is presented and operated.
 
@@ -169,6 +171,8 @@ The generated LRC is written beside the audio. Reports go to `outputs\reports` b
 For a run with several songs, the wrapper prints the queue size and one elapsed/ETA line at the start and end of each song. The ETA average includes every completed attempt, including failures, because each attempt consumes runtime. After alignment it invokes scripts\lrc_batch_summary.py for the original input folder with the run start time, report directory, and repository work directory. A summary warning never replaces the alignment exit code.
 
 To review generated reports, run Review LRC.bat with no arguments. It opens the reports in the local review server and keeps the console window open while the server is running; close the window to stop it. Pass report files or folders, or options such as --read-only, when you need a narrower review. The default server uses a free localhost port. If a manually selected port is occupied, omit --port or choose another one. Edits are saved by the review page and are consumed by the next alignment run.
+
+Reports whose LRC has since been moved or deleted open read-only as `lrc-missing`; the song list folds them away. To clean them out of the live folder, run `scripts\archive_stale_reports.py` (lists them) and then `scripts\archive_stale_reports.py --apply` (moves each report with its `.review.tsv`, `.auto.lrc` and `.review-edits.json` into `outputs\reports\_archive\stale_<date>`; nothing is deleted and reports with a live LRC are never touched).
 
 Windows command lines have an 8191-character limit. Paths with spaces and special characters are passed as argument arrays by the PowerShell wrapper; for a large set of such paths, drop the whole report folder onto Review LRC.bat or process the audio in smaller batches instead of building one long command line.
 

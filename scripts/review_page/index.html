@@ -28,6 +28,7 @@ header .song-name{font-weight:600;font-size:15px;max-width:34vw;overflow:hidden;
 .song-tab:hover{background:var(--panel-2)}.song-tab.active{background:var(--panel-2);border-color:var(--line);color:var(--fg)}
 .song-tab .dot{width:8px;height:8px;border-radius:50%;background:var(--fg-3);flex:none;box-shadow:0 0 0 3px rgba(255,255,255,.04)}.song-tab.todo .dot{background:var(--warn)}.song-tab.done .dot{background:var(--ok)}
 .song-tab .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.song-tab .n{color:var(--fg-3);font-size:12px}
+.song-tab.off{color:var(--fg-3)}.song-tab.off .dot{background:transparent;border:1px solid var(--fg-3);box-shadow:none}.song-tab.group{margin-top:8px;color:var(--fg-3);font-size:12px}
 .work{display:flex;flex-direction:column;min-width:0;padding:14px 18px 80px 10px;gap:14px;overflow:auto}
 .row{padding:18px 20px;display:flex;flex-direction:column;gap:12px}
 .row.conflict{border-color:var(--bad)}
@@ -128,7 +129,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   const token = new URLSearchParams(location.search).get('t') || new URLSearchParams(location.hash.slice(1)).get('t');
   const queue = document.getElementById('queue');
   const status = document.getElementById('status');
-  const state = {songs:[], rows:[], edits:new Map(), peaks:new Map(), decoded:new Map(), done:new Set(), dirty:false, selected:0, activeSong:null, showUntrusted:false, mode:'flac', details:false, player:{audio:new Map(), handlers:new Map(), seq:0, timer:null, active:null, ab:null}, error:'', notice:''};
+  const state = {songs:[], rows:[], edits:new Map(), peaks:new Map(), decoded:new Map(), done:new Set(), dirty:false, selected:0, activeSong:null, showUnreachable:false, showUntrusted:false, mode:'flac', details:false, player:{audio:new Map(), handlers:new Map(), seq:0, timer:null, active:null, ab:null}, error:'', notice:''};
   const api = async (path, options={}) => {
     const headers = Object.assign({'X-Review-Token':token}, options.headers || {});
     const response = await fetch(path, Object.assign({}, options, {headers}));
@@ -147,6 +148,13 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   const isDone = item => state.done.has(keyFor(item));
   const pendingOf = song => state.rows.filter(item => item.song.index === song.index && item.row.review === 'REVIEW').length;
   const leftOf = song => state.rows.filter(item => item.song.index === song.index && item.row.review === 'REVIEW' && !isDone(item)).length;
+  // A song the page cannot review at all: read-only for its own reason (not the server flag) and no rows came back.
+  const unreachable = song => !!song.read_only && !(song.detail?.rows || []).length;
+  const unreachableText = song => {
+    const reason = song.read_only_reason || song.detail?.load_error || 'unknown';
+    if (reason === 'lrc-missing') return '找不到這首的 LRC 檔，無法審核；LRC 可能已搬走、改名或這是舊測試留下的 report。';
+    return '這首的 report 與 LRC 對不上（' + reason + '），無法審核。';
+  };
   const deltaText = delta => (delta < 0 ? '提早 ' : '延後 ') + Math.abs(delta / 100).toFixed(1) + ' 秒';
   const sourceText = c => (c.sources || [c.label]).join(',');
   const sourceLabel = source => ({
@@ -501,7 +509,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   function render() {
     stopPlayer();
     if (state.activeSong == null && state.songs.length) {
-      const first = state.songs.find(song => leftOf(song) > 0) || state.songs[0];
+      const first = state.songs.find(song => leftOf(song) > 0) || state.songs.find(song => !unreachable(song)) || state.songs[0];
       state.activeSong = first.index;
     }
     if (state.activeSong != null && !state.songs.some(song => song.index === state.activeSong)) state.activeSong = state.songs[0]?.index ?? null;
@@ -521,15 +529,26 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     // rail
     const rail = document.getElementById('rail');
     rail.innerHTML = '<h2>歌曲</h2>';
-    state.songs.forEach(item => {
-      const pending = pendingOf(item), left = leftOf(item);
+    const songTab = item => {
+      const pending = pendingOf(item), left = leftOf(item), off = unreachable(item);
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = 'song-tab' + (item.index === state.activeSong ? ' active' : '') + (left ? ' todo' : ' done');
-      button.innerHTML = '<span class="dot"></span><span class="t">' + esc(item.song) + '</span><span class="n num">' + (left ? left + '/' + pending : '✓') + '</span>';
+      button.className = 'song-tab' + (item.index === state.activeSong ? ' active' : '') + (off ? ' off' : left ? ' todo' : ' done');
+      button.innerHTML = '<span class="dot"></span><span class="t">' + esc(item.song) + '</span><span class="n num">' + (off ? '唯讀' : left ? left + '/' + pending : '✓') + '</span>';
       button.addEventListener('click', () => { state.activeSong = item.index; state.selected = 0; state.notice = ''; render(); });
-      rail.appendChild(button);
-    });
+      return button;
+    };
+    const reachable = state.songs.filter(song => !unreachable(song)), hidden = state.songs.filter(unreachable);
+    reachable.forEach(item => rail.appendChild(songTab(item)));
+    if (hidden.length) {
+      const group = document.createElement('button');
+      group.type = 'button';
+      group.className = 'song-tab group';
+      group.innerHTML = '<span class="t">' + (state.showUnreachable ? '▾' : '▸') + ' 另有 ' + hidden.length + ' 首找不到 LRC，無法審核</span>';
+      group.addEventListener('click', () => { state.showUnreachable = !state.showUnreachable; render(); });
+      rail.appendChild(group);
+      if (state.showUnreachable || hidden.some(song => song.index === state.activeSong)) hidden.forEach(item => rail.appendChild(songTab(item)));
+    }
     // work area
     queue.innerHTML = '';
     if (song) {
@@ -542,7 +561,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       if (notes.length) { const note = document.createElement('div'); note.className = 'meta'; note.innerHTML = notes.join(' · '); queue.appendChild(note); }
     }
     if (current) queue.appendChild(rowElement(current));
-    else { const empty = document.createElement('div'); empty.className = 'meta'; empty.textContent = song ? '這首沒有需要審的句子。' : '沒有歌曲。'; queue.appendChild(empty); }
+    else { const empty = document.createElement('div'); empty.className = 'meta'; empty.textContent = song ? (unreachable(song) ? unreachableText(song) : '這首沒有需要審的句子。') : '沒有歌曲。'; queue.appendChild(empty); }
     const list = document.createElement('section');
     list.className = 'queue-list glass';
     list.innerHTML = '<h3>本首待審</h3>';

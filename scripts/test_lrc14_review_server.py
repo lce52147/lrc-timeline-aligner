@@ -533,6 +533,10 @@ class ReviewServerTests(unittest.TestCase):
         self.assertIn("R2 skipped:", page)
         self.assertIn("load error:", page)
         self.assertIn("這首沒有需要審的句子。", page)
+        self.assertIn("找不到這首的 LRC 檔，無法審核", page)
+        self.assertIn("首找不到 LRC，無法審核", page)
+        self.assertIn("const unreachable = song => !!song.read_only && !(song.detail?.rows || []).length;", page)
+        self.assertIn("state.songs.find(song => !unreachable(song))", page)
         self.assertIn("color-scheme:dark", page)
         source = page.split("<script>", 1)[1].rsplit("</script>", 1)[0]
         harness = r"""
