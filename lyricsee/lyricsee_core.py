@@ -1317,9 +1317,10 @@ class HttpClient:
         url: str,
         params: dict | None = None,
         headers: dict[str, str] | None = None,
-        retries: int = 4,
+        timeout: float = 20,
+        retries: int = 1,
     ) -> str:
-        return self._request(url, params=params, headers=headers, retries=retries)
+        return self._request(url, params=params, timeout=timeout, headers=headers, retries=retries)
 
     def get_json(
         self,

@@ -309,13 +309,20 @@ def _existing_row(index: int, audio_path: Path, output_root: Path, status: str, 
 
 
 def _oogg_error(exc: Exception) -> str:
-    if isinstance(exc, HTTPError):
-        url = str(getattr(exc, "url", "") or getattr(exc, "filename", ""))
-        if url.rstrip("/").endswith("/v1/models"):
+    current: BaseException | None = exc
+    for _ in range(5):
+        if isinstance(current, HTTPError):
+            url = str(getattr(current, "url", "") or getattr(current, "filename", ""))
+            if url.rstrip("/").endswith("/v1/models"):
+                return "oogg_unreachable"
+            if current is exc:
+                return f"oogg_http_{current.code}"
+        elif isinstance(current, (URLError, ConnectionError, TimeoutError, ConnectionResetError)):
             return "oogg_unreachable"
-        return f"oogg_http_{exc.code}"
-    if isinstance(exc, (URLError, ConnectionError, TimeoutError)):
-        return "oogg_unreachable"
+        next_exc = current.__cause__ or current.__context__ if current is not None else None
+        if next_exc is None or next_exc is current:
+            break
+        current = next_exc
     return f"{type(exc).__name__}: {str(exc)[:240]}"
 
 
@@ -353,6 +360,22 @@ def _clear_oogg_endpoint_cache(client: HttpClient, endpoints: tuple[str, ...]) -
     cache = getattr(client, "_lyricsee_oogg_target_cache", None)
     if isinstance(cache, dict):
         cache.pop(endpoints, None)
+
+
+def _maybe_reprobe_oogg(
+    index: int,
+    client: HttpClient,
+    endpoints: tuple[str, ...],
+    state: dict[str, object],
+) -> None:
+    if not state.get("disabled") or index % 10 != 0:
+        return
+    _clear_oogg_endpoint_cache(client, endpoints)
+    target = _select_oogg_endpoint(client, endpoints)
+    if target is not None:
+        state["disabled"] = False
+        state["consecutive_failures"] = 0
+        print(f"OOGG back online: {target.endpoint}", file=sys.stderr)
 
 
 def _process_track(
@@ -427,6 +450,7 @@ def _process_track(
             validate_output(original, selected, require_translation=False)
             attach_verification(selected, evidence, translation_method="none")
         else:
+            _maybe_reprobe_oogg(index, client, config.oogg_endpoints, oogg_state)
             try:
                 selected = choose_verified_web_translation(identity, original, collected.candidates)
                 validate_output(original, selected, require_translation=True)

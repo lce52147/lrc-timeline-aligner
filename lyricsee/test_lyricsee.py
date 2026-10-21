@@ -659,7 +659,7 @@ class LyricseeCoreTests(unittest.TestCase):
         with mock.patch.object(core, "urlopen", side_effect=failures + [Response()]) as urlopen, mock.patch.object(
             core.time, "sleep"
         ) as sleep:
-            self.assertEqual(core.HttpClient().get_text("https://example.com"), "ok")
+            self.assertEqual(core.HttpClient().get_text("https://example.com", retries=4), "ok")
         self.assertEqual(urlopen.call_count, 3)
         self.assertEqual(sleep.call_args_list, [mock.call(1.0), mock.call(2.0)])
 
@@ -669,9 +669,19 @@ class LyricseeCoreTests(unittest.TestCase):
         with mock.patch.object(core, "urlopen", side_effect=failures) as urlopen, mock.patch.object(
             core.time, "sleep"
         ) as sleep, self.assertRaises(HTTPError):
-            core.HttpClient().get_text("https://example.com")
+            core.HttpClient().get_text("https://example.com", retries=4)
         self.assertEqual(urlopen.call_count, 4)
         self.assertEqual(sleep.call_args_list, [mock.call(1.0), mock.call(2.0), mock.call(4.0)])
+
+    def test_http_get_text_defaults_to_one_retry_and_twenty_second_timeout(self):
+        core = load_core()
+        with mock.patch.object(core, "urlopen", side_effect=URLError("offline")) as urlopen, mock.patch.object(
+            core.time, "sleep"
+        ) as sleep, self.assertRaises(URLError):
+            core.HttpClient().get_text("https://lyrics.example/page")
+        self.assertEqual(urlopen.call_count, 1)
+        self.assertEqual(urlopen.call_args.kwargs["timeout"], 20)
+        sleep.assert_not_called()
 
     def test_http_retry_scope_can_disable_search_page_retries_but_keep_lrclib_retries(self):
         core = load_core()

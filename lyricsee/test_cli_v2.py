@@ -236,6 +236,8 @@ class LyricseeV2CliTests(unittest.TestCase):
             self.assertEqual(payload["oogg_endpoint"], "http://100.87.97.121:6969")
 
     def test_oogg_unreachable_switches_to_second_endpoint(self):
+        wrapped = RuntimeError("wrapped connection failure")
+        wrapped.__cause__ = URLError("local down")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             audio = root / "Song.flac"
@@ -258,7 +260,14 @@ class LyricseeV2CliTests(unittest.TestCase):
                 mock.patch.object(cli, "choose_verified_original", return_value=(original, evidence)),
                 mock.patch.object(cli, "choose_verified_web_translation", side_effect=LookupError("no web translation")),
                 mock.patch.object(cli, "_select_oogg_endpoint", side_effect=[local, sister]) as select,
-                mock.patch.object(cli, "translate_oogg", side_effect=[URLError("local down"), [f"譯文{i}" for i in range(8)]]) as translate,
+                mock.patch.object(
+                    cli,
+                    "translate_oogg",
+                    side_effect=[
+                        wrapped,
+                        [f"譯文{i}" for i in range(8)],
+                    ],
+                ) as translate,
             ):
                 row = cli._process_track(
                     1,
@@ -317,6 +326,48 @@ class LyricseeV2CliTests(unittest.TestCase):
             self.assertEqual(translate.call_count, 3)
             self.assertEqual(select.call_count, 6)
             self.assertIn("OOGG offline after 3 consecutive failures", stderr.getvalue())
+
+    def test_oogg_disabled_reprobes_on_tenth_track(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            audio = root / "Song10.flac"
+            audio.write_bytes(b"")
+            original = self._canonical()
+            collected = core.CollectionResult([original], [], [])
+            config = cli.Config(root / "bk", root, cli.DEFAULT_OOGG_ENDPOINTS)
+            evidence = {
+                "policy": source_policy.VERSION,
+                "original_verified_by": "test",
+                "canonical_original_url": original.url,
+                "cross_sources": [],
+            }
+            target = cli.OoggTarget(cli.DEFAULT_OOGG_ENDPOINTS[1], "sister")
+            state = {"consecutive_failures": 3, "disabled": True}
+            with (
+                mock.patch.object(cli, "probe_embedded_lyrics", return_value=cli.EmbeddedInfo("Artist", "Song", False, 0, 0)),
+                mock.patch.object(cli, "probe_audio", return_value=core.TrackIdentity("Song", "Artist")),
+                mock.patch.object(cli, "collect_candidates", return_value=collected),
+                mock.patch.object(cli, "choose_verified_original", return_value=(original, evidence)),
+                mock.patch.object(cli, "choose_verified_web_translation", side_effect=LookupError("no web translation")),
+                mock.patch.object(cli, "_select_oogg_endpoint", side_effect=[target, target]) as select,
+                mock.patch.object(cli, "translate_oogg", return_value=[f"譯文{i}" for i in range(8)]) as translate,
+                redirect_stderr(StringIO()) as stderr,
+            ):
+                row = cli._process_track(
+                    10,
+                    audio,
+                    config=config,
+                    no_translate=False,
+                    replace_existing=False,
+                    client=core.HttpClient(),
+                    oogg_state=state,
+                )
+            self.assertEqual(row["status"], "oogg_draft")
+            self.assertEqual(row["oogg_endpoint"], target.endpoint)
+            self.assertEqual(state, {"consecutive_failures": 0, "disabled": False})
+            self.assertEqual(select.call_count, 2)
+            translate.assert_called_once()
+            self.assertIn(f"OOGG back online: {target.endpoint}", stderr.getvalue())
 
     def test_lrclib_unavailable_is_reported_as_source_unavailable(self):
         with tempfile.TemporaryDirectory() as tmp:
