@@ -8,6 +8,7 @@ import unittest
 from contextlib import redirect_stderr
 from io import StringIO
 from pathlib import Path
+from urllib.error import URLError
 from unittest import mock
 
 import lyricsee as cli
@@ -233,6 +234,113 @@ class LyricseeV2CliTests(unittest.TestCase):
             self.assertEqual(translate.call_args.kwargs["model"], "selected-model")
             payload = json.loads(Path(row["output_json"]).read_text(encoding="utf-8"))
             self.assertEqual(payload["oogg_endpoint"], "http://100.87.97.121:6969")
+
+    def test_oogg_unreachable_switches_to_second_endpoint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            audio = root / "Song.flac"
+            audio.write_bytes(b"")
+            original = self._canonical()
+            collected = core.CollectionResult([original], [], [])
+            config = cli.Config(root / "bk", root, cli.DEFAULT_OOGG_ENDPOINTS)
+            evidence = {
+                "policy": source_policy.VERSION,
+                "original_verified_by": "test",
+                "canonical_original_url": original.url,
+                "cross_sources": [],
+            }
+            local = cli.OoggTarget(cli.DEFAULT_OOGG_ENDPOINTS[0], "local")
+            sister = cli.OoggTarget(cli.DEFAULT_OOGG_ENDPOINTS[1], "sister")
+            with (
+                mock.patch.object(cli, "probe_embedded_lyrics", return_value=cli.EmbeddedInfo("Artist", "Song", False, 0, 0)),
+                mock.patch.object(cli, "probe_audio", return_value=core.TrackIdentity("Song", "Artist")),
+                mock.patch.object(cli, "collect_candidates", return_value=collected),
+                mock.patch.object(cli, "choose_verified_original", return_value=(original, evidence)),
+                mock.patch.object(cli, "choose_verified_web_translation", side_effect=LookupError("no web translation")),
+                mock.patch.object(cli, "_select_oogg_endpoint", side_effect=[local, sister]) as select,
+                mock.patch.object(cli, "translate_oogg", side_effect=[URLError("local down"), [f"譯文{i}" for i in range(8)]]) as translate,
+            ):
+                row = cli._process_track(
+                    1,
+                    audio,
+                    config=config,
+                    no_translate=False,
+                    replace_existing=False,
+                    client=core.HttpClient(),
+                )
+            self.assertEqual(row["status"], "oogg_draft")
+            self.assertEqual(row["oogg_endpoint"], cli.DEFAULT_OOGG_ENDPOINTS[1])
+            self.assertEqual(select.call_count, 2)
+            self.assertEqual([call.kwargs["endpoint"] for call in translate.call_args_list], list(cli.DEFAULT_OOGG_ENDPOINTS))
+
+    def test_oogg_disables_after_three_unreachable_tracks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original = self._canonical()
+            collected = core.CollectionResult([original], [], [])
+            config = cli.Config(root / "bk", root, cli.DEFAULT_OOGG_ENDPOINTS)
+            evidence = {
+                "policy": source_policy.VERSION,
+                "original_verified_by": "test",
+                "canonical_original_url": original.url,
+                "cross_sources": [],
+            }
+            target = cli.OoggTarget(cli.DEFAULT_OOGG_ENDPOINTS[0], "local")
+            state = {"consecutive_failures": 0, "disabled": False}
+            with (
+                mock.patch.object(cli, "probe_embedded_lyrics", return_value=cli.EmbeddedInfo("Artist", "Song", False, 0, 0)),
+                mock.patch.object(cli, "probe_audio", return_value=core.TrackIdentity("Song", "Artist")),
+                mock.patch.object(cli, "collect_candidates", return_value=collected),
+                mock.patch.object(cli, "choose_verified_original", return_value=(original, evidence)),
+                mock.patch.object(cli, "choose_verified_web_translation", side_effect=LookupError("no web translation")),
+                mock.patch.object(cli, "_select_oogg_endpoint", side_effect=[target] * 6) as select,
+                mock.patch.object(cli, "translate_oogg", side_effect=URLError("offline")) as translate,
+                redirect_stderr(StringIO()) as stderr,
+            ):
+                rows = []
+                for index in range(1, 5):
+                    audio = root / f"Song{index}.flac"
+                    audio.write_bytes(b"")
+                    rows.append(
+                        cli._process_track(
+                            index,
+                            audio,
+                            config=config,
+                            no_translate=False,
+                            replace_existing=False,
+                            client=core.HttpClient(),
+                            oogg_state=state,
+                        )
+                    )
+            self.assertEqual([row["status"] for row in rows], ["original_only"] * 4)
+            self.assertEqual([row["translation_error"] for row in rows], ["oogg_unreachable"] * 4)
+            self.assertEqual(translate.call_count, 3)
+            self.assertEqual(select.call_count, 6)
+            self.assertIn("OOGG offline after 3 consecutive failures", stderr.getvalue())
+
+    def test_lrclib_unavailable_is_reported_as_source_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            audio = root / "Song.flac"
+            audio.write_bytes(b"")
+            config = cli.Config(root / "bk", root, cli.DEFAULT_OOGG_ENDPOINTS)
+            collected = core.CollectionResult([], [], ["lrclib: source_unavailable (HTTP 503)"], "none", "", True)
+            with (
+                mock.patch.object(cli, "probe_embedded_lyrics", return_value=cli.EmbeddedInfo("Artist", "Song", False, 0, 0)),
+                mock.patch.object(cli, "probe_audio", return_value=core.TrackIdentity("Song", "Artist")),
+                mock.patch.object(cli, "collect_candidates", return_value=collected),
+                mock.patch.object(cli, "choose_verified_original", side_effect=LookupError("Cannot verify original")),
+            ):
+                row = cli._process_track(
+                    1,
+                    audio,
+                    config=config,
+                    no_translate=False,
+                    replace_existing=False,
+                    client=core.HttpClient(),
+                )
+            self.assertEqual(row["status"], "source_unavailable")
+            self.assertIn("source_unavailable (HTTP 503)", row["error"])
 
     def test_both_oogg_endpoints_offline_falls_back_to_original_only(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -15,7 +15,7 @@ import time
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Iterable, NamedTuple
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
@@ -662,6 +662,7 @@ class CollectionResult(NamedTuple):
     errors: list[str]
     search_engine: str = "none"
     search_url: str = ""
+    lrclib_unavailable: bool = False
 
 
 class SearchResult:
@@ -875,11 +876,19 @@ def collect_candidates(
 ) -> CollectionResult:
     candidates: list[LyricCandidate] = []
     errors: list[str] = []
+    lrclib_unavailable = False
 
     try:
         candidates.append(lrclib_fetcher(identity, client))
     except Exception as exc:
-        errors.append(f"lrclib: {exc}")
+        if isinstance(exc, HTTPError) and 500 <= exc.code <= 599:
+            lrclib_unavailable = True
+            errors.append(f"lrclib: source_unavailable (HTTP {exc.code})")
+        elif isinstance(exc, (URLError, TimeoutError)):
+            lrclib_unavailable = True
+            errors.append(f"lrclib: source_unavailable ({exc})")
+        else:
+            errors.append(f"lrclib: {exc}")
 
     google_urls: list[str] = []
     search_engine = "none"
@@ -941,7 +950,14 @@ def collect_candidates(
         candidate.discovered_urls = list(google_urls)
         candidate.search_engine = search_engine
         candidate.search_url = search_url
-    return CollectionResult(candidates, google_urls, errors, search_engine, search_url)
+    return CollectionResult(
+        candidates,
+        google_urls,
+        errors,
+        search_engine,
+        search_url,
+        lrclib_unavailable,
+    )
 
 
 def _translation_messages(
@@ -1257,7 +1273,7 @@ class HttpClient:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             request_headers["Content-Type"] = "application/json"
         request = Request(url, data=body, headers=request_headers, method="POST" if body else "GET")
-        for attempt in range(2):
+        for attempt in range(4):
             self._throttle()
             try:
                 with urlopen(request, timeout=timeout) as response:
@@ -1269,12 +1285,24 @@ class HttpClient:
                     return raw.decode(charset, errors="replace")
             except HTTPError as exc:
                 self._last_request = time.monotonic()
-                if attempt == 0 and exc.code in (429, 503):
-                    retry_after = exc.headers.get("Retry-After", "1")
-                    try:
-                        time.sleep(max(0.0, float(retry_after)))
-                    except ValueError:
-                        time.sleep(1.0)
+                if attempt < 3 and exc.code in (429, 502, 503, 504):
+                    retry_after = exc.headers.get("Retry-After")
+                    if retry_after is not None:
+                        try:
+                            delay = max(0.0, float(retry_after))
+                        except ValueError:
+                            delay = float(2**attempt)
+                    else:
+                        delay = float(2**attempt)
+                    time.sleep(delay)
+                    self._last_request = time.monotonic() - 0.25
+                    continue
+                raise
+            except (URLError, TimeoutError):
+                self._last_request = time.monotonic()
+                if attempt < 3:
+                    time.sleep(float(2**attempt))
+                    self._last_request = time.monotonic() - 0.25
                     continue
                 raise
         raise RuntimeError("HTTP request retry loop ended unexpectedly")

@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from urllib.error import HTTPError
 from unittest import mock
 
 
@@ -625,6 +626,72 @@ class LyricseeCoreTests(unittest.TestCase):
                 core.HttpClient().get_text("https://example.com"),
                 "君の声  你的聲音",
             )
+
+    def test_http_client_retries_transient_503_four_attempts(self):
+        core = load_core()
+
+        class Headers:
+            def get(self, key, default=None):
+                return default
+
+            def get_content_charset(self):
+                return "utf-8"
+
+        class Response:
+            headers = Headers()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, limit):
+                return b"ok"
+
+        failures = [HTTPError("https://example.com", 503, "busy", {}, None) for _ in range(2)]
+        with mock.patch.object(core, "urlopen", side_effect=failures + [Response()]) as urlopen, mock.patch.object(
+            core.time, "sleep"
+        ) as sleep:
+            self.assertEqual(core.HttpClient().get_text("https://example.com"), "ok")
+        self.assertEqual(urlopen.call_count, 3)
+        self.assertEqual(sleep.call_args_list, [mock.call(1.0), mock.call(2.0)])
+
+    def test_http_client_raises_after_four_transient_503_attempts(self):
+        core = load_core()
+        failures = [HTTPError("https://example.com", 503, "busy", {}, None) for _ in range(4)]
+        with mock.patch.object(core, "urlopen", side_effect=failures) as urlopen, mock.patch.object(
+            core.time, "sleep"
+        ) as sleep, self.assertRaises(HTTPError):
+            core.HttpClient().get_text("https://example.com")
+        self.assertEqual(urlopen.call_count, 4)
+        self.assertEqual(sleep.call_args_list, [mock.call(1.0), mock.call(2.0), mock.call(4.0)])
+
+    def test_collect_candidates_marks_lrclib_http_503_unavailable(self):
+        core = load_core()
+
+        def lrclib(identity, client):
+            raise HTTPError("https://lrclib.net/api/get/1", 503, "busy", {}, None)
+
+        result = core.collect_candidates(
+            core.TrackIdentity("Song", "Artist"),
+            object(),
+            lrclib_fetcher=lrclib,
+            google_fetcher=lambda identity, client: ([], []),
+        )
+        self.assertTrue(result.lrclib_unavailable)
+        self.assertIn("lrclib: source_unavailable (HTTP 503)", result.errors)
+
+    def test_collect_candidates_does_not_mark_lrclib_lookup_error_unavailable(self):
+        core = load_core()
+        result = core.collect_candidates(
+            core.TrackIdentity("Song", "Artist"),
+            object(),
+            lrclib_fetcher=lambda identity, client: (_ for _ in ()).throw(LookupError("no match")),
+            google_fetcher=lambda identity, client: ([], []),
+        )
+        self.assertFalse(result.lrclib_unavailable)
+        self.assertIn("lrclib: no match", result.errors)
 
     def test_collect_candidates_attempts_google_even_when_structured_sources_succeed(self):
         core = load_core()
