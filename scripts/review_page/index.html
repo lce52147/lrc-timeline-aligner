@@ -4,60 +4,69 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer"><title>LRC review</title>
 <style>
-:root{--bg:#0f141c;--panel:#161d28;--panel-2:#1c2533;--line:#2a3647;--fg:#e6ecf4;--fg-2:#9fb0c6;--fg-3:#6b7d95;--accent:#f2b84b;--accent-ink:#1a1304;--ok:#5ed39a;--warn:#f2b84b;--bad:#ef7a7a;--wave:#4f9be6;
+:root{--bg:#0b0e18;--glow-a:rgba(255,150,80,.5);--glow-b:rgba(105,118,255,.42);--panel:rgba(22,26,42,.66);--panel-2:rgba(255,255,255,.05);--panel-3:rgba(255,255,255,.09);--line:rgba(255,255,255,.09);--line-2:rgba(255,255,255,.16);
+  --fg:#eceff8;--fg-2:#aab3cc;--fg-3:#7b84a3;--accent:#6d7cff;--accent-2:#9aa6ff;--accent-ink:#ffffff;--hot:#ffb454;--ok:#5fd3a0;--warn:#ffb454;--bad:#ff7b7b;--wave:#7f95ff;
   font:14px/1.5 system-ui,-apple-system,"Noto Sans TC","Microsoft JhengHei",sans-serif;color:var(--fg);background:var(--bg);color-scheme:dark}
-html,body{height:100%}body{margin:0;background:var(--bg);display:flex;flex-direction:column}
-button{font:inherit;padding:6px 10px;cursor:pointer;color:var(--fg);background:var(--panel-2);border:1px solid var(--line);border-radius:6px}
-button:hover:not(:disabled){border-color:var(--fg-3)}button:disabled{cursor:not-allowed;opacity:.45}button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
-.num{font-family:ui-monospace,Consolas,monospace;font-variant-numeric:tabular-nums}
-header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:2}
-header .song-name{font-weight:600;font-size:15px}header .muted,.muted{color:var(--fg-3)}header .spacer{flex:1}
-.bar{height:6px;width:140px;background:var(--panel-2);border-radius:3px;overflow:hidden;display:inline-block;vertical-align:middle}.bar i{display:block;height:100%;background:var(--ok)}
-.status{color:var(--fg-2)}.status.dirty{color:var(--accent)}.warning{color:var(--bad)}
-.pill{font-size:12px;padding:2px 8px;border-radius:999px;background:var(--panel-2);color:var(--fg-2)}
-.layout{flex:1;display:grid;grid-template-columns:240px minmax(0,1fr);min-height:0}
+html,body{height:100%}
+body{margin:0;display:flex;flex-direction:column;background:var(--bg);background-image:radial-gradient(900px 600px at 8% 100%,var(--glow-a),transparent 65%),radial-gradient(900px 700px at 100% 0%,var(--glow-b),transparent 60%),radial-gradient(700px 500px at 55% 115%,rgba(180,95,255,.3),transparent 70%);background-attachment:fixed}
+button{font:inherit;padding:7px 11px;cursor:pointer;color:var(--fg);background:var(--panel-2);border:1px solid var(--line);border-radius:9px;transition:background .15s,border-color .15s}
+button:hover:not(:disabled){background:var(--panel-3);border-color:var(--line-2)}button:disabled{cursor:not-allowed;opacity:.4}button:focus-visible{outline:2px solid var(--accent-2);outline-offset:1px}
+.num{font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-variant-numeric:tabular-nums}
+.glass{background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:0 12px 40px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.05);backdrop-filter:blur(18px) saturate(1.3);-webkit-backdrop-filter:blur(18px) saturate(1.3)}
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--line);background:rgba(12,15,26,.7);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);position:sticky;top:0;z-index:2}
+header .song-name{font-weight:600;font-size:15px;max-width:34vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}header .spacer{flex:1}.muted{color:var(--fg-3)}
+.tile{display:flex;align-items:center;gap:8px;padding:4px 10px;border-radius:10px;background:var(--panel-2);border:1px solid var(--line)}
+.tile .lbl{font-size:11px;color:var(--fg-3);letter-spacing:.04em}.tile .val{font-size:16px;font-weight:600}
+.bar{height:5px;width:120px;background:var(--panel-3);border-radius:3px;overflow:hidden;display:inline-block;vertical-align:middle}.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-2))}
+.status{color:var(--fg-2)}.status.dirty{color:var(--hot)}.warning{color:var(--bad)}
+.pill{font-size:12px;padding:2px 9px;border-radius:999px;background:var(--panel-3);color:var(--fg-2)}
+.layout{flex:1;display:grid;grid-template-columns:250px minmax(0,1fr);min-height:0}
 @media (max-width:760px){.layout{grid-template-columns:1fr}.rail{display:none}}
-.rail{border-right:1px solid var(--line);background:var(--panel);overflow:auto;padding:8px}
-.rail h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-3);margin:8px 8px 4px;font-weight:500}
-.song-tab{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:6px 8px;border:0;background:transparent;border-radius:6px;color:var(--fg-2)}
-.song-tab:hover{background:var(--panel-2)}.song-tab.active{background:var(--panel-2);color:var(--fg)}
-.song-tab .dot{width:8px;height:8px;border-radius:50%;background:var(--fg-3);flex:none}.song-tab.todo .dot{background:var(--warn)}.song-tab.done .dot{background:var(--ok)}
+.rail{overflow:auto;padding:14px 10px 14px 14px}
+.rail h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-3);margin:4px 8px 6px;font-weight:500}
+.song-tab{display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:7px 9px;border:1px solid transparent;background:transparent;border-radius:10px;color:var(--fg-2)}
+.song-tab:hover{background:var(--panel-2)}.song-tab.active{background:var(--panel-2);border-color:var(--line);color:var(--fg)}
+.song-tab .dot{width:8px;height:8px;border-radius:50%;background:var(--fg-3);flex:none;box-shadow:0 0 0 3px rgba(255,255,255,.04)}.song-tab.todo .dot{background:var(--warn)}.song-tab.done .dot{background:var(--ok)}
 .song-tab .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.song-tab .n{color:var(--fg-3);font-size:12px}
-.work{display:flex;flex-direction:column;min-width:0;padding:14px 16px;gap:14px;overflow:auto}
-.row{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;display:flex;flex-direction:column;gap:12px}
+.work{display:flex;flex-direction:column;min-width:0;padding:14px 18px 80px 10px;gap:14px;overflow:auto}
+.row{padding:18px 20px;display:flex;flex-direction:column;gap:12px}
 .row.conflict{border-color:var(--bad)}
 .meta{display:flex;gap:10px;align-items:center;color:var(--fg-3);font-size:12px;flex-wrap:wrap}
-.lyric{font-size:22px;line-height:1.35;font-weight:600;white-space:pre-wrap;text-wrap:balance}
-.why{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:8px;background:var(--panel-2)}
-.why .ic{width:18px;height:18px;border-radius:50%;background:var(--warn);color:var(--accent-ink);font-weight:600;font-size:12px;display:grid;place-items:center;flex:none;margin-top:2px}.why.ok .ic{background:var(--ok)}
-.wavebox{position:relative}.peaks{display:block;width:100%;height:96px;border-radius:8px;background:var(--panel-2);border:1px solid var(--line);touch-action:none;cursor:ew-resize}
+.lyric{font-size:23px;line-height:1.35;font-weight:600;white-space:pre-wrap;text-wrap:balance;letter-spacing:.01em}
+.why{display:flex;gap:10px;align-items:flex-start;padding:10px 13px;border-radius:12px;background:var(--panel-2);border:1px solid var(--line)}
+.why .ic{width:18px;height:18px;border-radius:50%;background:var(--warn);color:#1a1304;font-weight:700;font-size:12px;display:grid;place-items:center;flex:none;margin-top:2px}.why.ok .ic{background:var(--ok)}
+.wavebox{position:relative}.peaks{display:block;width:100%;height:96px;border-radius:12px;background:rgba(0,0,0,.25);border:1px solid var(--line);touch-action:none;cursor:ew-resize}
 .wavenote{position:absolute;right:10px;top:8px;font-size:11px;color:var(--fg-3);pointer-events:none}
 .options{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
-.option{display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:10px 12px;border-radius:8px;border:1px solid var(--line);background:var(--panel-2);text-align:left;min-width:0}
+.option{display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:11px 13px;border-radius:12px;border:1px solid var(--line);background:var(--panel-2);text-align:left;min-width:0}
 .option .k{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--fg-3)}.option .l{font-weight:600;font-size:15px}.option .t{color:var(--fg-2);font-size:12px}
-.option.selected{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}.option.keep .l::before{content:"● ";color:var(--ok)}
-.actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.actions .primary{background:var(--accent);color:var(--accent-ink);border-color:transparent;font-weight:600}
-.nudge{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}.nudge button{border:0;border-radius:0}.nudge span{padding:6px 10px;background:var(--panel);color:var(--fg-2)}
+.option.selected{border-color:var(--accent-2);background:rgba(109,124,255,.16);box-shadow:0 0 0 1px var(--accent) inset,0 6px 20px rgba(109,124,255,.18)}.option.keep .l::before{content:"● ";color:var(--ok)}
+.actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.actions .primary{background:linear-gradient(180deg,#7784ff,#5f6df0);color:var(--accent-ink);border-color:rgba(255,255,255,.18);font-weight:600;box-shadow:0 6px 18px rgba(109,124,255,.3)}
+.nudge{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}.nudge button{border:0;border-radius:0}.nudge span{padding:7px 10px;background:rgba(0,0,0,.2);color:var(--fg-2)}
 .hint{color:var(--fg-3);font-size:12px;margin-left:auto}.order-warning{color:var(--bad);font-weight:600}
 details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointer;color:var(--fg-3)}
 .candidate{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:4px 0;border-top:1px solid var(--line)}
-.candidate.selected{color:var(--fg)}.candidate.rejected{text-decoration:line-through;color:var(--fg-3)}.candidate-action{padding:2px 6px;font-size:12px}
-.queue-list h3{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-3);font-weight:500;margin:4px 0}
-.q{display:grid;grid-template-columns:36px 76px minmax(0,1fr) auto;gap:12px;align-items:center;padding:6px 10px;border-radius:6px;cursor:pointer;color:var(--fg-2)}
-.q:hover{background:var(--panel)}.q.cur{background:var(--panel);color:var(--fg);box-shadow:inset 3px 0 0 var(--accent)}
+.candidate.selected{color:var(--fg)}.candidate.rejected{text-decoration:line-through;color:var(--fg-3)}.candidate-action{padding:2px 7px;font-size:12px}
+.queue-list{padding:10px 8px}
+.queue-list h3{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-3);font-weight:500;margin:4px 10px 6px}
+.q{display:grid;grid-template-columns:36px 76px minmax(0,1fr) auto;gap:12px;align-items:center;padding:7px 12px;border-radius:10px;cursor:pointer;color:var(--fg-2)}
+.q:hover{background:var(--panel-2)}.q.cur{background:var(--panel-2);color:var(--fg);box-shadow:inset 3px 0 0 var(--accent-2)}
 .q .ly{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.q .st{font-size:12px;color:var(--fg-3)}.q.done .st{color:var(--ok)}.q.done .ly{opacity:.6}
-.help[hidden]{display:none}.help{position:fixed;inset:0;background:rgba(0,0,0,.55);display:grid;place-items:center;padding:16px;z-index:5}
-.help .box{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 22px;max-width:440px;width:100%}
-.help table{width:100%;font-size:13px}.help td{padding:4px 6px}.help td:first-child{font-family:ui-monospace,Consolas,monospace;color:var(--accent);width:100px}
+.playbar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);display:flex;gap:12px;align-items:center;padding:9px 16px;border-radius:999px;font-size:13px;z-index:3}
+.playbar[hidden]{display:none}.playbar .led{width:8px;height:8px;border-radius:50%;background:var(--accent-2);box-shadow:0 0 10px var(--accent-2)}
+.help[hidden]{display:none}.help{position:fixed;inset:0;background:rgba(0,0,0,.5);display:grid;place-items:center;padding:16px;z-index:5}
+.help .box{padding:18px 22px;max-width:440px;width:100%}
+.help table{width:100%;font-size:13px}.help td{padding:4px 6px}.help td:first-child{font-family:ui-monospace,Consolas,monospace;color:var(--accent-2);width:100px}
 .help label{display:block;margin-top:10px;color:var(--fg-2)}
 </style>
 </head>
 <body>
 <header>
   <span class="song-name" id="song-name">LRC review</span>
-  <span class="muted">第 <b class="num" id="pos">0</b> / <span class="num" id="pos-total">0</span> 筆</span>
-  <span class="bar"><i id="pos-bar" style="width:0%"></i></span>
-  <span class="muted">本首剩 <b class="num" id="left-song">0</b> · 全部剩 <b class="num" id="left-all">0</b></span>
+  <span class="tile"><span class="lbl">第</span><span class="val num"><span id="pos">0</span><span class="muted">/</span><span id="pos-total">0</span></span><span class="bar"><i id="pos-bar" style="width:0%"></i></span></span>
+  <span class="tile"><span class="lbl">本首剩</span><span class="val num" id="left-song">0</span></span>
+  <span class="tile"><span class="lbl">全部剩</span><span class="val num" id="left-all">0</span></span>
   <span class="spacer"></span>
   <span id="status" class="status">loading</span>
   <span id="server-mode" class="muted"></span>
@@ -69,7 +78,8 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   <nav class="rail" id="rail"></nav>
   <main id="queue" class="work"></main>
 </div>
-<div class="help" id="help" hidden><div class="box">
+<div class="playbar glass" id="playbar" hidden><span class="led"></span><span id="playbar-text">播放中</span></div>
+<div class="help" id="help" hidden><div class="box glass">
   <b>快捷鍵</b>
   <table>
     <tr><td>空白</td><td>播放目前時間點起 2 秒</td></tr>
@@ -185,9 +195,11 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     }
     return audio;
   }
+  function playbar(text) { const bar = document.getElementById('playbar'); if (!bar) return; if (text) { document.getElementById('playbar-text').textContent = text; bar.hidden = false; } else bar.hidden = true; }
   function stopPlayer() {
     const player = state.player;
     player.seq += 1;
+    playbar('');
     if (player.timer != null) { clearTimeout(player.timer); player.timer = null; }
     [...player.handlers.keys()].forEach(unbindAudio);
     player.audio.forEach(audio => audio.pause());
@@ -210,6 +222,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     audio.pause();
     if (state.player.timer != null) { clearTimeout(state.player.timer); state.player.timer = null; }
     state.player.active = null;
+    playbar('');
   }
   async function playAround(item, targetCs, kind=state.mode) {
     if (!item || targetCs == null) return;
@@ -231,6 +244,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       if (!active()) return;
       bindAudio(audio, [{type:'timeupdate', fn:check}, {type:'ended', fn:() => finishClip(audio, seq)}, {type:'error', fn:fail}]);
       state.player.active = audio;
+      playbar('播放 ' + (kind === 'stem' ? '人聲' : 'FLAC') + ' · ' + time(targetCs) + ' 起 2 秒');
       Promise.resolve(audio.play()).catch(() => { if (active()) playbackFailure('audio playback was blocked'); });
       state.player.timer = setTimeout(check, 2250);
     };
@@ -255,6 +269,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
         if (!active()) return;
         audio.currentTime = start;
         state.player.active = audio;
+        playbar('A/B ' + (ab.phase % 2 ? 'B 選定 ' + time(ab.b_cs) : 'A 目前 ' + time(ab.a_cs)) + ' · 第 ' + (Math.floor(ab.phase / 2) + 1) + '/4 輪');
         Promise.resolve(audio.play()).catch(() => { if (active()) playbackFailure('audio playback was blocked'); });
         state.player.timer = setTimeout(() => {
           if (!active()) return;
@@ -307,7 +322,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
           if (label && context.fillText) { context.fillStyle = color; context.font = '600 11px ui-monospace, Consolas, monospace'; context.textAlign = 'left'; context.fillText(label, x(cs) + 4, 13); }
         };
         (marks || []).forEach(m => mark(m.cs, m.color, m.label, m.dash));
-        mark(markerCs, cssVar('--accent', '#f2b84b'), '現在');
+        mark(markerCs, cssVar('--hot', '#ffb454'), '現在');
       }
       if (message && context.fillText) { context.fillStyle = cssVar('--fg-2', '#9fb0c6'); context.font = '12px system-ui, sans-serif'; context.textAlign = 'center'; context.fillText(message, width / 2, height / 2); }
     } catch (error) { /* drawing is best-effort; the controls below the canvas still work */ }
@@ -497,7 +512,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     if (current) queue.appendChild(rowElement(current));
     else { const empty = document.createElement('div'); empty.className = 'meta'; empty.textContent = song ? '這首沒有需要審的句子。' : '沒有歌曲。'; queue.appendChild(empty); }
     const list = document.createElement('section');
-    list.className = 'queue-list';
+    list.className = 'queue-list glass';
     list.innerHTML = '<h3>本首待審</h3>';
     rows.forEach((item, index) => {
       const row = item.row, edit = editFor(item), done = isDone(item);
@@ -529,7 +544,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     const selectedCandidate = chosen != null && chosen !== row.current_cs ? {cs:chosen, diagnostic_only:false} : null;
     const conflict = conflicted(item);
     const canEdit = editable(song);
-    div.className = 'row ' + String(row.review || 'UNTRUSTED').toLowerCase() + (conflict ? ' conflict' : '') + (visible()[state.selected] === item ? ' selected-row' : '');
+    div.className = 'row glass ' + String(row.review || 'UNTRUSTED').toLowerCase() + (conflict ? ' conflict' : '') + (visible()[state.selected] === item ? ' selected-row' : '');
     div.dataset.key = key;
     const sentence = row.reason_text || (alternatives.length ? '需要人工確認。' : '候選一致，只需確認。');
     const optionMarkup = options.map((option, index) => {

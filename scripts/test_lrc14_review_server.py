@@ -569,7 +569,7 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
   await settle();
   const queue = elements.get('queue'), rail = elements.get('rail');
   const card = queue.children.find(child => String(child.className).startsWith('row '));
-  const list = queue.children.find(child => child.className === 'queue-list');
+  const list = queue.children.find(child => String(child.className).startsWith('queue-list'));
   const html = card._html;
   console.log(JSON.stringify({
     tabs: rail.children.map(child => child._html.includes('song') && child._html.includes('2/2')),
