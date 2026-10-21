@@ -155,14 +155,18 @@ def score(report: dict, reference: list[int]) -> dict | None:
     deltas = [abs(t - r) for t, r in zip(times, reference)]
     status_error = {key: error_cells() for key in ("REVIEW", "UNTRUSTED", "TRUSTED")}
     reason_error: dict[str, dict[str, int]] = {}
+    review_lines: list[dict] = []
     for row, status, delta in zip(report["assignments"], statuses, deltas):
         add_error(status_error[status], delta)
         if status == "REVIEW":
-            for code in lrc_review_tsv.reason_codes_for(row, status):
+            codes = sorted(set(lrc_review_tsv.reason_codes_for(row, status)))
+            for code in codes:
                 add_error(reason_error.setdefault(code, error_cells()), delta)
+            review_lines.append({"codes": codes, "delta_cs": delta})
     return {
         "status_error": status_error,
         "reason_error": reason_error,
+        "review_lines": review_lines,
         "lines": len(deltas),
         "buckets": bucket_counts(deltas),
         "over_1s": sum(d > 100 for d in deltas),
@@ -195,6 +199,7 @@ def merge_cells(total: dict[str, dict[str, int]], part: dict[str, dict[str, int]
 def add_totals(total: dict, part: dict) -> None:
     merge_cells(total["status_error"], part["status_error"])
     merge_cells(total["reason_error"], part["reason_error"])
+    total["review_lines"].extend(part["review_lines"])
     total["lines"] += part["lines"]
     total["over_1s"] += part["over_1s"]
     total["trusted_over_1s"] += part["trusted_over_1s"]
@@ -207,7 +212,47 @@ def add_totals(total: dict, part: dict) -> None:
 
 def empty_totals() -> dict:
     return {"songs": 0, "lines": 0, "over_1s": 0, "trusted_over_1s": 0, "within_20cs": 0, "buckets": {}, "status": {},
-            "status_error": {}, "reason_error": {}}
+            "status_error": {}, "reason_error": {}, "review_lines": []}
+
+
+def sole_trigger_table(review_lines: list[dict]) -> dict[str, dict[str, int]]:
+    """Error cells of REVIEW lines that carry exactly one reason code, per code."""
+    table: dict[str, dict[str, int]] = {}
+    for item in review_lines:
+        if len(item["codes"]) == 1:
+            add_error(table.setdefault(item["codes"][0], error_cells()), item["delta_cs"])
+    return table
+
+
+def demotion_ladder(review_lines: list[dict], reason_error: dict[str, dict[str, int]]) -> list[dict]:
+    """What-if ladder: treat reason codes as weak one at a time, best already-right share first.
+
+    A REVIEW line is demoted once every code it carries is weak. Each step reports
+    how many lines would leave REVIEW, how many of those were already right
+    (within 0.20 s of BK) and how many were off by more than 1 s, so the cut-off
+    can be read directly: stop before the step that starts losing big errors.
+    """
+    order = sorted(
+        reason_error.items(),
+        key=lambda item: (-(item[1]["<=0.20s"] / item[1]["n"]) if item[1]["n"] else 0.0, -item[1]["n"]),
+    )
+    weak: set[str] = set()
+    ladder: list[dict] = []
+    for code, cell in order:
+        weak.add(code)
+        demoted = [item for item in review_lines if set(item["codes"]) <= weak]
+        kept = [item for item in review_lines if not set(item["codes"]) <= weak]
+        ladder.append({
+            "code": code,
+            "code_already_right": round(100 * cell["<=0.20s"] / cell["n"]) if cell["n"] else 0,
+            "demoted": len(demoted),
+            "demoted_right": sum(item["delta_cs"] <= 20 for item in demoted),
+            "demoted_over_1s": sum(item["delta_cs"] > 100 for item in demoted),
+            "kept": len(kept),
+            "kept_right_share": round(100 * sum(item["delta_cs"] <= 20 for item in kept) / len(kept)) if kept else 0,
+            "kept_over_1s": sum(item["delta_cs"] > 100 for item in kept),
+        })
+    return ladder
 
 
 def compare(ref_dir: Path, run_dir: Path, bk_dir: Path) -> dict:
@@ -231,7 +276,7 @@ def compare(ref_dir: Path, run_dir: Path, bk_dir: Path) -> dict:
                    else f"line-count-mismatch-with-bk (report {len(run_report['assignments'])} vs bk {len(reference_times)}: {reference})")
             skipped.append({"report": name, "reason": why})
             continue
-        slim = lambda item: {k: v for k, v in item.items() if k not in ("deltas", "status_error", "reason_error")}
+        slim = lambda item: {k: v for k, v in item.items() if k not in ("deltas", "status_error", "reason_error", "review_lines")}
         entry = {"report": name, "bk": str(reference), "run": slim(run_score)}
         totals["run"]["songs"] += 1
         add_totals(totals["run"], run_score)
@@ -300,6 +345,26 @@ def markdown(result: dict) -> str:
         for code, cell in sorted(total["reason_error"].items(), key=lambda item: -item[1]["n"]):
             share = f"{100 * cell['<=0.20s'] / cell['n']:.0f}%" if cell["n"] else "-"
             lines.append(f"| {code} | {cell['n']} | {cell['<=0.20s']} | {cell['0.20-0.50s']} | {cell['0.50-1.00s']} | {cell['>1.00s']} | {share} |")
+    if ref["review_lines"]:
+        sole = sole_trigger_table(ref["review_lines"])
+        lines.append("")
+        lines.append("REVIEW lines carrying exactly one reason code vs BK (ref):")
+        lines.append("")
+        lines.append("| only reason code | lines | <=0.20s | 0.20-0.50s | 0.50-1.00s | >1.00s | already right |")
+        lines.append("|---|---:|---:|---:|---:|---:|---:|")
+        for code, cell in sorted(sole.items(), key=lambda item: -item[1]["n"]):
+            share = f"{100 * cell['<=0.20s'] / cell['n']:.0f}%" if cell["n"] else "-"
+            lines.append(f"| {code} | {cell['n']} | {cell['<=0.20s']} | {cell['0.20-0.50s']} | {cell['0.50-1.00s']} | {cell['>1.00s']} | {share} |")
+        lines.append("")
+        lines.append("Demotion ladder (ref): each row marks one more reason code as weak, best already-right share first; a REVIEW line leaves REVIEW once all its codes are weak.")
+        lines.append("")
+        lines.append("| + weak code | code already right | demoted | demoted already right | demoted >1.00s | kept in REVIEW | kept already right | kept >1.00s |")
+        lines.append("|---|---:|---:|---:|---:|---:|---:|---:|")
+        for step in demotion_ladder(ref["review_lines"], ref["reason_error"]):
+            lines.append(
+                f"| {step['code']} | {step['code_already_right']}% | {step['demoted']} | {step['demoted_right']} | "
+                f"{step['demoted_over_1s']} | {step['kept']} | {step['kept_right_share']}% | {step['kept_over_1s']} |"
+            )
     if result["moved_lines"]:
         lines.append("")
         lines.append("| report | entry | shift s | ref err s | run err s |")

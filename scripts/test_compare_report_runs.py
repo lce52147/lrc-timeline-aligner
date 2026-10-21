@@ -96,5 +96,30 @@ class CompareReportRunsTest(unittest.TestCase):
             self.assertTrue(result["skipped"][0]["reason"].startswith("ambiguous-bk-match"))
 
 
+
+
+class DemotionLadderTest(unittest.TestCase):
+    def test_ladder_demotes_only_lines_whose_codes_are_all_weak(self) -> None:
+        lines = [
+            {"codes": ["weak"], "delta_cs": 5},
+            {"codes": ["weak"], "delta_cs": 8},
+            {"codes": ["weak", "strong"], "delta_cs": 300},
+            {"codes": ["strong"], "delta_cs": 150},
+        ]
+        reason_error = {}
+        for item in lines:
+            for code in item["codes"]:
+                crr.add_error(reason_error.setdefault(code, crr.error_cells()), item["delta_cs"])
+        ladder = crr.demotion_ladder(lines, reason_error)
+        self.assertEqual([step["code"] for step in ladder], ["weak", "strong"])
+        first, second = ladder
+        self.assertEqual((first["demoted"], first["demoted_right"], first["demoted_over_1s"]), (2, 2, 0))
+        self.assertEqual((first["kept"], first["kept_over_1s"]), (2, 2))
+        self.assertEqual((second["demoted"], second["demoted_over_1s"], second["kept"]), (4, 2, 0))
+        sole = crr.sole_trigger_table(lines)
+        self.assertEqual(sole["weak"]["n"], 2)
+        self.assertEqual(sole["strong"]["n"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()
