@@ -1,6 +1,16 @@
-# LRC Timeline Aligner — v1.5.0
+# LRC Timeline Aligner — v1.6.0
 
 Local LRC timestamp generation for Windows. The tool keeps lyric order fixed, generates timing evidence from the audio, lets Central arbitration choose the final line starts, and writes a same-name `.lrc` plus an audit report.
+
+## What's new in v1.6
+
+Review page redesign. Line timing policy, report format and the save flow are unchanged; v1.6 only changes how a review row is presented and operated.
+
+- **One line at a time.** The page shows the current line as one card: lyric, a one-sentence reason in plain language, the waveform, and at most three timing options, A / B / keep (`1` / `2` / `3`). Candidates closer than 0.25 s are merged into one option; candidates within 0.15 s of the current timestamp fold into "keep". The raw candidate list, internal source names, severity and reason codes sit in a collapsible "詳細" fold.
+- **Reason as a sentence.** `row["reason_text"]` is derived server-side from the reason codes by priority (vocal absent → order problem → early opening → detector disagreement → silent risk → repeated line → weak evidence); the per-code labels remain in the fold.
+- **Waveform that explains itself.** Markers for the current time, options A/B and the previous/next line; a 0.5 s ruler; when the vocal stem cannot be read the page decodes the FLAC in the browser instead, and when neither works it says why instead of showing an empty box.
+- **Progress, not tabs.** A song list with remaining counts replaces the tab wall; the page opens on the first song that still has rows to review; stat tiles show this song's progress, remaining rows here and overall, and unsaved edits; the per-song queue is a list of one-line rows with a verdict chip. `Enter` accepts and moves on, `K` keeps, `U` undoes, `← →` nudge, `Tab` opens the fold, `?` lists the keys.
+- **New module** `scripts/review_presentation.py` (`present_options`, `reason_sentence`) with tests; the review server adds `options` and `reason_text` to each row and keeps every previous field.
 
 ## What's new in v1.5
 
