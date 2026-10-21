@@ -982,8 +982,8 @@ class ArchivedReportsStayHiddenTest(unittest.TestCase):
             root = Path(tmp)
             (root / "_archive" / "stale_2026-10-21").mkdir(parents=True)
             live = root / "live--1.align-report.json"
-            live.write_text(_json.dumps({"assignments": []}), encoding="utf-8")
+            live.write_text(_json.dumps({"assignments": [], "audio_path": str(root / "a.flac")}), encoding="utf-8")
             (root / "_archive" / "stale_2026-10-21" / "old--2.align-report.json").write_text(
-                _json.dumps({"assignments": []}), encoding="utf-8")
+                _json.dumps({"assignments": [], "audio_path": str(root / "b.flac")}), encoding="utf-8")
             found, _excluded = review_server._report_files([root], root)
             self.assertEqual([path.name for path in found], ["live--1.align-report.json"])
