@@ -80,3 +80,11 @@ docs/*.html
 docs/*.png
 docs/*.jpg
 !README.md
+
+# Lyricsee generated outputs
+lyricsee/txt/
+lyricsee/report/
+lyricsee/rebuild_*/
+lyricsee/translation_*staging*/
+lyricsee/traditional_pass_*/
+lyricsee/lrc_validation/
