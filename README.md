@@ -83,6 +83,36 @@ Measured on the 39-song / 1487-line manually checked validation pool (cache-only
 
 These results describe this corpus and do not predict accuracy on arbitrary songs. The v1.2 sections below are kept for history.
 
+## What's new in v1.2
+
+Architecture rewrite around Central arbitration and independent reviewer evidence (tag `v1.2.0`, 2026-10-04).
+
+- Central becomes the single authority that selects the timestamp written to each lyric row; CTC and Whisper-family systems become evidence producers instead of competing final writers.
+- R1 `gross-rescue` and R2 `reviewer-validity` arbiter modes are introduced. R2 can validate only registered soft evidence gaps, using independent HUBP / WhisperX / XLSR evidence, and otherwise fails closed.
+- User-facing runs acquire reviewer evidence automatically; reviewer trust labels stay diagnostic and separate from timestamp selection.
+- Automatic inference is separated from checked-reference timing; checked timestamps remain available only through explicit assisted modes.
+- Validation and reporting are expanded around per-row evidence, review status and reproducible evaluation (see "Current architecture", "Arbiter modes" and "Evaluation method" below).
+
+## What's new in v1.1
+
+CTC becomes the primary forced-alignment path and is evaluated alongside the original WhisperX-assisted pipeline (June–July 2026, no release tag).
+
+- Added MMS/CTC forced alignment (`torchaudio.pipelines.MMS_FA`) over the known lyric sequence, with Japanese lyrics romanized for the CTC/Viterbi pass.
+- `auto` runs the CTC and the whisper.cpp + WhisperX candidates and selects by backend-aware report quality; near-ties favour CTC because it is constrained to the prepared lyric order.
+- Added auditable CTC reports, alignment against isolated vocal stems, conservative acoustic onset correction and experimental vocal-onset refinement.
+- Added quantitative checked-song regression gates and alignment summaries.
+- Hardened repeated-line and late-ASR cases while preserving the prepared lyric order.
+
+## What's new in v1.0
+
+Initial public release of the local timeline aligner (2026-06-16).
+
+- Align prepared lyrics to FLAC without generating or rewriting lyric text.
+- Use whisper.cpp ASR anchors plus WhisperX forced alignment for untimed lyrics, with CUDA acceleration when available.
+- Reuse checked LRC timing when explicitly supplied and the text order matches.
+- Write a same-name `.lrc` together with an auditable alignment report.
+- Establish fail-loudly / report-first behaviour and private checked-song regression gates.
+
 ## Current architecture
 
 The production path has five layers:
