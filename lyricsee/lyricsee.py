@@ -349,6 +349,12 @@ def _select_oogg_endpoint(client: HttpClient, endpoints: tuple[str, ...]) -> Oog
     return target
 
 
+def _clear_oogg_endpoint_cache(client: HttpClient, endpoints: tuple[str, ...]) -> None:
+    cache = getattr(client, "_lyricsee_oogg_target_cache", None)
+    if isinstance(cache, dict):
+        cache.pop(endpoints, None)
+
+
 def _process_track(
     index: int,
     audio_path: Path,
@@ -357,7 +363,12 @@ def _process_track(
     no_translate: bool,
     replace_existing: bool,
     client: HttpClient,
+    oogg_state: dict[str, object] | None = None,
 ) -> dict:
+    if oogg_state is None:
+        oogg_state = getattr(client, "_lyricsee_oogg_state", None)
+        if oogg_state is None:
+            oogg_state = {"consecutive_failures": 0, "disabled": False}
     embedded_lines = 0
     search_engine = "none"
     search_url = ""
@@ -387,7 +398,7 @@ def _process_track(
             return _base_row(
                 index,
                 audio_path,
-                status="no_original",
+                status=("source_unavailable" if collected.lrclib_unavailable else "no_original"),
                 search_engine=search_engine,
                 search_url=search_url,
                 embedded_lyrics_lines=embedded_lines,
@@ -399,6 +410,7 @@ def _process_track(
         translation_error = ""
         oogg_endpoint = ""
         status = "original_only"
+        selected: LyricCandidate | None = None
 
         if no_translate:
             selected = LyricCandidate(
@@ -421,52 +433,118 @@ def _process_track(
                 translation_method = "web"
                 status = "web"
                 attach_verification(selected, evidence, translation_method="web")
+                oogg_state["consecutive_failures"] = 0
             except Exception:
-                oogg_target = _select_oogg_endpoint(client, config.oogg_endpoints)
-                oogg_endpoint = oogg_target.endpoint if oogg_target else ""
-                try:
-                    if not oogg_target:
-                        raise ConnectionError("no configured OOGG endpoint is online")
-                    translated = translate_oogg(
-                        [row.original for row in original.lines],
-                        title=identity.title,
-                        endpoint=oogg_endpoint,
-                        model=oogg_target.model,
-                        review=False,
-                    )
-                    selected = LyricCandidate(
-                        source=f"oogg:{oogg_endpoint}",
-                        url=original.url,
-                        title=identity.title,
-                        artist=identity.artist,
-                        lines=[
-                            LyricPair(row.original, translated[index])
-                            for index, row in enumerate(original.lines)
-                        ],
-                        discovered_urls=list(collected.google_urls),
-                        search_engine=search_engine,
-                        search_url=search_url,
-                        translator="OOGG",
-                    )
-                    validate_output(original, selected, require_translation=True)
-                    translation_method = "oogg_draft"
-                    status = "oogg_draft"
-                    attach_verification(selected, evidence, translation_method="oogg_draft")
-                except Exception as exc:
-                    translation_error = _oogg_error(exc)
-                    selected = LyricCandidate(
-                        source=original.source,
-                        url=original.url,
-                        title=identity.title,
-                        artist=identity.artist,
-                        lines=[LyricPair(row.original) for row in original.lines],
-                        discovered_urls=list(collected.google_urls),
-                        search_engine=search_engine,
-                        search_url=search_url,
-                        translator=None,
-                    )
-                    validate_output(original, selected, require_translation=False)
-                    attach_verification(selected, evidence, translation_method="none")
+                if oogg_state.get("disabled"):
+                    translation_error = "oogg_unreachable"
+                else:
+                    oogg_target = _select_oogg_endpoint(client, config.oogg_endpoints)
+                    oogg_endpoint = oogg_target.endpoint if oogg_target else ""
+                    try:
+                        if not oogg_target:
+                            raise ConnectionError("no configured OOGG endpoint is online")
+                        translated = translate_oogg(
+                            [row.original for row in original.lines],
+                            title=identity.title,
+                            endpoint=oogg_endpoint,
+                            model=oogg_target.model,
+                            review=False,
+                        )
+                        selected = LyricCandidate(
+                            source=f"oogg:{oogg_endpoint}",
+                            url=original.url,
+                            title=identity.title,
+                            artist=identity.artist,
+                            lines=[
+                                LyricPair(row.original, translated[index])
+                                for index, row in enumerate(original.lines)
+                            ],
+                            discovered_urls=list(collected.google_urls),
+                            search_engine=search_engine,
+                            search_url=search_url,
+                            translator="OOGG",
+                        )
+                        validate_output(original, selected, require_translation=True)
+                        translation_method = "oogg_draft"
+                        status = "oogg_draft"
+                        attach_verification(selected, evidence, translation_method="oogg_draft")
+                        oogg_state["consecutive_failures"] = 0
+                    except Exception as exc:
+                        translation_error = _oogg_error(exc)
+                        if translation_error == "oogg_unreachable":
+                            if oogg_target:
+                                _clear_oogg_endpoint_cache(client, config.oogg_endpoints)
+                                switched = _select_oogg_endpoint(client, config.oogg_endpoints)
+                                if switched and switched.endpoint != oogg_endpoint:
+                                    try:
+                                        translated = translate_oogg(
+                                            [row.original for row in original.lines],
+                                            title=identity.title,
+                                            endpoint=switched.endpoint,
+                                            model=switched.model,
+                                            review=False,
+                                        )
+                                        selected = LyricCandidate(
+                                            source=f"oogg:{switched.endpoint}",
+                                            url=original.url,
+                                            title=identity.title,
+                                            artist=identity.artist,
+                                            lines=[
+                                                LyricPair(row.original, translated[index])
+                                                for index, row in enumerate(original.lines)
+                                            ],
+                                            discovered_urls=list(collected.google_urls),
+                                            search_engine=search_engine,
+                                            search_url=search_url,
+                                            translator="OOGG",
+                                        )
+                                        validate_output(original, selected, require_translation=True)
+                                        oogg_endpoint = switched.endpoint
+                                        translation_method = "oogg_draft"
+                                        status = "oogg_draft"
+                                        translation_error = ""
+                                        attach_verification(selected, evidence, translation_method="oogg_draft")
+                                        oogg_state["consecutive_failures"] = 0
+                                    except Exception:
+                                        translation_error = "oogg_unreachable"
+                            if status != "oogg_draft":
+                                failures = int(oogg_state.get("consecutive_failures") or 0) + 1
+                                oogg_state["consecutive_failures"] = failures
+                                if failures >= 3:
+                                    oogg_state["disabled"] = True
+                                    print(
+                                        "OOGG offline after 3 consecutive failures; remaining tracks original_only",
+                                        file=sys.stderr,
+                                    )
+                        if status != "oogg_draft":
+                            selected = LyricCandidate(
+                                source=original.source,
+                                url=original.url,
+                                title=identity.title,
+                                artist=identity.artist,
+                                lines=[LyricPair(row.original) for row in original.lines],
+                                discovered_urls=list(collected.google_urls),
+                                search_engine=search_engine,
+                                search_url=search_url,
+                                translator=None,
+                            )
+                            validate_output(original, selected, require_translation=False)
+                            attach_verification(selected, evidence, translation_method="none")
+
+        if selected is None:
+            selected = LyricCandidate(
+                source=original.source,
+                url=original.url,
+                title=identity.title,
+                artist=identity.artist,
+                lines=[LyricPair(row.original) for row in original.lines],
+                discovered_urls=list(collected.google_urls),
+                search_engine=search_engine,
+                search_url=search_url,
+                translator=None,
+            )
+            validate_output(original, selected, require_translation=False)
+            attach_verification(selected, evidence, translation_method="none")
 
         selected.discovered_urls = list(collected.google_urls)
         selected.search_engine = search_engine
@@ -558,6 +636,7 @@ def run(args: argparse.Namespace) -> tuple[list[dict], tuple[Path, Path] | None]
     seen: dict[str, int] = {}
     eligible = 0
     client: HttpClient | None = None
+    oogg_state: dict[str, object] = {"consecutive_failures": 0, "disabled": False}
 
     for index, raw_path in enumerate(tracks, start=1):
         path = raw_path.expanduser()
@@ -598,6 +677,10 @@ def run(args: argparse.Namespace) -> tuple[list[dict], tuple[Path, Path] | None]
 
         if client is None:
             client = HttpClient()
+            try:
+                setattr(client, "_lyricsee_oogg_state", oogg_state)
+            except (AttributeError, TypeError):
+                pass
         row = _process_track(
             index,
             path,
