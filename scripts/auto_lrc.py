@@ -45,8 +45,8 @@ import runtime_paths
 import model_cache
 from model_cache import ModelCacheMiss
 from multimodel_consensus import (
-    MODEL_SPECS,
     PROTOCOL_REVISION as MULTIMODEL_PROTOCOL_REVISION,
+    active_model_specs,
     build_windows,
     choose_consensus_overrides,
     consensus_report,
@@ -5113,13 +5113,14 @@ def _apply_multimodel_consensus_runtime(
         return state
 
     device = str(getattr(args, "whisperx_device", "auto"))
+    model_specs = list(active_model_specs())
     cache_request = {
         "protocol_revision": MULTIMODEL_PROTOCOL_REVISION,
-        "models": list(MODEL_SPECS),
+        "models": model_specs,
         "device": device,
         "windows": list(windows),
     }
-    model_ids = {spec: model_identity(spec) for spec in MODEL_SPECS}
+    model_ids = {spec: model_identity(spec) for spec in model_specs}
     diagnostic["model_identities"] = model_ids
     unverified_models = [
         spec for spec, identity in model_ids.items()
@@ -5141,7 +5142,7 @@ def _apply_multimodel_consensus_runtime(
         model_revision=model_revision,
         model_blob_sha256=model_blob_sha,
         protocol_revision=MULTIMODEL_PROTOCOL_REVISION,
-        models=list(MODEL_SPECS),
+        models=model_specs,
     )
     cache_key = _model_cache_key(
         "multimodel-consensus",
@@ -5154,7 +5155,7 @@ def _apply_multimodel_consensus_runtime(
     diagnostic["cache_key"] = cache_key
     diagnostic["cache_path"] = str(_model_cache_path("multimodel-consensus", cache_key))
     diagnostic["windows"] = list(windows)
-    diagnostic["models"] = list(MODEL_SPECS)
+    diagnostic["models"] = model_specs
 
     try:
         payload = _model_cache_read(

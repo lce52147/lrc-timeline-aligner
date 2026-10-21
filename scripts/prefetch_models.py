@@ -16,7 +16,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import runtime_paths  # noqa: E402
-from multimodel_consensus import HF_MODEL_REVISIONS, MODEL_SPECS  # noqa: E402
+from multimodel_consensus import HF_MODEL_REVISIONS, active_model_specs  # noqa: E402
 ENGLISH_XLSR_REPO = "jonatasgrosman/wav2vec2-large-xlsr-53-english"
 ENGLISH_XLSR_FILES = (
     "config.json",
@@ -72,7 +72,7 @@ def _download_snapshot(
 
 
 def _prefetch_hf() -> None:
-    repos = {repo for spec in MODEL_SPECS if (repo := _repo_from_spec(spec))}
+    repos = {repo for spec in active_model_specs() if (repo := _repo_from_spec(spec))}
     for repo in sorted(repos):
         if repo == JAPANESE_XLSR_REPO:
             continue

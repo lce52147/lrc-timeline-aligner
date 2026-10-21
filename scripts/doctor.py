@@ -285,7 +285,15 @@ def check_multimodel_identities() -> str:
             raise RuntimeError(f"{spec}: no expected identity")
         if (revision, blob) != expected:
             raise RuntimeError(f"{spec}: {(revision, blob)} != {expected}")
-    return f"{len(mm.MODEL_SPECS)}/{len(mm.MODEL_SPECS)} verified"
+    extras = mm.extra_model_specs()
+    for spec in extras:
+        identity = mm.model_identity(spec)
+        if "UNVERIFIED" in (identity.get("model_revision"), identity.get("model_blob_sha256")):
+            raise RuntimeError(f"{spec}: extra model identity unresolved (run prefetch_models.py)")
+    summary = f"{len(mm.MODEL_SPECS)}/{len(mm.MODEL_SPECS)} verified"
+    if extras:
+        summary += f"; extra (experiment): {', '.join(extras)}"
+    return summary
 
 
 def check_reviewer_models() -> str:

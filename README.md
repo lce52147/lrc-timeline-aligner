@@ -283,6 +283,10 @@ These trust labels are auxiliary information, not a correctness guarantee.
 
 Other explicit modes include `lyrics`, `checked`, `ctc`, `jactc`, `whisperx`, `whispercpp`, `heuristic`, and `audio`. `jactc`, `whispercpp`, `heuristic`, and `audio` remain experimental comparison or fallback paths.
 
+### Opt-in extra consensus models (experiment)
+
+`LRC_MULTIMODEL_EXTRA_MODELS` appends extra `en-ctc:<repo>:roman|native` / `ja-ctc:...` specs to the multimodel-consensus reviewer. Only repos pinned in `multimodel_consensus.HF_MODEL_REVISIONS` are accepted, the extra specs become part of the consensus cache identity (so an experiment never reuses or pollutes production cache entries), `prefetch_models.py` downloads them, and `doctor.py` lists them as `extra (experiment)`. Currently pinned for A/B: `en-ctc:NextFire/mms-300m-ForcedAligner-karaoke-ja-Latn:roman` (mms-300m fine-tuned on karaoke lyric timings; CC BY-NC-SA 4.0). Unset the variable for production runs.
+
 ## Evaluation method
 
 The manually aligned references are private and are not published with the repository because they contain manually checked lyric text/timestamps that are intentionally kept outside the public release. The public evaluator first normalizes the sung text with NFKC and whitespace removal, aligns equal lyric rows in sequence order, excludes non-lyric marker rows such as `♪`, and only then compares timestamps. Added or missing lyric rows are reported explicitly instead of shifting all later timing pairs.

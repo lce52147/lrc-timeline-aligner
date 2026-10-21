@@ -32,12 +32,45 @@ MODEL_SPECS = (
     "ja-ctc:jonatasgrosman/wav2vec2-large-xlsr-53-japanese:native",
 )
 
+# Opt-in experiment models (never in MODEL_SPECS; see extra_model_specs()).
+KARAOKE_JA_REPO = "NextFire/mms-300m-ForcedAligner-karaoke-ja-Latn"
+KARAOKE_JA_SPEC = f"en-ctc:{KARAOKE_JA_REPO}:roman"
+EXTRA_MODELS_ENV = "LRC_MULTIMODEL_EXTRA_MODELS"
+
 HF_MODEL_REVISIONS = {
     "facebook/mms-1b-all": "3d33597edbdaaba14a8e858e2c8caa76e3cec0cd",
+    KARAOKE_JA_REPO: "2ab2b5f46539ee284703c281f286b01d2410ee12",
     "facebook/wav2vec2-large-960h-lv60-self": "54074b1c16f4de6a5ad59affb4caa8f2ea03a119",
     "jonatasgrosman/wav2vec2-large-xlsr-53-english": "569a6236e92bd5f7652a0420bfe9bb94c5664080",
     "jonatasgrosman/wav2vec2-large-xlsr-53-japanese": "cf031e020336460d15a417eba710bbc5bb43be9a",
 }
+
+
+def extra_model_specs(value: str | None = None) -> tuple[str, ...]:
+    """Opt-in model specs from LRC_MULTIMODEL_EXTRA_MODELS (comma/semicolon separated).
+
+    Only ``en-ctc:<pinned repo>:roman|native`` and ``ja-ctc:...`` forms are accepted,
+    so an experiment can never pull an unpinned model. Specs already in MODEL_SPECS
+    are ignored. Invalid entries fail loudly instead of being skipped.
+    """
+    raw = os.environ.get(EXTRA_MODELS_ENV, "") if value is None else value
+    specs: list[str] = []
+    for item in re.split(r"[,;]", raw or ""):
+        spec = item.strip()
+        if not spec or spec in MODEL_SPECS or spec in specs:
+            continue
+        parts = spec.split(":", 2)
+        if len(parts) != 3 or parts[0] not in {"en-ctc", "ja-ctc"} or parts[2] not in {"roman", "native"}:
+            raise RuntimeError(f"{EXTRA_MODELS_ENV}: unsupported model spec: {spec}")
+        if parts[1] == "torchaudio" or parts[1] not in HF_MODEL_REVISIONS:
+            raise RuntimeError(f"{EXTRA_MODELS_ENV}: unpinned model repo: {parts[1]}")
+        specs.append(spec)
+    return tuple(specs)
+
+
+def active_model_specs(value: str | None = None) -> tuple[str, ...]:
+    """MODEL_SPECS plus any opt-in extra specs; the cache identity uses this list."""
+    return tuple(MODEL_SPECS) + extra_model_specs(value)
 
 
 _WEIGHT_NAME = re.compile(

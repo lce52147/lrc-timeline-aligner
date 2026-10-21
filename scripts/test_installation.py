@@ -107,7 +107,9 @@ class InstallationContractTests(unittest.TestCase):
 
     def test_every_consensus_hf_repo_is_pinned(self) -> None:
         repos = set()
-        for spec in multimodel_consensus.MODEL_SPECS:
+        # Every pinned repo must be reachable from a default spec or a documented opt-in spec.
+        specs = multimodel_consensus.active_model_specs(multimodel_consensus.KARAOKE_JA_SPEC)
+        for spec in specs:
             if spec.startswith("mms1b:"):
                 repos.add("facebook/mms-1b-all")
             elif spec.startswith(("en-ctc:", "ja-ctc:")):
