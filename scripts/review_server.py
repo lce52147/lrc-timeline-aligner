@@ -253,7 +253,11 @@ def _report_files(targets, report_dir, *, scan_report_dir=True):
                 if str(data.get("audio_path", "")).casefold() == target:
                     candidates.append(report)
         elif path.is_dir():
-            local_reports = sorted(path.rglob("*.align-report.json"))
+            # Archived reports (archive_stale_reports.py) live under _archive/ and must stay hidden.
+            local_reports = sorted(
+                item for item in path.rglob("*.align-report.json")
+                if not any(part.casefold() == "_archive" for part in item.relative_to(path).parts[:-1])
+            )
             if local_reports:
                 candidates = local_reports
             else:

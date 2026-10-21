@@ -973,3 +973,17 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ArchivedReportsStayHiddenTest(unittest.TestCase):
+    def test_directory_target_skips_archive_subfolder(self) -> None:
+        import json as _json
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "_archive" / "stale_2026-10-21").mkdir(parents=True)
+            live = root / "live--1.align-report.json"
+            live.write_text(_json.dumps({"assignments": []}), encoding="utf-8")
+            (root / "_archive" / "stale_2026-10-21" / "old--2.align-report.json").write_text(
+                _json.dumps({"assignments": []}), encoding="utf-8")
+            found, _excluded = review_server._report_files([root], root)
+            self.assertEqual([path.name for path in found], ["live--1.align-report.json"])
