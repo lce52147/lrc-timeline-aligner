@@ -20,6 +20,9 @@ from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 
+SEARCH_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+
+
 class TrackIdentity(NamedTuple):
     title: str
     artist: str = ""
@@ -668,11 +671,13 @@ class SearchResult:
         candidates: list[LyricCandidate],
         search_engine: str,
         search_url: str,
+        errors: list[str] | None = None,
     ) -> None:
         self.urls = urls
         self.candidates = candidates
         self.search_engine = search_engine
         self.search_url = search_url
+        self.errors = list(errors or [])
 
     def __iter__(self):
         yield self.urls
@@ -788,14 +793,20 @@ def fetch_google_candidates(
     urls: list[str] = []
     search_engine = "none"
     search_url = ""
+    search_errors: list[str] = []
 
     try:
         search_document = client.get_text(
             "https://www.google.com/search",
             params={"q": query, "udm": "14"},
+            headers={
+                "User-Agent": SEARCH_USER_AGENT,
+                "Accept-Language": "zh-TW,ja;q=0.8",
+            },
         )
         urls = parse_google_results(search_document)
-    except Exception:
+    except Exception as exc:
+        search_errors.append(f"google_http: {exc}")
         urls = []
     if urls:
         search_engine = "google"
@@ -807,12 +818,13 @@ def fetch_google_candidates(
             ddg_document = client.get_text(
                 ddg_url,
                 headers={
-                    "User-Agent": getattr(client, "user_agent", "Lyricsee/0.1 (local LRC tools helper)"),
+                    "User-Agent": SEARCH_USER_AGENT,
                     "Accept-Language": "zh-TW,ja;q=0.8",
                 },
             )
             urls = parse_duckduckgo_results(ddg_document)
-        except Exception:
+        except Exception as exc:
+            search_errors.append(f"duckduckgo: {exc}")
             urls = []
         if urls:
             search_engine = "duckduckgo"
@@ -851,7 +863,7 @@ def fetch_google_candidates(
                 search_url=search_url,
             )
         )
-    return SearchResult(urls, candidates, search_engine, search_url)
+    return SearchResult(urls, candidates, search_engine, search_url, search_errors)
 
 
 def collect_candidates(
@@ -878,6 +890,7 @@ def collect_candidates(
         if isinstance(fetched, SearchResult):
             search_engine = fetched.search_engine
             search_url = fetched.search_url
+            errors.extend(fetched.errors)
         elif google_urls:
             search_engine = "google"
             search_url = google_search_url(identity)

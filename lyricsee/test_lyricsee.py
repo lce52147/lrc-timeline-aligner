@@ -367,10 +367,12 @@ class LyricseeCoreTests(unittest.TestCase):
 
             def __init__(self):
                 self.headless_calls = 0
+                self.google_headers = None
                 self.ddg_headers = None
 
             def get_text(self, url, params=None, headers=None):
                 if "google.com/search" in url:
+                    self.google_headers = headers
                     return '<a href="https://support.google.com/websearch">blocked</a>'
                 if "duckduckgo.com/html" in url:
                     self.ddg_headers = headers
@@ -387,7 +389,9 @@ class LyricseeCoreTests(unittest.TestCase):
         self.assertEqual(result.search_engine, "duckduckgo")
         self.assertTrue(result.search_url.startswith("https://html.duckduckgo.com/html/?q="))
         self.assertEqual(client.headless_calls, 0)
-        self.assertEqual(client.ddg_headers["User-Agent"], "test-agent")
+        self.assertTrue(client.google_headers["User-Agent"].startswith("Mozilla/5.0"))
+        self.assertTrue(client.ddg_headers["User-Agent"].startswith("Mozilla/5.0"))
+        self.assertEqual(client.google_headers["Accept-Language"], "zh-TW,ja;q=0.8")
         self.assertEqual(client.ddg_headers["Accept-Language"], "zh-TW,ja;q=0.8")
         self.assertEqual(len(result.candidates), 1)
 
@@ -398,8 +402,10 @@ class LyricseeCoreTests(unittest.TestCase):
             user_agent = "test-agent"
 
             def get_text(self, url, params=None, headers=None):
-                if "google.com/search" in url or "duckduckgo.com/html" in url:
+                if "google.com/search" in url:
                     return "<html></html>"
+                if "duckduckgo.com/html" in url:
+                    raise RuntimeError("ddg down")
                 raise AssertionError(url)
 
             def google_search_urls(self, identity):
@@ -410,6 +416,7 @@ class LyricseeCoreTests(unittest.TestCase):
             Client(),
             lrclib_fetcher=lambda identity, client: (_ for _ in ()).throw(RuntimeError("offline")),
         )
+        self.assertIn("duckduckgo: ddg down", result.errors)
         self.assertIn("google: search_blocked", result.errors)
         self.assertEqual(result.search_engine, "none")
         self.assertEqual(result.search_url, "")
@@ -420,10 +427,12 @@ class LyricseeCoreTests(unittest.TestCase):
         class Client:
             def __init__(self):
                 self.search_params = None
+                self.search_headers = None
 
-            def get_text(self, url, params=None):
+            def get_text(self, url, params=None, headers=None):
                 if "google.com/search" in url:
                     self.search_params = params
+                    self.search_headers = headers
                     return '<a href="https://lyrics.example/song">result</a>'
                 return "<p>君の声<br>你的聲音<br>夜を越える<br>跨越黑夜</p>"
 
@@ -432,6 +441,8 @@ class LyricseeCoreTests(unittest.TestCase):
             core.TrackIdentity("Song", "Artist"), client
         )
         self.assertIn("中文翻譯", client.search_params["q"])
+        self.assertTrue(client.search_headers["User-Agent"].startswith("Mozilla/5.0"))
+        self.assertEqual(client.search_headers["Accept-Language"], "zh-TW,ja;q=0.8")
         self.assertEqual(urls, ["https://lyrics.example/song"])
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0].lines[0], core.LyricPair("君の声", "你的聲音"))
@@ -440,7 +451,7 @@ class LyricseeCoreTests(unittest.TestCase):
         core = load_core()
 
         class Client:
-            def get_text(self, url, params=None):
+            def get_text(self, url, params=None, headers=None):
                 if "google.com/search" in url:
                     return '<a href="https://lyrics.example/wrong-song">result</a>'
                 return """
@@ -480,7 +491,7 @@ class LyricseeCoreTests(unittest.TestCase):
         core = load_core()
 
         class Client:
-            def get_text(self, url, params=None):
+            def get_text(self, url, params=None, headers=None):
                 if "google.com/search" in url:
                     return '<a href="https://lyrics.example/song">result</a>'
                 return """
