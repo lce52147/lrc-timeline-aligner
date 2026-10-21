@@ -28,7 +28,7 @@ class RawAsrDriftGuardTests(unittest.TestCase):
         auto_lrc.flag_unresolved_raw_ctc_disagreements(timestamps, report, raw_report)
 
         self.assertEqual(report["raw_asr_systematic_drift_runs"], [])
-        self.assertEqual(report["review_required_count"], 0)  # WEAK code (LRC 1.7): evidence only
+        self.assertEqual(report["review_required_count"], 3)
         self.assertTrue(all(
             "unresolved_raw_ctc_disagreement" in row.get("flags", [])
             for row in report["suspicious_alignments"]  # type: ignore[index]

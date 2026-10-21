@@ -25747,18 +25747,6 @@ def _suspicious_row_requires_review(row: object) -> bool:
     return any(str(flag) in ACTIONABLE_SUSPICIOUS_FLAGS for flag in flags)
 
 
-def _suspicious_row_requires_human_review(row: object) -> bool:
-    """Final verdict only: an unresolved row whose flags are all WEAK is not a review task."""
-    if not _suspicious_row_requires_review(row):
-        return False
-    flags = row.get("flags") if isinstance(row, dict) else None
-    return any(
-        str(flag) in ACTIONABLE_SUSPICIOUS_FLAGS
-        and FINAL_LINE_TRUST_CLASSIFICATION.get(str(flag)) == "REVIEW"
-        for flag in (flags if isinstance(flags, list) else [])
-    )
-
-
 
 
 CENTRAL_RESOLVABLE_SUSPICIOUS_FLAGS = frozenset({
@@ -28270,7 +28258,7 @@ def assignment_timing_is_trusted(item: object) -> bool:
     # content confidence is checked separately by assignment_is_trusted().
     if item.get("timing_trusted"):
         return True
-    return not bool(item.get("review_required")) and not bool(item.get("weak_review_evidence"))
+    return not bool(item.get("review_required"))
 
 
 
@@ -28361,23 +28349,6 @@ def report_has_verified_central_commit(report: dict[str, object]) -> bool:
 # A single, declarative authority for final-line defect classification.
 # Unknown diagnostics are INFO until an owner explicitly classifies them.
 SILENT_RISK_REVIEW_FLAG = "silent-risk:selected-confidence-le-0.8-and-next-gap-ge-19"
-# LRC 1.7 (B2 ladder, 39 songs vs BK, EvanOG chose the middle cut): these
-# codes were 92–100% "already right" on their own.  A row carrying only WEAK
-# codes is no longer a human review task; it stays UNTRUSTED (never TRUSTED)
-# so the reviewer still sees it as unverified.  Any REVIEW-class code on the
-# same row still forces review.  Central's own use of the actionable sets is
-# untouched; only the final human-review verdict changes.
-WEAK_REVIEW_CODES = frozenset({
-    "phonetic_anchor_disagreement",
-    "nonmonotonic-line-start",
-    "candidate_disagreement",
-    "unresolved_raw_ctc_disagreement",
-    "unresolved-precentral-disagreement",
-    "unresolved-material-alternative",
-    "recurrence-uncorroborated",
-    "previous-tail-overlap",
-})
-
 FINAL_LINE_TRUST_CLASSIFICATION: dict[str, str] = {
     **{code: "INFO" for code in {
         "manual_anchor_resolved", "central-selected", "central-provisional",
@@ -28400,7 +28371,6 @@ FINAL_LINE_TRUST_CLASSIFICATION: dict[str, str] = {
           "F3-compressed-or-nonmonotonic", "F3-nonmonotonic",
           "model-disagreement",
           SILENT_RISK_REVIEW_FLAG}},
-    **{code: "WEAK" for code in WEAK_REVIEW_CODES},
 }
 
 
@@ -28416,7 +28386,6 @@ class FinalLineTrustDecision:
     timing_trusted: bool
     review_required: bool
     reason_codes: tuple[str, ...]
-    weak_evidence: bool = False
 
 
 def final_line_trust(
@@ -28453,11 +28422,10 @@ def final_line_trust(
         (central_committed and assignment.get("review_required"))
         or any(FINAL_LINE_TRUST_CLASSIFICATION.get(code) == "REVIEW" for code in reasons)
     )
-    weak = any(FINAL_LINE_TRUST_CLASSIFICATION.get(code) == "WEAK" for code in reasons)
-    trusted = bool(assignment_timing_is_trusted(assignment) and not review and not weak)
+    trusted = bool(assignment_timing_is_trusted(assignment) and not review)
     if not trusted and not reasons:
         reasons.append("timing-evidence-unverified")
-    return FinalLineTrustDecision(trusted, review, tuple(reasons), weak)
+    return FinalLineTrustDecision(trusted, review, tuple(reasons))
 
 
 def _silent_risk_rule_applies(assignments: list[object], index: int) -> bool:
@@ -28483,17 +28451,14 @@ def _review_reason_classes_from_trust(
     suspicious_rows: list[dict[str, object]],
 ) -> list[str]:
     """Keep the review taxonomy derived from the final trust decision."""
-    reasons = {
-        code for code in decision.reason_codes
-        if FINAL_LINE_TRUST_CLASSIFICATION.get(code) == "REVIEW"
-    }
+    reasons = set(decision.reason_codes)
     classes: list[str] = []
     if any(_timing_failure_requires_review(code) for code in reasons):
         classes.append("actionable-timing-failure")
     if any(
         code in ACTIONABLE_SUSPICIOUS_FLAGS or code == "model-disagreement"
         for code in reasons
-    ) or any(_suspicious_row_requires_human_review(row) for row in suspicious_rows):
+    ) or any(_suspicious_row_requires_review(row) for row in suspicious_rows):
         classes.append("actionable-suspicious-conflict")
     if "unresolved-material-alternative" in reasons:
         classes.append("unresolved-material-alternative")
@@ -28541,6 +28506,107 @@ def finalize_review_summary(report: dict[str, object]) -> None:
     }
 
 
+# LRC 1.7 (B2 ladder over 39 songs vs BK; EvanOG chose the middle cut): a
+# REVIEW row whose REVIEW-class reason codes are all in this set was already
+# right 92-100% of the time, so it is no longer a human review task.  The
+# policy is applied only when the report is written (write_alignment_report and
+# just before the review TSV), never inside the pipeline: every intermediate
+# trust decision, Central/consensus input and cache key stays byte-identical.
+# Demoted rows become UNTRUSTED ("unverified"), never TRUSTED.
+WEAK_REVIEW_CODES = frozenset({
+    "phonetic_anchor_disagreement",
+    "nonmonotonic-line-start",
+    "candidate_disagreement",
+    "unresolved_raw_ctc_disagreement",
+    "unresolved-precentral-disagreement",
+    "unresolved-material-alternative",
+    "recurrence-uncorroborated",
+    "previous-tail-overlap",
+})
+WEAK_REVIEW_POLICY_KEY = "weak_review_policy"
+
+
+def _weak_review_demotes(item: dict[str, object]) -> bool:
+    if item.get("verification_status") != "review-required" and not item.get("review_required"):
+        return False
+    codes = item.get("final_trust_reason_codes")
+    if not isinstance(codes, list):
+        return False
+    review_codes = {
+        str(code) for code in codes
+        if FINAL_LINE_TRUST_CLASSIFICATION.get(str(code)) == "REVIEW"
+    }
+    return bool(review_codes) and review_codes <= WEAK_REVIEW_CODES
+
+
+def apply_weak_review_policy(report: dict[str, object]) -> list[int]:
+    """Demote REVIEW rows that carry only WEAK reason codes to UNTRUSTED (output time only).
+
+    Idempotent; returns the 1-based entries demoted by this call.  Rows demoted
+    earlier are recorded under ``report[WEAK_REVIEW_POLICY_KEY]``.
+    """
+    assignments = report.get("assignments")
+    if not isinstance(assignments, list):
+        return []
+    demoted: list[int] = []
+    for index, item in enumerate(assignments):
+        if not isinstance(item, dict) or not _weak_review_demotes(item):
+            continue
+        item["review_required"] = False
+        if "review_reason_classes" in item:
+            item["review_reason_classes"] = []
+        item["overall_trusted"] = False
+        item["verification_status"] = "unverified"
+        item["weak_review_demoted"] = True
+        demoted.append(index + 1)
+    if not demoted:
+        return []
+    entries = set(demoted)
+    suspicious = report.get("suspicious_alignments")
+    if isinstance(suspicious, list):
+        for row in suspicious:
+            if isinstance(row, dict) and row.get("entry") in entries and row.get("review_required"):
+                row["review_required"] = False
+                row["weak_review_demoted"] = True
+    for key in ("low_confidence_entries", "unverified_entries"):
+        rows = report.get(key)
+        if isinstance(rows, list):
+            for row in rows:
+                if isinstance(row, dict) and row.get("entry") in entries:
+                    row["verification_status"] = "unverified"
+                    failures = row.get("trust_failures")
+                    if isinstance(failures, list):
+                        row["trust_failures"] = [f for f in failures if f != "actionable-review"]
+    timing_review = report.get("timing_review_entries")
+    if isinstance(timing_review, list):
+        report["timing_review_entries"] = [
+            row for row in timing_review
+            if not (isinstance(row, dict) and row.get("entry") in entries)
+        ]
+    unverified_rows = report.get("unverified_entries")
+    if isinstance(unverified_rows, list):
+        known = {row.get("entry") for row in unverified_rows if isinstance(row, dict)}
+        for entry in demoted:
+            if entry not in known:
+                unverified_rows.append({"entry": entry, "verification_status": "unverified",
+                                        "trust_failures": ["timing-untrusted"]})
+        unverified_rows.sort(key=lambda row: row.get("entry", 0) if isinstance(row, dict) else 0)
+    policy = report.get(WEAK_REVIEW_POLICY_KEY)
+    previous = policy.get("demoted_entries") if isinstance(policy, dict) else []
+    report[WEAK_REVIEW_POLICY_KEY] = {
+        "schema": 1,
+        "weak_codes": sorted(WEAK_REVIEW_CODES),
+        "demoted_entries": sorted(set(previous if isinstance(previous, list) else []) | entries),
+    }
+    finalize_review_summary(report)
+    if "unverified_count" in report:
+        timing_entries = int(report.get("timing_entries", len(assignments)) or len(assignments))
+        unverified = report["verification_counts"]["unverified"]
+        report["unverified_count"] = unverified
+        report["unverified_percent"] = ratio_percent(unverified, timing_entries)
+    return demoted
+
+
 def update_report_confidence_metrics(
     report: dict[str, object], *, apply_silent_risk: bool = False
 ) -> None:
@@ -28572,7 +28638,7 @@ def update_report_confidence_metrics(
                     if row.get("severity") == "resolved":
                         prior = row.get("original_severity")
                         row["severity"] = prior if prior in {"high", "medium", "low"} else "medium"
-        row["review_required"] = _suspicious_row_requires_human_review(row)
+        row["review_required"] = _suspicious_row_requires_review(row)
     report["suspicious_alignment_count"] = len(suspicious_rows)
     severity_counts = {"high": 0, "medium": 0, "low": 0}
     for row in suspicious_rows:
@@ -28626,9 +28692,6 @@ def update_report_confidence_metrics(
         item["content_trusted"] = content_trusted
         item["timing_audit_trusted"] = timing_trusted
         item["final_trust_reason_codes"] = list(decision.reason_codes)
-        # WEAK evidence keeps the row untrusted for every later pass exactly as
-        # the old REVIEW flag did, so Central/consensus inputs do not change.
-        item["weak_review_evidence"] = decision.weak_evidence
         if central_committed:
             if not isinstance(central_rows, list) or not isinstance(central_rows[index], dict):
                 raise LrcError("Verified Central report lost its timing row")
@@ -37076,10 +37139,7 @@ def _validate_backend_provenance_projection(
                 if not 0 <= entry_index < len(assignments):
                     raise LrcError("Cross-backend material review entry is out of range")
                 assignment = assignments[entry_index]
-                if not isinstance(assignment, dict) or not (
-                    assignment.get("review_required")
-                    or "unresolved-material-alternative" in (assignment.get("final_trust_reason_codes") or [])
-                ):
+                if not isinstance(assignment, dict) or not assignment.get("review_required"):
                     raise LrcError("Cross-backend material review was not propagated")
 
 
@@ -39214,6 +39274,7 @@ def report_artifact_paths(audio_path: Path, output_path: Path, report_dir: Path)
 
 
 def write_alignment_report(report_path: Path, report: dict[str, object]) -> None:
+    apply_weak_review_policy(report)
     report["algorithm_revision"] = LRC_ALGORITHM_REVISION
     _validate_backend_provenance_projection(report)
     _validate_unresolved_evidence_requirements_projection(report)
@@ -39715,6 +39776,7 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
     preflight["retained_entries"] = len(entries)
     report["lyric_preflight"] = preflight
     report["input_status"] = preflight["status"]
+    apply_weak_review_policy(report)
     review_tsv_path = report_path.with_name(report_path.name.replace(".align-report.json", ".review.tsv"))
     report["review_tsv_path"] = str(review_tsv_path)
     write_review_tsv(review_tsv_path, report, entries)

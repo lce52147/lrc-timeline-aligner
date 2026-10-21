@@ -40,6 +40,7 @@ PUBLIC_SAFE_TESTS = [
     "scripts/test_multimodel_extra_models.py",
     "scripts/test_compare_report_runs.py",
     "scripts/test_archive_stale_reports.py",
+    "scripts/test_weak_review_policy.py",
     "scripts/reviewers/test_common.py",
 ]
 
