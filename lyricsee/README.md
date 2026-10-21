@@ -5,7 +5,7 @@ Drag supported audio files onto `Lyricsee.cmd` / `Lyricsee.bat`, or pass audio a
 ## Source rules
 
 - LRCLIB originals must match the recording's title, artist and duration.
-- Google is used to discover existing lyric/translation pages. If HTTP search is blocked, Lyricsee uses an isolated headless Chrome with a temporary profile and does not touch the user's logged-in browser. Bahamut/marumaru originals must agree with the independently checked source, or, without LRCLIB, two different allowed sites must agree on at least 85% of unique lyric lines.
+- Google is used to discover existing lyric/translation pages. If Google HTTP search is blocked, Lyricsee tries DuckDuckGo's HTML endpoint first, then an isolated headless Chrome with a temporary profile; it does not touch the user's logged-in browser. Bahamut/marumaru originals must agree with the independently checked source, or, without LRCLIB, two different allowed sites must agree on at least 85% of unique lyric lines.
 - The program joins a vetted web translation to *exactly matched original lyrics*. It does not invent missing translations, copy site menus, or treat arbitrary search snippets as lyrics.
 - If no checked human/community translation exists, OOGG may create an `oogg_draft`. The exact endpoint is recorded in provenance. If OOGG is unavailable, output remains `original_only`.
 - Original-only lyrics recovered from the DF playlist are staged separately in `rebuild_no_llm_20261008\original_only`. They are not translated and are not automatically sent into LRC tools.

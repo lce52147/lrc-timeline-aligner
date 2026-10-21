@@ -171,7 +171,8 @@ def choose_verified_web_translation(
     return LyricCandidate(
         source=page.source, url=page.url, title=identity.title,
         artist=identity.artist, lines=pairs, translator=page.translator,
-        discovered_urls=page.discovered_urls, google_search=page.google_search,
+        discovered_urls=page.discovered_urls, search_url=page.search_url,
+        search_engine=page.search_engine,
     )
 
 

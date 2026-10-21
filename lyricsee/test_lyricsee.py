@@ -302,7 +302,8 @@ class LyricseeCoreTests(unittest.TestCase):
                 artist="artist",
                 lines=[core.LyricPair("original", "translation")],
                 discovered_urls=["https://example.com/translation"],
-                google_search="https://www.google.com/search?q=song",
+                search_url="https://html.duckduckgo.com/html/?q=song",
+                search_engine="duckduckgo",
             )
             output, provenance = core.write_result(audio, candidate, output_root=root, overwrite=False)
             self.assertEqual(output, root / "txt" / "song.lyrics.txt")
@@ -314,7 +315,8 @@ class LyricseeCoreTests(unittest.TestCase):
             self.assertEqual(payload["selected_source"], "lrclib")
             self.assertEqual(payload["source_url"], "https://lrclib.net/api/get/1")
             self.assertEqual(payload["google_candidates"], ["https://example.com/translation"])
-            self.assertEqual(payload["google_search_url"], "https://www.google.com/search?q=song")
+            self.assertEqual(payload["search_url"], "https://html.duckduckgo.com/html/?q=song")
+            self.assertEqual(payload["search_engine"], "duckduckgo")
             self.assertNotIn("lyrics", payload)
 
     def test_lrclib_candidate_supplies_original_when_translation_is_unavailable(self):
@@ -340,6 +342,77 @@ class LyricseeCoreTests(unittest.TestCase):
         self.assertEqual(candidate.source, "lrclib")
         self.assertEqual([row.original for row in candidate.lines], ["first line", "second line"])
         self.assertEqual(core.translation_coverage(candidate.lines), 0.0)
+
+    def test_parse_duckduckgo_results_decodes_redirects_dedupes_and_preserves_order(self):
+        core = load_core()
+        document = """
+        <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fhome.gamer.com.tw%2Fartwork.php%3Fsn%3D5820258&amp;rut=x">a</a>
+        <a class="result__a" href="https://marumaru-x.com/japanese-song/play-y7okwq04oq">b</a>
+        <a class="result__a" href="https://marumaru-x.com/japanese-song/play-y7okwq04oq">dup</a>
+        <a class="other" href="https://ignored.example/song">ignored</a>
+        """
+        self.assertEqual(
+            core.parse_duckduckgo_results(document),
+            [
+                "https://home.gamer.com.tw/artwork.php?sn=5820258",
+                "https://marumaru-x.com/japanese-song/play-y7okwq04oq",
+            ],
+        )
+
+    def test_google_discovery_uses_duckduckgo_before_headless_chrome(self):
+        core = load_core()
+
+        class Client:
+            user_agent = "test-agent"
+
+            def __init__(self):
+                self.headless_calls = 0
+                self.ddg_headers = None
+
+            def get_text(self, url, params=None, headers=None):
+                if "google.com/search" in url:
+                    return '<a href="https://support.google.com/websearch">blocked</a>'
+                if "duckduckgo.com/html" in url:
+                    self.ddg_headers = headers
+                    return '<a class="result__a" href="https://lyrics.example/song">result</a>'
+                return "<html><head><title>Song - Lyrics</title></head><body><p>君の声<br>你的聲音<br>夜を越える<br>跨越黑夜</p></body></html>"
+
+            def google_search_urls(self, identity):
+                self.headless_calls += 1
+                return ["https://headless.example/should-not-run"]
+
+        client = Client()
+        result = core.fetch_google_candidates(core.TrackIdentity("Song", "Artist"), client)
+        self.assertEqual(result.urls, ["https://lyrics.example/song"])
+        self.assertEqual(result.search_engine, "duckduckgo")
+        self.assertTrue(result.search_url.startswith("https://html.duckduckgo.com/html/?q="))
+        self.assertEqual(client.headless_calls, 0)
+        self.assertEqual(client.ddg_headers["User-Agent"], "test-agent")
+        self.assertEqual(client.ddg_headers["Accept-Language"], "zh-TW,ja;q=0.8")
+        self.assertEqual(len(result.candidates), 1)
+
+    def test_collect_candidates_marks_search_blocked_only_after_all_search_layers_are_empty(self):
+        core = load_core()
+
+        class Client:
+            user_agent = "test-agent"
+
+            def get_text(self, url, params=None, headers=None):
+                if "google.com/search" in url or "duckduckgo.com/html" in url:
+                    return "<html></html>"
+                raise AssertionError(url)
+
+            def google_search_urls(self, identity):
+                return []
+
+        result = core.collect_candidates(
+            core.TrackIdentity("Song", "Artist"),
+            Client(),
+            lrclib_fetcher=lambda identity, client: (_ for _ in ()).throw(RuntimeError("offline")),
+        )
+        self.assertIn("google: search_blocked", result.errors)
+        self.assertEqual(result.search_engine, "none")
+        self.assertEqual(result.search_url, "")
 
     def test_google_discovery_searches_translation_and_extracts_supported_pages(self):
         core = load_core()

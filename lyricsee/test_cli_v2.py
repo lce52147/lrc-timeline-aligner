@@ -71,6 +71,19 @@ class LyricseeV2CliTests(unittest.TestCase):
             )
         return row, web, select, translate
 
+    def test_run_markdown_includes_search_engine_and_search_url_columns(self):
+        row = cli._base_row(
+            1,
+            Path("Song.flac"),
+            status="original_only",
+            search_engine="duckduckgo",
+            search_url="https://html.duckduckgo.com/html/?q=Song",
+        )
+        rendered = cli.render_markdown([row])
+        self.assertIn("| search_engine | search_url |", rendered.splitlines()[4])
+        self.assertIn("duckduckgo", rendered)
+        self.assertNotIn("google_search", rendered.splitlines()[4])
+
     def test_playlist_paths_resolve_relative_entries_and_preserve_order(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

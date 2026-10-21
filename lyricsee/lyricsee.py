@@ -19,7 +19,6 @@ from lyricsee_core import (
     SUPPORTED_AUDIO_EXTENSIONS,
     _atomic_write_text,
     collect_candidates,
-    google_search_url,
     probe_audio,
     write_result,
 )
@@ -49,7 +48,8 @@ RUN_FIELDS = (
     "oogg_endpoint",
     "line_count",
     "original_source_url",
-    "google_search",
+    "search_engine",
+    "search_url",
     "embedded_lyrics_lines",
     "error",
     "output_txt",
@@ -278,7 +278,8 @@ def _base_row(index: int, audio_path: Path, **updates: object) -> dict:
         "oogg_endpoint": "",
         "line_count": 0,
         "original_source_url": "",
-        "google_search": "",
+        "search_engine": "none",
+        "search_url": "",
         "embedded_lyrics_lines": 0,
         "error": "",
         "output_txt": "",
@@ -299,7 +300,8 @@ def _existing_row(index: int, audio_path: Path, output_root: Path, status: str, 
         oogg_endpoint=str(payload.get("oogg_endpoint") or ""),
         line_count=int(payload.get("line_count") or 0),
         original_source_url=str(payload.get("source_url") or ""),
-        google_search=str(payload.get("google_search_url") or ""),
+        search_engine=str(payload.get("search_engine") or "none"),
+        search_url=str(payload.get("search_url") or payload.get("google_search_url") or ""),
         error="" if status == "existing" else "existing output is not current verified provenance",
         output_txt=str(output) if output.exists() else "",
         output_json=str(provenance) if provenance.exists() else "",
@@ -357,7 +359,8 @@ def _process_track(
     client: HttpClient,
 ) -> dict:
     embedded_lines = 0
-    google = ""
+    search_engine = "none"
+    search_url = ""
     original_url = ""
     try:
         audio_path = audio_path.expanduser().resolve()
@@ -373,8 +376,9 @@ def _process_track(
             embedded_lines = 0
 
         identity = probe_audio(audio_path)
-        google = google_search_url(identity)
         collected = collect_candidates(identity, client)
+        search_engine = collected.search_engine
+        search_url = collected.search_url
         try:
             original, evidence = choose_verified_original(identity, collected.candidates)
         except Exception as exc:
@@ -384,7 +388,8 @@ def _process_track(
                 index,
                 audio_path,
                 status="no_original",
-                google_search=google,
+                search_engine=search_engine,
+                search_url=search_url,
                 embedded_lyrics_lines=embedded_lines,
                 error="; ".join(item for item in details if item),
             )
@@ -403,7 +408,8 @@ def _process_track(
                 artist=identity.artist,
                 lines=[LyricPair(row.original) for row in original.lines],
                 discovered_urls=list(collected.google_urls),
-                google_search=google,
+                search_engine=search_engine,
+                search_url=search_url,
                 translator=None,
             )
             validate_output(original, selected, require_translation=False)
@@ -438,7 +444,8 @@ def _process_track(
                             for index, row in enumerate(original.lines)
                         ],
                         discovered_urls=list(collected.google_urls),
-                        google_search=google,
+                        search_engine=search_engine,
+                        search_url=search_url,
                         translator="OOGG",
                     )
                     validate_output(original, selected, require_translation=True)
@@ -454,14 +461,16 @@ def _process_track(
                         artist=identity.artist,
                         lines=[LyricPair(row.original) for row in original.lines],
                         discovered_urls=list(collected.google_urls),
-                        google_search=google,
+                        search_engine=search_engine,
+                        search_url=search_url,
                         translator=None,
                     )
                     validate_output(original, selected, require_translation=False)
                     attach_verification(selected, evidence, translation_method="none")
 
         selected.discovered_urls = list(collected.google_urls)
-        selected.google_search = google
+        selected.search_engine = search_engine
+        selected.search_url = search_url
         output, provenance = write_result(
             audio_path,
             selected,
@@ -482,7 +491,8 @@ def _process_track(
             oogg_endpoint=oogg_endpoint,
             line_count=len(selected.lines),
             original_source_url=original_url,
-            google_search=google,
+            search_engine=search_engine,
+            search_url=search_url,
             embedded_lyrics_lines=embedded_lines,
             output_txt=str(output),
             output_json=str(provenance),
@@ -493,7 +503,8 @@ def _process_track(
             audio_path,
             status="failed",
             original_source_url=original_url,
-            google_search=google,
+            search_engine=search_engine,
+            search_url=search_url,
             embedded_lyrics_lines=embedded_lines,
             error=f"{type(exc).__name__}: {exc}",
         )
@@ -511,8 +522,8 @@ def render_markdown(rows: list[dict]) -> str:
     lines.extend(
         [
             "",
-            "| index | audio | stem | status | translation_method | translation_error | oogg_endpoint | line_count | original_source_url | google_search | embedded_lyrics_lines | error | output_txt | output_json |",
-            "|---:|---|---|---|---|---|---|---:|---|---|---:|---|---|---|",
+            "| index | audio | stem | status | translation_method | translation_error | oogg_endpoint | line_count | original_source_url | search_engine | search_url | embedded_lyrics_lines | error | output_txt | output_json |",
+            "|---:|---|---|---|---|---|---|---:|---|---|---|---:|---|---|---|",
         ]
     )
     for row in rows:

@@ -16,7 +16,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Iterable, NamedTuple
 from urllib.error import HTTPError
-from urllib.parse import parse_qs, unquote, urlencode, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -47,6 +47,8 @@ class LyricCandidate:
         artist: str,
         lines: list[LyricPair],
         discovered_urls: list[str] | None = None,
+        search_url: str | None = None,
+        search_engine: str = "none",
         google_search: str | None = None,
         translator: str | None = None,
     ) -> None:
@@ -56,8 +58,17 @@ class LyricCandidate:
         self.artist = artist
         self.lines = lines
         self.discovered_urls = list(discovered_urls or [])
-        self.google_search = google_search
+        self.search_url = search_url if search_url is not None else google_search
+        self.search_engine = search_engine
         self.translator = translator
+
+    @property
+    def google_search(self) -> str | None:
+        return self.search_url
+
+    @google_search.setter
+    def google_search(self, value: str | None) -> None:
+        self.search_url = value
 
 
 _LRC_TIMESTAMP = re.compile(r"\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]")
@@ -191,6 +202,49 @@ def parse_google_results(document: str) -> list[str]:
     for href in parser.hrefs:
         target = _google_target(href)
         if not target or target in seen:
+            continue
+        seen.add(target)
+        results.append(target)
+    return results
+
+
+class _DuckDuckGoLinkParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.hrefs: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.casefold() != "a":
+            return
+        values = dict(attrs)
+        if "result__a" not in (values.get("class") or "").split():
+            return
+        href = values.get("href")
+        if href:
+            self.hrefs.append(href)
+
+
+def parse_duckduckgo_results(document: str) -> list[str]:
+    parser = _DuckDuckGoLinkParser()
+    parser.feed(document)
+    results: list[str] = []
+    seen: set[str] = set()
+    for raw_href in parser.hrefs:
+        href = html_module.unescape(raw_href)
+        absolute = "https:" + href if href.startswith("//") else href
+        parsed = urlparse(absolute)
+        host = parsed.hostname.casefold() if parsed.hostname else ""
+        if host == "duckduckgo.com" or host.endswith(".duckduckgo.com"):
+            values = parse_qs(parsed.query).get("uddg") if parsed.path == "/l/" else None
+            target = unquote(values[0]) if values else ""
+        else:
+            target = absolute
+        if not target.startswith(("http://", "https://")):
+            continue
+        target_host = (urlparse(target).hostname or "").casefold()
+        if target_host == "duckduckgo.com" or target_host.endswith(".duckduckgo.com"):
+            continue
+        if target in seen:
             continue
         seen.add(target)
         results.append(target)
@@ -584,7 +638,8 @@ def write_result(
         "line_count": len(candidate.lines),
         "translated_line_count": sum(bool(row.translation) for row in candidate.lines),
         "translation_coverage": translation_coverage(candidate.lines),
-        "google_search_url": candidate.google_search,
+        "search_url": candidate.search_url,
+        "search_engine": candidate.search_engine,
         "google_candidates": candidate.discovered_urls,
         "translation_method": translation_method,
         "human_approved": human_approved,
@@ -602,6 +657,26 @@ class CollectionResult(NamedTuple):
     candidates: list[LyricCandidate]
     google_urls: list[str]
     errors: list[str]
+    search_engine: str = "none"
+    search_url: str = ""
+
+
+class SearchResult:
+    def __init__(
+        self,
+        urls: list[str],
+        candidates: list[LyricCandidate],
+        search_engine: str,
+        search_url: str,
+    ) -> None:
+        self.urls = urls
+        self.candidates = candidates
+        self.search_engine = search_engine
+        self.search_url = search_url
+
+    def __iter__(self):
+        yield self.urls
+        yield self.candidates
 
 
 def _normalized(value: str) -> str:
@@ -687,13 +762,18 @@ def fetch_lrclib_candidate(identity: TrackIdentity, client) -> LyricCandidate:
     )
 
 
-def google_search_url(identity: TrackIdentity) -> str:
-    from urllib.parse import urlencode
-
-    query = " ".join(
+def _search_query(identity: TrackIdentity) -> str:
+    return " ".join(
         part for part in (identity.title, identity.artist, "歌詞 中文翻譯") if part
     )
-    return "https://www.google.com/search?" + urlencode({"q": query})
+
+
+def google_search_url(identity: TrackIdentity) -> str:
+    return "https://www.google.com/search?" + urlencode({"q": _search_query(identity)})
+
+
+def duckduckgo_search_url(identity: TrackIdentity) -> str:
+    return "https://html.duckduckgo.com/html/?q=" + quote(_search_query(identity))
 
 
 def fetch_google_candidates(
@@ -701,17 +781,52 @@ def fetch_google_candidates(
     client,
     *,
     max_pages: int = 5,
-) -> tuple[list[str], list[LyricCandidate]]:
-    query = " ".join(
-        part for part in (identity.title, identity.artist, "歌詞 中文翻譯") if part
-    )
-    search_document = client.get_text(
-        "https://www.google.com/search",
-        params={"q": query, "udm": "14"},
-    )
-    urls = parse_google_results(search_document)
+) -> SearchResult:
+    query = _search_query(identity)
+    google_url = google_search_url(identity)
+    direct_google_url = google_url + "&udm=14"
+    urls: list[str] = []
+    search_engine = "none"
+    search_url = ""
+
+    try:
+        search_document = client.get_text(
+            "https://www.google.com/search",
+            params={"q": query, "udm": "14"},
+        )
+        urls = parse_google_results(search_document)
+    except Exception:
+        urls = []
+    if urls:
+        search_engine = "google"
+        search_url = direct_google_url
+
+    if not urls:
+        ddg_url = duckduckgo_search_url(identity)
+        try:
+            ddg_document = client.get_text(
+                ddg_url,
+                headers={
+                    "User-Agent": getattr(client, "user_agent", "Lyricsee/0.1 (local LRC tools helper)"),
+                    "Accept-Language": "zh-TW,ja;q=0.8",
+                },
+            )
+            urls = parse_duckduckgo_results(ddg_document)
+        except Exception:
+            urls = []
+        if urls:
+            search_engine = "duckduckgo"
+            search_url = ddg_url
+
     if not urls and hasattr(client, "google_search_urls"):
-        urls = list(client.google_search_urls(identity))
+        try:
+            urls = list(client.google_search_urls(identity))
+        except Exception:
+            urls = []
+        if urls:
+            search_engine = "headless_chrome"
+            search_url = google_url
+
     candidates: list[LyricCandidate] = []
     for url in urls[:max_pages]:
         try:
@@ -732,9 +847,11 @@ def fetch_google_candidates(
                 title=page_title or identity.title,
                 artist="",
                 lines=pairs,
+                search_engine=search_engine,
+                search_url=search_url,
             )
         )
-    return urls, candidates
+    return SearchResult(urls, candidates, search_engine, search_url)
 
 
 def collect_candidates(
@@ -753,8 +870,17 @@ def collect_candidates(
         errors.append(f"lrclib: {exc}")
 
     google_urls: list[str] = []
+    search_engine = "none"
+    search_url = ""
     try:
-        google_urls, google_candidates = google_fetcher(identity, client)
+        fetched = google_fetcher(identity, client)
+        google_urls, google_candidates = fetched
+        if isinstance(fetched, SearchResult):
+            search_engine = fetched.search_engine
+            search_url = fetched.search_url
+        elif google_urls:
+            search_engine = "google"
+            search_url = google_search_url(identity)
         candidates.extend(google_candidates)
         if not google_urls:
             errors.append("google: search_blocked")
@@ -798,11 +924,11 @@ def collect_candidates(
         safe_candidates.append(candidate)
     candidates = safe_candidates
 
-    search_url = google_search_url(identity)
     for candidate in candidates:
         candidate.discovered_urls = list(google_urls)
-        candidate.google_search = search_url
-    return CollectionResult(candidates, google_urls, errors)
+        candidate.search_engine = search_engine
+        candidate.search_url = search_url
+    return CollectionResult(candidates, google_urls, errors, search_engine, search_url)
 
 
 def _translation_messages(
@@ -1105,16 +1231,19 @@ class HttpClient:
         params: dict | None = None,
         payload: dict | None = None,
         timeout: float = 30,
+        headers: dict[str, str] | None = None,
     ) -> str:
         if params:
             separator = "&" if "?" in url else "?"
             url = url + separator + urlencode(params)
         body = None
-        headers = {"User-Agent": self.user_agent, "Accept": "application/json,text/html;q=0.9,*/*;q=0.8"}
+        request_headers = {"User-Agent": self.user_agent, "Accept": "application/json,text/html;q=0.9,*/*;q=0.8"}
+        if headers:
+            request_headers.update(headers)
         if payload is not None:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            headers["Content-Type"] = "application/json"
-        request = Request(url, data=body, headers=headers, method="POST" if body else "GET")
+            request_headers["Content-Type"] = "application/json"
+        request = Request(url, data=body, headers=request_headers, method="POST" if body else "GET")
         for attempt in range(2):
             self._throttle()
             try:
@@ -1137,8 +1266,13 @@ class HttpClient:
                 raise
         raise RuntimeError("HTTP request retry loop ended unexpectedly")
 
-    def get_text(self, url: str, params: dict | None = None) -> str:
-        return self._request(url, params=params)
+    def get_text(
+        self,
+        url: str,
+        params: dict | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> str:
+        return self._request(url, params=params, headers=headers)
 
     def get_json(
         self,
