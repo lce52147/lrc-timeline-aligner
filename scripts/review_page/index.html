@@ -544,7 +544,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       const group = document.createElement('button');
       group.type = 'button';
       group.className = 'song-tab group';
-      group.innerHTML = '<span class="t">' + (state.showUnreachable ? '▾' : '▸') + ' 另有 ' + hidden.length + ' 首找不到 LRC，無法審核</span>';
+      group.innerHTML = '<span class="t">' + (state.showUnreachable ? '▾' : '▸') + ' 另有 ' + hidden.length + ' 首無法審核（LRC 已搬走或是舊版報告）</span>';
       group.addEventListener('click', () => { state.showUnreachable = !state.showUnreachable; render(); });
       rail.appendChild(group);
       if (state.showUnreachable || hidden.some(song => song.index === state.activeSong)) hidden.forEach(item => rail.appendChild(songTab(item)));

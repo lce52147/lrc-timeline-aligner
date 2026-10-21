@@ -534,7 +534,7 @@ class ReviewServerTests(unittest.TestCase):
         self.assertIn("load error:", page)
         self.assertIn("這首沒有需要審的句子。", page)
         self.assertIn("找不到這首的 LRC 檔，無法審核", page)
-        self.assertIn("首找不到 LRC，無法審核", page)
+        self.assertIn("首無法審核（LRC 已搬走或是舊版報告）", page)
         self.assertIn("const unreachable = song => !!song.read_only && !(song.detail?.rows || []).length;", page)
         self.assertIn("state.songs.find(song => !unreachable(song))", page)
         self.assertIn("color-scheme:dark", page)
