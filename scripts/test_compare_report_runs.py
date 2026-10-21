@@ -16,7 +16,9 @@ def bare(cs: int) -> str:
 
 class CompareReportRunsTest(unittest.TestCase):
     def _report(self, folder: Path, name: str, times, statuses, output: Path, audio: Path) -> None:
-        rows = [{"entry": i + 1, "lrc_tag": bare(t), "verification_status": s} for i, (t, s) in enumerate(zip(times, statuses))]
+        rows = [{"entry": i + 1, "lrc_tag": bare(t), "verification_status": s,
+                 "final_trust_reason_codes": (["order-problem"] if s == "review-required" else [])}
+                for i, (t, s) in enumerate(zip(times, statuses))]
         (folder / f"{name}.align-report.json").write_text(
             json.dumps({"assignments": rows, "output_path": str(output), "audio_path": str(audio)}), encoding="utf-8")
 
@@ -46,6 +48,14 @@ class CompareReportRunsTest(unittest.TestCase):
             self.assertTrue(result["skipped"][0]["reason"].startswith("no-bk-match:02. other.lrc"))
             text = crr.markdown(result)
             self.assertIn("| lines within 0.20 s of BK | 1 | 2 |", text)
+            ref_cells = result["totals"]["ref"]["status_error"]
+            self.assertEqual(ref_cells["REVIEW"], {"n": 1, "<=0.20s": 0, "0.20-0.50s": 0, "0.50-1.00s": 0, ">1.00s": 1})
+            self.assertEqual(ref_cells["TRUSTED"]["<=0.20s"], 1)
+            self.assertEqual(result["totals"]["ref"]["reason_error"]["order-problem"]["n"], 1)
+            self.assertIn("| REVIEW | 1 | 0 | 0 | 0 | 1 | 0% |", text)
+            self.assertIn("REVIEW reason codes vs BK (ref)", text)
+            self.assertIn("| order-problem | 1 | 0 | 0 | 0 | 1 | 0% |", text)
+            self.assertNotIn("REVIEW reason codes vs BK (run)", text)
 
     def test_generic_output_name_matches_bk_by_audio_stem(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

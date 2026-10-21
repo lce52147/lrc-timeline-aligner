@@ -17,6 +17,9 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import lrc_review_tsv  # noqa: E402
+
 REPORT_SUFFIX = ".align-report.json"
 TAG_RE = re.compile(r"^\[?(\d{2,}):(\d{2})\.(\d{2})\]?")  # report lrc_tag values carry no brackets
 BUCKETS = ((10, "<=0.10s"), (20, "<=0.20s"), (50, "<=0.50s"), (100, "<=1.00s"), (None, ">1.00s"))
@@ -150,7 +153,16 @@ def score(report: dict, reference: list[int]) -> dict | None:
         return None
     statuses = [status_of(row) for row in report["assignments"]]
     deltas = [abs(t - r) for t, r in zip(times, reference)]
+    status_error = {key: error_cells() for key in ("REVIEW", "UNTRUSTED", "TRUSTED")}
+    reason_error: dict[str, dict[str, int]] = {}
+    for row, status, delta in zip(report["assignments"], statuses, deltas):
+        add_error(status_error[status], delta)
+        if status == "REVIEW":
+            for code in lrc_review_tsv.reason_codes_for(row, status):
+                add_error(reason_error.setdefault(code, error_cells()), delta)
     return {
+        "status_error": status_error,
+        "reason_error": reason_error,
         "lines": len(deltas),
         "buckets": bucket_counts(deltas),
         "over_1s": sum(d > 100 for d in deltas),
@@ -161,7 +173,28 @@ def score(report: dict, reference: list[int]) -> dict | None:
     }
 
 
+ERROR_CELLS = ("n", "<=0.20s", "0.20-0.50s", "0.50-1.00s", ">1.00s")
+
+
+def error_cells() -> dict[str, int]:
+    return {key: 0 for key in ERROR_CELLS}
+
+
+def add_error(cell: dict[str, int], delta: int) -> None:
+    cell["n"] += 1
+    cell["<=0.20s" if delta <= 20 else "0.20-0.50s" if delta <= 50 else "0.50-1.00s" if delta <= 100 else ">1.00s"] += 1
+
+
+def merge_cells(total: dict[str, dict[str, int]], part: dict[str, dict[str, int]]) -> None:
+    for key, cell in part.items():
+        target = total.setdefault(key, error_cells())
+        for name, value in cell.items():
+            target[name] = target.get(name, 0) + value
+
+
 def add_totals(total: dict, part: dict) -> None:
+    merge_cells(total["status_error"], part["status_error"])
+    merge_cells(total["reason_error"], part["reason_error"])
     total["lines"] += part["lines"]
     total["over_1s"] += part["over_1s"]
     total["trusted_over_1s"] += part["trusted_over_1s"]
@@ -173,7 +206,8 @@ def add_totals(total: dict, part: dict) -> None:
 
 
 def empty_totals() -> dict:
-    return {"songs": 0, "lines": 0, "over_1s": 0, "trusted_over_1s": 0, "within_20cs": 0, "buckets": {}, "status": {}}
+    return {"songs": 0, "lines": 0, "over_1s": 0, "trusted_over_1s": 0, "within_20cs": 0, "buckets": {}, "status": {},
+            "status_error": {}, "reason_error": {}}
 
 
 def compare(ref_dir: Path, run_dir: Path, bk_dir: Path) -> dict:
@@ -197,11 +231,12 @@ def compare(ref_dir: Path, run_dir: Path, bk_dir: Path) -> dict:
                    else f"line-count-mismatch-with-bk (report {len(run_report['assignments'])} vs bk {len(reference_times)}: {reference})")
             skipped.append({"report": name, "reason": why})
             continue
-        entry = {"report": name, "bk": str(reference), "run": {k: v for k, v in run_score.items() if k != "deltas"}}
+        slim = lambda item: {k: v for k, v in item.items() if k not in ("deltas", "status_error", "reason_error")}
+        entry = {"report": name, "bk": str(reference), "run": slim(run_score)}
         totals["run"]["songs"] += 1
         add_totals(totals["run"], run_score)
         if ref_score is not None:
-            entry["ref"] = {k: v for k, v in ref_score.items() if k != "deltas"}
+            entry["ref"] = slim(ref_score)
             totals["ref"]["songs"] += 1
             add_totals(totals["ref"], ref_score)
             ref_times, run_times = times_of(ref_report), times_of(run_report)
@@ -244,6 +279,27 @@ def markdown(result: dict) -> str:
         f"Lines that moved between ref and run: {len(result['moved_lines'])} in {result['moved_songs']} song(s); "
         f"{result['moved_over_20cs']} moved by more than 0.20 s; closer to BK: {result['moved_better']}, further: {result['moved_worse']}."
     )
+    for label, total in (("ref", ref), ("run", run)):
+        lines.append("")
+        lines.append(f"Status × error vs BK ({label}):")
+        lines.append("")
+        lines.append("| status | lines | <=0.20s | 0.20-0.50s | 0.50-1.00s | >1.00s | already right |")
+        lines.append("|---|---:|---:|---:|---:|---:|---:|")
+        for key in ("REVIEW", "UNTRUSTED", "TRUSTED"):
+            cell = total["status_error"].get(key) or error_cells()
+            share = f"{100 * cell['<=0.20s'] / cell['n']:.0f}%" if cell["n"] else "-"
+            lines.append(f"| {key} | {cell['n']} | {cell['<=0.20s']} | {cell['0.20-0.50s']} | {cell['0.50-1.00s']} | {cell['>1.00s']} | {share} |")
+    for label, total in (("ref", ref), ("run", run)):
+        if not total["reason_error"]:
+            continue
+        lines.append("")
+        lines.append(f"REVIEW reason codes vs BK ({label}), most frequent first:")
+        lines.append("")
+        lines.append("| reason code | REVIEW lines | <=0.20s | 0.20-0.50s | 0.50-1.00s | >1.00s | already right |")
+        lines.append("|---|---:|---:|---:|---:|---:|---:|")
+        for code, cell in sorted(total["reason_error"].items(), key=lambda item: -item[1]["n"]):
+            share = f"{100 * cell['<=0.20s'] / cell['n']:.0f}%" if cell["n"] else "-"
+            lines.append(f"| {code} | {cell['n']} | {cell['<=0.20s']} | {cell['0.20-0.50s']} | {cell['0.50-1.00s']} | {cell['>1.00s']} | {share} |")
     if result["moved_lines"]:
         lines.append("")
         lines.append("| report | entry | shift s | ref err s | run err s |")
