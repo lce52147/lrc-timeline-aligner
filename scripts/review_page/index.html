@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="referrer" content="no-referrer"><title>LRC review</title>
+<meta name="referrer" content="no-referrer"><link rel="icon" href="data:,"><title>LRC review</title>
 <style>
 :root{--bg:#0b0e18;--glow-a:rgba(255,150,80,.5);--glow-b:rgba(105,118,255,.42);--panel:rgba(22,26,42,.66);--panel-2:rgba(255,255,255,.05);--panel-3:rgba(255,255,255,.09);--line:rgba(255,255,255,.09);--line-2:rgba(255,255,255,.16);
   --fg:#eceff8;--fg-2:#aab3cc;--fg-3:#7b84a3;--accent:#6d7cff;--accent-2:#9aa6ff;--accent-ink:#ffffff;--hot:#ffb454;--ok:#5fd3a0;--warn:#ffb454;--bad:#ff7b7b;--wave:#7f95ff;
@@ -352,16 +352,19 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       if (message && context.fillText) { context.fillStyle = cssVar('--fg-2', '#9fb0c6'); context.font = '12px system-ui, sans-serif'; context.textAlign = 'center'; context.fillText(message, width / 2, height / 2); }
     } catch (error) { /* drawing is best-effort; the controls below the canvas still work */ }
   }
-  async function flacPeaks(item, fromCs, toCs, bins) {
+  async function decodedPeaks(item, kind, fromCs, toCs, bins) {
+    // Browser-side fallback: decode the stem (any format the browser can play) or the FLAC once per song.
     const AudioContextClass = globalThis.AudioContext || globalThis.webkitAudioContext;
-    if (!AudioContextClass || !item.song.has_flac) throw Error('no decoder');
-    let buffer = state.decoded.get(item.song.index);
+    const available = kind === 'stem' ? item.song.has_stem : item.song.has_flac;
+    if (!AudioContextClass || !available) throw Error(kind === 'stem' ? '沒有 stem' : '沒有 FLAC');
+    const cacheKey = item.song.index + ':' + kind;
+    let buffer = state.decoded.get(cacheKey);
     if (!buffer) {
-      const response = await fetch('/audio/' + item.song.index + '/flac?t=' + encodeURIComponent(token), {headers:{'X-Review-Token':token}});
-      if (!response.ok) throw Error('FLAC ' + response.status);
+      const response = await fetch('/audio/' + item.song.index + '/' + kind + '?t=' + encodeURIComponent(token), {headers:{'X-Review-Token':token}});
+      if (!response.ok) throw Error(kind + ' HTTP ' + response.status);
       const context = new AudioContextClass();
       try { buffer = await context.decodeAudioData(await response.arrayBuffer()); } finally { context.close?.(); }
-      state.decoded.set(item.song.index, buffer);
+      state.decoded.set(cacheKey, buffer);
     }
     const data = buffer.getChannelData(0), rate = buffer.sampleRate;
     const start = Math.floor(fromCs / 100 * rate), end = Math.min(data.length, Math.floor(toCs / 100 * rate));
@@ -372,8 +375,9 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       for (let i = left; i < right; i += 4) { const v = data[i]; if (v < low) low = v; if (v > high) high = v; }
       peaks.push([low, high]);
     }
-    return {from_cs:fromCs, to_cs:toCs, bins, sample_rate:rate, peaks, source:'flac'};
+    return {from_cs:fromCs, to_cs:toCs, bins, sample_rate:rate, peaks, source:kind + '-decoded'};
   }
+  const flacPeaks = (item, fromCs, toCs, bins) => decodedPeaks(item, 'flac', fromCs, toCs, bins);
   function attachPeaks(item, canvas) {
     const startCs = working(item);
     if (startCs == null) return;
@@ -388,12 +392,14 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     const paint = markerCs => paintPeaks(canvas, payload || {from_cs:fromCs, to_cs:toCs, peaks:[]}, markerCs, marks, message);
     if (payload) paint(startCs);
     else {
-      paint(startCs);
+      message = '讀取波形中…'; paint(startCs); message = '';
       const stemPeaks = item.song.has_stem
         ? api('/api/song/' + item.song.index + '/peaks?from=' + fromCs + '&to=' + toCs + '&bins=' + bins + '&t=' + encodeURIComponent(token))
         : Promise.reject(Error('stem not found'));
       stemPeaks
-        .catch(stemError => flacPeaks(item, fromCs, toCs, bins).catch(flacError => { throw Error(stemError.message + (item.song.has_flac ? '；FLAC 解碼失敗：' + flacError.message : '')); }))
+        .catch(stemError => decodedPeaks(item, 'stem', fromCs, toCs, bins)
+          .catch(() => flacPeaks(item, fromCs, toCs, bins))
+          .catch(fallbackError => { throw Error(stemError.message + '；瀏覽器解碼也失敗：' + fallbackError.message); }))
         .then(data => { state.peaks.set(cacheKey, data); payload = data; paint(startCs); })
         .catch(error => { message = '無法顯示波形：' + error.message; paint(startCs); });
     }
