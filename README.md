@@ -2,6 +2,22 @@
 
 Local LRC timestamp generation for Windows. The tool keeps lyric order fixed, generates timing evidence from the audio, lets Central arbitration choose the final line starts, and writes a same-name `.lrc` plus an audit report.
 
+## Screenshots
+
+The v1.6 review page, running read-only on a demo report (synthetic timing data, one song).
+
+![Review page: one line at a time with reason, waveform and A/B/keep options](docs/images/review-overview.png)
+
+*One line per screen: the lyric, a one-sentence reason, the waveform with markers for A, B and the current time, and at most three options (`1` / `2` / `3`). The stat tiles show this song's progress, remaining rows here and overall, and unsaved edits.*
+
+![Review page: details fold with every candidate and its reason codes](docs/images/review-details.png)
+
+*`Tab` opens the fold with the raw candidate list, source names, severity and reason codes; the per-song queue below lists each remaining row with a verdict chip.*
+
+![Review page: keyboard help overlay](docs/images/review-help.png)
+
+*`?` lists the keys. Everything on the page can be done without the mouse: play, pick, nudge, accept, keep, undo, save.*
+
 ## What's new in v1.6
 
 Review page redesign. Line timing policy, report format and the save flow are unchanged; v1.6 only changes how a review row is presented and operated.
