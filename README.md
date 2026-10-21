@@ -390,11 +390,13 @@ Reports record the selected backend, Central timing state, trust/review counts, 
 
 ## Public-safe validation
 
-Run the checks that do not need private media or model files:
+Run the checks that do not need private media or model files (this is also what the GitHub Actions "Public checks" workflow runs on a clean Windows runner):
 
 ```powershell
 python .\scripts\check_public.py
 ```
+
+It refuses tracked media/model/report files, byte-compiles every tracked Python file and runs the unit tests that pass without the Windows runtime. The full suite (`python -m unittest discover -s scripts -p "test_*.py"`, 1267 tests) needs the installed runtime and is run on the release machine before every tag.
 
 For local evaluation against a manually reviewed reference, the exact public command is:
 

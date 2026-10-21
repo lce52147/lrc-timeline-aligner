@@ -27,27 +27,20 @@ FORBIDDEN_SUFFIXES = {
     ".safetensors",
     ".wav",
 }
-PYTHON_SOURCES = [
-    "scripts/auto_lrc.py",
-    "scripts/ctc_align.py",
-    "scripts/doctor.py",
-    "scripts/evaluate_lrc.py",
-    "scripts/export_alignment_audit.py",
-    "scripts/quantify_alignment.py",
-    "scripts/r2_pipeline.py",
-    "scripts/prefetch_models.py",
-    "scripts/reviewer_layer.py",
-    "scripts/reviewers/build_hubp_plan.py",
-    "scripts/reviewers/common.py",
-    "scripts/reviewers/run_hubp.py",
-    "scripts/reviewers/run_whisperx.py",
-    "scripts/reviewers/run_xlsr.py",
-    "scripts/run_benchmarks.py",
-    "scripts/test_align_lrc_wrapper.py",
-    "scripts/test_core_logic.py",
+# Test files that pass on a clean checkout with only requirements.txt installed.
+# The full suite (test_core_logic, test_align_lrc_wrapper, ...) needs the Windows
+# runtime (PowerShell wrapper, whisper.cpp, model caches) and runs on the release PC.
+PUBLIC_SAFE_TESTS = [
     "scripts/test_installation.py",
+    "scripts/test_runtime_paths.py",
+    "scripts/test_model_cache.py",
     "scripts/test_r2_pipeline.py",
-    "scripts/whisperx_refine.py",
+    "scripts/test_review_presentation.py",
+    "scripts/test_lrc14_review_server.py",
+    "scripts/test_multimodel_extra_models.py",
+    "scripts/test_compare_report_runs.py",
+    "scripts/test_archive_stale_reports.py",
+    "scripts/reviewers/test_common.py",
 ]
 
 
@@ -79,14 +72,15 @@ def assert_no_forbidden_tracked_files() -> None:
         raise SystemExit(f"Forbidden generated/media/model files are tracked:\n{joined}")
 
 
+def python_sources() -> list[str]:
+    return [name for name in tracked_files() if name.endswith(".py")]
+
+
 def main() -> int:
-    run([sys.executable, "scripts/test_core_logic.py"])
-    run([sys.executable, "scripts/test_r2_pipeline.py"])
-    run([sys.executable, "scripts/test_align_lrc_wrapper.py"])
-    run([sys.executable, "scripts/test_installation.py"])
-    run([sys.executable, "scripts/reviewers/test_common.py"])
-    run([sys.executable, "-m", "py_compile", *PYTHON_SOURCES])
     assert_no_forbidden_tracked_files()
+    run([sys.executable, "-m", "py_compile", *python_sources()])
+    for test in PUBLIC_SAFE_TESTS:
+        run([sys.executable, test])
     print("Public-safe checks passed.", flush=True)
     return 0
 
