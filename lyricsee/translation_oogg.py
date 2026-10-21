@@ -21,6 +21,7 @@ def _validate_texts(original: list[str], translated: list[str]) -> list[str]:
 def translate_oogg(original: list[str], *,
                    title: str,
                    endpoint: str="http://127.0.0.1:6969",
+                   model: str | None=None,
                    post_json=None,
                    review: bool=True) -> list[str]:
     from lyricsee_core import (
@@ -30,11 +31,12 @@ def translate_oogg(original: list[str], *,
     import time
     http=HttpClient()
     if post_json is None: post_json=http.post_json
-    payload=http.get_json(endpoint.rstrip("/")+"/v1/models")
-    models=payload.get("data") if isinstance(payload,dict) else None
-    if not models or not models[0].get("id"):
-        raise RuntimeError("OOGG endpoint has no available model")
-    model=models[0]["id"]
+    if model is None:
+        payload=http.get_json(endpoint.rstrip("/")+"/v1/models")
+        models=payload.get("data") if isinstance(payload,dict) else None
+        if not models or not models[0].get("id"):
+            raise RuntimeError("OOGG endpoint has no available model")
+        model=str(models[0]["id"])
 
     def post_with_wake_retry(url, request, timeout):
         # llama-server --sleep-idle-seconds may return 503 during wake-up.

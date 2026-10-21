@@ -1150,8 +1150,13 @@ class HttpClient:
     def get_text(self, url: str, params: dict | None = None) -> str:
         return self._request(url, params=params)
 
-    def get_json(self, url: str, params: dict | None = None) -> dict | list:
-        return json.loads(self._request(url, params=params))
+    def get_json(
+        self,
+        url: str,
+        params: dict | None = None,
+        timeout: float = 30,
+    ) -> dict | list:
+        return json.loads(self._request(url, params=params, timeout=timeout))
 
     def post_json(self, url: str, payload: dict, timeout: float) -> dict:
         result = json.loads(self._request(url, payload=payload, timeout=timeout))

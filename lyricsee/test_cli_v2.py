@@ -18,10 +18,10 @@ import source_policy
 class _EndpointClient:
     def __init__(self, online: set[str]):
         self.online = {item.rstrip("/") for item in online}
-        self.calls: list[str] = []
+        self.calls: list[tuple[str, float | None]] = []
 
-    def get_json(self, url, params=None):
-        self.calls.append(url)
+    def get_json(self, url, params=None, timeout=None):
+        self.calls.append((url, timeout))
         endpoint = url.removesuffix("/v1/models").rstrip("/")
         if endpoint not in self.online:
             raise ConnectionError(endpoint)
@@ -51,13 +51,14 @@ class LyricseeV2CliTests(unittest.TestCase):
             "canonical_original_url": original.url,
             "cross_sources": [],
         }
+        target = cli.OoggTarget(endpoint, "selected-model") if endpoint else None
         with (
             mock.patch.object(cli, "probe_embedded_lyrics", return_value=cli.EmbeddedInfo("Artist", "Song", False, 0, 0)),
             mock.patch.object(cli, "probe_audio", return_value=core.TrackIdentity("Song", "Artist")),
             mock.patch.object(cli, "collect_candidates", return_value=collected),
             mock.patch.object(cli, "choose_verified_original", return_value=(original, evidence)),
             mock.patch.object(cli, "choose_verified_web_translation", side_effect=LookupError("no web translation")) as web,
-            mock.patch.object(cli, "_select_oogg_endpoint", return_value=endpoint) as select,
+            mock.patch.object(cli, "_select_oogg_endpoint", return_value=target) as select,
             mock.patch.object(cli, "translate_oogg", return_value=translated) as translate,
         ):
             row = cli._process_track(
@@ -105,18 +106,33 @@ class LyricseeV2CliTests(unittest.TestCase):
     def test_oogg_auto_probe_prefers_local_when_both_are_online(self):
         client = _EndpointClient(set(cli.DEFAULT_OOGG_ENDPOINTS))
         selected = cli._select_oogg_endpoint(client, cli.DEFAULT_OOGG_ENDPOINTS)
-        self.assertEqual(selected, "http://127.0.0.1:6969")
-        self.assertEqual(client.calls, ["http://127.0.0.1:6969/v1/models"])
+        self.assertEqual(selected.endpoint, "http://127.0.0.1:6969")
+        self.assertEqual(selected.model, "oogg")
+        self.assertEqual(client.calls, [("http://127.0.0.1:6969/v1/models", 5)])
 
     def test_oogg_auto_probe_uses_sister_when_local_is_offline(self):
         client = _EndpointClient({"http://100.87.97.121:6969"})
         selected = cli._select_oogg_endpoint(client, cli.DEFAULT_OOGG_ENDPOINTS)
-        self.assertEqual(selected, "http://100.87.97.121:6969")
+        self.assertEqual(selected.endpoint, "http://100.87.97.121:6969")
+        self.assertEqual(selected.model, "oogg")
         self.assertEqual(
             client.calls,
             [
-                "http://127.0.0.1:6969/v1/models",
-                "http://100.87.97.121:6969/v1/models",
+                ("http://127.0.0.1:6969/v1/models", 5),
+                ("http://100.87.97.121:6969/v1/models", 5),
+            ],
+        )
+
+    def test_oogg_probe_is_cached_for_shared_run_client(self):
+        client = _EndpointClient({"http://100.87.97.121:6969"})
+        first = cli._select_oogg_endpoint(client, cli.DEFAULT_OOGG_ENDPOINTS)
+        second = cli._select_oogg_endpoint(client, cli.DEFAULT_OOGG_ENDPOINTS)
+        self.assertEqual(second, first)
+        self.assertEqual(
+            client.calls,
+            [
+                ("http://127.0.0.1:6969/v1/models", 5),
+                ("http://100.87.97.121:6969/v1/models", 5),
             ],
         )
 
@@ -126,9 +142,29 @@ class LyricseeV2CliTests(unittest.TestCase):
             self.assertEqual(cli.resolve_config(args).oogg_endpoints, ("http://forced:6969",))
 
     def test_environment_endpoint_disables_default_fallbacks(self):
-        with mock.patch.dict(os.environ, {"LYRICSEE_OOGG_ENDPOINT": "http://env:6969"}):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "LYRICSEE_OOGG_ENDPOINTS": "",
+                "LYRICSEE_OOGG_ENDPOINT": "http://env:6969",
+            },
+        ):
             args = cli.build_parser().parse_args(["Song.flac"])
             self.assertEqual(cli.resolve_config(args).oogg_endpoints, ("http://env:6969",))
+
+    def test_environment_endpoint_list_overrides_defaults(self):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "LYRICSEE_OOGG_ENDPOINTS": "http://one:6969 ; http://two:6969/",
+                "LYRICSEE_OOGG_ENDPOINT": "",
+            },
+        ):
+            args = cli.build_parser().parse_args(["Song.flac"])
+            self.assertEqual(
+                cli.resolve_config(args).oogg_endpoints,
+                ("http://one:6969", "http://two:6969"),
+            )
 
     def test_bk_skip_does_not_construct_http_client_or_process_track(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -174,6 +210,7 @@ class LyricseeV2CliTests(unittest.TestCase):
             web.assert_called_once()
             select.assert_called_once()
             translate.assert_called_once()
+            self.assertEqual(translate.call_args.kwargs["model"], "selected-model")
             payload = json.loads(Path(row["output_json"]).read_text(encoding="utf-8"))
             self.assertEqual(payload["oogg_endpoint"], "http://100.87.97.121:6969")
 

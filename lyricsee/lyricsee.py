@@ -71,6 +71,11 @@ class Config(NamedTuple):
     oogg_endpoints: tuple[str, ...]
 
 
+class OoggTarget(NamedTuple):
+    endpoint: str
+    model: str
+
+
 def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed <= 0:
@@ -99,8 +104,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--endpoint",
         help=(
-            "Force one OOGG endpoint; otherwise LYRICSEE_OOGG_ENDPOINT overrides "
-            "automatic local-then-Sister probing"
+            "Force one OOGG endpoint; otherwise LYRICSEE_OOGG_ENDPOINTS may "
+            "provide a semicolon-separated probe list before the built-in local/Sister defaults"
         ),
     )
     parser.add_argument(
@@ -125,12 +130,21 @@ def build_parser() -> argparse.ArgumentParser:
 def resolve_config(args: argparse.Namespace) -> Config:
     bk_value = args.bk_dir or os.environ.get("LYRICSEE_BK_DIR")
     output_value = args.output_root or os.environ.get("LYRICSEE_OUTPUT_ROOT")
-    endpoint = args.endpoint or os.environ.get("LYRICSEE_OOGG_ENDPOINT")
-    oogg_endpoints = (
-        (endpoint.rstrip("/"),)
-        if endpoint
-        else DEFAULT_OOGG_ENDPOINTS
-    )
+    if args.endpoint:
+        oogg_endpoints = (args.endpoint.rstrip("/"),)
+    else:
+        endpoint_list = os.environ.get("LYRICSEE_OOGG_ENDPOINTS", "")
+        endpoints = tuple(
+            item.strip().rstrip("/")
+            for item in endpoint_list.split(";")
+            if item.strip()
+        )
+        legacy_endpoint = os.environ.get("LYRICSEE_OOGG_ENDPOINT", "").strip()
+        oogg_endpoints = endpoints or (
+            (legacy_endpoint.rstrip("/"),)
+            if legacy_endpoint
+            else DEFAULT_OOGG_ENDPOINTS
+        )
     return Config(
         bk_dir=Path(bk_value).expanduser() if bk_value else DEFAULT_BK_DIR,
         output_root=Path(output_value).expanduser() if output_value else HERE,
@@ -302,10 +316,21 @@ def _oogg_error(exc: Exception) -> str:
     return f"{type(exc).__name__}: {str(exc)[:240]}"
 
 
-def _select_oogg_endpoint(client: HttpClient, endpoints: tuple[str, ...]) -> str | None:
+def _select_oogg_endpoint(client: HttpClient, endpoints: tuple[str, ...]) -> OoggTarget | None:
+    cache = getattr(client, "_lyricsee_oogg_target_cache", None)
+    if cache is None:
+        cache = {}
+        setattr(client, "_lyricsee_oogg_target_cache", cache)
+    if endpoints in cache:
+        return cache[endpoints]
+
+    target = None
     for endpoint in endpoints:
         try:
-            payload = client.get_json(endpoint.rstrip("/") + "/v1/models")
+            payload = client.get_json(
+                endpoint.rstrip("/") + "/v1/models",
+                timeout=5,
+            )
             models = payload.get("data") if isinstance(payload, dict) else None
             if (
                 isinstance(models, list)
@@ -313,10 +338,12 @@ def _select_oogg_endpoint(client: HttpClient, endpoints: tuple[str, ...]) -> str
                 and isinstance(models[0], dict)
                 and models[0].get("id")
             ):
-                return endpoint.rstrip("/")
+                target = OoggTarget(endpoint.rstrip("/"), str(models[0]["id"]))
+                break
         except Exception:
             continue
-    return None
+    cache[endpoints] = target
+    return target
 
 
 def _process_track(
@@ -388,14 +415,16 @@ def _process_track(
                 status = "web"
                 attach_verification(selected, evidence, translation_method="web")
             except Exception:
-                oogg_endpoint = _select_oogg_endpoint(client, config.oogg_endpoints) or ""
+                oogg_target = _select_oogg_endpoint(client, config.oogg_endpoints)
+                oogg_endpoint = oogg_target.endpoint if oogg_target else ""
                 try:
-                    if not oogg_endpoint:
+                    if not oogg_target:
                         raise ConnectionError("no configured OOGG endpoint is online")
                     translated = translate_oogg(
                         [row.original for row in original.lines],
                         title=identity.title,
                         endpoint=oogg_endpoint,
+                        model=oogg_target.model,
                         review=False,
                     )
                     selected = LyricCandidate(

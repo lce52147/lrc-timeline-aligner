@@ -41,7 +41,7 @@ Without an override, OOGG probes these endpoints in order and uses the first one
 1. `http://127.0.0.1:6969`
 2. `http://100.87.97.121:6969`
 
-When `--endpoint` or `LYRICSEE_OOGG_ENDPOINT` is set, Lyricsee uses only that endpoint and does not fall back to the defaults. `--no-translate` prevents all OOGG calls. The selected endpoint is saved as `oogg_endpoint` in per-track provenance and run reports.
+`LYRICSEE_OOGG_ENDPOINTS` can replace that candidate list with semicolon-separated endpoints. When `--endpoint` is set, Lyricsee uses only that endpoint and does not fall back to the candidate list. The older singular `LYRICSEE_OOGG_ENDPOINT` remains accepted as a compatibility override. `--no-translate` prevents all OOGG calls. The selected endpoint is saved as `oogg_endpoint` in per-track provenance and run reports.
 
 ```powershell
 python .\lyricsee.py "D:\Music\Artist - Song.flac"

@@ -13,6 +13,25 @@ class OoggTranslatorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "multiline"):
             _validate_texts(["歌詞原文"], ["翻譯\n第二行"])
 
+    def test_supplied_model_skips_model_discovery(self):
+        source = ["声が響く"]
+
+        def generate(lines, **kwargs):
+            self.assertEqual(kwargs["model"], "cached-model")
+            return [LyricPair(lines[0], "聲音迴盪")]
+
+        with patch(
+            "lyricsee_core.HttpClient.get_json",
+            side_effect=AssertionError("model discovery repeated"),
+        ), patch("lyricsee_core.translate_with_local_llm", side_effect=generate):
+            result = translate_oogg(
+                source,
+                title="歌",
+                model="cached-model",
+                review=False,
+            )
+        self.assertEqual(result, ["聲音迴盪"])
+
     def test_oogg_cold_wake_503_retries_then_second_pass(self):
         source=["声が響く","君が笑う"]
         attempts=[]
