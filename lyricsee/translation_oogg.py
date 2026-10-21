@@ -1,14 +1,7 @@
-"""Optional translation backends. Never fetch lyrics or create original text.
-
-DeepL: HTTPS POST /v2/translate, exact 1-to-1 output, ZH-HANT. Key ONLY
-from DEEPL_API_KEY environment variable and NEVER written to any report.
-OOGG: pre-existing OpenAI-compatible HTTP endpoint, explicit opt-in.
-"""
+"""OOGG translation backend. Never fetch lyrics or create original text."""
 from __future__ import annotations
 import json
-import os
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
 def _validate_texts(original: list[str], translated: list[str]) -> list[str]:
     if len(original) != len(translated):
@@ -24,70 +17,6 @@ def _validate_texts(original: list[str], translated: list[str]) -> list[str]:
             raise ValueError(f"Abnormally verbose translation at line {i}")
         valid.append(out)
     return valid
-
-def _deepl_http(url: str, body: dict, api_key: str, timeout: float) -> dict:
-    payload=json.dumps(body,ensure_ascii=False,separators=(",",":")).encode("utf-8")
-    if len(payload)>128*1024:
-        raise ValueError("DeepL request exceeds 128 KiB limit")
-    req=Request(url,
-        data=payload,
-        headers={
-            "Authorization":"DeepL-Auth-Key "+api_key,
-            "Content-Type":"application/json",
-            "User-Agent":"Lyricsee-external-translation/1.0",
-        },
-        method="POST")
-    try:
-        with urlopen(req,timeout=timeout) as r:
-            if r.status!=200:raise RuntimeError("DeepL request failed")
-            return json.loads(r.read(500000).decode("utf-8"))
-    except HTTPError as e:
-        labels={400:"invalid-request",403:"invalid-key-or-plan",429:"rate-limited",456:"quota-exceeded"}
-        raise RuntimeError("DeepL API "+labels.get(e.code,f"HTTP-{e.code}")) from None
-    except URLError as e:
-        raise RuntimeError("DeepL network connection failed") from e
-
-def translate_deepl(original: list[str], *,
-                    key: str | None=None,
-                    source_lang: str | None=None,
-                    context: str="",
-                    batch_size: int=25,
-                    transport=None) -> list[str]:
-    if not original: raise ValueError("No lyric originals to translate")
-    if not 1<=batch_size<=50:raise ValueError("DeepL batch size must be 1..50")
-    if any(not isinstance(line,str) or not line.strip() for line in original):
-        raise ValueError("Original contains blank or non-text lyric")
-    key = key if key is not None else os.environ.get("DEEPL_API_KEY","")
-    if not key:raise RuntimeError("DEEPL_API_KEY missing; no API calls made")
-    # User explicitly prohibits paid translation requests: no paid API endpoint.
-    if not key.endswith(":fx"):
-        raise RuntimeError("Paid DeepL API key refused; use free MyMemory or local OOGG")
-    url="https://api-free.deepl.com/v2/translate"
-    http=transport or _deepl_http
-    # Deduplicate identical refrain lines while retaining original order.
-    unique=list(dict.fromkeys(original))
-    table={}
-    short_context=context[:7000]
-    for start in range(0,len(unique),batch_size):
-        chunk=unique[start:start+batch_size]
-        body={
-            "text":chunk,
-            "target_lang":"ZH-HANT",
-            "split_sentences":"0",
-            "preserve_formatting":True,
-        }
-        if source_lang:body["source_lang"]=source_lang
-        if short_context:body["context"]=short_context
-        result=http(url,body,key,40.0)
-        if not isinstance(result,dict) or not isinstance(result.get("translations"),list):
-            raise RuntimeError("DeepL returned malformed translation response")
-        rows=result["translations"]
-        if len(rows)!=len(chunk):
-            raise RuntimeError("DeepL changed the number of translated lines")
-        outputs=[item.get("text") if isinstance(item,dict) else None for item in rows]
-        checked=_validate_texts(chunk,outputs)
-        table.update(zip(chunk,checked))
-    return _validate_texts(original,[table[v] for v in original])
 
 def translate_oogg(original: list[str], *,
                    title: str,
@@ -238,87 +167,3 @@ def translate_oogg(original: list[str], *,
     if [r.original for r in reviewed]!=original:
         raise RuntimeError("OOGG QA unexpectedly changed original lyric rows")
     return _validate_texts(original,[r.translation or "" for r in reviewed])
-
-
-def _mymemory_http(text: str, *, timeout: float = 15.0) -> dict:
-    """Free documented MyMemory GET API. Never use a paid service or hidden key."""
-    from urllib.parse import urlencode
-    url = "https://api.mymemory.translated.net/get?" + urlencode({
-        "q": text,
-        "langpair": "ja|zh-TW",
-    })
-    req = Request(url, headers={
-        "User-Agent": "Lyricsee/1.0 (voluntary anonymous free API)",
-        "Accept": "application/json",
-    })
-    try:
-        with urlopen(req, timeout=timeout) as response:
-            return json.loads(response.read(150000).decode("utf-8"))
-    except HTTPError as exc:
-        raise RuntimeError(f"MyMemory HTTP {exc.code}; no automatic paid fallback") from None
-    except URLError as exc:
-        raise RuntimeError("MyMemory unavailable; no automatic paid fallback") from exc
-
-
-def translate_mymemory(
-    original: list[str],
-    *,
-    daily_budget: int = 4500,
-    usage_path=None,
-    transport=None,
-) -> list[str]:
-    """No-key free translator with local UTC-day budget and repeated-line cache.
-
-    Default budget is below the published 5000 char/day anonymous IP allowance.
-    Each returned lyric remains machine-translated / pending human QA.
-    """
-    from datetime import datetime, timezone
-    from html import unescape
-    from pathlib import Path
-    from urllib.parse import quote
-    if not original or any(not isinstance(line, str) or not line.strip() for line in original):
-        raise ValueError("MyMemory requires nonempty source lyric lines")
-    if not 1 <= daily_budget <= 5000:
-        raise ValueError("Anonymous free limit cannot exceed 5000 characters per day")
-    unique = list(dict.fromkeys(original))
-    if any(len(line.encode("utf-8")) > 480 for line in unique):
-        raise ValueError("A lyric line exceeds the MyMemory free query byte limit")
-    date = datetime.now(timezone.utc).date().isoformat()
-    ledger = Path(usage_path) if usage_path is not None else (
-        Path(__file__).resolve().parent / "report" / "mymemory_free_usage.json"
-    )
-    used = 0
-    if ledger.is_file():
-        record = json.loads(ledger.read_text(encoding="utf-8-sig"))
-        if record.get("utc_day") == date:
-            used = int(record.get("sent_characters", 0))
-    requested = sum(len(line) for line in unique)
-    if used + requested > daily_budget:
-        raise RuntimeError(
-            f"MyMemory anonymous free daily budget reached: "
-            f"{used}+{requested}>{daily_budget} characters; choose OOGG"
-        )
-    send = transport or _mymemory_http
-    lookup = {}
-    for line in unique:
-        # Debit before each request to avoid retrying a paid-for or failed
-        # request after a network interruption. This is a conservative cap.
-        used += len(line)
-        from lyricsee_core import _atomic_write_text
-        _atomic_write_text(
-            ledger,
-            json.dumps(
-                {"utc_day": date, "sent_characters": used,
-                 "local_daily_budget": daily_budget, "provider": "MyMemory anonymous"},
-                ensure_ascii=False, indent=2,
-            ) + "\n",
-        )
-        response = send(line)
-        if not isinstance(response, dict) or response.get("responseStatus") != 200:
-            raise RuntimeError("MyMemory rejected or rate-limited free request")
-        data = response.get("responseData") or {}
-        text = unescape(str(data.get("translatedText") or "")).strip()
-        if "MYMEMORY WARNING" in text.upper() or "QUERY LENGTH LIMIT" in text.upper():
-            raise RuntimeError("MyMemory returned a quota/warning message")
-        lookup[line] = _validate_texts([line], [text])[0]
-    return _validate_texts(original, [lookup[v] for v in original])

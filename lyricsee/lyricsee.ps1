@@ -3,10 +3,13 @@ param(
     [Parameter(ValueFromRemainingArguments = $true, Position = 0)]
     [string[]] $Paths,
 
-    [ValidateSet("1", "2", "3", "4")]
-    [string] $Mode,
+    [string] $Endpoint,
 
-    [string] $Endpoint = "http://127.0.0.1:6969",
+    [string] $OutputRoot,
+
+    [string] $BkDir,
+
+    [switch] $NoTranslate,
 
     [switch] $Overwrite
 )
@@ -22,16 +25,9 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $backend = Join-Path $scriptDir "lyricsee.py"
 
 if (-not $Paths -or $Paths.Count -eq 0) {
-    Write-Host "Drag one or more audio files onto Lyricsee.bat or Lyricsee.cmd." -ForegroundColor Yellow
-    Write-Host "Supported search inputs: FLAC, MP3, M4A, WAV, OGG, OPUS, AAC, WMA, AIFF, ALAC." -ForegroundColor Yellow
+    Write-Host "Drag one or more audio files or an M3U8 playlist onto Lyricsee.bat or Lyricsee.cmd." -ForegroundColor Yellow
+    Write-Host "Supported audio: FLAC, MP3, M4A, WAV, OGG, OPUS, AAC, WMA, AIFF, ALAC." -ForegroundColor Yellow
     exit 2
-}
-
-if (-not $Mode) {
-    # Default is always verified-source / no-model mode.
-    # Model calls require the caller to explicitly pass -Mode 2.
-    $Mode = "1"
-    Write-Host "Lyricsee: verified web translation mode (no LLM / no NetEase)" -ForegroundColor Cyan
 }
 
 $python = Get-Command python -ErrorAction SilentlyContinue
@@ -42,13 +38,19 @@ if (-not (Test-Path -LiteralPath $backend -PathType Leaf)) {
     throw "Backend not found: $backend"
 }
 
-$modeName = switch ($Mode) {
-    "1" { "web" }
-    "2" { "llm" }
-    "3" { "deepl" }
-    "4" { "mymemory" }
+$arguments = @($backend)
+if ($PSBoundParameters.ContainsKey("Endpoint")) {
+    $arguments += @("--endpoint", $Endpoint)
 }
-$arguments = @($backend, "--mode", $modeName, "--endpoint", $Endpoint)
+if ($PSBoundParameters.ContainsKey("OutputRoot")) {
+    $arguments += @("--output-root", $OutputRoot)
+}
+if ($PSBoundParameters.ContainsKey("BkDir")) {
+    $arguments += @("--bk-dir", $BkDir)
+}
+if ($NoTranslate) {
+    $arguments += "--no-translate"
+}
 if ($Overwrite) {
     $arguments += "--overwrite"
 }

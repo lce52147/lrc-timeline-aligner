@@ -15,20 +15,6 @@ class SourceIntegrity20261008(unittest.TestCase):
         self.assertEqual(output,"嘲笑う世界 闇を暴け  嘲笑著的世界 揭露黑暗\n")
         self.assertEqual(output.count("  "),1)
 
-    def test_netease_tv_size_different_duration_is_rejected(self):
-        core=self.core
-        class Client:
-            def get_json(self,url,params=None):
-                if "search/get" in url:
-                    return {"result":{"songs":[{
-                        "id":5,"name":"A Promise (TV Size)","duration":89900,
-                        "artists":[{"name":"結城アイラ"}],
-                    }]}}
-                raise AssertionError("lyric endpoint must not be contacted")
-        with self.assertRaisesRegex(LookupError,"duration mismatch"):
-            core.fetch_netease_candidate(core.TrackIdentity(
-                "A Promise","結城アイラ",duration=240.0),Client())
-
     def test_lrclib_partial_title_or_artist_does_not_silently_pass(self):
         core=self.core
         class Client:
@@ -49,7 +35,7 @@ class SourceIntegrity20261008(unittest.TestCase):
             core.fetch_lrclib_candidate(core.TrackIdentity(
                 "A Promise","結城アイラ",duration=240.0),Client())
 
-    def test_netease_mistyped_title_caption_and_credit_are_removed(self):
+    def test_mistyped_title_caption_and_credit_are_removed(self):
         core=self.core
         identity=core.TrackIdentity("素晴らしき世界 でも どこにもない場所","Ave Mujica")
         pairs=[
@@ -67,8 +53,6 @@ class SourceIntegrity20261008(unittest.TestCase):
         wrong=[core.LyricPair(f"他の世界{i}",f"錯譯{i}") for i in range(12)]
         result=core.collect_candidates(
             core.TrackIdentity("影色舞","MyGO!!!!!"),object(),
-            netease_fetcher=lambda identity,client:(_ for _ in ()).throw(
-                AssertionError("NetEase is forbidden")),
             lrclib_fetcher=lambda identity,client:core.LyricCandidate(
                 source="lrclib",url="https://lrclib.net/api/get/1",
                 title=identity.title,artist=identity.artist,lines=ref),
@@ -90,7 +74,6 @@ class SourceIntegrity20261008(unittest.TestCase):
             lines=[core.LyricPair(f"metadata about album{i}",f"中文{i}") for i in range(30)])
         result=core.collect_candidates(
             core.TrackIdentity("Song","Artist"),object(),
-            netease_fetcher=lambda i,c:(_ for _ in ()).throw(LookupError()),
             lrclib_fetcher=lambda i,c:(_ for _ in ()).throw(LookupError()),
             google_fetcher=lambda i,c:([fake.url],[fake]))
         self.assertEqual(result.candidates,[])

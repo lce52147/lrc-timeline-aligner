@@ -169,8 +169,8 @@ class LyricseeCoreTests(unittest.TestCase):
     def test_choose_web_candidate_prefers_more_translated_rows(self):
         core = load_core()
         weaker = core.LyricCandidate(
-            source="netease",
-            url="https://music.example/1",
+            source="lrclib",
+            url="https://lrclib.net/api/get/1",
             title="Song",
             artist="Artist",
             lines=[core.LyricPair("a", "甲"), core.LyricPair("b", None)],
@@ -184,11 +184,11 @@ class LyricseeCoreTests(unittest.TestCase):
         )
         self.assertIs(core.choose_candidate([weaker, stronger], require_translation=True), stronger)
 
-    def test_choose_web_candidate_prefers_complete_structured_translation_over_longer_page(self):
+    def test_choose_web_candidate_prefers_more_complete_translation_regardless_of_source_type(self):
         core = load_core()
         structured = core.LyricCandidate(
-            source="netease",
-            url="https://music.example/1",
+            source="lrclib",
+            url="https://lrclib.net/api/get/1",
             title="Song",
             artist="Artist",
             lines=[core.LyricPair(f"line {index}", f"translation {index}") for index in range(54)],
@@ -202,7 +202,7 @@ class LyricseeCoreTests(unittest.TestCase):
         )
         self.assertIs(
             core.choose_candidate([generic_page, structured], require_translation=True),
-            structured,
+            generic_page,
         )
 
     def test_render_lyrics_uses_two_ascii_spaces_between_columns(self):
@@ -222,10 +222,10 @@ class LyricseeCoreTests(unittest.TestCase):
     def test_collect_candidates_sanitizes_structured_metadata_without_dropping_lyrics(self):
         core = load_core()
 
-        def netease(identity, client):
+        def lrclib(identity, client):
             return core.LyricCandidate(
-                source="netease",
-                url="https://music.example/1",
+                source="lrclib",
+                url="https://lrclib.net/api/get/1",
                 title="無路矢",
                 artist="MyGO!!!!!",
                 lines=[
@@ -246,10 +246,7 @@ class LyricseeCoreTests(unittest.TestCase):
         result = core.collect_candidates(
             core.TrackIdentity("無路矢", "MyGO!!!!!"),
             object(),
-            netease_fetcher=lambda identity, client: (_ for _ in ()).throw(
-                AssertionError("NetEase must never be called")
-            ),
-            lrclib_fetcher=netease,
+            lrclib_fetcher=lrclib,
             google_fetcher=lambda identity, client: ([], []),
         )
         self.assertEqual(
@@ -273,9 +270,8 @@ class LyricseeCoreTests(unittest.TestCase):
                 artist="artist",
                 lines=[core.LyricPair("original", "translation")],
             )
-            with mock.patch.object(core, "OUTPUT_ROOT", root):
-                with self.assertRaises(FileExistsError):
-                    core.write_result(audio, candidate, overwrite=False)
+            with self.assertRaises(FileExistsError):
+                core.write_result(audio, candidate, output_root=root, overwrite=False)
             self.assertEqual(output.read_text(encoding="utf-8"), "existing\n")
 
     def test_atomic_write_preserves_existing_file_when_replace_fails(self):
@@ -300,61 +296,26 @@ class LyricseeCoreTests(unittest.TestCase):
             audio = root / "song.flac"
             audio.write_bytes(b"fake")
             candidate = core.LyricCandidate(
-                source="netease",
-                url="https://music.163.com/song?id=1",
+                source="lrclib",
+                url="https://lrclib.net/api/get/1",
                 title="song",
                 artist="artist",
                 lines=[core.LyricPair("original", "translation")],
                 discovered_urls=["https://example.com/translation"],
                 google_search="https://www.google.com/search?q=song",
             )
-            with mock.patch.object(core, "OUTPUT_ROOT", root):
-                output, provenance = core.write_result(audio, candidate, overwrite=False)
+            output, provenance = core.write_result(audio, candidate, output_root=root, overwrite=False)
             self.assertEqual(output, root / "txt" / "song.lyrics.txt")
             self.assertEqual(provenance, root / "report" / "song.lyrics.sources.json")
             self.assertFalse((root / "song.lyrics.txt").exists())
             self.assertFalse((root / "song.lyrics.sources.json").exists())
             self.assertEqual(output.read_text(encoding="utf-8"), "original  translation\n")
             payload = json.loads(provenance.read_text(encoding="utf-8"))
-            self.assertEqual(payload["selected_source"], "netease")
-            self.assertEqual(payload["source_url"], "https://music.163.com/song?id=1")
+            self.assertEqual(payload["selected_source"], "lrclib")
+            self.assertEqual(payload["source_url"], "https://lrclib.net/api/get/1")
             self.assertEqual(payload["google_candidates"], ["https://example.com/translation"])
             self.assertEqual(payload["google_search_url"], "https://www.google.com/search?q=song")
             self.assertNotIn("lyrics", payload)
-
-    def test_netease_candidate_uses_existing_timed_translation_and_translator(self):
-        core = load_core()
-
-        class Client:
-            def get_json(self, url, params=None):
-                if url.endswith("/api/search/get"):
-                    return {
-                        "result": {
-                            "songs": [
-                                {
-                                    "id": 42,
-                                    "name": "影色舞",
-                                    "duration": 209453,
-                                    "artists": [{"name": "MyGO!!!!!"}],
-                                    "album": {"name": "迷跡波"},
-                                }
-                            ]
-                        }
-                    }
-                self.last_lyric_params = params
-                return {
-                    "lrc": {"lyric": "[00:01.00]原文一\n[00:02.00]原文二"},
-                    "tlyric": {"lyric": "[00:01.00]翻譯一\n[00:02.00]翻譯二"},
-                    "transUser": {"nickname": "譯者"},
-                }
-
-        candidate = core.fetch_netease_candidate(
-            core.TrackIdentity("影色舞", "MyGO!!!!!", duration=209.4), Client()
-        )
-        self.assertEqual(candidate.source, "netease")
-        self.assertEqual(candidate.translator, "譯者")
-        self.assertEqual(candidate.url, "https://music.163.com/song?id=42")
-        self.assertEqual(candidate.lines[1], core.LyricPair("原文二", "翻譯二"))
 
     def test_lrclib_candidate_supplies_original_when_translation_is_unavailable(self):
         core = load_core()
@@ -379,28 +340,6 @@ class LyricseeCoreTests(unittest.TestCase):
         self.assertEqual(candidate.source, "lrclib")
         self.assertEqual([row.original for row in candidate.lines], ["first line", "second line"])
         self.assertEqual(core.translation_coverage(candidate.lines), 0.0)
-
-    def test_netease_rejects_an_unrelated_artist_match(self):
-        core = load_core()
-
-        class Client:
-            def get_json(self, url, params=None):
-                return {
-                    "result": {
-                        "songs": [
-                            {
-                                "id": 99,
-                                "name": "Song",
-                                "duration": 120000,
-                                "artists": [{"name": "Wrong Artist"}],
-                                "album": {"name": "Wrong"},
-                            }
-                        ]
-                    }
-                }
-
-        with self.assertRaisesRegex(LookupError, "metadata"):
-            core.fetch_netease_candidate(core.TrackIdentity("Song", "Artist", duration=120), Client())
 
     def test_google_discovery_searches_translation_and_extracts_supported_pages(self):
         core = load_core()
@@ -562,16 +501,6 @@ class LyricseeCoreTests(unittest.TestCase):
         core = load_core()
         calls = []
 
-        def netease(identity, client):
-            calls.append("netease")
-            return core.LyricCandidate(
-                source="netease",
-                url="n",
-                title=identity.title,
-                artist=identity.artist,
-                lines=[core.LyricPair("original", "translation")],
-            )
-
         def lrclib(identity, client):
             calls.append("lrclib")
             return core.LyricCandidate(
@@ -589,7 +518,6 @@ class LyricseeCoreTests(unittest.TestCase):
         result = core.collect_candidates(
             core.TrackIdentity("Song", "Artist"),
             object(),
-            netease_fetcher=netease,
             lrclib_fetcher=lrclib,
             google_fetcher=google,
         )
@@ -742,37 +670,6 @@ class LyricseeCoreTests(unittest.TestCase):
         self.assertEqual(identity.artist, "MyGO!!!!!")
         self.assertEqual(identity.album, "迷跡波")
         self.assertAlmostEqual(identity.duration, 209.453)
-
-    def test_windows_wrappers_offer_web_and_llm_modes(self):
-        expected = [HERE / "Lyricsee.bat", HERE / "Lyricsee.cmd", HERE / "lyricsee.ps1"]
-        for path in expected:
-            self.assertTrue(path.exists(), f"missing wrapper: {path.name}")
-        ps1 = (HERE / "lyricsee.ps1").read_text(encoding="utf-8")
-        self.assertIn('$Mode = "1"', ps1)
-        self.assertIn('explicitly pass -Mode 2', ps1)
-        self.assertNotIn('Read-Host', ps1)
-        self.assertIn("--mode", ps1)
-        self.assertIn("web", ps1)
-        self.assertIn("llm", ps1)
-        self.assertIn("lyricsee.py", ps1)
-        self.assertIn("lyricsee.ps1", (HERE / "Lyricsee.bat").read_text(encoding="utf-8"))
-        self.assertIn("lyricsee.ps1", (HERE / "Lyricsee.cmd").read_text(encoding="utf-8"))
-
-    def test_cli_help_exposes_modes_endpoint_and_overwrite(self):
-        cli = HERE / "lyricsee.py"
-        self.assertTrue(cli.exists(), "lyricsee.py has not been implemented")
-        result = subprocess.run(
-            ["python", str(cli), "--help"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            check=False,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("--mode {web,mymemory,deepl,llm}", result.stdout)
-        self.assertIn("--endpoint", result.stdout)
-        self.assertIn("--overwrite", result.stdout)
-
 
 if __name__ == "__main__":
     unittest.main()

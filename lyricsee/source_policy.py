@@ -1,8 +1,8 @@
 """Fail-closed source policy for lyricsee (2026-10-08).
 
-No NetEase, and no LLM required. Prefer LRCLIB original lyrics verified
-against audio metadata. Only borrow published translation rows from matched
-lyrics pages, or keep verified originals separately when no translation exists.
+Prefer LRCLIB original lyrics verified against audio metadata. Only borrow
+published translation rows from matched lyrics pages, or keep verified
+originals separately when no translation exists.
 Do not create translations by guessing from search snippets.
 """
 from __future__ import annotations
@@ -176,18 +176,25 @@ def choose_verified_web_translation(
 
 
 def validate_output(
-    canonical: LyricCandidate, candidate: LyricCandidate
+    canonical: LyricCandidate,
+    candidate: LyricCandidate,
+    *,
+    require_translation: bool,
 ) -> None:
     if len(candidate.lines) != len(canonical.lines) or len(candidate.lines) < MIN_LINES:
         raise ValueError("Output lost or invented lyric rows")
     for idx, (original_row, final_row) in enumerate(
         zip(canonical.lines, candidate.lines), 1
     ):
+        if not final_row.original.strip():
+            raise ValueError(f"Empty original lyric at row {idx}")
         if final_row.original != original_row.original:
             raise ValueError(f"Original lyric changed at row {idx}")
         translation = (final_row.translation or "").strip()
         if not translation:
-            raise ValueError(f"Untranslated row {idx}")
+            if require_translation:
+                raise ValueError(f"Untranslated row {idx}")
+            continue
         if _looks_like_non_lyric_web_text(translation):
             raise ValueError(f"Page UI / non-lyric translation at row {idx}")
         if "\ufffd" in translation or "\x00" in translation:
@@ -221,5 +228,4 @@ def verified_provenance_is_current(provenance: dict, output_bytes: bytes) -> boo
         and verify.get("source_verified") is True
         and provenance.get("txt_sha256") ==
             hashlib.sha256(output_bytes).hexdigest()
-        and not str(provenance.get("selected_source") or "").startswith("netease")
     )

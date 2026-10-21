@@ -18,7 +18,7 @@ def candidate(source, url, rows, *, title="Sample", artist="Singer"):
     )
 
 
-class NeteaseFreePolicyTests(unittest.TestCase):
+class SourcePolicyTests(unittest.TestCase):
     def setUp(self):
         self.identity=TrackIdentity("Sample","Singer",duration=201.0)
         self.rows=[
@@ -27,19 +27,6 @@ class NeteaseFreePolicyTests(unittest.TestCase):
         self.ref=candidate(
             "lrclib","https://lrclib.net/api/get/123",self.rows,
         )
-
-    def test_collection_must_not_call_netease_even_when_injected(self):
-        called=[]
-        def netease(i,c):
-            called.append("netease")
-            raise AssertionError("Netease forbidden")
-        col=collect_candidates(
-            self.identity, object(), netease_fetcher=netease,
-            lrclib_fetcher=lambda i,c:self.ref,
-            google_fetcher=lambda i,c:([],[]),
-        )
-        self.assertEqual(called,[])
-        self.assertEqual([x.source for x in col.candidates],["lrclib"])
 
     def test_lrclib_canonical_original_with_evidence(self):
         orig,evidence=choose_verified_original(self.identity,[self.ref])
@@ -75,7 +62,7 @@ class NeteaseFreePolicyTests(unittest.TestCase):
         )
         original,_=choose_verified_original(self.identity,[self.ref,web])
         output=choose_verified_web_translation(self.identity,original,[web])
-        validate_output(original,output)
+        validate_output(original, output, require_translation=True)
         self.assertEqual(
             [x.original for x in output.lines],
             [x.original for x in self.rows],
@@ -101,7 +88,7 @@ class NeteaseFreePolicyTests(unittest.TestCase):
 
     def test_failed_legacy_or_tampered_provenance_does_not_pass(self):
         payload=b"original  translation\n"
-        old={"selected_source":"netease","txt_sha256":hashlib.sha256(payload).hexdigest()}
+        old={"selected_source":"legacy","txt_sha256":hashlib.sha256(payload).hexdigest()}
         self.assertFalse(verified_provenance_is_current(old,payload))
         original,proof=choose_verified_original(self.identity,[self.ref])
         out=candidate("local-llm:OOGG",original.url,
@@ -117,6 +104,17 @@ class NeteaseFreePolicyTests(unittest.TestCase):
         self.assertFalse(
             out.verification["translation_semantics_human_checked"]
         )
+
+    def test_validate_output_allows_original_only_without_mutation(self):
+        original,_=choose_verified_original(self.identity,[self.ref])
+        output=candidate(
+            "original-only",original.url,
+            [LyricPair(row.original) for row in original.lines],
+        )
+        validate_output(original, output, require_translation=False)
+        output.lines[0]=LyricPair("changed")
+        with self.assertRaisesRegex(ValueError,"Original lyric changed"):
+            validate_output(original, output, require_translation=False)
 
     def test_review_fixes_but_does_not_change_original(self):
         original=[LyricPair("私はダメ 油断してると","我真沒用，只要一掉以為輕"),

@@ -1,13 +1,13 @@
-# Lyricsee — Verified sources, no-LLM default (2026-10-08)
+# Lyricsee v2 — verified sources with OOGG fallback
 
-Drag FLAC/MP3/M4A and other supported audio files onto `Lyricsee.cmd` or `Lyricsee.bat`. The launcher **automatically uses verified online translation mode**. It does not call OOGG/Gemini and does not query NetEase.
+Drag supported audio files onto `Lyricsee.cmd` / `Lyricsee.bat`, or pass audio and `.m3u8` paths to `lyricsee.py`. Lyricsee prefers a verified published translation; when none is available it probes OOGG at `127.0.0.1:6969` and then Sister at `100.87.97.121:6969`. If neither endpoint is online, it writes the verified original only.
 
 ## Source rules
 
 - LRCLIB originals must match the recording's title, artist and duration.
 - Google is used to discover existing lyric/translation pages. Bahamut/marumaru originals must agree with the independently checked source, or, without LRCLIB, two different allowed sites must agree on at least 85% of unique lyric lines.
 - The program joins a vetted web translation to *exactly matched original lyrics*. It does not invent missing translations, copy site menus, or treat arbitrary search snippets as lyrics.
-- Failure to find a checked human/community translation is a normal, explicit failure; **never substitute LLM text silently**. It does not write a misleading bilingual TXT.
+- If no checked human/community translation exists, OOGG may create an `oogg_draft`. The exact endpoint is recorded in provenance. If OOGG is unavailable, output remains `original_only`.
 - Original-only lyrics recovered from the DF playlist are staged separately in `rebuild_no_llm_20261008\original_only`. They are not translated and are not automatically sent into LRC tools.
 - Bilingual TXT has the format `original  translation` (exactly two ASCII spaces delimiting two fields). Existing TXT remains untrusted until re-audited. LRC outputs and certified BK are not touched.
 
@@ -32,54 +32,23 @@ For an individual audio file:
 python .\lyricsee.py "D:\Music\Artist - Song.flac"
 ```
 
-## Free-first translation (no paid API)
+## Translation and endpoint selection
 
-Lyricsee only retrieves/verifies original lyrics. Optional translation is a separate lightweight API client; the model stays inside the existing OOGG service. **No paid API is selected automatically.**
+The main CLI uses this order: verified web translation → OOGG draft → verified original only. OOGG does not supply source lyrics; it only translates already verified original rows.
 
-- **OOGG (default for DF batch):** already running local model at port 6969. No API charge; consumes local GPU resources while translating. No model is loaded by Lyricsee.
-- **MyMemory (no key):** real live Japanese-to-`zh-TW` API tested, about **5000 anonymous characters/day shared by source IP**. Lyricsee enforces a conservative **4500 chars per UTC day** using `report/mymemory_free_usage.json`, deduplicates repeated chorus lines, and rejects missing, quota-warning or malformed responses. Good for a few songs only; translation accuracy and Traditional Chinese glyphs need review.
-- **Azure Translator F0:** Microsoft lists 2,000,000 characters/month free, but requires an account, free-tier resource and credentials. Not currently connected to Lyricsee and **not automatically used**.
-- **DeepL:** prior API Free is closed to new sign-ups; the newer Developer API plan gives a limited total free allocation. Lyricsee currently **refuses paid DeepL keys**; only pre-existing keys ending with `:fx` can access the old free endpoint. No paid fallback exists.
+Without an override, OOGG probes these endpoints in order and uses the first one exposing a model:
 
-For the existing **178 rebuilt and verified original-only DF songs**, dry-run is the default and the user must specify `--run`:
+1. `http://127.0.0.1:6969`
+2. `http://100.87.97.121:6969`
 
-```powershell
-# No API charges; relies on pre-existing local OOGG service
-python .\translate_rebuilt_df_20261008.py --max-songs 5
-python .\translate_rebuilt_df_20261008.py --provider oogg --max-songs 5 --run
-
-# Anonymous free API; small daily shared quota
-python .\translate_rebuilt_df_20261008.py --provider mymemory --max-songs 2 --run
-```
-
-For an individual song, the no-key web translation remains the drag-and-drop default; optional MyMemory and OOGG can be selected explicitly:
+When `--endpoint` or `LYRICSEE_OOGG_ENDPOINT` is set, Lyricsee uses only that endpoint and does not fall back to the defaults. `--no-translate` prevents all OOGG calls. The selected endpoint is saved as `oogg_endpoint` in per-track provenance and run reports.
 
 ```powershell
-python .\lyricsee.py --mode mymemory "D:\Music\Artist - Song.flac"
-python .\lyricsee.py --mode llm --endpoint http://127.0.0.1:6969 "D:\Music\Artist - Song.flac"
+python .\lyricsee.py "D:\Music\Artist - Song.flac"
+python .\lyricsee.py --endpoint http://100.87.97.121:6969 "D:\Music\Artist - Song.flac"
+python .\lyricsee.py --no-translate "D:\Music\Artist - Song.flac"
+python .\lyricsee.py --dry-run "D:\Music\playlist.m3u8"
 ```
-
-## Sister remote inference preparation (paused; no Sister IP configured yet)
-
-The local bulk translation batch has been stopped on user request. Its per-song checkpoints, canonical bilingual TXT and byte-identical `.org` backups remain intact. On resume, the script first confirms the successful output SHA before skipping previously published tracks; failed or interrupted tracks are retryable.
-
-Use the exact **Sister Tailscale or LAN IP** (not `127.0.0.1`) and its **llama.cpp OpenAI-compatible port**. Keep the Sister inference server listening only on the appropriate private/Tailscale interface and ensure that port is reachable from the primary PC. Do not expose an unauthenticated model server to the public internet.
-
-```powershell
-# Read-only network + health + model checks
-python .\\preflight_sister_llm_20261008.py --ip <SISTER_IP> --port 6969
-
-# Optional short real inference smoke test
-python .\\preflight_sister_llm_20261008.py --ip <SISTER_IP> --port 6969 --smoke-test
-
-# Dry run; explicitly fail if a local or public endpoint was accidentally used
-python .\\process_remaining_verified_df_20261008.py --sister-only --endpoint http://<SISTER_IP>:6969
-
-# Only after verified remote reachability, resume translations
-python -u .\\process_remaining_verified_df_20261008.py --sister-only --endpoint http://<SISTER_IP>:6969 --run
-```
-
-`--sister-only` denies loopback/public addresses and verifies remote health/model before any translation requests. The `--endpoint` value is forwarded to the OOGG translation client; inference is done on Sister while TXT/backup/provenance stay on this local computer. No user-supplied IP is stored in the project until it is actually provided. The `--smoke-test` is optional and sends one short query only.
 
 ## Sister RTX 5080 two-lane translation — live 2026-10-08
 

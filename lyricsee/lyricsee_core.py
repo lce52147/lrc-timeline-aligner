@@ -20,9 +20,6 @@ from urllib.parse import parse_qs, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 
-OUTPUT_ROOT = Path(__file__).resolve().parent
-
-
 class TrackIdentity(NamedTuple):
     title: str
     artist: str = ""
@@ -373,8 +370,8 @@ def _sanitize_candidate_lines(
             continue
         if title_artist_rows and _normalized(original) in title_artist_rows:
             continue
-        # NetEase sometimes inserts a mistyped "song - artist" caption after
-        # its credit lines; exact string matching misses these false lyrics.
+        # Some sources insert a mistyped "song - artist" caption after credit
+        # lines; exact string matching misses these false lyrics.
         if len(result) < 4 and identity.artist and re.search(r"\s[-–—]\s", original):
             caption_title, caption_artist = re.split(r"\s[-–—]\s", original, maxsplit=1)
             if any(artist and artist in _normalized(caption_artist) for artist in artists):
@@ -492,14 +489,11 @@ def choose_candidate(
         kind = "translated lyrics" if require_translation else "lyrics"
         raise LookupError(f"No candidate supplied {kind}")
 
-    def score(candidate: LyricCandidate) -> tuple[int, int, float, int, int]:
+    def score(candidate: LyricCandidate) -> tuple[int, float, int, int]:
         translated = sum(bool(row.translation) for row in candidate.lines)
         coverage = translation_coverage(candidate.lines)
         near_complete = int(coverage >= 0.95)
-        structured_priority = 2 if candidate.source == "netease" else 0
-        if not near_complete:
-            structured_priority = 0
-        return near_complete, structured_priority, coverage, translated, len(candidate.lines)
+        return near_complete, coverage, translated, len(candidate.lines)
 
     return max(materialized, key=score)
 
@@ -571,11 +565,18 @@ def write_result(
     audio_path: Path,
     candidate: LyricCandidate,
     *,
+    output_root: Path,
     overwrite: bool,
+    translation_method: str = "",
+    status: str = "",
+    translation_error: str = "",
+    human_approved: bool = False,
+    oogg_endpoint: str = "",
 ) -> tuple[Path, Path]:
     audio_path = audio_path.resolve()
-    txt_dir = OUTPUT_ROOT / "txt"
-    report_dir = OUTPUT_ROOT / "report"
+    output_root = Path(output_root)
+    txt_dir = output_root / "txt"
+    report_dir = output_root / "report"
     output = txt_dir / f"{audio_path.stem}.lyrics.txt"
     provenance = report_dir / f"{audio_path.stem}.lyrics.sources.json"
     if output.exists() and not overwrite:
@@ -597,6 +598,11 @@ def write_result(
         "translation_coverage": translation_coverage(candidate.lines),
         "google_search_url": candidate.google_search,
         "google_candidates": candidate.discovered_urls,
+        "translation_method": translation_method,
+        "human_approved": human_approved,
+        "status": status,
+        "translation_error": translation_error,
+        "oogg_endpoint": oogg_endpoint,
     }
     provenance_text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
     _atomic_write_text(output, lyrics_text)
@@ -638,75 +644,6 @@ def _metadata_score(
         else 9999.0
     )
     return title_score, artist_score, -duration_penalty
-
-
-def fetch_netease_candidate(identity: TrackIdentity, client) -> LyricCandidate:
-    query = " ".join(part for part in (identity.title, identity.artist) if part)
-    payload = client.get_json(
-        "https://music.163.com/api/search/get",
-        params={"s": query, "type": 1, "limit": 10, "offset": 0},
-    )
-    songs = ((payload or {}).get("result") or {}).get("songs") or []
-    if not songs:
-        raise LookupError("NetEase returned no song matches")
-
-    def song_metadata(song):
-        artist_names = [
-            item.get("name", "") for item in (song.get("artists") or []) if item.get("name")
-        ]
-        artists = ", ".join(artist_names)
-        duration = song.get("duration")
-        duration_seconds = float(duration) / 1000.0 if duration is not None else None
-        return artists, artist_names, duration_seconds
-
-    def song_score(song):
-        artists, _, duration = song_metadata(song)
-        return _metadata_score(
-            identity,
-            title=str(song.get("name") or ""),
-            artist=artists,
-            duration=duration,
-        )
-
-    song = max(songs, key=song_score)
-    artists, artist_names, song_duration = song_metadata(song)
-    metadata_score = _metadata_score(
-        identity,
-        title=str(song.get("name") or ""),
-        artist=artists,
-        duration=song_duration,
-    )
-    requested_artist = _normalized(identity.artist)
-    exact_artist = any(_normalized(name) == requested_artist for name in artist_names)
-    if metadata_score[0] < 1 or (requested_artist and not exact_artist):
-        raise LookupError("NetEase best match failed the title/artist metadata check")
-    # A partial title can silently select TV-size, acoustic, covers, etc.
-    # When the actual FLAC duration is available these variants must fail closed.
-    if (identity.duration is not None and song_duration is not None
-            and abs(identity.duration - song_duration) > 15.0):
-        raise LookupError(
-            f"NetEase duration mismatch: FLAC={identity.duration:.1f}s "
-            f"candidate={song_duration:.1f}s"
-        )
-    song_id = int(song["id"])
-    lyric_payload = client.get_json(
-        "https://music.163.com/api/song/lyric",
-        params={"id": song_id, "lv": -1, "kv": -1, "tv": -1},
-    )
-    original = parse_lrc(((lyric_payload.get("lrc") or {}).get("lyric") or ""))
-    if not original:
-        raise LookupError("NetEase match has no usable original lyrics")
-    translated = parse_lrc(((lyric_payload.get("tlyric") or {}).get("lyric") or ""))
-    translator = ((lyric_payload.get("transUser") or {}).get("nickname") or None)
-    album = song.get("album") or {}
-    return LyricCandidate(
-        source="netease",
-        url=f"https://music.163.com/song?id={song_id}",
-        title=str(song.get("name") or identity.title),
-        artist=artists or identity.artist,
-        lines=pair_timed_lyrics(original, translated),
-        translator=translator,
-    )
 
 
 def _plain_lyric_pairs(text: str) -> list[LyricPair]:
@@ -816,16 +753,12 @@ def collect_candidates(
     identity: TrackIdentity,
     client,
     *,
-    netease_fetcher=fetch_netease_candidate,
     lrclib_fetcher=fetch_lrclib_candidate,
     google_fetcher=fetch_google_candidates,
 ) -> CollectionResult:
     candidates: list[LyricCandidate] = []
     errors: list[str] = []
 
-    # Source policy 2026-10-08: NetEase is categorically disabled.
-    # Keep the injectable argument for compatibility with existing callers,
-    # but NEVER call it; neither lyrics nor translations may originate there.
     try:
         candidates.append(lrclib_fetcher(identity, client))
     except Exception as exc:
@@ -847,7 +780,7 @@ def collect_candidates(
     # those rows when independently retrieved structured originals disagree.
     structured = [
         item for item in candidates
-        if item.source in {"netease", "lrclib"} and len(item.lines) >= 8
+        if item.source == "lrclib" and len(item.lines) >= 8
     ]
     safe_candidates: list[LyricCandidate] = []
     for candidate in candidates:
