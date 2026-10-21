@@ -10,9 +10,13 @@ def tag(cs: int) -> str:
     return f"[{cs // 6000:02d}:{cs % 6000 // 100:02d}.{cs % 100:02d}]"
 
 
+def bare(cs: int) -> str:
+    return tag(cs)[1:-1]
+
+
 class CompareReportRunsTest(unittest.TestCase):
     def _report(self, folder: Path, name: str, times, statuses, output: Path, audio: Path) -> None:
-        rows = [{"entry": i + 1, "lrc_tag": tag(t), "verification_status": s} for i, (t, s) in enumerate(zip(times, statuses))]
+        rows = [{"entry": i + 1, "lrc_tag": bare(t), "verification_status": s} for i, (t, s) in enumerate(zip(times, statuses))]
         (folder / f"{name}.align-report.json").write_text(
             json.dumps({"assignments": rows, "output_path": str(output), "audio_path": str(audio)}), encoding="utf-8")
 
@@ -60,7 +64,7 @@ class CompareReportRunsTest(unittest.TestCase):
             root = Path(tmp)
             run, bk = root / "run", root / "bk"
             run.mkdir(); bk.mkdir()
-            (bk / "07. Ever Be My Love.lrc").write_text(
+            (bk / "Ever Be My Love (TV size).lrc").write_text(
                 "[00:00.00]title\n" + "\n".join(f"{tag(t)} orig\n{tag(t)} 翻譯" for t in (100, 200, 300)), encoding="utf-8")
             self._report(run, "07. Ever be my love--8140201fbb", (0, 100, 200, 330), ("trusted",) * 4,
                          root / "o.lrc", root / "07. Ever be my love.flac")

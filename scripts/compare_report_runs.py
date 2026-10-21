@@ -17,7 +17,7 @@ import re
 from pathlib import Path
 
 REPORT_SUFFIX = ".align-report.json"
-TAG_RE = re.compile(r"^\[(\d{2,}):(\d{2})\.(\d{2})\]")
+TAG_RE = re.compile(r"^\[?(\d{2,}):(\d{2})\.(\d{2})\]?")  # report lrc_tag values carry no brackets
 BUCKETS = ((10, "<=0.10s"), (20, "<=0.20s"), (50, "<=0.50s"), (100, "<=1.00s"), (None, ">1.00s"))
 
 
@@ -116,6 +116,10 @@ def find_reference(report: dict, report_name: str, bk_index: dict[str, list[Path
     for name in reference_names(report, report_name):
         candidates = bk_index.get(name) or loose_index.get(loose_key(name), [])
         if not candidates:
+            key = loose_key(name)
+            partial = [path for k, paths in loose_index.items() for path in paths if len(key) >= 6 and (key in k or k in key)]
+            candidates = partial if len(partial) == 1 else []
+        if not candidates:
             continue
         if len(candidates) > 1:
             narrowed = [path for path in candidates if path.parent.name == folder]
@@ -186,7 +190,10 @@ def compare(ref_dir: Path, run_dir: Path, bk_dir: Path) -> dict:
         run_score = score(run_report, reference_times)
         ref_score = score(ref_report, reference_times) if ref_report is not None else None
         if run_score is None:
-            skipped.append({"report": name, "reason": f"line-count-mismatch-with-bk (report {len(run_report['assignments'])} vs bk {len(reference_times)}: {reference})"})
+            unparsed = sum(t is None for t in times_of(run_report))
+            why = (f"unparsable-lrc-tag ({unparsed} rows)" if unparsed
+                   else f"line-count-mismatch-with-bk (report {len(run_report['assignments'])} vs bk {len(reference_times)}: {reference})")
+            skipped.append({"report": name, "reason": why})
             continue
         entry = {"report": name, "bk": str(reference), "run": {k: v for k, v in run_score.items() if k != "deltas"}}
         totals["run"]["songs"] += 1
