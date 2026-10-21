@@ -780,6 +780,10 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         after = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in self.root.rglob("*") if path.is_file()}
         self.assertEqual(before, after)
 
+    def test_checked_references_root_is_reviewable(self) -> None:
+        self.assertFalse(review_server._path_is_excluded(self.root / "LRC tools checked references" / "song.lrc"))
+        self.assertTrue(review_server._path_is_excluded(self.root / "LRC tools checked references" / "LRC bk" / "song.lrc"))
+
     def test_bk_exclusion_and_public_api_paths(self) -> None:
         bk = self.root / "lrc bk"
         bk.mkdir()

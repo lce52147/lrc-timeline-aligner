@@ -24,7 +24,7 @@ import review_presentation
 import runtime_paths
 from lrc_manual_edits import review_artifact_paths
 
-_EXCLUDED_DIR_NAMES = ("lrc tools checked references", "lrc bk")
+_EXCLUDED_DIR_NAMES = ("lrc bk",)
 _TAG_RE = re.compile(rb"^\[(\d{2,}):(\d{2})\.(\d{2})\]")
 _RANGE_RE = re.compile(r"^bytes=(\d*)-(\d*)$")
 _MAX_BODY = 256 * 1024
