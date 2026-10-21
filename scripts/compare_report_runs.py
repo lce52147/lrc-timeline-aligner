@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 
 REPORT_SUFFIX = ".align-report.json"
@@ -270,6 +271,10 @@ def main(argv: list[str] | None = None) -> int:
     (args.out / "summary.json").write_text(json.dumps(result, ensure_ascii=False, indent=1), encoding="utf-8")
     text = markdown(result)
     (args.out / "summary.md").write_text(text, encoding="utf-8")
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # Windows cp950 consoles
+    except (AttributeError, ValueError):
+        pass
     print(text)
     return 0
 
