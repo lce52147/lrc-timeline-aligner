@@ -626,7 +626,7 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
   const list = queue.children.find(child => String(child.className).startsWith('queue-list'));
   const html = card._html;
   console.log(JSON.stringify({
-    tabs: rail.children.map(child => child._html.includes('song') && child._html.includes('2/2')),
+    tabs: rail.children.map(child => child._html.includes('song') && child._html.includes('剩 2')),
     key: card.dataset.key,
     queue: (list.children.find(child => child.className === 'list') || list).children.map(child => child.className),
     audio: html.includes('class="play" data-kind="flac"'),

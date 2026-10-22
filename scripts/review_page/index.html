@@ -96,7 +96,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   <nav class="rail" id="rail"></nav>
   <main class="work"><div class="column">
     <section class="tiles" id="tiles">
-      <div class="tile glass"><span class="ico">▶</span><div><div class="lbl">這首進度</div><div class="val num"><span id="pos">0</span><span class="muted"> / </span><span id="pos-total">0</span></div><div class="bar"><i id="pos-bar" style="width:0%"></i></div></div></div>
+      <div class="tile glass"><span class="ico">▶</span><div><div class="lbl">這首已審</div><div class="val num"><span id="pos">0</span><span class="muted"> / </span><span id="pos-total">0</span></div><div class="bar"><i id="pos-bar" style="width:0%"></i></div></div></div>
       <div class="tile glass"><span class="ico">♪</span><div><div class="lbl">本首剩餘</div><div class="val num" id="left-song">0</div></div></div>
       <div class="tile glass"><span class="ico">☰</span><div><div class="lbl">全部剩餘</div><div class="val num" id="left-all">0</div></div></div>
       <div class="tile glass"><span class="ico">✎</span><div><div class="lbl">未儲存</div><div class="val num" id="unsaved">0</div></div></div>
@@ -522,9 +522,9 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     const current = rows[state.selected];
     // header
     document.getElementById('song-name').textContent = song ? song.song : 'LRC review';
-    document.getElementById('pos').textContent = rows.length ? state.selected + 1 : 0;
-    document.getElementById('pos-total').textContent = rows.length;
     const doneHere = rows.filter(isDone).length;
+    document.getElementById('pos').textContent = doneHere;
+    document.getElementById('pos-total').textContent = rows.length;
     document.getElementById('pos-bar').setAttribute?.('style', 'width:' + (rows.length ? 100 * doneHere / rows.length : 0) + '%');
     document.getElementById('left-song').textContent = song ? leftOf(song) : 0;
     document.getElementById('left-all').textContent = state.songs.reduce((sum, item) => sum + leftOf(item), 0);
@@ -537,7 +537,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'song-tab' + (item.index === state.activeSong ? ' active' : '') + (off ? ' off' : left ? ' todo' : ' done');
-      button.innerHTML = '<span class="dot"></span><span class="t">' + esc(item.song) + '</span><span class="n num">' + (off ? '唯讀' : left ? left + '/' + pending : '✓') + '</span>';
+      button.innerHTML = '<span class="dot"></span><span class="t">' + esc(item.song) + '</span><span class="n num">' + (off ? '唯讀' : left ? '剩 ' + left : '✓') + '</span>';
       button.addEventListener('click', () => { state.activeSong = item.index; state.selected = 0; state.notice = ''; render(); });
       return button;
     };
@@ -586,6 +586,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     status.textContent = state.error || (state.dirty ? state.edits.size + ' 筆已改，未儲存' : '未變更');
     status.className = state.error ? 'warning' : state.dirty ? 'status dirty' : 'status';
     document.getElementById('save').disabled = globalReadOnly || !state.dirty;
+    document.getElementById('save').title = state.dirty ? '' : '沒有改動，不需要儲存';
     document.getElementById('server-mode').textContent = globalReadOnly ? 'server read-only' : '';
     const shownSong = state.songs.find(song => song.index === state.activeSong) || null;
     document.getElementById('mode').textContent = '音源: ' + (modeFor(shownSong) === 'stem' ? (state.mode === 'flac' ? '人聲（找不到 FLAC）' : '人聲') : 'FLAC');
@@ -701,7 +702,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   async function save() {
     stopPlayer();
     if (serverReadOnly()) { state.error = 'save disabled: server read-only'; render(); return; }
-    if (!state.dirty) return;
+    if (!state.dirty) { state.notice = '沒有改動，不需要儲存。選了「維持」的行本來就是原時間。'; render(); return; }
     const bySong = new Map();
     state.edits.forEach((edit,key) => { const index = Number(key.split(':')[0]); if (!bySong.has(index)) bySong.set(index, []); bySong.get(index).push(edit); });
     const failures = [];
