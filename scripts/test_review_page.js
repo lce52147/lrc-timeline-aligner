@@ -55,6 +55,8 @@ const jobsState = {import_enabled:true, jobs:[]};
 const jobsPosts = [], inspectPosts = [];
 let loadCalls = 0;
 async function fetchMock(url, options={}) {
+  // the server answers 415 to any POST that is not declared as JSON
+  if (options.method === 'POST' && (options.headers || {})['Content-Type'] !== 'application/json') return {ok:false,status:415,statusText:'Unsupported Media Type',json:async()=>{throw new Error('not json');}};
   if (url === '/api/songs') { loadCalls++; return {ok:true,json:async()=>[song]}; }
   if (url === '/api/version') return {ok:true,json:async()=>({generation:0})};
   if (url === '/api/jobs' && !options.method) return {ok:true,json:async()=>jobsState};
