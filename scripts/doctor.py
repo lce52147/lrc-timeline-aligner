@@ -343,7 +343,7 @@ def check_whisperx_alignment_identity() -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Check the LRC Tools v1.6.1 runtime.")
+    parser = argparse.ArgumentParser(description="Check the LRC Tools v1.7.0 runtime.")
     parser.add_argument("--prefetch", action="store_true", help="Require every prefetched model.")
     parser.add_argument("--expect-cuda", choices=("yes", "no", "auto"), default="auto")
     parser.add_argument("--json-out")

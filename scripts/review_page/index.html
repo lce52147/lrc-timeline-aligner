@@ -60,6 +60,16 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
 .help .box{padding:18px 22px;max-width:440px;width:100%}
 .help table{width:100%;font-size:13px}.help td{padding:4px 6px}.help td:first-child{font-family:ui-monospace,Consolas,monospace;color:var(--accent-2);width:100px}
 .help label{display:block;margin-top:10px;color:var(--fg-2)}
+.help .box.wide{max-width:780px;max-height:90vh;overflow:auto}
+.imp textarea{width:100%;min-height:64px;box-sizing:border-box;border-radius:10px;border:1px solid rgba(255,255,255,.12);background:rgba(0,0,0,.25);color:var(--fg);padding:8px 10px;font:inherit;font-size:13px}
+.imp .bar-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
+.imp .item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 12px;padding:10px 12px;border-radius:12px;background:rgba(0,0,0,.22);margin-top:6px;font-size:13px}
+.imp .item .name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.imp .item .sub{color:var(--fg-3);grid-column:1/-1}
+.imp .item.bad .st{color:#ffb4a8}.imp .item.ok .st{color:#9be7b0}.imp .item.run .st{color:var(--accent-2)}
+.imp .paste{grid-column:1/-1;display:none}.imp .item.open .paste{display:block}
+.imp .summary{margin-top:12px;padding:10px 12px;border-radius:12px;background:rgba(109,124,255,.14)}
+.rail .add-song{margin:0 0 10px;width:100%}
 
 .work{display:flex;flex-direction:column;min-width:0;padding:22px 24px 90px 12px;overflow:auto;align-items:center}
 .column{width:100%;max-width:1120px;display:flex;flex-direction:column;gap:18px}
@@ -124,12 +134,29 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   <label><input id="untrusted" type="checkbox"> 也顯示未標記為需審的句子（UNTRUSTED）</label>
   <div style="margin-top:12px;text-align:right"><button id="help-close">關閉</button></div>
 </div></div>
+<div class="help imp" id="import" hidden><div class="box glass wide">
+  <b>新增歌曲</b>
+  <div class="muted" style="margin:6px 0 4px">選 FLAC（或含 FLAC 的資料夾），確認每首都有歌詞，再按「開始對齊」。對齊好的歌會自動出現在左邊的歌曲清單。</div>
+  <div class="bar-row">
+    <button type="button" id="import-pick-audio">選擇 FLAC…</button>
+    <button type="button" id="import-pick-folder">選擇資料夾…</button>
+    <span class="muted">或把路徑貼在下面，一行一個</span>
+  </div>
+  <textarea id="import-paths" placeholder="D:\Music\Album\01 Song.flac"></textarea>
+  <div class="bar-row"><button type="button" id="import-inspect">檢查</button><span id="import-note" class="muted"></span></div>
+  <div id="import-list"></div>
+  <div id="import-queue"></div>
+  <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+    <button type="button" id="import-start" disabled>開始對齊</button>
+    <button type="button" id="import-close">關閉</button>
+  </div>
+</div></div>
 <script>
 (() => {
   const token = new URLSearchParams(location.search).get('t') || new URLSearchParams(location.hash.slice(1)).get('t');
   const queue = document.getElementById('queue');
   const status = document.getElementById('status');
-  const state = {songs:[], rows:[], edits:new Map(), peaks:new Map(), decoded:new Map(), done:new Set(), dirty:false, selected:0, activeSong:null, showUnreachable:false, showUntrusted:false, mode:'flac', details:false, player:{audio:new Map(), handlers:new Map(), seq:0, timer:null, active:null, ab:null}, error:'', notice:''};
+  const state = {songs:[], rows:[], edits:new Map(), peaks:new Map(), decoded:new Map(), done:new Set(), dirty:false, selected:0, activeSong:null, showUnreachable:false, showUntrusted:false, mode:'flac', details:false, importEnabled:false, imports:[], jobs:[], jobsSeen:new Set(), player:{audio:new Map(), handlers:new Map(), seq:0, timer:null, active:null, ab:null}, error:'', notice:''};
   const api = async (path, options={}) => {
     const headers = Object.assign({'X-Review-Token':token}, options.headers || {});
     const response = await fetch(path, Object.assign({}, options, {headers}));
@@ -532,6 +559,12 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     // rail
     const rail = document.getElementById('rail');
     rail.innerHTML = '<h2>歌曲</h2>';
+    if (state.importEnabled) {
+      const add = document.createElement('button');
+      add.type = 'button'; add.className = 'add-song'; add.textContent = '＋ 新增歌曲';
+      add.addEventListener('click', () => openImport());
+      rail.appendChild(add);
+    }
     const songTab = item => {
       const pending = pendingOf(item), left = leftOf(item), off = unreachable(item);
       const button = document.createElement('button');
@@ -745,7 +778,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   document.addEventListener('keydown', event => {
     if (event.ctrlKey && !event.altKey && !event.metaKey && event.key.toLowerCase() === 's') { event.preventDefault(); save(); return; }
     if (event.altKey || event.metaKey || event.ctrlKey) return;
-    if (event.key === 'Escape') { document.getElementById('help').hidden = true; return; }
+    if (event.key === 'Escape') { document.getElementById('help').hidden = true; importBox().hidden = true; return; }
     if (event.key === '?') { event.preventDefault(); document.getElementById('help').hidden = false; return; }
     if (event.target?.closest?.('input,textarea,select,[contenteditable]') && event.target?.type !== 'checkbox') return;
     if (event.target?.closest?.('button') && (event.key === 'Enter' || event.code === 'Space')) return;
@@ -778,6 +811,153 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     }
   });
 
+  // ---- 新增歌曲 (import panel): pick FLACs, check lyrics, run alignment, land in the song list ----
+  const importBox = () => document.getElementById('import');
+  const importNote = text => { document.getElementById('import-note').textContent = text || ''; };
+  const songsOf = item => state.songs.filter(song => song.song === item.name || song.song.startsWith(item.name + '--'));
+  function openImport() { importBox().hidden = false; renderImport(); }
+  function pathsTyped() { return document.getElementById('import-paths').value.split(/\r?\n/).map(line => line.trim()).filter(Boolean); }
+  async function pick(kind) {
+    importNote('已開啟選擇視窗，請在跳出的視窗裡選檔…');
+    try {
+      const result = await api('/api/pick', {method:'POST', body:JSON.stringify({kind})});
+      const box = document.getElementById('import-paths');
+      const have = new Set(pathsTyped());
+      (result.paths || []).forEach(path => { if (!have.has(path)) { have.add(path); } });
+      box.value = [...have].join('\n');
+      importNote('');
+      if ((result.paths || []).length) await inspectImports();
+    } catch (error) {
+      importNote(/501|dialog/.test(error.message) ? '這台電腦開不了選檔視窗，請把路徑貼在上面。' : error.message);
+    }
+  }
+  async function inspectImports() {
+    const paths = pathsTyped();
+    if (!paths.length) { importNote('先選 FLAC 或貼路徑。'); return; }
+    importNote('檢查中…');
+    try {
+      const result = await api('/api/import/inspect', {method:'POST', body:JSON.stringify({paths})});
+      const previous = new Map(state.imports.map(item => [item.audio, item]));
+      state.imports = (result.items || []).map(item => Object.assign({overwrite:false, pasted:''}, previous.get(item.audio) || {}, item));
+      const skipped = result.skipped || [];
+      importNote(skipped.length ? skipped.length + ' 個路徑略過（不是 FLAC 或找不到）' : (state.imports.length ? '' : '沒有找到 FLAC。'));
+    } catch (error) { importNote(error.message); }
+    renderImport();
+  }
+  async function saveLyrics(item, source) {
+    const body = source ? {audio:item.audio, source} : {audio:item.audio, text:item.pasted};
+    try {
+      const result = await api('/api/import/lyrics', {method:'POST', body:JSON.stringify(body)});
+      item.lyrics = result.lyrics; item.pasted = ''; item.open = false;
+    } catch (error) { importNote('歌詞沒有存成功：' + error.message); }
+    renderImport();
+  }
+  const readyItems = () => state.imports.filter(item => item.lyrics && (!item.existing_lrc || item.overwrite));
+  async function startImport() {
+    const items = readyItems().map(item => ({audio:item.audio, overwrite:!!item.overwrite}));
+    if (!items.length) return;
+    try {
+      await api('/api/jobs', {method:'POST', body:JSON.stringify({items})});
+      state.imports = state.imports.filter(item => !items.some(sent => sent.audio === item.audio));
+      document.getElementById('import-paths').value = '';
+      await refreshJobs();
+    } catch (error) { importNote(error.message); }
+    renderImport();
+  }
+  async function retryItem(item) {
+    try { await api('/api/jobs', {method:'POST', body:JSON.stringify({items:[{audio:item.audio, overwrite:true}]})}); await refreshJobs(); }
+    catch (error) { importNote(error.message); }
+    renderImport();
+  }
+  async function cancelJob(job) {
+    try { await api('/api/jobs/' + job.id + '/cancel', {method:'POST', body:'{}'}); await refreshJobs(); }
+    catch (error) { importNote(error.message); }
+    renderImport();
+  }
+  let jobsTimer = null;
+  const jobsActive = () => state.jobs.some(job => job.items.some(item => item.status === 'queued' || item.status === 'running'));
+  async function refreshJobs() {
+    let result;
+    try { result = await api('/api/jobs'); } catch (error) { return; }
+    state.importEnabled = !!result.import_enabled;
+    state.jobs = result.jobs || [];
+    let landed = false;
+    state.jobs.forEach(job => job.items.forEach(item => {
+      const key = job.id + ':' + item.audio;
+      if (item.status === 'done' && !state.jobsSeen.has(key)) { state.jobsSeen.add(key); landed = true; }
+    }));
+    if (landed && !state.player.active) await load();
+    if (!importBox().hidden) renderImport(); else if (landed) render();
+    clearTimeout(jobsTimer);
+    if (jobsActive()) { jobsTimer = setTimeout(refreshJobs, 2000); jobsTimer?.unref?.(); }
+  }
+  function renderImport() {
+    const list = document.getElementById('import-list');
+    list.innerHTML = '';
+    state.imports.forEach(item => {
+      const row = document.createElement('div');
+      const ready = item.lyrics && (!item.existing_lrc || item.overwrite);
+      row.className = 'item' + (item.lyrics ? (ready ? ' ok' : '') : ' bad') + (item.open ? ' open' : '');
+      let status = item.lyrics ? '已找到：' + esc(item.lyrics.split(/[\\/]/).pop()) : '缺歌詞';
+      if (item.existing_lrc) status += ' · 已有 LRC';
+      row.innerHTML = '<span class="name" title="' + esc(item.audio) + '">' + esc(item.name) + '</span><span class="st">' + status + '</span>' +
+        '<span class="sub">' + (item.existing_lrc ? '<label><input type="checkbox" class="ow"' + (item.overwrite ? ' checked' : '') + '> 覆蓋現有 LRC 重跑</label> ' : '') +
+        (item.lyrics ? '' : '<button type="button" class="pick-lyrics">選擇歌詞…</button> <button type="button" class="paste-lyrics">貼歌詞</button>') + '</span>' +
+        (item.lyrics ? '' : '<div class="paste"><textarea placeholder="把這首的歌詞貼在這裡，一行一句">' + esc(item.pasted || '') + '</textarea><div class="bar-row"><button type="button" class="save-lyrics">存成歌詞</button><span class="muted">會存成 ' + esc(item.name) + '.lyrics.txt，放在 FLAC 旁邊</span></div></div>');
+      row.querySelector?.('.ow')?.addEventListener('change', event => { item.overwrite = event.target.checked; renderImport(); });
+      row.querySelector?.('.pick-lyrics')?.addEventListener('click', async () => {
+        try { const picked = await api('/api/pick', {method:'POST', body:JSON.stringify({kind:'lyrics'})}); if ((picked.paths || [])[0]) await saveLyrics(item, picked.paths[0]); }
+        catch (error) { importNote('這台電腦開不了選檔視窗，請用「貼歌詞」。'); }
+      });
+      row.querySelector?.('.paste-lyrics')?.addEventListener('click', () => { item.open = !item.open; renderImport(); });
+      row.querySelector?.('.paste textarea')?.addEventListener('input', event => { item.pasted = event.target.value; });
+      row.querySelector?.('.save-lyrics')?.addEventListener('click', () => { if ((item.pasted || '').trim()) saveLyrics(item); else importNote('歌詞是空的。'); });
+      list.appendChild(row);
+    });
+    document.getElementById('import-start').disabled = !readyItems().length;
+    const queue = document.getElementById('import-queue');
+    queue.innerHTML = '';
+    const stageText = {queued:'等待中', running:'對齊中', done:'完成', failed:'失敗', cancelled:'已取消', interrupted:'中斷'};
+    const recent = state.jobs.slice(-3);
+    recent.forEach(job => {
+      const head = document.createElement('div');
+      head.className = 'bar-row';
+      const active = job.items.some(item => item.status === 'queued' || item.status === 'running');
+      head.innerHTML = '<b>對齊佇列</b><span class="muted num">' + esc(job.id) + '</span>' + (active ? ' <button type="button" class="cancel">取消</button>' : '');
+      head.querySelector?.('.cancel')?.addEventListener('click', () => cancelJob(job));
+      queue.appendChild(head);
+      job.items.forEach(item => {
+        const row = document.createElement('div');
+        row.className = 'item' + (item.status === 'done' ? ' ok' : item.status === 'failed' ? ' bad' : item.status === 'running' ? ' run' : '');
+        const detail = item.status === 'failed' ? esc(item.error || '') + (item.log ? ' · 紀錄：' + esc(item.log) : '') :
+          item.status === 'running' ? esc(item.stage || '對齊中') :
+          item.status === 'done' ? '待審 ' + songsOf(item).reduce((sum, song) => sum + leftOf(song), 0) + ' 句' : '';
+        row.innerHTML = '<span class="name" title="' + esc(item.audio) + '">' + esc(item.name) + '</span><span class="st">' + (stageText[item.status] || esc(item.status)) + '</span>' +
+          '<span class="sub">' + detail + (item.status === 'failed' || item.status === 'interrupted' ? ' <button type="button" class="retry">重試</button>' : '') + '</span>';
+        row.querySelector?.('.retry')?.addEventListener('click', () => retryItem(item));
+        queue.appendChild(row);
+      });
+      if (!active && job.items.some(item => item.status === 'done')) {
+        const done = job.items.filter(item => item.status === 'done');
+        const pending = done.reduce((sum, item) => sum + songsOf(item).reduce((s2, song) => s2 + leftOf(song), 0), 0);
+        const summary = document.createElement('div');
+        summary.className = 'summary';
+        summary.innerHTML = '完成 ' + done.length + ' 首，待審 ' + pending + ' 句。 <button type="button" class="go">開始審核</button>';
+        summary.querySelector?.('.go')?.addEventListener('click', () => {
+          const first = done.map(item => songsOf(item).find(song => leftOf(song) > 0)).find(Boolean) || songsOf(done[0])[0];
+          if (first) { state.activeSong = first.index; state.selected = 0; }
+          importBox().hidden = true; render();
+        });
+        queue.appendChild(summary);
+      }
+    });
+  }
+  document.getElementById('import-pick-audio').addEventListener('click', () => pick('audio'));
+  document.getElementById('import-pick-folder').addEventListener('click', () => pick('folder'));
+  document.getElementById('import-inspect').addEventListener('click', () => inspectImports());
+  document.getElementById('import-start').addEventListener('click', () => startImport());
+  document.getElementById('import-close').addEventListener('click', () => { importBox().hidden = true; });
+
   addEventListener('beforeunload', event => { if (state.dirty) { event.preventDefault(); event.returnValue = ''; } });
   // Live refresh: a FLAC dropped in, an LRC changed or a new alignment run shows up without restarting.
   let seenGeneration = null, refreshPending = false;
@@ -796,7 +976,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     const timer = setTimeout(watchFiles, 3000);
     timer?.unref?.();
   }
-  load().then(watchFiles);
+  load().then(() => { refreshJobs(); watchFiles(); });
 })();
 </script>
 </body>

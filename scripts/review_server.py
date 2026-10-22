@@ -11,7 +11,9 @@ import os
 import pathlib
 import re
 import secrets
+import subprocess
 import threading
+import time
 import uuid
 import urllib.parse
 import webbrowser
@@ -871,6 +873,359 @@ def _save_song(song, body):
     return 200, _song_payload(pathlib.Path(song["report"]), song["report_data"])
 
 
+# ---------------------------------------------------------------------------
+# Import panel: find lyrics beside a FLAC, write pasted lyrics, run alignment
+# jobs through align-lrc.ps1 and expose their state. Alignment itself is not
+# touched; this is the same command a drag onto Align LRC.bat would run.
+
+_LYRIC_SUFFIXES = (".lyrics.lrc", ".lyrics.txt", ".txt", ".lyrics")  # same order as auto_lrc.find_lyrics
+
+
+def _find_lyrics(audio):
+    audio = pathlib.Path(audio)
+    for suffix in _LYRIC_SUFFIXES:
+        candidate = audio.with_name(audio.stem + suffix)
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _expand_audio(paths):
+    """Expand folders to their top-level FLACs; keep FLAC files; drop the rest."""
+    audios, skipped = [], []
+    seen = set()
+    for raw in paths or []:
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        path = pathlib.Path(raw.strip().strip('"')).expanduser()
+        if path.is_dir():
+            found = sorted((c for c in path.iterdir() if c.is_file() and c.suffix.casefold() == ".flac"),
+                           key=lambda c: c.name.casefold())
+            if not found:
+                skipped.append({"path": str(path), "reason": "no-flac-in-folder"})
+        elif path.is_file() and path.suffix.casefold() == ".flac":
+            found = [path]
+        elif path.is_file():
+            # A dropped lyric file stands for the FLAC beside it.
+            sibling = next((path.with_name(path.name[: -len(sfx)] + ".flac") for sfx in _LYRIC_SUFFIXES
+                            if path.name.casefold().endswith(sfx) and path.with_name(path.name[: -len(sfx)] + ".flac").is_file()), None)
+            if sibling is None and path.suffix.casefold() == ".lrc" and path.with_suffix(".flac").is_file():
+                sibling = path.with_suffix(".flac")
+            found = [sibling] if sibling else []
+            if not found:
+                skipped.append({"path": str(path), "reason": "not-a-flac"})
+        else:
+            found = []
+            skipped.append({"path": str(path), "reason": "not-found"})
+        for audio in found:
+            key = str(audio.resolve()).casefold()
+            if key not in seen:
+                seen.add(key)
+                audios.append(audio)
+    return audios, skipped
+
+
+def _inspect_imports(paths):
+    audios, skipped = _expand_audio(paths)
+    items = []
+    for audio in audios:
+        lyrics = _find_lyrics(audio)
+        items.append({
+            "audio": str(audio),
+            "name": audio.stem,
+            "lyrics": str(lyrics) if lyrics else None,
+            "existing_lrc": audio.with_suffix(".lrc").is_file(),
+        })
+    return {"items": items, "skipped": skipped}
+
+
+def _write_lyrics(audio, text=None, source=None):
+    """Save pasted lyrics (or copy a chosen lyric file) as <song>.lyrics.txt beside the FLAC."""
+    audio = pathlib.Path(audio)
+    if not audio.is_file() or audio.suffix.casefold() != ".flac":
+        return 400, {"error": "audio not found"}
+    if _find_lyrics(audio) is not None:
+        return 409, {"error": "lyrics already exist", "lyrics": str(_find_lyrics(audio))}
+    if source:
+        try:
+            text = pathlib.Path(source).read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeError) as exc:
+            return 400, {"error": f"cannot read lyrics: {exc}"}
+    if not isinstance(text, str) or not text.strip():
+        return 400, {"error": "empty lyrics"}
+    target = audio.with_name(audio.stem + ".lyrics.txt")
+    try:
+        target.write_text(text.replace("\r\n", "\n").rstrip("\n") + "\n", encoding="utf-8")
+    except OSError as exc:
+        return 500, {"error": f"cannot write lyrics: {exc}"}
+    return 200, {"lyrics": str(target)}
+
+
+_PICK_SCRIPT = r"""
+import json, sys
+try:
+    import tkinter
+    from tkinter import filedialog
+except Exception as exc:
+    print(json.dumps({"error": "no-tkinter", "detail": str(exc)})); sys.exit(0)
+kind = sys.argv[1]
+root = tkinter.Tk(); root.withdraw(); root.attributes("-topmost", True)
+if kind == "folder":
+    picked = filedialog.askdirectory(title="選擇含 FLAC 的資料夾")
+    paths = [picked] if picked else []
+elif kind == "lyrics":
+    paths = list(filedialog.askopenfilenames(title="選擇歌詞", filetypes=[("Lyrics", "*.txt *.lrc"), ("All", "*.*")]))
+else:
+    paths = list(filedialog.askopenfilenames(title="選擇 FLAC", filetypes=[("FLAC", "*.flac"), ("All", "*.*")]))
+root.destroy()
+print(json.dumps({"paths": paths}))
+"""
+
+
+def _pick_paths(kind):
+    """Open the native file dialog on this PC and return the chosen paths."""
+    try:
+        result = subprocess.run([sys.executable, "-c", _PICK_SCRIPT, kind], capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=600)
+        payload = json.loads(result.stdout.strip().splitlines()[-1]) if result.stdout.strip() else {}
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        return 501, {"error": "dialog-unavailable", "detail": str(exc)}
+    if payload.get("error"):
+        return 501, {"error": "dialog-unavailable", "detail": payload.get("detail", payload["error"])}
+    return 200, {"paths": payload.get("paths", [])}
+
+
+def _align_command(audio, overwrite, report_dir):
+    """The command a drag onto Align LRC.bat would run for one FLAC."""
+    wrapper = runtime_paths.project_root() / "align-lrc.ps1"
+    command = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(wrapper),
+               "-Paths", str(audio), "-ReportDirectory", str(report_dir)]
+    if overwrite:
+        command.append("-Overwrite")
+    return command
+
+
+_STAGE_RE = re.compile(r"^(LRC tools:.*|\[\d+/\d+\].*|.*reviewer.*)$", re.IGNORECASE)
+
+
+def _stage_of(line):
+    line = line.strip()
+    if not line or not _STAGE_RE.match(line):
+        return None
+    return line[:120]
+
+
+def _failure_reason(log_path, exit_code):
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        lines = []
+    for line in reversed(lines):
+        if line.strip().upper().startswith("ERROR"):
+            return line.strip()[:300]
+    return f"exit {exit_code}"
+
+
+def _jobs_dir(report_dir):
+    report_dir = pathlib.Path(report_dir)
+    if report_dir.name.casefold() == "reports":
+        return report_dir.parent / "jobs"
+    return report_dir / "_jobs"
+
+
+class JobRunner:
+    """Runs alignment jobs one song at a time and remembers their state on disk."""
+
+    def __init__(self, store, report_dir):
+        self.store = store
+        self.report_dir = pathlib.Path(report_dir)
+        self.jobs_dir = _jobs_dir(self.report_dir)
+        self.lock = threading.RLock()
+        self.jobs = []
+        self.current = None  # (job id, item index, Popen)
+        self.cancelled = set()
+        self._worker = None
+        self._load_saved()
+
+    # -- persistence -------------------------------------------------------
+    def _load_saved(self):
+        try:
+            files = sorted(self.jobs_dir.glob("*.json"))
+        except OSError:
+            files = []
+        for path in files[-20:]:
+            try:
+                job = json.loads(path.read_text(encoding="utf-8-sig"))
+            except (OSError, ValueError):
+                continue
+            if isinstance(job, dict) and isinstance(job.get("items"), list):
+                for item in job["items"]:
+                    if item.get("status") in ("queued", "running"):
+                        item["status"] = "interrupted"  # the server was restarted; nothing auto-resumes
+                        item["error"] = "server restarted"
+                self.jobs.append(job)
+
+    def _save(self, job):
+        try:
+            self.jobs_dir.mkdir(parents=True, exist_ok=True)
+            tmp = self.jobs_dir / (job["id"] + ".json.tmp")
+            tmp.write_text(json.dumps(job, ensure_ascii=False, indent=1), encoding="utf-8")
+            os.replace(tmp, self.jobs_dir / (job["id"] + ".json"))
+        except OSError:
+            pass
+
+    # -- public ------------------------------------------------------------
+    def snapshot(self):
+        with self.lock:
+            return json.loads(json.dumps(self.jobs))
+
+    def queued_audio(self):
+        with self.lock:
+            return {item["audio"].casefold() for job in self.jobs for item in job["items"] if item["status"] in ("queued", "running")}
+
+    def enqueue(self, items):
+        prepared, rejected = [], []
+        busy = self.queued_audio()
+        for raw in items or []:
+            if not isinstance(raw, dict):
+                continue
+            audio = pathlib.Path(str(raw.get("audio", ""))).expanduser()
+            if not audio.is_file() or audio.suffix.casefold() != ".flac":
+                rejected.append({"audio": str(audio), "reason": "audio not found"})
+                continue
+            if str(audio).casefold() in busy:
+                rejected.append({"audio": str(audio), "reason": "already queued"})
+                continue
+            if _find_lyrics(audio) is None:
+                rejected.append({"audio": str(audio), "reason": "缺歌詞"})
+                continue
+            busy.add(str(audio).casefold())
+            prepared.append({"audio": str(audio), "name": audio.stem, "overwrite": bool(raw.get("overwrite")),
+                             "status": "queued", "stage": "等待中", "exit_code": None, "error": None,
+                             "report": None, "log": None, "started": None, "finished": None})
+        if not prepared:
+            return 400, {"error": "nothing to run", "rejected": rejected}
+        job = {"id": datetime.now().strftime("%Y%m%d_%H%M%S_") + secrets.token_hex(2),
+               "created": datetime.now(timezone.utc).isoformat(timespec="seconds"), "items": prepared, "rejected": rejected}
+        with self.lock:
+            self.jobs.append(job)
+            self._save(job)
+            if self._worker is None or not self._worker.is_alive():
+                self._worker = threading.Thread(target=self._run_loop, name="lrc-import-jobs", daemon=True)
+                self._worker.start()
+        return 200, {"job": job["id"], "items": len(prepared), "rejected": rejected}
+
+    def cancel(self, job_id):
+        with self.lock:
+            job = next((j for j in self.jobs if j["id"] == job_id), None)
+            if job is None:
+                return 404, {"error": "no such job"}
+            self.cancelled.add(job_id)
+            for item in job["items"]:
+                if item["status"] == "queued":
+                    item["status"] = "cancelled"
+                    item["stage"] = "已取消"
+            proc = self.current[2] if self.current and self.current[0] == job_id else None
+            self._save(job)
+        if proc is not None:
+            try:
+                proc.terminate()
+            except OSError:
+                pass
+        return 200, {"job": job_id}
+
+    # -- worker ------------------------------------------------------------
+    def _next_item(self):
+        with self.lock:
+            for job in self.jobs:
+                for index, item in enumerate(job["items"]):
+                    if item["status"] == "queued":
+                        return job, index
+        return None, None
+
+    def _run_loop(self):
+        while True:
+            job, index = self._next_item()
+            if job is None:
+                with self.lock:
+                    self._worker = None
+                return
+            self._run_item(job, index)
+
+    def _run_item(self, job, index):
+        item = job["items"][index]
+        audio = pathlib.Path(item["audio"])
+        log_dir = self.jobs_dir / job["id"]
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        log_path = log_dir / (audio.stem + ".log")
+        started = time.time()
+        with self.lock:
+            item.update({"status": "running", "stage": "對齊中", "log": str(log_path),
+                         "started": datetime.now(timezone.utc).isoformat(timespec="seconds")})
+            self._save(job)
+        env = dict(os.environ, LRC_NO_REVIEW="1", LRC_NO_PAUSE="1", PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+        command = _align_command(audio, item["overwrite"], self.report_dir)
+        exit_code = None
+        try:
+            with open(log_path, "w", encoding="utf-8", errors="replace") as log:
+                proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                        encoding="utf-8", errors="replace", env=env, cwd=str(runtime_paths.project_root()))
+                with self.lock:
+                    self.current = (job["id"], index, proc)
+                for line in proc.stdout:
+                    log.write(line)
+                    log.flush()
+                    stage = _stage_of(line)
+                    if stage:
+                        with self.lock:
+                            item["stage"] = stage
+                exit_code = proc.wait()
+        except OSError as exc:
+            exit_code = -1
+            try:
+                log_path.write_text(f"ERROR: cannot start alignment: {exc}\n", encoding="utf-8")
+            except OSError:
+                pass
+        with self.lock:
+            self.current = None
+            item["exit_code"] = exit_code
+            item["finished"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            if job["id"] in self.cancelled and item["status"] == "running" and exit_code != 0:
+                item.update({"status": "cancelled", "stage": "已取消"})
+            else:
+                report = self._report_for(audio, started) if exit_code == 0 else None
+                if exit_code == 0 and report is not None:
+                    item.update({"status": "done", "stage": "完成", "report": str(report)})
+                else:
+                    item.update({"status": "failed", "stage": "失敗",
+                                 "error": _failure_reason(log_path, exit_code) if exit_code != 0 else "report not written"})
+            self._save(job)
+        if item["status"] == "done":
+            self.store.add_target(audio)
+
+    def _report_for(self, audio, started):
+        target = str(audio).casefold()
+        best = None
+        try:
+            candidates = list(self.report_dir.glob("*.align-report.json"))
+        except OSError:
+            candidates = []
+        for report in candidates:
+            try:
+                if report.stat().st_mtime < started - 5:
+                    continue
+                data = _load_report(report)
+            except OSError:
+                continue
+            if data is not None and str(data.get("audio_path", "")).casefold() == target:
+                if best is None or report.stat().st_mtime > best.stat().st_mtime:
+                    best = report
+        return best
+
+
 class ReviewStore:
     def __init__(self, report_dir, targets, read_only=False, scan_report_dir=True):
         self.report_dir = pathlib.Path(report_dir).expanduser().resolve()
@@ -920,6 +1275,16 @@ class ReviewStore:
         for folder in sorted(folders, key=str):
             listing(folder)
         return hashlib.sha256(repr(seen).encode("utf-8", "replace")).hexdigest()
+
+    def add_target(self, path):
+        """A song aligned from the import panel joins the review list without a restart."""
+        with self.lock:
+            value = str(path)
+            if not self.scan_report_dir and value.casefold() not in {str(t).casefold() for t in self.targets}:
+                self.targets.append(value)
+            self.reload()
+            self.version = self._signature()
+            self.generation += 1
 
     def refresh_if_changed(self):
         """Reload when a FLAC/LRC/report changed on disk, so the page never needs a restart."""
@@ -1042,6 +1407,14 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
                 return
             self._json(200, {"generation": self.server.store.refresh_if_changed()})
             return
+        if parsed.path == "/api/jobs":
+            if not self._token_header_ok():
+                self._send(403, b"forbidden\n", "text/plain; charset=utf-8")
+                return
+            runner = getattr(self.server, "jobs", None)
+            self._json(200, {"import_enabled": runner is not None and not self.server.store.read_only,
+                             "jobs": runner.snapshot() if runner is not None else []})
+            return
         if parsed.path == "/api/excluded":
             if not self._token_header_ok():
                 self._send(403, b"forbidden\n", "text/plain; charset=utf-8")
@@ -1081,12 +1454,15 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
             return
         self._send(405, b"method not allowed\n", "text/plain; charset=utf-8")
 
+    _IMPORT_POSTS = ("/api/pick", "/api/import/inspect", "/api/import/lyrics", "/api/jobs")
+
     def do_POST(self):
         if not self._check_host():
             return
         parsed = urllib.parse.urlsplit(self.path)
         match = re.fullmatch(r"/api/song/(\d+)/save", parsed.path)
-        if not match:
+        cancel = re.fullmatch(r"/api/jobs/([A-Za-z0-9_]+)/cancel", parsed.path)
+        if not match and not cancel and parsed.path not in self._IMPORT_POSTS:
             self._send(404, b"not found\n", "text/plain; charset=utf-8")
             return
         if not self._token_header_ok() or self.headers.get("Origin", "") != f"http://127.0.0.1:{self.server.server_port}":
@@ -1110,6 +1486,9 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
         if not isinstance(body, dict):
             self._send(400, b"invalid json\n", "text/plain; charset=utf-8")
             return
+        if not match:
+            self._handle_import(parsed.path, cancel, body)
+            return
         with self.server.store.lock:
             song = self.server.store.song(int(match.group(1)))
             if song is None or self.server.store.read_only:
@@ -1117,6 +1496,23 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
                 return
             status, result = _save_song(song, body)
             self._json(status, _public_song(result, self.server.store.read_only) if status == 200 else result)
+
+    def _handle_import(self, path, cancel, body):
+        runner = getattr(self.server, "jobs", None)
+        if runner is None or self.server.store.read_only:
+            self._json(403, {"error": "import disabled"})
+            return
+        if path == "/api/pick":
+            status, result = _pick_paths(str(body.get("kind", "audio")))
+        elif path == "/api/import/inspect":
+            status, result = 200, _inspect_imports(body.get("paths"))
+        elif path == "/api/import/lyrics":
+            status, result = _write_lyrics(str(body.get("audio", "")), body.get("text"), body.get("source"))
+        elif path == "/api/jobs":
+            status, result = runner.enqueue(body.get("items"))
+        else:
+            status, result = runner.cancel(cancel.group(1))
+        self._json(status, result)
 
     def _serve_audio(self, index, kind, query, head):
         if not self._token_query_ok(query):
@@ -1272,6 +1668,7 @@ def run_server(targets, report_dir=None, port=0, no_browser=False, read_only=Fal
         return None
     server = http.server.ThreadingHTTPServer(("127.0.0.1", int(port)), ReviewHandler)
     server.store = store
+    server.jobs = None if (read_only or os.environ.get("LRC_NO_REVIEW") == "1") else JobRunner(store, report_dir)
     server.token = secrets.token_urlsafe(32)
     url = f"http://127.0.0.1:{server.server_port}/#t={urllib.parse.quote(server.token)}"
     print(json.dumps({"url": url, "token": server.token, "songs": len(store.songs), "excluded": len(store.excluded),

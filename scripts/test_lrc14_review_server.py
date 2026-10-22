@@ -11,6 +11,7 @@ import struct
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import wave
 from contextlib import redirect_stderr
@@ -496,6 +497,110 @@ class ReviewServerTests(unittest.TestCase):
         self.assertTrue(store.songs[0]["has_flac"])
         self.assertEqual(self._request("GET", "/api/version")[0], 403)
 
+    # ---- import panel ----
+    def _token(self):
+        return {"X-Review-Token": self.server.token}
+
+    def _fake_wrapper(self) -> Path:
+        script = self.root / "fake_align.py"
+        script.write_text(
+            "import json, sys\n"
+            "from pathlib import Path\n"
+            "audio, report_dir = Path(sys.argv[1]), Path(sys.argv[2])\n"
+            "print('LRC tools: generating same-folder .lrc', flush=True)\n"
+            "if audio.stem.startswith('bad'):\n"
+            "    print('ERROR: boom'); sys.exit(1)\n"
+            "lrc = audio.with_suffix('.lrc')\n"
+            "lrc.write_bytes(b'[00:01.00]one\\n[00:02.00]two\\n')\n"
+            "report = {'audio_path': str(audio), 'output_path': str(lrc), 'timing_entries': 2, 'duration_seconds': 10.0,\n"
+            "          'assignments': [{'entry': 1, 'lrc_tag': '[00:01.00]', 'review_required': True, 'verification_status': 'review-required', 'candidates': []},\n"
+            "                          {'entry': 2, 'lrc_tag': '[00:02.00]', 'review_required': False, 'verification_status': 'trusted', 'candidates': []}]}\n"
+            "(report_dir / (audio.stem + '--abcdef1234.align-report.json')).write_text(json.dumps(report), encoding='utf-8')\n",
+            encoding="utf-8",
+        )
+        return script
+
+    def _wait_job(self, job_id: str, timeout: float = 15.0) -> dict:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            payload = json.loads(self._request("GET", "/api/jobs", **self._token())[2])
+            job = next((j for j in payload["jobs"] if j["id"] == job_id), None)
+            if job and all(item["status"] not in ("queued", "running") for item in job["items"]):
+                return job
+            time.sleep(0.1)
+        self.fail(f"job {job_id} did not finish")
+
+    def test_import_inspect_follows_lyric_discovery_order(self) -> None:
+        folder = self.root / "album"
+        folder.mkdir()
+        for name in ("a.flac", "a.lyrics.lrc", "a.txt", "b.flac", "b.txt", "c.flac", "notes.md"):
+            (folder / name).write_bytes(b"x")
+        self.server.jobs = review_server.JobRunner(self.store, self.root)
+        status, _headers, data = self._json_request("POST", "/api/import/inspect", {"paths": [str(folder), str(self.audio), str(folder / "notes.md")]})
+        self.assertEqual(status, 200)
+        payload = json.loads(data)
+        by_name = {item["name"]: item for item in payload["items"]}
+        self.assertEqual([item["name"] for item in payload["items"]], ["a", "b", "c", "song"])
+        self.assertTrue(by_name["a"]["lyrics"].endswith("a.lyrics.lrc"))
+        self.assertTrue(by_name["b"]["lyrics"].endswith("b.txt"))
+        self.assertIsNone(by_name["c"]["lyrics"])
+        self.assertFalse(by_name["a"]["existing_lrc"])
+        self.assertTrue(by_name["song"]["existing_lrc"])
+        self.assertEqual([item["reason"] for item in payload["skipped"]], ["not-a-flac"])
+
+    def test_import_lyrics_are_written_once_beside_the_flac(self) -> None:
+        audio = self.root / "fresh.flac"
+        audio.write_bytes(b"x")
+        self.server.jobs = review_server.JobRunner(self.store, self.root)
+        status, _h, data = self._json_request("POST", "/api/import/lyrics", {"audio": str(audio), "text": "line one\r\nline two\r\n"})
+        self.assertEqual(status, 200, data)
+        target = self.root / "fresh.lyrics.txt"
+        self.assertEqual(target.read_bytes(), b"line one\nline two\n")
+        self.assertEqual(self._json_request("POST", "/api/import/lyrics", {"audio": str(audio), "text": "again"})[0], 409)
+        other = self.root / "other.flac"
+        other.write_bytes(b"x")
+        self.assertEqual(self._json_request("POST", "/api/import/lyrics", {"audio": str(other), "text": "  "})[0], 400)
+        self.assertFalse((self.root / "other.lyrics.txt").exists())
+
+    def test_jobs_run_the_wrapper_and_land_in_the_song_list(self) -> None:
+        fake = self._fake_wrapper()
+        good, bad, bare = (self.root / "good.flac", self.root / "bad.flac", self.root / "bare.flac")
+        for audio in (good, bad, bare):
+            audio.write_bytes(b"x")
+        (self.root / "good.txt").write_text("one\ntwo\n", encoding="utf-8")
+        (self.root / "bad.txt").write_text("one\ntwo\n", encoding="utf-8")
+        store = review_server.ReviewStore(self.root, [self.report], scan_report_dir=False)
+        self.server.store = store
+        runner = review_server.JobRunner(store, self.root)
+        self.server.jobs = runner
+        with mock.patch.object(review_server, "_align_command",
+                               side_effect=lambda audio, overwrite, report_dir: [sys.executable, str(fake), str(audio), str(report_dir)]):
+            status, _h, data = self._json_request("POST", "/api/jobs", {"items": [{"audio": str(good)}, {"audio": str(bad)}, {"audio": str(bare)}]})
+            self.assertEqual(status, 200, data)
+            created = json.loads(data)
+            self.assertEqual([r["reason"] for r in created["rejected"]], ["缺歌詞"])
+            job = self._wait_job(created["job"])
+        by_name = {item["name"]: item for item in job["items"]}
+        self.assertEqual(by_name["good"]["status"], "done")
+        self.assertTrue(by_name["good"]["report"].endswith("good--abcdef1234.align-report.json"))
+        self.assertEqual(by_name["bad"]["status"], "failed")
+        self.assertEqual(by_name["bad"]["error"], "ERROR: boom")
+        self.assertTrue(Path(by_name["bad"]["log"]).is_file())
+        songs = json.loads(self._request("GET", "/api/songs", **self._token())[2])
+        self.assertEqual(sorted(song["song"] for song in songs), ["good--abcdef1234", "song"])
+        self.assertTrue((runner.jobs_dir / (job["id"] + ".json")).is_file())
+        self.assertEqual(self._json_request("POST", "/api/jobs", {"items": []})[0], 400)
+
+    def test_import_endpoints_are_disabled_when_read_only(self) -> None:
+        store = review_server.ReviewStore(self.root, [self.report], read_only=True)
+        self.server.store = store
+        self.server.jobs = review_server.JobRunner(store, self.root)
+        payload = json.loads(self._request("GET", "/api/jobs", **self._token())[2])
+        self.assertFalse(payload["import_enabled"])
+        self.assertEqual(self._json_request("POST", "/api/import/inspect", {"paths": [str(self.audio)]})[0], 403)
+        self.assertEqual(self._json_request("POST", "/api/jobs", {"items": [{"audio": str(self.audio)}]})[0], 403)
+        self.assertEqual(self._request("POST", "/api/import/inspect", b"{}", **{"Content-Type": "application/json"})[0], 403)
+
     def test_song_load_failure_keeps_stub_in_api_song_list(self) -> None:
         other = self.root / "z-song.align-report.json"
         other.write_text(self.report.read_text(encoding="utf-8"), encoding="utf-8")
@@ -869,7 +974,7 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
                        "base_cs:item.row.current_cs", "candidate.cs, sourceText(candidate), 0", "actualDelta = cs - before",
                        "dropped staged edit", "edit.base_cs !== item.row.current_cs", "button.blur()",
                        "event.target?.type !== 'checkbox'", "const conflict = conflicted(item)",
-                       "const loadMessage = await load()", "這筆的時間在暫存後被改過", "/api/excluded", "emptyText()", "/api/version", "load().then(watchFiles)"):
+                       "const loadMessage = await load()", "這筆的時間在暫存後被改過", "/api/excluded", "emptyText()", "/api/version", "refreshJobs(); watchFiles();", "新增歌曲", "/api/import/inspect", "import-start"):
             self.assertIn(marker, page)
         self.assertNotIn("alert(", page)
         self.assertIn("/^[1-3]$/.test(event.key)", page)

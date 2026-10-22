@@ -1,4 +1,4 @@
-# LRC Timeline Aligner — v1.6.1
+# LRC Timeline Aligner — v1.7.0
 
 Local LRC timestamp generation for Windows. The tool keeps lyric order fixed, generates timing evidence from the audio, lets Central arbitration choose the final line starts, and writes a same-name `.lrc` plus an audit report.
 
@@ -17,6 +17,17 @@ The v1.6 review page, running read-only on a demo report (synthetic timing data,
 ![Review page: keyboard help overlay](docs/images/review-help.png)
 
 *`?` lists the keys. Everything on the page can be done without the mouse: play, pick, nudge, accept, keep, undo, save.*
+
+## What's new in v1.7
+
+Import from the review page, review where the files are, and fewer lines flagged for review. Alignment, report format and the save flow are unchanged.
+
+- **＋ 新增歌曲 (import panel).** The review page can now start alignment: pick FLACs or a folder in the native file dialog (or paste paths), the panel shows for each song which lyric file it found (`.lyrics.lrc` → `.lyrics.txt` → `.txt`, the same order as the command line), lets you paste lyrics (saved as `<song>.lyrics.txt` beside the FLAC) and skips songs that already have an LRC unless 覆蓋 is ticked. 開始對齊 runs `align-lrc.ps1` one song at a time with the same defaults as `Align LRC.bat`; each finished song appears in the song list, a failed one shows the last `ERROR` line and its log, and can be retried. Queue state lives in `outputs\jobs`. Dragging files into the browser is deliberately not supported (the browser never sees the real path).
+- **Review where you are.** Drag a folder, FLAC or LRC onto `Review LRC.bat` and the page reviews and saves the files in that folder, even if the song was aligned somewhere else; a missing FLAC or LRC is looked up beside its partner, and with no FLAC the page plays the vocal stem. `Review LRC.bat` with no arguments opens the songs of the last run instead of every old report. Only the `LRC bk` folder is excluded from review.
+- **Live refresh.** The page checks every 3 s and reloads itself when a FLAC is dropped in, an LRC changes or a new alignment lands; staged edits are kept.
+- **Review threshold (B2 ladder, middle cut).** When outputs are written, REVIEW rows whose reason codes all sit in the weak set (`phonetic_anchor_disagreement`, `nonmonotonic-line-start`, `candidate_disagreement`, `unresolved_raw_ctc_disagreement`, `unresolved-precentral-disagreement`, `unresolved-material-alternative`, `recurrence-uncorroborated`, `previous-tail-overlap`, plus the companions `F4-ctc-final-disagreement`, `insufficient-minimum-proof`, `previous-tail-ownership-unknown`) are demoted to unverified, never to trusted. On the 36-song B2 set this took REVIEW from 538 to 232 rows, moved 0 lines, and kept 35 of the 37 lines that are more than 1 s off inside REVIEW; TRUSTED lines more than 1 s off stayed at 0. The report records `weak_review_policy`.
+- **Smaller fixes.** The batch summary covers only the songs queued in the run (no more "MISSING" for every FLAC in the folder); an empty review page says which reports were skipped and why; the progress counters agree; Ctrl+S with nothing changed says so; `ffprobe` missing no longer crashes track labelling.
+- **lyricsee v2** (lyric fetch and OOGG translation, `lyricsee\`) is included; see its own handoff notes.
 
 ## What's new in v1.6
 
@@ -158,19 +169,23 @@ Published forced-alignment results and this project can be compared only at the 
 
 ## Basic use
 
-With `Song.flac` and `Song.lyrics.txt` or `Song.lyrics.lrc` in the same folder:
+Put `Song.flac` and its lyrics (`Song.lyrics.txt`, `Song.lyrics.lrc` or `Song.txt`) in the same folder. Any folder works; it does not have to be the album folder.
+
+**From the review page (recommended).** Double-click `Review LRC.bat`, press **＋ 新增歌曲**, choose the FLACs or the folder (or paste paths), check that every song shows a lyric file (paste lyrics if one is missing), and press **開始對齊**. Songs are aligned one at a time and appear in the song list as they finish; press **開始審核** to start reviewing. The LRC is written beside the audio.
+
+**From Explorer.** Drag a FLAC onto `Align LRC.bat`. A lyric file may be dragged by itself when the matching FLAC is beside it. When the run finishes the review page opens with the songs of that run.
+
+**Command line / advanced options** (TimingSource, Arbiter, strict gates and so on stay here):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\align-lrc.ps1 "D:\Music\Song.flac"
 ```
 
-You can also drag a FLAC onto `Align LRC.bat`. A lyric file may be dragged by itself when the matching FLAC is beside it.
-
-The generated LRC is written beside the audio. Reports go to `outputs\reports` by default.
+Reports go to `outputs\reports` by default.
 
 For a run with several songs, the wrapper prints the queue size and one elapsed/ETA line at the start and end of each song. The ETA average includes every completed attempt, including failures, because each attempt consumes runtime. After alignment it invokes scripts\lrc_batch_summary.py for the original input folder with the run start time, report directory, and repository work directory. A summary warning never replaces the alignment exit code.
 
-To review generated reports, run Review LRC.bat with no arguments. It opens the reports in the local review server and keeps the console window open while the server is running; close the window to stop it. Pass report files or folders, or options such as --read-only, when you need a narrower review. The default server uses a free localhost port. If a manually selected port is occupied, omit --port or choose another one. Edits are saved by the review page and are consumed by the next alignment run.
+To review, run Review LRC.bat with no arguments: it opens the songs of the last alignment run in the local review server and keeps the console window open while the server is running; close the window to stop it. Drag a folder, FLAC or LRC onto Review LRC.bat to review that instead; the page edits the LRC in that folder, wherever the song was aligned. Pass report files or folders, or options such as --read-only (which also hides the import panel), when you need a narrower review. The default server uses a free localhost port. If a manually selected port is occupied, omit --port or choose another one. Edits are saved by the review page and are consumed by the next alignment run.
 
 Reports whose LRC has since been moved or deleted open read-only as `lrc-missing`; the song list folds them away. To clean them out of the live folder, run `scripts\archive_stale_reports.py` (lists them) and then `scripts\archive_stale_reports.py --apply` (moves each report with its `.review.tsv`, `.auto.lrc` and `.review-edits.json` into `outputs\reports\_archive\stale_<date>`; nothing is deleted and reports with a live LRC are never touched).
 
