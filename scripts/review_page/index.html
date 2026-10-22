@@ -45,7 +45,7 @@ header .song-name{font-weight:600;font-size:15px;max-width:34vw;overflow:hidden;
 .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .actions .primary{background:linear-gradient(180deg,#7784ff,#5f6df0);color:var(--accent-ink);border-color:rgba(255,255,255,.18);font-weight:600;box-shadow:0 6px 18px rgba(109,124,255,.3)}
 .nudge{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}.nudge button{border:0;border-radius:0}.nudge span{padding:7px 10px;background:rgba(0,0,0,.2);color:var(--fg-2)}
-.hint{color:var(--fg-3);font-size:12px;margin-left:auto}.order-warning{color:var(--bad);font-weight:600}
+.hint{color:var(--fg-3);font-size:12px;margin-left:auto}.neighbors{margin-top:10px;display:grid;gap:4px;font-size:13px;color:var(--fg-2)}.neighbors>div{display:flex;gap:10px;align-items:baseline;min-width:0}.neighbors .lab{color:var(--fg-3);flex:none}.neighbors .num{flex:none;color:var(--fg-3)}.neighbors .ly{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.order-warning{color:var(--bad);font-weight:600}
 details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointer;color:var(--fg-3)}
 .candidate{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:4px 0;border-top:1px solid var(--line)}
 .candidate.selected{color:var(--fg)}.candidate.rejected{text-decoration:line-through;color:var(--fg-3)}.candidate-action{padding:2px 7px;font-size:12px}
@@ -683,7 +683,9 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       '<button type="button" class="primary accept"' + (canEdit ? '' : ' disabled') + '>接受，下一筆 <span class="num">Enter</span></button>' +
       '<button type="button" class="keep-next">維持 <span class="num">K</span></button>' +
       '<button type="button" class="undo"' + (edit ? '' : ' disabled') + '>復原 <span class="num">U</span></button>' +
-      '<span class="hint">上一句 ' + (previous ? time(previous.cs) + ' ' + esc(previous.lyric || '') : '—') + ' · 下一句 ' + (next ? time(next.cs) + ' ' + esc(next.lyric || '') : '—') + '</span></div>' +
+      '</div>' +
+      '<div class="neighbors">' + [['上一句', previous], ['下一句', next]].map(([label, line]) =>
+        '<div><span class="lab">' + label + '</span><span class="num">' + (line ? time(line.cs) : '—') + '</span><span class="ly">' + (line ? esc((line.lyrics || [line.lyric || '']).join(' / ')) : '') + '</span></div>').join('') + '</div>' +
       details;
     div.addEventListener('click', () => { select(item); render(); });
     div.querySelectorAll('.option').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); button.blur(); pickOption(item, options[Number(button.dataset.option)]); }));
