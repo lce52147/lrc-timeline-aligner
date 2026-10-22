@@ -142,9 +142,12 @@ vm.runInNewContext(script, context, {filename:'review_page/index.html'});
   assert.ok(!/class="ab-play"[^>]*disabled/.test(rendered), 'A/B enables after selecting a candidate');
 
   // ---- import panel ----
+  const rail = documentMock.getElementById('rail');
+  test.state.importEnabled = false; rail.children = []; test.render();
+  assert.ok(!(documentMock.getElementById('rail').children || []).some(child => child.className === 'add-song'), 'rail hides 新增歌曲 before /api/jobs answers');
+  rail.children = []; documentMock.getElementById('import').hidden = true;
   await test.refreshJobs(); await flush();
   assert.equal(test.state.importEnabled, true, 'import enabled from /api/jobs');
-  test.render();
   assert.ok((documentMock.getElementById('rail').children || []).some(child => child.className === 'add-song'), 'rail shows 新增歌曲');
   test.openImport();
   assert.equal(documentMock.getElementById('import').hidden, false, 'panel opens');
