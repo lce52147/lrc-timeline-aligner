@@ -52,7 +52,7 @@ const row = {
 const song={index:0,song:'demo',has_flac:true,has_stem:true,read_only:false,detail:{has_flac:true,has_stem:true,base_sha256:'base',rows:[row]}};
 let peakCalls = 0;
 const jobsState = {import_enabled:true, jobs:[]};
-const jobsPosts = [], inspectPosts = [];
+const jobsPosts = [], inspectPosts = [], decisionPosts = [];
 let loadCalls = 0;
 async function fetchMock(url, options={}) {
   // the server answers 415 to any POST that is not declared as JSON
@@ -62,6 +62,7 @@ async function fetchMock(url, options={}) {
   if (url === '/api/jobs' && !options.method) return {ok:true,json:async()=>jobsState};
   if (url === '/api/jobs') { jobsPosts.push(JSON.parse(options.body)); return {ok:true,json:async()=>({job:'j1',items:1,rejected:[]})}; }
   if (url === '/api/import/inspect') { inspectPosts.push(JSON.parse(options.body)); return {ok:true,json:async()=>({items:[{audio:'D:\\m\\new.flac',name:'new',lyrics:'D:\\m\\new.lyrics.txt',existing_lrc:false},{audio:'D:\\m\\bare.flac',name:'bare',lyrics:null,existing_lrc:true}],skipped:[]})}; }
+  if (url === '/api/song/0/decision') { decisionPosts.push(JSON.parse(options.body)); return {ok:true,json:async()=>({recorded:'x'})}; }
   if (url === '/api/song/0') return {ok:true,json:async()=>song.detail};
   if (url.startsWith('/api/song/0/peaks')) { peakCalls++; return {ok:true,json:async()=>({from_cs:0,to_cs:600,bins:120,sample_rate:16000,peaks:Array.from({length:120},()=>[0,0])})}; }
   if (url === '/api/song/0/save') return {ok:true,json:async()=>song.detail};
@@ -71,7 +72,7 @@ async function fetchMock(url, options={}) {
 let source = fs.readFileSync('scripts/review_page/index.html','utf8');
 const match = source.match(/<script>\r?\n([\s\S]*?)\r?\n<\/script>/);
 assert.ok(match, 'page script missing');
-const script = match[1].replace(/  load\(\)\.then\(\(\) => \{ refreshJobs\(\); watchFiles\(\); \}\);\r?\n\}\)\(\);/, '  globalThis.__reviewTest = {state, render, playAround, playAB, stopPlayer, select, stage, save, rowElement, attachPeaks, openImport, inspectImports, startImport, refreshJobs, renderImport};\n  load().then(() => { refreshJobs(); watchFiles(); });\n})();');
+const script = match[1].replace(/  load\(\)\.then\(\(\) => \{ refreshJobs\(\); watchFiles\(\); \}\);\r?\n\}\)\(\);/, '  globalThis.__reviewTest = {state, render, playAround, playAB, stopPlayer, select, stage, save, rowElement, attachPeaks, accept, keep, openImport, inspectImports, startImport, refreshJobs, renderImport};\n  load().then(() => { refreshJobs(); watchFiles(); });\n})();');
 const context = {console, document:documentMock, addEventListener(){}, URLSearchParams: class { constructor(){ } get(){return 'token';} }, location:{search:'',hash:''}, fetch:fetchMock, Audio:AudioMock, setTimeout:fakeSetTimeout, clearTimeout:fakeClearTimeout, alert(){}, Promise, encodeURIComponent, Map, Set, Number, String, Math, JSON, Object, Error, RegExp};
 context.globalThis=context;
 vm.runInNewContext(script, context, {filename:'review_page/index.html'});
@@ -141,6 +142,11 @@ vm.runInNewContext(script, context, {filename:'review_page/index.html'});
 
   const rendered=test.rowElement(item).innerHTML;
   assert.match(rendered, /class="ab-play"/, 'row renders A/B control after drag');
+  test.accept(item); await flush();
+  assert.deepEqual(decisionPosts.at(-1), {entry:item.row.entry, decision:'change', cs:200, source:'drag'}, 'accepting a staged edit logs a change');
+  test.keep(item); await flush();
+  assert.deepEqual(decisionPosts.at(-1), {entry:item.row.entry, decision:'keep', cs:item.row.current_cs, source:'keep'}, 'keep logs a keep');
+  test.state.edits.set(String(item.song.index) + ':' + item.row.entry, dragEdit); test.state.selected = 0;
   assert.ok(!/class="ab-play"[^>]*disabled/.test(rendered), 'A/B enables after selecting a candidate');
 
   // ---- import panel ----

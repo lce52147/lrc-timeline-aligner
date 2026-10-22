@@ -746,6 +746,52 @@ def _write_json_stage(path, payload):
         raise
 
 
+_DECISIONS = ("keep", "change")
+
+
+def _decisions_path(song):
+    edits_path = pathlib.Path(song["edits"])
+    return edits_path.with_name(edits_path.name[:-len(".review-edits.json")] + ".review-decisions.jsonl")
+
+
+def _record_decision(song, body):
+    """Append one reviewer verdict (keep or change) so thresholds can later be tuned on real outcomes."""
+    if song["read_only"]:
+        return 403, {"error": song["read_only_reason"] or "read-only"}
+    if set(body) - {"entry", "decision", "cs", "source"} or body.get("decision") not in _DECISIONS:
+        return 400, {"error": "body must contain entry and decision (keep or change)"}
+    try:
+        entry = int(body.get("entry"))
+        cs = None if body.get("cs") is None else int(body["cs"])
+    except (TypeError, ValueError):
+        return 400, {"error": "invalid decision"}
+    row = next((item for item in song.get("rows", []) if item.get("entry") == entry), None)
+    if row is None:
+        return 400, {"error": "unknown entry"}
+    source = body.get("source")
+    record = {
+        "utc": datetime.now(timezone.utc).isoformat(),
+        "entry": entry,
+        "decision": body["decision"],
+        "chosen_cs": cs if cs is not None else row.get("current_cs"),
+        "current_cs": row.get("current_cs"),
+        "auto_cs": row.get("auto_cs"),
+        "review": row.get("review"),
+        "reason_codes": list(row.get("reason_codes") or []),
+        "severity_rank": row.get("severity_rank"),
+        "candidate_spread_s": row.get("candidate_spread"),
+        "source": source[:64] if isinstance(source, str) else None,
+        "options": [{"kind": option.get("kind"), "label": option.get("label"), "cs": option.get("cs")} for option in row.get("options") or []],
+    }
+    path = _decisions_path(song)
+    try:
+        with open(path, "a", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        return 500, {"error": f"cannot record decision: {exc}"}
+    return 200, {"recorded": path.name}
+
+
 def _save_song(song, body):
     if song["read_only"]:
         return 403, {"error": song["read_only_reason"] or "read-only"}
@@ -1461,7 +1507,7 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
         if not self._check_host():
             return
         parsed = urllib.parse.urlsplit(self.path)
-        match = re.fullmatch(r"/api/song/(\d+)/save", parsed.path)
+        match = re.fullmatch(r"/api/song/(\d+)/(save|decision)", parsed.path)
         cancel = re.fullmatch(r"/api/jobs/([A-Za-z0-9_]+)/cancel", parsed.path)
         if not match and not cancel and parsed.path not in self._IMPORT_POSTS:
             self._send(404, b"not found\n", "text/plain; charset=utf-8")
@@ -1494,6 +1540,9 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
             song = self.server.store.song(int(match.group(1)))
             if song is None or self.server.store.read_only:
                 self._json(403, {"error": "read-only"})
+                return
+            if match.group(2) == "decision":
+                self._json(*_record_decision(song, body))
                 return
             status, result = _save_song(song, body)
             self._json(status, _public_song(result, self.server.store.read_only) if status == 200 else result)

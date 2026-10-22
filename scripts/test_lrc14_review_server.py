@@ -591,6 +591,26 @@ class ReviewServerTests(unittest.TestCase):
         self.assertTrue((runner.jobs_dir / (job["id"] + ".json")).is_file())
         self.assertEqual(self._json_request("POST", "/api/jobs", {"items": []})[0], 400)
 
+    def test_decisions_are_logged_beside_the_report(self) -> None:
+        status, _h, data = self._json_request("POST", "/api/song/0/decision", {"entry": 2, "decision": "keep", "cs": None, "source": "keep"})
+        self.assertEqual(status, 200, data)
+        self.assertEqual(self._json_request("POST", "/api/song/0/decision", {"entry": 2, "decision": "change", "cs": 250, "source": "drag"})[0], 200)
+        log = self.report.with_name(self.report.name.replace(".align-report.json", ".review-decisions.jsonl"))
+        records = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual([(r["entry"], r["decision"], r["chosen_cs"]) for r in records], [(2, "keep", records[0]["current_cs"]), (2, "change", 250)])
+        self.assertIsInstance(records[0]["reason_codes"], list)
+        self.assertIn("review", records[0])
+        self.assertEqual(self._json_request("POST", "/api/song/0/decision", {"entry": 2, "decision": "maybe"})[0], 400)
+        self.assertEqual(self._json_request("POST", "/api/song/0/decision", {"entry": 99, "decision": "keep"})[0], 400)
+        self.assertEqual(self._json_request("POST", "/api/song/0/decision", {"entry": 2, "decision": "keep", "extra": 1})[0], 400)
+        self.server.store = review_server.ReviewStore(self.root, [self.report], read_only=True)
+        self.assertEqual(self._json_request("POST", "/api/song/0/decision", {"entry": 2, "decision": "keep"})[0], 403)
+        self.assertEqual(len(log.read_text(encoding="utf-8").splitlines()), 2)
+        import review_decisions_summary
+        summary = review_decisions_summary.summarize(review_decisions_summary.load_decisions(log.parent))
+        self.assertEqual(summary["decisions"], 1, "the later change overrides the earlier keep")
+        self.assertTrue(all(counts["change"] == 1 for counts in summary["by_code"].values()))
+
     def test_import_endpoints_are_disabled_when_read_only(self) -> None:
         store = review_server.ReviewStore(self.root, [self.report], read_only=True)
         self.server.store = store

@@ -1,4 +1,4 @@
-# LRC Timeline Aligner — v1.7.0
+# LRC Timeline Aligner — v1.7.1
 
 Local LRC timestamp generation for Windows. The tool keeps lyric order fixed, generates timing evidence from the audio, lets Central arbitration choose the final line starts, and writes a same-name `.lrc` plus an audit report.
 
@@ -21,6 +21,8 @@ The v1.6 review page, running read-only on a demo report (synthetic timing data,
 ## What's new in v1.7
 
 Import from the review page, review where the files are, and fewer lines flagged for review. Alignment, report format and the save flow are unchanged.
+
+v1.7.1: every review verdict is now recorded. Pressing 維持 (K) or accepting a line (Enter) appends one line to `<song>.review-decisions.jsonl` beside the report: keep or change, the chosen time, and the line's status and reason codes. `python scripts\review_decisions_summary.py` tallies, per reason code, how often reviewers kept the timestamp versus changed it, so the review threshold can be tuned on real outcomes instead of guesses. Alignment and the save flow are unchanged; the import queue lists only the newest job and any still running.
 
 - **＋ 新增歌曲 (import panel).** The review page can now start alignment: pick FLACs or a folder in the native file dialog (or paste paths), the panel shows for each song which lyric file it found (`.lyrics.lrc` → `.lyrics.txt` → `.txt`, the same order as the command line), lets you paste lyrics (saved as `<song>.lyrics.txt` beside the FLAC) and skips songs that already have an LRC unless 覆蓋 is ticked. 開始對齊 runs `align-lrc.ps1` one song at a time with the same defaults as `Align LRC.bat`; each finished song appears in the song list, a failed one shows the last `ERROR` line and its log, and can be retried. Queue state lives in `outputs\jobs`. Dragging files into the browser is deliberately not supported (the browser never sees the real path).
 - **Review where you are.** Drag a folder, FLAC or LRC onto `Review LRC.bat` and the page reviews and saves the files in that folder, even if the song was aligned somewhere else; a missing FLAC or LRC is looked up beside its partner, and with no FLAC the page plays the vocal stem. `Review LRC.bat` with no arguments opens the songs of the last run instead of every old report. Only the `LRC bk` folder is excluded from review.
