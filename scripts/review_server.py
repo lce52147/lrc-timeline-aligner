@@ -231,7 +231,68 @@ def _load_report(path):
     return data if isinstance(data, dict) else None
 
 
-def _report_files(targets, report_dir, *, scan_report_dir=True):
+def _find_beside(names, folders):
+    for folder in folders:
+        if folder is None:
+            continue
+        for name in names:
+            if not name:
+                continue
+            candidate = folder / name
+            if _path_is_file(candidate):
+                return candidate
+    return None
+
+
+def _relocated(report, anchor=None):
+    """Bind a report to the FLAC/LRC where the user is reviewing, not where it was aligned.
+
+    ``anchor`` is the folder the user opened (dragged folder, or the dragged file's folder);
+    files there win. Otherwise a missing FLAC/LRC is looked up beside its partner.
+    """
+    audio_value = report.get("audio_path")
+    output_value = report.get("output_path")
+    audio = pathlib.Path(audio_value) if isinstance(audio_value, str) and audio_value else None
+    output = pathlib.Path(output_value) if isinstance(output_value, str) and output_value else None
+    anchor = pathlib.Path(anchor) if anchor else None
+    audio_names = [audio.name if audio else None, (output.stem + ".flac") if output else None]
+    output_names = [output.name if output else None, (audio.stem + ".lrc") if audio else None]
+    new_audio = _find_beside(audio_names, [anchor]) or (audio if _path_is_file(audio) else None)
+    new_output = _find_beside(output_names, [anchor]) or (output if _path_is_file(output) else None)
+    if new_audio is None:
+        new_audio = _find_beside(audio_names, [new_output.parent if new_output else None])
+    if new_output is None:
+        new_output = _find_beside(output_names, [new_audio.parent if new_audio else None])
+    changed = {}
+    if new_audio is not None and audio is not None and new_audio != audio:
+        changed["audio_path"] = str(new_audio)
+    if new_output is not None and output is not None and new_output != output:
+        changed["output_path"] = str(new_output)
+    if not changed:
+        return report
+    moved = dict(report)
+    moved.update(changed)
+    moved["review_relocated_from"] = {key: report.get(key) for key in changed}
+    return moved
+
+
+def _names_of(data):
+    names = set()
+    for key in ("audio_path", "output_path"):
+        value = data.get(key)
+        if isinstance(value, str) and value:
+            names.add(pathlib.PureWindowsPath(value).name.casefold())
+            names.add(pathlib.Path(value).name.casefold())
+    return names
+
+
+def _newest(reports):
+    if len(reports) <= 1:
+        return reports
+    return [max(reports, key=lambda item: item.stat().st_mtime_ns)]
+
+
+def _report_files(targets, report_dir, *, scan_report_dir=True, anchors=None):
     found = []
     excluded = []
     targets = list(targets or [])
@@ -239,10 +300,12 @@ def _report_files(targets, report_dir, *, scan_report_dir=True):
         targets = [report_dir]
     for raw in targets:
         path = pathlib.Path(raw).expanduser().resolve()
+        anchor = None
         if path.is_file() and path.name.endswith(".align-report.json"):
             candidates = [path]
         elif path.is_file():
             candidates = []
+            by_name = []
             target = str(path).casefold()
             for report in report_dir.glob("*.align-report.json"):
                 data = _load_report(report)
@@ -250,19 +313,28 @@ def _report_files(targets, report_dir, *, scan_report_dir=True):
                     if report not in excluded:
                         excluded.append(report)
                     continue
-                if str(data.get("audio_path", "")).casefold() == target:
+                if target in (str(data.get("audio_path", "")).casefold(), str(data.get("output_path", "")).casefold()):
                     candidates.append(report)
+                elif path.name.casefold() in _names_of(data):
+                    by_name.append(report)
+            # A song moved after alignment is still the same song: match it by file name.
+            candidates = candidates or _newest(by_name)
+            anchor = path.parent
         elif path.is_dir():
             # Archived reports (archive_stale_reports.py) live under _archive/ and must stay hidden.
             local_reports = sorted(
                 item for item in path.rglob("*.align-report.json")
                 if not any(part.casefold() == "_archive" for part in item.relative_to(path).parts[:-1])
             )
+            anchor = None
             if local_reports:
                 candidates = local_reports
             else:
+                anchor = path
                 prefix = str(path).casefold().rstrip("\\/") + "\\"
+                here = {item.name.casefold() for item in path.iterdir() if item.is_file()}
                 candidates = []
+                by_name = {}
                 for report in report_dir.glob("*.align-report.json"):
                     data = _load_report(report)
                     if data is None:
@@ -271,8 +343,19 @@ def _report_files(targets, report_dir, *, scan_report_dir=True):
                         continue
                     if str(data.get("audio_path", "")).casefold().startswith(prefix):
                         candidates.append(report)
+                    else:
+                        # Songs moved into this folder after alignment: match by file name.
+                        audio_value = data.get("audio_path")
+                        audio_name = pathlib.PureWindowsPath(audio_value).name.casefold() if isinstance(audio_value, str) else ""
+                        if audio_name and audio_name in here:
+                            by_name.setdefault(audio_name, []).append(report)
+                for group in by_name.values():
+                    candidates.extend(_newest(group))
         else:
             candidates = []
+            anchor = None
+        if not (path.is_file() and not path.name.endswith(".align-report.json")) and not path.is_dir():
+            anchor = None
         for report in candidates:
             data = _load_report(report)
             if data is None:
@@ -283,6 +366,7 @@ def _report_files(targets, report_dir, *, scan_report_dir=True):
                 if report not in excluded:
                     excluded.append(report)
                 continue
+            data = _relocated(data, anchor)
             paths = (report, data.get("audio_path", ""), data.get("output_path", ""))
             if not report.is_file():
                 continue
@@ -291,6 +375,8 @@ def _report_files(targets, report_dir, *, scan_report_dir=True):
                     excluded.append(report)
             elif report not in found:
                 found.append(report)
+                if anchors is not None and anchor is not None:
+                    anchors[report] = anchor
     return sorted(found, key=lambda item: item.name.casefold()), sorted(excluded, key=lambda item: item.name.casefold())
 
 
@@ -489,7 +575,8 @@ def _path_is_file(value):
         return False
 
 
-def _song_payload(report_path, report):
+def _song_payload(report_path, report, anchor=None):
+    report = _relocated(report, anchor)
     assignments = report.get("assignments") if isinstance(report.get("assignments"), list) else []
     output_value = report.get("output_path")
     output_path = pathlib.Path(output_value).expanduser() if isinstance(output_value, str) and output_value else None
@@ -602,6 +689,7 @@ def _song_payload(report_path, report):
         "output": output_path,
         "auto": auto_path,
         "edits": edits_path,
+        "anchor": str(anchor) if anchor else None,
     }
 
 
@@ -796,14 +884,15 @@ class ReviewStore:
 
     def reload(self):
         self.songs = []
+        anchors = {}
         reports, self.excluded = _report_files(
-            self.targets, self.report_dir, scan_report_dir=self.scan_report_dir
+            self.targets, self.report_dir, scan_report_dir=self.scan_report_dir, anchors=anchors
         )
         for path in reports:
             try:
                 report = json.loads(path.read_text(encoding="utf-8-sig"))
                 if isinstance(report, dict):
-                    self.songs.append(_song_payload(path, report))
+                    self.songs.append(_song_payload(path, report, anchors.get(path)))
                 else:
                     raise ValueError("report must be a JSON object")
             except Exception as exc:
@@ -818,7 +907,7 @@ class ReviewStore:
             try:
                 report = json.loads(report_path.read_text(encoding="utf-8-sig"))
                 if isinstance(report, dict):
-                    current = _song_payload(report_path, report)
+                    current = _song_payload(report_path, report, current.get("anchor"))
                     self.songs[index] = current
             except Exception as exc:
                 current = _song_stub(report_path, exc)

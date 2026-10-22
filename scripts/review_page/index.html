@@ -257,8 +257,11 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     state.player.active = null;
     playbar('');
   }
-  async function playAround(item, targetCs, kind=state.mode) {
+  // No FLAC beside this song: play the vocal stem instead of refusing.
+  const modeFor = song => (state.mode === 'flac' && song && !song.has_flac && song.has_stem) ? 'stem' : state.mode;
+  async function playAround(item, targetCs, kind=null) {
     if (!item || targetCs == null) return;
+    kind = kind || modeFor(item.song);
     const available = kind === 'stem' ? item.song.has_stem : item.song.has_flac;
     if (!available) { state.error = kind.toUpperCase() + ' audio is unavailable for this song'; render(); return; }
     stopPlayer();
@@ -286,7 +289,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   }
   function playAB(item, candidate) {
     if (!item || !candidate || candidate.cs == null || candidate.diagnostic_only || item.row.current_cs == null) return;
-    const kind = state.mode;
+    const kind = modeFor(item.song);
     const available = kind === 'stem' ? item.song.has_stem : item.song.has_flac;
     if (!available) { state.error = kind.toUpperCase() + ' audio is unavailable for this song'; render(); return; }
     stopPlayer();
@@ -584,7 +587,8 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     status.className = state.error ? 'warning' : state.dirty ? 'status dirty' : 'status';
     document.getElementById('save').disabled = globalReadOnly || !state.dirty;
     document.getElementById('server-mode').textContent = globalReadOnly ? 'server read-only' : '';
-    document.getElementById('mode').textContent = '音源: ' + (state.mode === 'stem' ? '人聲' : 'FLAC');
+    const shownSong = state.songs.find(song => song.index === state.activeSong) || null;
+    document.getElementById('mode').textContent = '音源: ' + (modeFor(shownSong) === 'stem' ? (state.mode === 'flac' ? '人聲（找不到 FLAC）' : '人聲') : 'FLAC');
   }
   function rowElement(item) {
     const song = item.song, row = item.row, edit = editFor(item), chosen = working(item), div = document.createElement('article');
@@ -630,8 +634,8 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       (conflict ? '<div class="order-warning">conflict: 這筆時間在暫存後被改過，請重新選一個選項或按 U。</div>' : '') +
       (showWave ? '<div class="wavebox"><span class="wavenote">' + (song.has_stem ? '人聲 stem' : 'FLAC') + ' · ±3 秒 · 拖曳可微調</span></div>' : '') +
       '<div class="options">' + (optionMarkup || '<span class="muted">no candidates</span>') + '</div>' +
-      '<div class="actions"><button type="button" class="play" data-kind="' + state.mode + '"' + ((state.mode === 'stem' ? song.has_stem : song.has_flac) ? '' : ' disabled') + '>▶ 播放 <span class="num">空白</span></button>' +
-      '<button type="button" class="ab-play"' + (selectedCandidate && (state.mode === 'stem' ? song.has_stem : song.has_flac) ? '' : ' disabled') + ' aria-label="alternate current and selected candidate">A/B</button>' +
+      '<div class="actions"><button type="button" class="play" data-kind="' + modeFor(song) + '"' + ((modeFor(song) === 'stem' ? song.has_stem : song.has_flac) ? '' : ' disabled') + '>▶ 播放 <span class="num">空白</span></button>' +
+      '<button type="button" class="ab-play"' + (selectedCandidate && (modeFor(song) === 'stem' ? song.has_stem : song.has_flac) ? '' : ' disabled') + ' aria-label="alternate current and selected candidate">A/B</button>' +
       '<span class="nudge"><button type="button" class="nudge-button" data-delta="-10"' + (canEdit ? '' : ' disabled') + ' aria-label="move timestamp earlier by 0.1 seconds">−0.1</button><span class="num">' + time(chosen) + '</span><button type="button" class="nudge-button" data-delta="10"' + (canEdit ? '' : ' disabled') + ' aria-label="move timestamp later by 0.1 seconds">+0.1</button></span>' +
       '<button type="button" class="primary accept"' + (canEdit ? '' : ' disabled') + '>接受，下一筆 <span class="num">Enter</span></button>' +
       '<button type="button" class="keep-next">維持 <span class="num">K</span></button>' +

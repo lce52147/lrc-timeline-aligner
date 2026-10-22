@@ -446,15 +446,51 @@ class ReviewServerTests(unittest.TestCase):
         self.assertEqual(detail["rows"][4]["current_cs"], 6200)
         self.assertIn("base_sha256", detail)
 
+    def _move_song(self, folder_name: str) -> Path:
+        folder = self.root / folder_name
+        folder.mkdir()
+        reports = self.root / "reports"
+        reports.mkdir()
+        self.report = self.report.rename(reports / self.report.name)
+        self.output = self.output.rename(folder / self.output.name)
+        self.audio = self.audio.rename(folder / self.audio.name)
+        return reports
+
+    def test_moved_song_is_reviewed_and_saved_where_it_now_is(self) -> None:
+        reports = self._move_song("checked")
+        for target in (reports.parent / "checked", self.output, self.audio):
+            store = review_server.ReviewStore(reports, [target], scan_report_dir=False)
+            self.assertEqual(len(store.songs), 1, target)
+            song = store.songs[0]
+            self.assertFalse(song["read_only"], song["read_only_reason"])
+            self.assertEqual(Path(song["output_path"]), self.output)
+            self.assertEqual(Path(song["audio_path"]), self.audio)
+            self.assertTrue(song["has_flac"])
+        self.server.store = store
+        detail = self._detail()
+        body = {"base_sha256": detail["base_sha256"], "edits": [{"entry": 2, "cs": 250, "source": "ctc", "nudge_cs": 50}]}
+        self.assertEqual(self._json_request("POST", "/api/song/0/save", body)[0], 200)
+        self.assertIn(b"[00:02.50]two a", self.output.read_bytes())
+
+    def test_missing_flac_is_found_beside_its_lrc(self) -> None:
+        data = json.loads(self.report.read_text(encoding="utf-8"))
+        data["audio_path"] = str(self.root / "old music folder" / self.audio.name)
+        self.report.write_text(json.dumps(data), encoding="utf-8")
+        store = review_server.ReviewStore(self.root, [self.report])
+        song = store.songs[0]
+        self.assertTrue(song["has_flac"])
+        self.assertEqual(Path(song["audio_path"]), self.audio)
+        self.assertEqual(Path(song["output_path"]), self.output)
+
     def test_song_load_failure_keeps_stub_in_api_song_list(self) -> None:
         other = self.root / "z-song.align-report.json"
         other.write_text(self.report.read_text(encoding="utf-8"), encoding="utf-8")
         real_payload = review_server._song_payload
 
-        def payload_or_fail(path, report):
+        def payload_or_fail(path, report, anchor=None):
             if path.name == self.report.name:
                 raise RuntimeError("payload exploded")
-            return real_payload(path, report)
+            return real_payload(path, report, anchor)
 
         with mock.patch.object(review_server, "_song_payload", side_effect=payload_or_fail):
             store = review_server.ReviewStore(self.root, [self.report, other])
