@@ -463,8 +463,8 @@ class ReviewServerTests(unittest.TestCase):
             self.assertEqual(len(store.songs), 1, target)
             song = store.songs[0]
             self.assertFalse(song["read_only"], song["read_only_reason"])
-            self.assertEqual(Path(song["output_path"]), self.output)
-            self.assertEqual(Path(song["audio_path"]), self.audio)
+            self.assertEqual(Path(song["output_path"]).resolve(), self.output.resolve())
+            self.assertEqual(Path(song["audio_path"]).resolve(), self.audio.resolve())
             self.assertTrue(song["has_flac"])
         self.server.store = store
         detail = self._detail()
@@ -479,8 +479,8 @@ class ReviewServerTests(unittest.TestCase):
         store = review_server.ReviewStore(self.root, [self.report])
         song = store.songs[0]
         self.assertTrue(song["has_flac"])
-        self.assertEqual(Path(song["audio_path"]), self.audio)
-        self.assertEqual(Path(song["output_path"]), self.output)
+        self.assertEqual(Path(song["audio_path"]).resolve(), self.audio.resolve())
+        self.assertEqual(Path(song["output_path"]).resolve(), self.output.resolve())
 
     def test_song_load_failure_keeps_stub_in_api_song_list(self) -> None:
         other = self.root / "z-song.align-report.json"
