@@ -955,7 +955,8 @@ def _write_lyrics(audio, text=None, source=None):
         return 400, {"error": "empty lyrics"}
     target = audio.with_name(audio.stem + ".lyrics.txt")
     try:
-        target.write_text(text.replace("\r\n", "\n").rstrip("\n") + "\n", encoding="utf-8")
+        with open(target, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text.replace("\r\n", "\n").rstrip("\n") + "\n")
     except OSError as exc:
         return 500, {"error": f"cannot write lyrics: {exc}"}
     return 200, {"lyrics": str(target)}

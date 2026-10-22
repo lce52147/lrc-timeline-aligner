@@ -741,7 +741,7 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
   }));
 })().catch(error => { console.error(error.stack); process.exitCode = 1; });
 """.replace("SOURCE", json.dumps(source))
-        result = subprocess.run(["node", "-"], input=harness, capture_output=True, text=True)
+        result = subprocess.run(["node", "-"], input=harness, capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), {"tabs": [True], "key": "0:1", "queue": ["q cur", "q"], "audio": True, "nudge": True, "options": 3, "extras": True})
 
@@ -1066,7 +1066,7 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
   console.log(JSON.stringify({marked, postCount, serverCs}));
 })().catch(error => { console.error(error.stack); process.exitCode = 1; });
 """.replace("SOURCE", json.dumps(source))
-        result = subprocess.run(["node", "-"], input=harness, capture_output=True, text=True)
+        result = subprocess.run(["node", "-"], input=harness, capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), {"marked": True, "postCount": 1, "serverCs": 125})
 
