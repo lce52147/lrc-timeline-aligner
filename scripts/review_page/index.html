@@ -778,7 +778,24 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   });
 
   addEventListener('beforeunload', event => { if (state.dirty) { event.preventDefault(); event.returnValue = ''; } });
-  load();
+  // Live refresh: a FLAC dropped in, an LRC changed or a new alignment run shows up without restarting.
+  let seenGeneration = null, refreshPending = false;
+  async function watchFiles() {
+    try {
+      const generation = (await api('/api/version')).generation;
+      if (seenGeneration !== null && generation !== seenGeneration) refreshPending = true;
+      seenGeneration = generation;
+      if (refreshPending && !state.player.active) {
+        refreshPending = false;
+        await load();
+        state.notice = '偵測到檔案變動，已自動更新。';
+        render();
+      }
+    } catch (error) { /* server closed or busy: try again next tick */ }
+    const timer = setTimeout(watchFiles, 3000);
+    timer?.unref?.();
+  }
+  load().then(watchFiles);
 })();
 </script>
 </body>

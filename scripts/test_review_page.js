@@ -53,6 +53,7 @@ const song={index:0,song:'demo',has_flac:true,has_stem:true,read_only:false,deta
 let peakCalls = 0;
 async function fetchMock(url, options={}) {
   if (url === '/api/songs') return {ok:true,json:async()=>[song]};
+  if (url === '/api/version') return {ok:true,json:async()=>({generation:0})};
   if (url === '/api/song/0') return {ok:true,json:async()=>song.detail};
   if (url.startsWith('/api/song/0/peaks')) { peakCalls++; return {ok:true,json:async()=>({from_cs:0,to_cs:600,bins:120,sample_rate:16000,peaks:Array.from({length:120},()=>[0,0])})}; }
   if (url === '/api/song/0/save') return {ok:true,json:async()=>song.detail};
@@ -62,7 +63,7 @@ async function fetchMock(url, options={}) {
 let source = fs.readFileSync('scripts/review_page/index.html','utf8');
 const match = source.match(/<script>\r?\n([\s\S]*?)\r?\n<\/script>/);
 assert.ok(match, 'page script missing');
-const script = match[1].replace(/  load\(\);\r?\n\}\)\(\);/, '  globalThis.__reviewTest = {state, render, playAround, playAB, stopPlayer, select, stage, save, rowElement, attachPeaks};\n  load();\n})();');
+const script = match[1].replace(/  load\(\)\.then\(watchFiles\);\r?\n\}\)\(\);/, '  globalThis.__reviewTest = {state, render, playAround, playAB, stopPlayer, select, stage, save, rowElement, attachPeaks};\n  load().then(watchFiles);\n})();');
 const context = {console, document:documentMock, addEventListener(){}, URLSearchParams: class { constructor(){ } get(){return 'token';} }, location:{search:'',hash:''}, fetch:fetchMock, Audio:AudioMock, setTimeout:fakeSetTimeout, clearTimeout:fakeClearTimeout, alert(){}, Promise, encodeURIComponent, Map, Set, Number, String, Math, JSON, Object, Error, RegExp};
 context.globalThis=context;
 vm.runInNewContext(script, context, {filename:'review_page/index.html'});

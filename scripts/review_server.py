@@ -881,6 +881,55 @@ class ReviewStore:
         self.songs = []
         self.excluded = []
         self.reload()
+        self.version = self._signature()
+        self.generation = 0
+
+    def _signature(self):
+        """Cheap fingerprint of every file the review depends on (names, sizes, mtimes)."""
+        seen = []
+
+        def stat(path):
+            try:
+                info = path.stat()
+                seen.append((str(path), info.st_size, info.st_mtime_ns))
+            except (OSError, ValueError):
+                seen.append((str(path), None, None))
+
+        def listing(folder, suffixes=None):
+            try:
+                for child in sorted(folder.iterdir(), key=lambda item: item.name):
+                    if child.is_file() and (suffixes is None or child.name.endswith(suffixes)):
+                        stat(child)
+            except OSError:
+                seen.append((str(folder), "unreadable", None))
+
+        listing(self.report_dir, (".align-report.json", ".review.tsv"))
+        folders = set()
+        for raw in self.targets:
+            path = pathlib.Path(raw).expanduser()
+            if path.is_dir():
+                folders.add(path)
+            else:
+                stat(path)
+        for song in self.songs:
+            for key in ("audio_path", "output_path", "ctc_audio_path"):
+                value = song.get(key)
+                if value:
+                    stat(pathlib.Path(value))
+                    folders.add(pathlib.Path(value).parent)
+        for folder in sorted(folders, key=str):
+            listing(folder)
+        return hashlib.sha256(repr(seen).encode("utf-8", "replace")).hexdigest()
+
+    def refresh_if_changed(self):
+        """Reload when a FLAC/LRC/report changed on disk, so the page never needs a restart."""
+        with self.lock:
+            signature = self._signature()
+            if signature != self.version:
+                self.reload()
+                self.version = self._signature()
+                self.generation += 1
+            return self.generation
 
     def reload(self):
         self.songs = []
@@ -986,6 +1035,12 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
             with self.server.store.lock:
                 payload = [{"index": index, "song": song["song"], "rows": len(song["rows"]), "review_rows": song["review_rows"], "read_only": song["read_only"], "read_only_reason": song["read_only_reason"], "load_error": song.get("load_error"), "server_read_only": self.server.store.read_only} for index, song in enumerate(self.server.store.songs)]
             self._json(200, payload)
+            return
+        if parsed.path == "/api/version":
+            if not self._token_header_ok():
+                self._send(403, b"forbidden\n", "text/plain; charset=utf-8")
+                return
+            self._json(200, {"generation": self.server.store.refresh_if_changed()})
             return
         if parsed.path == "/api/excluded":
             if not self._token_header_ok():

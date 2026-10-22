@@ -482,6 +482,20 @@ class ReviewServerTests(unittest.TestCase):
         self.assertEqual(Path(song["audio_path"]).resolve(), self.audio.resolve())
         self.assertEqual(Path(song["output_path"]).resolve(), self.output.resolve())
 
+    def test_dropping_a_flac_in_refreshes_without_restart(self) -> None:
+        self.audio.unlink()
+        store = review_server.ReviewStore(self.root, [self.root])
+        self.server.store = store
+        token = {"X-Review-Token": self.server.token}
+        self.assertFalse(store.songs[0]["has_flac"])
+        first = json.loads(self._request("GET", "/api/version", **token)[2])["generation"]
+        self.assertEqual(json.loads(self._request("GET", "/api/version", **token)[2])["generation"], first)
+        self.audio.write_bytes(b"0123456789")
+        second = json.loads(self._request("GET", "/api/version", **token)[2])["generation"]
+        self.assertEqual(second, first + 1)
+        self.assertTrue(store.songs[0]["has_flac"])
+        self.assertEqual(self._request("GET", "/api/version")[0], 403)
+
     def test_song_load_failure_keeps_stub_in_api_song_list(self) -> None:
         other = self.root / "z-song.align-report.json"
         other.write_text(self.report.read_text(encoding="utf-8"), encoding="utf-8")
@@ -855,7 +869,7 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
                        "base_cs:item.row.current_cs", "candidate.cs, sourceText(candidate), 0", "actualDelta = cs - before",
                        "dropped staged edit", "edit.base_cs !== item.row.current_cs", "button.blur()",
                        "event.target?.type !== 'checkbox'", "const conflict = conflicted(item)",
-                       "const loadMessage = await load()", "這筆的時間在暫存後被改過", "/api/excluded", "emptyText()"):
+                       "const loadMessage = await load()", "這筆的時間在暫存後被改過", "/api/excluded", "emptyText()", "/api/version", "load().then(watchFiles)"):
             self.assertIn(marker, page)
         self.assertNotIn("alert(", page)
         self.assertIn("/^[1-3]$/.test(event.key)", page)
