@@ -99,7 +99,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--output-root",
-        help="Output root containing txt/ and report/ (CLI > LYRICSEE_OUTPUT_ROOT > script directory)",
+        help="Output root containing txt/<stem>.txt and report/<stem>.sources.json (CLI > LYRICSEE_OUTPUT_ROOT > script directory)",
     )
     parser.add_argument(
         "--endpoint",
@@ -220,6 +220,13 @@ def _bk_stems(bk_dir: Path) -> set[str]:
 
 def _output_paths(output_root: Path, audio_path: Path) -> tuple[Path, Path]:
     return (
+        output_root / "txt" / f"{audio_path.stem}.txt",
+        output_root / "report" / f"{audio_path.stem}.sources.json",
+    )
+
+
+def _legacy_output_paths(output_root: Path, audio_path: Path) -> tuple[Path, Path]:
+    return (
         output_root / "txt" / f"{audio_path.stem}.lyrics.txt",
         output_root / "report" / f"{audio_path.stem}.lyrics.sources.json",
     )
@@ -239,24 +246,41 @@ def _inspect_existing(
     output_root: Path,
     overwrite: bool,
     no_translate: bool,
+    dry_run: bool = False,
 ) -> tuple[str | None, dict, bool]:
     output, provenance = _output_paths(output_root, audio_path)
-    if not output.exists() and not provenance.exists():
+    legacy_output, legacy_provenance = _legacy_output_paths(output_root, audio_path)
+    inspect_output, inspect_provenance = output, provenance
+    if (
+        not output.exists()
+        and not provenance.exists()
+        and legacy_output.is_file()
+        and legacy_provenance.is_file()
+    ):
+        if dry_run:
+            print(f"would rename legacy output: {audio_path.stem}", file=sys.stderr)
+            inspect_output, inspect_provenance = legacy_output, legacy_provenance
+        else:
+            legacy_output.rename(output)
+            legacy_provenance.rename(provenance)
+            print(f"renamed legacy output: {audio_path.stem}", file=sys.stderr)
+
+    if not inspect_output.exists() and not inspect_provenance.exists():
         return None, {}, False
 
     payload: dict = {}
-    if provenance.is_file():
+    if inspect_provenance.is_file():
         try:
-            payload = json.loads(provenance.read_text(encoding="utf-8"))
+            payload = json.loads(inspect_provenance.read_text(encoding="utf-8"))
         except Exception:
             payload = {}
 
     if overwrite:
         return None, payload, True
 
-    if output.is_file() and provenance.is_file():
+    if inspect_output.is_file() and inspect_provenance.is_file():
         try:
-            current = verified_provenance_is_current(payload, output.read_bytes())
+            current = verified_provenance_is_current(payload, inspect_output.read_bytes())
         except Exception:
             current = False
         if current:
@@ -705,6 +729,7 @@ def run(args: argparse.Namespace) -> tuple[list[dict], tuple[Path, Path] | None]
             output_root=config.output_root,
             overwrite=args.overwrite,
             no_translate=args.no_translate,
+            dry_run=args.dry_run,
         )
         if existing_status:
             append_row(_existing_row(index, path, config.output_root, existing_status, payload))
