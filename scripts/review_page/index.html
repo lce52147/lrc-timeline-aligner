@@ -920,7 +920,9 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     const queue = document.getElementById('import-queue');
     queue.innerHTML = '';
     const stageText = {queued:'等待中', running:'對齊中', done:'完成', failed:'失敗', cancelled:'已取消', interrupted:'中斷'};
-    const recent = state.jobs.slice(-3);
+    // Only the newest job and any still running: older finished jobs would show a second 完成/開始審核 and confuse which run is which.
+    const busy = job => job.items.some(item => item.status === 'queued' || item.status === 'running');
+    const recent = state.jobs.filter((job, index) => index === state.jobs.length - 1 || busy(job));
     recent.forEach(job => {
       const head = document.createElement('div');
       head.className = 'bar-row';
