@@ -42,6 +42,7 @@ from ctc_confidence import ctc_alignment_confidence
 import arbiter as timing_arbiter
 import lrc_timestamp_pairs
 import runtime_paths
+import file_digest
 import model_cache
 from model_cache import ModelCacheMiss
 from multimodel_consensus import (
@@ -2839,7 +2840,25 @@ def _opening_mora_proof_end(
     return vowel.end
 
 
+# Candidates are frozen and their region analysis depends on nothing else, yet
+# Central asks for the same candidate's regions tens of thousands of times per
+# song; each object's result is remembered by identity (the entry keeps the
+# object alive, so its id cannot be reused while cached).
+_CANDIDATE_REGIONS: dict[int, tuple[TimingCandidate, CandidateRegionEvidence]] = {}
+
+
 def analyze_candidate_regions(candidate: TimingCandidate) -> CandidateRegionEvidence:
+    cached = _CANDIDATE_REGIONS.get(id(candidate))
+    if cached is not None and cached[0] is candidate:
+        return cached[1]
+    result = _analyze_candidate_regions_uncached(candidate)
+    if len(_CANDIDATE_REGIONS) >= 65536:
+        _CANDIDATE_REGIONS.clear()
+    _CANDIDATE_REGIONS[id(candidate)] = (candidate, result)
+    return result
+
+
+def _analyze_candidate_regions_uncached(candidate: TimingCandidate) -> CandidateRegionEvidence:
     spans = candidate.spans
     parsed_gaps = tuple(max(0.0, right.start - left.end) for left, right in zip(spans, spans[1:]))
     positive_gaps = tuple(gap for gap in parsed_gaps if gap > 0.0)
@@ -5393,7 +5412,7 @@ def _whisperx_model_identity(python_exe: Path, helper: Path, language: str) -> t
     except OSError:
         memo_key = None
     if memo_key is not None:
-        stored = _runtime_identity_load("whisperx-align-model.json").get(memo_key)
+        stored = file_digest.memo_load("whisperx-align-model.json").get(memo_key)
         if (
             isinstance(stored, list)
             and len(stored) == 2
@@ -5402,7 +5421,7 @@ def _whisperx_model_identity(python_exe: Path, helper: Path, language: str) -> t
             return str(stored[0]), str(stored[1])
     result = _probe_whisperx_model_identity(python_exe, helper, language)
     if memo_key is not None and "unresolved" not in result:
-        _runtime_identity_store("whisperx-align-model.json", memo_key, list(result))
+        file_digest.memo_store("whisperx-align-model.json", memo_key, list(result))
     return result
 
 
@@ -17792,75 +17811,12 @@ def _candidate_confidence(item: dict[str, object]) -> float:
     return 0.0
 
 
-def _hash_file_bytes(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-# A file's digest is reused only while its full stat identity (path, size,
-# mtime, ctime, inode) is unchanged; any rewrite changes mtime, so the bytes
-# are hashed again.  Large files (model weights) also keep their digest on
-# disk, so each process no longer re-reads multi-GB weights just to name them.
-_FILE_SHA256_MEMO: dict[tuple[str, int, int, int, int], str] = {}
-_FILE_SHA256_DISK_MIN_BYTES = 64 * 1024 * 1024
-_RUNTIME_IDENTITY_LOCK = threading.Lock()
-
-
-def _runtime_identity_path(name: str) -> Path:
-    return runtime_paths.cache_root() / "runtime-identity" / name
-
-
-def _runtime_identity_load(name: str) -> dict[str, object]:
-    try:
-        payload = json.loads(_runtime_identity_path(name).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
-
-
-def _runtime_identity_store(name: str, key: str, value: object) -> None:
-    path = _runtime_identity_path(name)
-    with _RUNTIME_IDENTITY_LOCK:
-        try:
-            payload = _runtime_identity_load(name)
-            payload[key] = value
-            path.parent.mkdir(parents=True, exist_ok=True)
-            temp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
-            temp.write_text(json.dumps(payload, sort_keys=True, indent=0), encoding="utf-8")
-            os.replace(temp, path)
-        except OSError:
-            pass
-
-
 def _path_sha256(path: Path) -> str:
-    try:
-        resolved = path.resolve()
-        stat = resolved.stat()
-    except OSError:
-        return _hash_file_bytes(path)
-    identity = (str(resolved), stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino)
-    digest = _FILE_SHA256_MEMO.get(identity)
-    if digest is not None:
-        return digest
-    large = stat.st_size >= _FILE_SHA256_DISK_MIN_BYTES
-    disk_key = "|".join(str(part) for part in identity)
-    if large:
-        stored = _runtime_identity_load("file-sha256.json").get(disk_key)
-        if isinstance(stored, str) and re.fullmatch(r"[0-9a-f]{64}", stored):
-            digest = stored
-    if digest is None:
-        digest = _hash_file_bytes(resolved)
-        if large:
-            _runtime_identity_store("file-sha256.json", disk_key, digest)
-    _FILE_SHA256_MEMO[identity] = digest
-    return digest
+    return file_digest.sha256(path)
 
 
 def _stable_file_sha256(path: Path) -> str:
-    return _path_sha256(path.resolve())
+    return _path_sha256(path)
 
 
 def build_local_whisper_capability(
