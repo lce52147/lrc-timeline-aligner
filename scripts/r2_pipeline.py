@@ -59,11 +59,19 @@ def _safe_name(value: str) -> str:
     return cleaned or "song"
 
 
+_WORK_NAME_MAX = 24
+
+
 def reviewer_work_directory(base: Path, audio_path: Path) -> Path:
     """Keep reviewer artifacts from identically named songs independent."""
     canonical_audio = str(audio_path.expanduser().resolve()).casefold()
     suffix = hashlib.sha256(canonical_audio.encode("utf-8")).hexdigest()[:12]
-    return base / f"{_safe_name(audio_path.stem)}--{suffix}"
+    # The baseline report inside this folder repeats the full song name, so a long name here
+    # would push its staging path past the 260-character Windows limit; the hash keeps it unique.
+    name = _safe_name(audio_path.stem)
+    if len(name) > _WORK_NAME_MAX:
+        name = name[:_WORK_NAME_MAX].rstrip(" .") or "song"
+    return base / f"{name}--{suffix}"
 
 
 def _current_candidate(assignment: Mapping[str, object]) -> Mapping[str, object]:

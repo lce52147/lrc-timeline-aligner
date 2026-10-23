@@ -57,7 +57,8 @@ def publish_pair(
     recover_pair(lrc_path, report_path)
     lrc_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    ident = uuid.uuid4().hex
+    # 12 hex digits are plenty to keep concurrent stages apart and keep staged paths short on Windows.
+    ident = uuid.uuid4().hex[:12]
     stages = {
         "lrc": lrc_path.with_name(lrc_path.name + "." + ident + ".stage"),
         "report": report_path.with_name(report_path.name + "." + ident + ".stage"),
