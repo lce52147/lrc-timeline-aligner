@@ -740,11 +740,11 @@ def _audio_feature_cache_key(
 ) -> tuple[object, ...] | None:
     """Return an exact-content key for deterministic heavy audio analysis.
 
-    Hashing the current bytes on every lookup deliberately avoids treating
-    path/mtime metadata as content identity.  Reuse is therefore possible only
-    while the exact same input bytes (and, where relevant, exact duration) are
-    presented again.  If content identity cannot be established, fail open to
-    the legacy uncached analysis path rather than changing call semantics.
+    The key carries the file's content digest, so reuse is possible only while
+    the same input bytes (and, where relevant, exact duration) are presented
+    again; ``_path_sha256`` re-hashes whenever the file's stat identity changes.
+    If content identity cannot be established, fail open to the legacy uncached
+    analysis path rather than changing call semantics.
     """
     try:
         resolved = audio_path.resolve()
@@ -1958,9 +1958,26 @@ def _make_tail_provenance(
     )
 
 
+# Contexts are frozen and Central re-validates the same few objects thousands
+# of times per song, so each object's verdict is remembered by identity (the
+# entry keeps the object alive, so its id cannot be reused while cached).
+_TAIL_CONTEXT_VALIDITY: dict[int, tuple[TailEvidenceContext, bool]] = {}
+
+
 def _tail_context_is_valid(context: TailEvidenceContext | None) -> bool:
     if not isinstance(context, TailEvidenceContext):
         return False
+    cached = _TAIL_CONTEXT_VALIDITY.get(id(context))
+    if cached is not None and cached[0] is context:
+        return cached[1]
+    result = _tail_context_is_valid_uncached(context)
+    if len(_TAIL_CONTEXT_VALIDITY) >= 4096:
+        _TAIL_CONTEXT_VALIDITY.clear()
+    _TAIL_CONTEXT_VALIDITY[id(context)] = (context, result)
+    return result
+
+
+def _tail_context_is_valid_uncached(context: TailEvidenceContext) -> bool:
     scalar_fields = (
         context.backend_lineage,
         context.model_identity,
@@ -5332,9 +5349,64 @@ def _ctc_model_blob_sha256() -> str:
     return "unresolved"
 
 
+def _hf_hub_fingerprint() -> list[list[object]]:
+    """Cheap stat summary of every hub repo's snapshots and refs.
+
+    Downloading or updating any cached model adds a snapshot or rewrites a
+    ref, which changes this summary and so retires remembered model lookups.
+    """
+    rows: list[list[object]] = []
+    for root in runtime_paths.hf_hub_cache_candidates():
+        try:
+            repos = sorted(item for item in root.iterdir() if item.name.startswith("models--"))
+        except OSError:
+            continue
+        for repo in repos:
+            row: list[object] = [str(repo)]
+            for child in (repo / "snapshots", repo / "refs" / "main"):
+                try:
+                    stat = child.stat()
+                    row.extend((stat.st_mtime_ns, stat.st_size))
+                except OSError:
+                    row.extend((None, None))
+            rows.append(row)
+    return rows
+
+
 @lru_cache(maxsize=8)
 def _whisperx_model_identity(python_exe: Path, helper: Path, language: str) -> tuple[str, str]:
-    """Resolve cached WhisperX alignment weights without loading the model."""
+    """Resolve cached WhisperX alignment weights without loading the model.
+
+    The probe imports WhisperX in a fresh interpreter, which costs several
+    seconds per process, so a resolved answer is remembered on disk for as
+    long as the interpreter, helper, language and hub cache are unchanged.
+    """
+    try:
+        python_stat = python_exe.resolve().stat()
+        memo_key = _timing_content_digest({
+            "python": [str(python_exe.resolve()), python_stat.st_size, python_stat.st_mtime_ns],
+            "helper_sha256": _path_sha256(helper),
+            "language": str(language),
+            "hub": _hf_hub_fingerprint(),
+            "env": [os.environ.get(name, "") for name in ("HF_HUB_CACHE", "HF_HOME", "HF_HUB_OFFLINE")],
+        })
+    except OSError:
+        memo_key = None
+    if memo_key is not None:
+        stored = _runtime_identity_load("whisperx-align-model.json").get(memo_key)
+        if (
+            isinstance(stored, list)
+            and len(stored) == 2
+            and all(isinstance(value, str) and value and value != "unresolved" for value in stored)
+        ):
+            return str(stored[0]), str(stored[1])
+    result = _probe_whisperx_model_identity(python_exe, helper, language)
+    if memo_key is not None and "unresolved" not in result:
+        _runtime_identity_store("whisperx-align-model.json", memo_key, list(result))
+    return result
+
+
+def _probe_whisperx_model_identity(python_exe: Path, helper: Path, language: str) -> tuple[str, str]:
     probe = (
         "import json; from whisperx_refine import model_provenance; "
         "print(json.dumps(model_provenance(" + repr(str(language)) + ") or {}))"
@@ -17720,7 +17792,7 @@ def _candidate_confidence(item: dict[str, object]) -> float:
     return 0.0
 
 
-def _path_sha256(path: Path) -> str:
+def _hash_file_bytes(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
@@ -17728,17 +17800,67 @@ def _path_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-@lru_cache(maxsize=32)
-def _cached_file_sha256(path_text: str, size: int, mtime_ns: int) -> str:
-    # size/mtime are part of the cache key only; content is still actually hashed.
-    del size, mtime_ns
-    return _path_sha256(Path(path_text))
+# A file's digest is reused only while its full stat identity (path, size,
+# mtime, ctime, inode) is unchanged; any rewrite changes mtime, so the bytes
+# are hashed again.  Large files (model weights) also keep their digest on
+# disk, so each process no longer re-reads multi-GB weights just to name them.
+_FILE_SHA256_MEMO: dict[tuple[str, int, int, int, int], str] = {}
+_FILE_SHA256_DISK_MIN_BYTES = 64 * 1024 * 1024
+_RUNTIME_IDENTITY_LOCK = threading.Lock()
+
+
+def _runtime_identity_path(name: str) -> Path:
+    return runtime_paths.cache_root() / "runtime-identity" / name
+
+
+def _runtime_identity_load(name: str) -> dict[str, object]:
+    try:
+        payload = json.loads(_runtime_identity_path(name).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _runtime_identity_store(name: str, key: str, value: object) -> None:
+    path = _runtime_identity_path(name)
+    with _RUNTIME_IDENTITY_LOCK:
+        try:
+            payload = _runtime_identity_load(name)
+            payload[key] = value
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+            temp.write_text(json.dumps(payload, sort_keys=True, indent=0), encoding="utf-8")
+            os.replace(temp, path)
+        except OSError:
+            pass
+
+
+def _path_sha256(path: Path) -> str:
+    try:
+        resolved = path.resolve()
+        stat = resolved.stat()
+    except OSError:
+        return _hash_file_bytes(path)
+    identity = (str(resolved), stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino)
+    digest = _FILE_SHA256_MEMO.get(identity)
+    if digest is not None:
+        return digest
+    large = stat.st_size >= _FILE_SHA256_DISK_MIN_BYTES
+    disk_key = "|".join(str(part) for part in identity)
+    if large:
+        stored = _runtime_identity_load("file-sha256.json").get(disk_key)
+        if isinstance(stored, str) and re.fullmatch(r"[0-9a-f]{64}", stored):
+            digest = stored
+    if digest is None:
+        digest = _hash_file_bytes(resolved)
+        if large:
+            _runtime_identity_store("file-sha256.json", disk_key, digest)
+    _FILE_SHA256_MEMO[identity] = digest
+    return digest
 
 
 def _stable_file_sha256(path: Path) -> str:
-    resolved = path.resolve()
-    stat = resolved.stat()
-    return _cached_file_sha256(str(resolved), stat.st_size, stat.st_mtime_ns)
+    return _path_sha256(path.resolve())
 
 
 def build_local_whisper_capability(

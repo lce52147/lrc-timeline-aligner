@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-import hashlib
 import json
 import sys
 from pathlib import Path
@@ -17,11 +16,9 @@ import auto_lrc  # noqa: E402
 from common import select_songs  # noqa: E402
 
 def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            h.update(block)
-    return h.hexdigest()
+    # Shares auto_lrc's stat-keyed digest memo, so the multi-GB Whisper model
+    # is not re-read on every song.
+    return auto_lrc._path_sha256(path)
 
 
 def rows_from_match_report(
