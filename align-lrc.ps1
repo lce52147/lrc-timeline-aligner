@@ -479,7 +479,9 @@ if ($exitCode -eq 0) {
 }
 
 $reviewBatchPath = [System.IO.Path]::GetFullPath((Join-Path $scriptDir "Review LRC.bat"))
-$reviewCommandText = '"{0}" --report-dir "{1}" --targets-file "{2}"' -f $reviewBatchPath, $ReportDirectory, $batchTargetsPath
+# The page opens on every song in the report folder, so earlier runs stay reviewable;
+# batch-targets.txt still records which songs this run produced.
+$reviewCommandText = '"{0}" --report-dir "{1}"' -f $reviewBatchPath, $ReportDirectory
 if ($env:LRC_NO_REVIEW -eq "1") {
     Write-Host "Review LRC: disabled by LRC_NO_REVIEW=1; not launching." -ForegroundColor DarkGray
 }
@@ -523,9 +525,7 @@ else {
             try {
                 $reviewArgs = @(
                     "--report-dir",
-                    ('"{0}"' -f $ReportDirectory),
-                    "--targets-file",
-                    ('"{0}"' -f $batchTargetsPath)
+                    ('"{0}"' -f $ReportDirectory)
                 )
                 Start-Process -FilePath $reviewBatchPath -ArgumentList $reviewArgs -WorkingDirectory $scriptDir | Out-Null
                 Write-Host "Review LRC: launched asynchronously." -ForegroundColor Green

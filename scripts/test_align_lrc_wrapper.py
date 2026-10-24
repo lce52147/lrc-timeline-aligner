@@ -45,8 +45,8 @@ class AlignLrcWrapperSafetyTests(unittest.TestCase):
         self.assertIn("scripts\\review_server.py", text)
         self.assertIn('"%~dp0scripts\\review_server.py" %*', text)
         self.assertIn("LRC_NO_PAUSE", text)
-        self.assertIn('--targets-file "%LAST_TARGETS%"', text)
-        self.assertIn("outputs\\reports\\batch-targets.txt", text)
+        self.assertIn('--report-dir "%~dp0outputs\\reports"', text)
+        self.assertNotIn("--targets-file", text)
         self.assertNotIn(" cd ", text.lower())
 
     def test_alignment_pause_uses_shared_no_pause_switch(self) -> None:

@@ -23,7 +23,7 @@ header .song-name{font-weight:600;font-size:15px;max-width:34vw;overflow:hidden;
 .layout{flex:1;display:grid;grid-template-columns:250px minmax(0,1fr);min-height:0}
 @media (max-width:760px){.layout{grid-template-columns:1fr}.rail{display:none}}
 .rail{overflow:auto;padding:14px 10px 14px 14px}
-.rail h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-3);margin:4px 8px 6px;font-weight:500}
+.rail h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-3);margin:4px 8px 6px;font-weight:500}.rail h2.rail-sec{margin-top:12px;color:var(--fg-2)}
 .song-tab{display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:7px 9px;border:1px solid transparent;background:transparent;border-radius:10px;color:var(--fg-2)}
 .song-tab:hover{background:var(--panel-2)}.song-tab.active{background:var(--panel-2);border-color:var(--line);color:var(--fg)}
 .song-tab .dot{width:8px;height:8px;border-radius:50%;background:var(--fg-3);flex:none;box-shadow:0 0 0 3px rgba(255,255,255,.04)}.song-tab.todo .dot{background:var(--warn)}.song-tab.done .dot{background:var(--ok)}
@@ -156,7 +156,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   const token = new URLSearchParams(location.search).get('t') || new URLSearchParams(location.hash.slice(1)).get('t');
   const queue = document.getElementById('queue');
   const status = document.getElementById('status');
-  const state = {songs:[], rows:[], edits:new Map(), peaks:new Map(), decoded:new Map(), done:new Set(), dirty:false, selected:0, activeSong:null, showUnreachable:false, showUntrusted:false, mode:'flac', details:false, importEnabled:false, imports:[], jobs:[], jobsSeen:new Set(), player:{audio:new Map(), handlers:new Map(), seq:0, timer:null, active:null, ab:null}, error:'', notice:''};
+  const state = {songs:[], rows:[], edits:new Map(), peaks:new Map(), decoded:new Map(), done:new Set(), dirty:false, selected:0, activeSong:null, showUnreachable:false, showDone:true, showUntrusted:false, mode:'flac', details:false, importEnabled:false, imports:[], jobs:[], jobsSeen:new Set(), player:{audio:new Map(), handlers:new Map(), seq:0, timer:null, active:null, ab:null}, error:'', notice:''};
   const api = async (path, options={}) => {
     const headers = Object.assign({'X-Review-Token':token}, options.body ? {'Content-Type':'application/json'} : {}, options.headers || {});
     const response = await fetch(path, Object.assign({}, options, {headers}));
@@ -584,7 +584,20 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       return button;
     };
     const reachable = state.songs.filter(song => !unreachable(song)), hidden = state.songs.filter(unreachable);
-    reachable.forEach(item => rail.appendChild(songTab(item)));
+    // Every reviewed song stays listed: songs with lines left come first, finished ones below.
+    const todo = reachable.filter(item => leftOf(item) > 0), done = reachable.filter(item => leftOf(item) === 0);
+    const heading = (text, count) => { const h = document.createElement('h2'); h.className = 'rail-sec'; h.textContent = text + ' ' + count; rail.appendChild(h); };
+    heading('待確認', todo.length);
+    todo.forEach(item => rail.appendChild(songTab(item)));
+    if (done.length) {
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'song-tab group rail-sec';
+      toggle.innerHTML = '<span class="t">' + (state.showDone ? '▾' : '▸') + ' 已確認 ' + done.length + '</span>';
+      toggle.addEventListener('click', () => { state.showDone = !state.showDone; render(); });
+      rail.appendChild(toggle);
+      if (state.showDone || done.some(song => song.index === state.activeSong)) done.forEach(item => rail.appendChild(songTab(item)));
+    }
     if (hidden.length) {
       const group = document.createElement('button');
       group.type = 'button';

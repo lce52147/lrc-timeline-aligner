@@ -751,7 +751,8 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
   const list = queue.children.find(child => String(child.className).startsWith('queue-list'));
   const html = card._html;
   console.log(JSON.stringify({
-    tabs: rail.children.map(child => child._html.includes('song') && child._html.includes('剩 2')),
+    tabs: rail.children.filter(child => String(child.className).startsWith('song-tab')).map(child => child._html.includes('song') && child._html.includes('剩 2')),
+    sections: rail.children.filter(child => child.className === 'rail-sec').map(child => child.textContent),
     key: card.dataset.key,
     queue: (list.children.find(child => child.className === 'list') || list).children.map(child => child.className),
     audio: html.includes('class="play" data-kind="flac"'),
@@ -763,7 +764,7 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
 """.replace("SOURCE", json.dumps(source))
         result = subprocess.run(["node", "-"], input=harness, capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout), {"tabs": [True], "key": "0:1", "queue": ["q cur", "q"], "audio": True, "nudge": True, "options": 3, "extras": True})
+        self.assertEqual(json.loads(result.stdout), {"tabs": [True], "sections": ["待確認 1"], "key": "0:1", "queue": ["q cur", "q"], "audio": True, "nudge": True, "options": 3, "extras": True})
 
     def test_acceptance_save_three_entries_and_second_save(self) -> None:
         detail = self._detail()

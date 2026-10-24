@@ -84,7 +84,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -Prefetch
 
 「維持」不會改動 LRC，所以只按維持的時候，儲存鈕是灰的，這是正常的。每一句的維持或修改結果都會立刻記錄下來，之後用來調整哪些句子需要審。
 
-之後想再審，雙擊 `Review LRC.bat` 會打開上一次跑的歌。把資料夾、FLAC 或 LRC 拖到 `Review LRC.bat`，則審核那裡的檔案。關掉黑色的主控台視窗就會停止審核頁。
+之後想再審，雙擊 `Review LRC.bat` 會打開所有跑過的歌：左側上方是「待確認」，還有句子沒審；下方是「已確認」，已經審完，點標題可以收合。把資料夾、FLAC 或 LRC 拖到 `Review LRC.bat`，則審核那裡的檔案。關掉黑色的主控台視窗就會停止審核頁。
 
 ### 審核頁快捷鍵
 
