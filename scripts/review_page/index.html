@@ -15,6 +15,7 @@ button:hover:not(:disabled){background:var(--panel-3);border-color:var(--line-2)
 .glass{background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:0 12px 40px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.05);backdrop-filter:blur(18px) saturate(1.3);-webkit-backdrop-filter:blur(18px) saturate(1.3)}
 header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--line);background:rgba(12,15,26,.7);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);position:sticky;top:0;z-index:2}
 header .song-name{font-weight:600;font-size:15px;max-width:34vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}header .spacer{flex:1}.muted{color:var(--fg-3)}
+.vol{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--fg-2)}.vol button{padding:4px 8px;min-width:34px}.vol input{width:110px;accent-color:var(--accent-2);cursor:pointer}.vol .num{min-width:64px;text-align:right;font-family:ui-monospace,Consolas,monospace}
 .tile{display:flex;align-items:center;gap:8px;padding:4px 10px;border-radius:10px;background:var(--panel-2);border:1px solid var(--line)}
 .tile .lbl{font-size:11px;color:var(--fg-3);letter-spacing:.04em}.tile .val{font-size:16px;font-weight:600}
 .bar{height:5px;width:120px;background:var(--panel-3);border-radius:3px;overflow:hidden;display:inline-block;vertical-align:middle}.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-2))}
@@ -100,6 +101,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   <span class="spacer"></span>
   <span id="status" class="status">loading</span>
   <span id="server-mode" class="muted"></span>
+  <span class="vol" id="vol-box" title="音量 0 ～ −100 dB（滾輪 ±1 dB，M 靜音）"><button id="vol-mute" title="靜音">🔊</button><input id="vol" type="range" min="0" max="1000" step="1" value="1000" aria-label="音量（dB）"><span class="num" id="vol-text">0.0 dB</span></span>
   <button id="mode">音源: FLAC</button>
   <button id="save">儲存 <span class="num">Ctrl+S</span></button>
   <button id="help-button" aria-label="快捷鍵與設定">?</button>
@@ -130,6 +132,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     <tr><td>P / N</td><td>播上一句 / 下一句開頭</td></tr>
     <tr><td>B</td><td>A/B 交替比較目前值與選定值</td></tr>
     <tr><td>V</td><td>切換 FLAC / 人聲 stem</td></tr>
+    <tr><td>M</td><td>靜音 / 取消靜音（音量在頂欄調整）</td></tr>
     <tr><td>Tab</td><td>展開 / 收起詳細</td></tr>
     <tr><td>Ctrl+S</td><td>儲存</td></tr>
   </table>
@@ -261,8 +264,29 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       audio = new Audio('/audio/' + item.song.index + '/' + kind + '?t=' + encodeURIComponent(token));
       state.player.audio.set(key, audio);
     }
+    audio.volume = volumeGain();
     return audio;
   }
+  // Volume in dB like foobar2000: 0 dB = full, -100 dB = silent. The slider position is curved
+  // (dB = -100 * (1 - pos)^2) so the useful 0 ~ -30 dB range gets most of the travel.
+  const VOLUME_KEY = 'lrc-review-volume', VOLUME_MIN_DB = -100;
+  const volume = {db:0, muted:false};
+  try { const saved = JSON.parse(localStorage.getItem(VOLUME_KEY) || 'null'); if (saved && Number.isFinite(saved.db)) { volume.db = Math.max(VOLUME_MIN_DB, Math.min(0, saved.db)); volume.muted = !!saved.muted; } } catch (_) {}
+  function volumeGain() { return volume.muted || volume.db <= VOLUME_MIN_DB ? 0 : Math.pow(10, volume.db / 20); }
+  function sliderToDb(pos) { return VOLUME_MIN_DB * Math.pow(1 - pos / 1000, 2); }
+  function dbToSlider(db) { return Math.round(1000 * (1 - Math.sqrt(db / VOLUME_MIN_DB))); }
+  function setVolumeDb(db) { volume.db = Math.max(VOLUME_MIN_DB, Math.min(0, Math.round(db * 10) / 10)); volume.muted = false; applyVolume(); }
+  function applyVolume() {
+    const gain = volumeGain();
+    state.player.audio.forEach(audio => { audio.volume = gain; });
+    document.getElementById('vol').value = String(dbToSlider(volume.db));
+    document.getElementById('vol-text').textContent = volume.muted ? '靜音' : volume.db <= VOLUME_MIN_DB ? '−∞ dB' : (volume.db === 0 ? '0.0' : '−' + Math.abs(volume.db).toFixed(1)) + ' dB';
+    const button = document.getElementById('vol-mute');
+    button.textContent = gain === 0 ? '🔇' : '🔊';
+    button.title = volume.muted ? '取消靜音' : '靜音';
+    try { localStorage.setItem(VOLUME_KEY, JSON.stringify(volume)); } catch (_) {}
+  }
+  function toggleMute() { volume.muted = !volume.muted; applyVolume(); }
   function playbar(text) { const bar = document.getElementById('playbar'); if (!bar) return; if (text) { document.getElementById('playbar-text').textContent = text; bar.hidden = false; } else bar.hidden = true; }
   function stopPlayer() {
     const player = state.player;
@@ -825,12 +849,18 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   document.getElementById('mode').addEventListener('click', event => { event.currentTarget.blur(); stopPlayer(); state.mode = state.mode === 'flac' ? 'stem' : 'flac'; render(); });
   document.getElementById('help-button').addEventListener('click', () => { document.getElementById('help').hidden = false; });
   document.getElementById('help-close').addEventListener('click', () => { document.getElementById('help').hidden = true; });
+  document.getElementById('vol').addEventListener('input', event => setVolumeDb(sliderToDb(Number(event.target.value))));
+  document.getElementById('vol-box').addEventListener('wheel', event => { event.preventDefault(); setVolumeDb(Math.round(volume.db) + (event.deltaY < 0 ? 1 : -1)); }, {passive:false});
+  document.getElementById('vol').addEventListener('pointerup', event => event.target.blur());
+  document.getElementById('vol-mute').addEventListener('click', event => { toggleMute(); event.currentTarget.blur(); });
+  applyVolume();
   document.addEventListener('keydown', event => {
     if (event.ctrlKey && !event.altKey && !event.metaKey && event.key.toLowerCase() === 's') { event.preventDefault(); save(); return; }
     if (event.altKey || event.metaKey || event.ctrlKey) return;
     if (event.key === 'Escape') { document.getElementById('help').hidden = true; importBox().hidden = true; return; }
     if (event.key === '?') { event.preventDefault(); document.getElementById('help').hidden = false; return; }
     if (event.target?.closest?.('input,textarea,select,[contenteditable]') && event.target?.type !== 'checkbox') return;
+    if (event.key.toLowerCase() === 'm') { event.preventDefault(); toggleMute(); return; }
     if (event.target?.closest?.('button') && (event.key === 'Enter' || event.code === 'Space')) return;
     const rows = visible(), item = rows[state.selected];
     if (!item) return;
