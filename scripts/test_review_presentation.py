@@ -100,7 +100,26 @@ class PayloadWiringTests(unittest.TestCase):
             self.assertIn(second["reason_text"], ("候選一致，只需確認。", "需要人工確認。"))
             # legacy fields stay for the details fold
             self.assertIn("candidates", first); self.assertIn("reason_codes", first)
+            self.assertEqual(first["risk"], "normal")
+            self.assertIsNone(second["risk"])
 
+
+    def test_review_risk_tiers(self):
+        cands = [{"time": 10.0 + i * 0.05, "source": "s%d" % i, "score": 0.8} for i in range(5)]
+        base = {"entry": 3, "candidates": cands}
+        self.assertEqual(review_presentation.review_risk(base, ["insufficient-minimum-proof"], 1000), "low")
+        # A strong competitor more than 0.5 s away blocks "low".
+        rival = dict(base, candidates=cands + [{"time": 12.0, "source": "x", "score": 0.9}])
+        self.assertEqual(review_presentation.review_risk(rival, ["insufficient-minimum-proof"], 1000), "normal")
+        # Rejected candidates do not count as agreement; hypotheses do.
+        few = {"entry": 3, "candidates": cands[:3], "rejected_candidates": cands[3:]}
+        self.assertEqual(review_presentation.review_risk(few, [], 1000), "normal")
+        hyp = dict(few, alignment_hypotheses=[{"source": "h1", "raw_candidate_time": 10.1}, {"source": "h2", "raw_candidate_time": 9.9}])
+        self.assertEqual(review_presentation.review_risk(hyp, [], 1000), "low")
+        self.assertEqual(review_presentation.review_risk(few, ["model-disagreement"], 1000), "high")
+        many = ["c%d" % i for i in range(7)]
+        self.assertEqual(review_presentation.review_risk(few, many, 1000), "high")
+        self.assertEqual(review_presentation.review_risk(few, many, 1000, [3]), "normal")
 
 if __name__ == "__main__":
     unittest.main()

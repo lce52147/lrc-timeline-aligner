@@ -609,6 +609,8 @@ def _song_payload(report_path, report, anchor=None):
             readonly, reason = True, trust_reason
         _abom, _atrailing, auto_lines = _split_lrc(reference_data)
         features = lrc_review_tsv.severity_features(report)
+        whisperx_rows = report.get("whisperx_row_evidence")
+        whisperx_entries = whisperx_rows.get("entries") if isinstance(whisperx_rows, dict) else None
         tsv_rows = _report_rows(report_path, report)
         listed = {
             int(row.get("entry")): row for row in tsv_rows
@@ -662,6 +664,10 @@ def _song_payload(report_path, report, anchor=None):
                 "previous": adjacent(index - 1),
                 "next": adjacent(index + 1),
                 "review": status,
+                "risk": review_presentation.review_risk(
+                    assignment, reason_codes, _tag_cs(assignment.get("lrc_tag")),
+                    whisperx_entries if isinstance(whisperx_entries, list) else (),
+                ) if status == "REVIEW" else None,
                 "severity_rank": listed_row.get("severity_rank"),
                 "severity_score": feature.get("severity_score", 0),
                 "candidate_spread": feature.get("candidate_spread_s"),
@@ -777,6 +783,7 @@ def _record_decision(song, body):
         "current_cs": row.get("current_cs"),
         "auto_cs": row.get("auto_cs"),
         "review": row.get("review"),
+        "risk": row.get("risk"),
         "reason_codes": list(row.get("reason_codes") or []),
         "severity_rank": row.get("severity_rank"),
         "candidate_spread_s": row.get("candidate_spread"),

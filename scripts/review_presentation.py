@@ -123,3 +123,66 @@ def present_options(candidates: object, extra_candidates: object, current_cs: ob
         options.append(keep)
         options.sort(key=lambda o: o["cs"])
     return options
+
+
+# Review risk tiers (R3 study, 36 checked songs): "high" lines held 38 of the 45 REVIEW lines
+# off by more than 0.5 s, "low" lines held 2 of them, so the page lists high first and folds low.
+RISK_AGREE_TOLERANCE_CS = 30
+RISK_AGREE_MIN_SOURCES = 5
+RISK_COMPETITOR_DISTANCE_CS = 50
+RISK_COMPETITOR_MAX_SCORE = 0.7
+RISK_MANY_CODES = 6
+
+
+def _seconds_to_cs(value: object) -> int | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number:
+        return None
+    return round(number * 100)
+
+
+def review_risk(assignment: dict, codes: object, written_cs: object, whisperx_entries: object = ()) -> str:
+    """Return "high", "normal" or "low" for one REVIEW line.
+
+    low: at least five candidate sources (accepted candidates and alignment hypotheses,
+    rejected ones excluded) sit within 0.3 s of the written time, and no accepted candidate
+    more than 0.5 s away scores above 0.7. high: the line carries model-disagreement, or more
+    than six reason codes without WhisperX row evidence. Everything else is normal.
+    """
+    written = _int(written_cs)
+    code_set = {str(code) for code in codes} if isinstance(codes, (list, tuple, set)) else set()
+    if written is not None:
+        agreeing: set[str] = set()
+        competitor = 0.0
+        for item in assignment.get("candidates") or []:
+            if not isinstance(item, dict):
+                continue
+            cs = _seconds_to_cs(item.get("time"))
+            if cs is None:
+                continue
+            if abs(cs - written) <= RISK_AGREE_TOLERANCE_CS:
+                agreeing.add(str(item.get("source")))
+            elif abs(cs - written) > RISK_COMPETITOR_DISTANCE_CS:
+                try:
+                    competitor = max(competitor, float(item.get("score") or 0.0))
+                except (TypeError, ValueError):
+                    pass
+        for item in assignment.get("alignment_hypotheses") or []:
+            if not isinstance(item, dict):
+                continue
+            cs = _seconds_to_cs(item.get("raw_candidate_time"))
+            if cs is not None and abs(cs - written) <= RISK_AGREE_TOLERANCE_CS:
+                agreeing.add(str(item.get("source")))
+        if len(agreeing) >= RISK_AGREE_MIN_SOURCES and competitor <= RISK_COMPETITOR_MAX_SCORE:
+            return "low"
+    try:
+        entries = {int(value) for value in whisperx_entries or ()}
+    except (TypeError, ValueError):
+        entries = set()
+    has_whisperx = _int(assignment.get("entry")) in entries
+    if "model-disagreement" in code_set or (len(code_set) > RISK_MANY_CODES and not has_whisperx):
+        return "high"
+    return "normal"
