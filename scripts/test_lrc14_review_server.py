@@ -23,6 +23,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import review_server
+import review_presentation
 import lrc_review_tsv
 
 
@@ -1154,6 +1155,20 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
             self.root, loaded, scan_report_dir=False
         )
         self.assertEqual([song["report"] for song in store.songs], [str(self.report.resolve())])
+
+    def test_candidate_rows_include_alignment_hypotheses(self) -> None:
+        rows, extra = review_server._candidate_rows({
+            "candidates": [{"time": 1.00, "source": "ctc-current", "score": .9}],
+            "alignment_hypotheses": [
+                {"source": "ctc-local-window-wide", "raw_candidate_time": 2.5, "confidence": 0.3, "mode": "region-radius-3"},
+                {"source": "broken", "raw_candidate_time": None},
+            ],
+        }, 100, 100)
+        self.assertEqual(extra, [])
+        wide = next(item for item in rows if item["cs"] == 250)
+        self.assertEqual((wide["label"], wide["score"], wide["rejected"], wide["diagnostic_only"]), ("ctc-local-window-wide", 0.3, False, False))
+        options = review_presentation.present_options(rows, extra, 100)
+        self.assertIn(250, [option["cs"] for option in options])
 
     def test_rows_carry_risk_basis_and_fit_and_decisions_log_them(self) -> None:
         data = json.loads(self.report.read_text(encoding="utf-8"))

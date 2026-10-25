@@ -505,6 +505,13 @@ def _candidate_rows(assignment, current_cs, auto_cs):
             value, str(item.get("source", "candidate")), _number(item.get("score")) or 0.0
         ):
             continue
+    # Alignment hypotheses are the local-window replays Central weighed but did not select; on the
+    # 36 checked songs one of them sat within 0.2 s of the checked time on a line the page could
+    # not otherwise offer, at no extra options on correct lines.
+    hypotheses = assignment.get("alignment_hypotheses") if isinstance(assignment.get("alignment_hypotheses"), list) else []
+    for item in hypotheses:
+        if isinstance(item, dict):
+            add(_candidate_time(item), str(item.get("source", "hypothesis")), _number(item.get("confidence")) or 0.0)
     precentral = assignment.get("precentral_candidate_recommendation")
     if isinstance(precentral, dict):
         value = _candidate_time(precentral)

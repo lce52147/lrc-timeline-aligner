@@ -293,4 +293,55 @@ vm.runInNewContext(script, context, {filename:'review_page/index.html'});
   queueEl.children = []; test.render();
   assert.equal(documentMock.getElementById('left-song').textContent, 1, 'confirming the high-risk line reduces the count');
   console.log('review page risk grouping tests: PASS');
+
+  // ---- reviewer settings: autoplay on row change, batch keep, one-key option accept ----
+  const flacAudio = () => AudioMock.instances.filter(audio => audio.src.includes('/0/flac')).at(-1);  // newest element: the cache was cleared earlier
+  const flacPlays = () => AudioMock.instances.filter(audio => audio.src.includes('/0/flac')).reduce((n, audio) => n + audio.playCalls.length, 0);
+  test.state.rows = [item, second]; test.state.done.clear(); test.state.edits.clear(); test.state.dirty = false; test.state.selected = 0; test.state.showLow = true; test.state.autoplay = false; test.state.mode = 'flac';
+  queueEl.children = []; test.render();
+  let plays = flacPlays();
+  test.keep(item); await flush();
+  assert.equal(flacPlays(), plays, 'without autoplay, moving to the next row plays nothing');
+  documentMock.getElementById('autoplay').checked = true; ids.get('autoplay').dispatch('change');
+  assert.equal(test.state.autoplay, true, 'the autoplay checkbox turns the setting on');
+  assert.deepEqual(JSON.parse(storage.get('lrc-review-settings')), {autoplay:true, batchSkip:false}, 'settings are remembered in the browser');
+  test.state.done.clear(); test.state.selected = 0; queueEl.children = []; test.render();
+  plays = flacPlays();
+  test.keep(item); await flush();
+  assert.equal(test.state.selected, 1, 'keep moves to the next row');
+  assert.equal(flacPlays(), plays + 1, 'with autoplay, the next row starts playing by itself');
+  assert.equal(flacAudio().playCalls.at(-1), 3, 'playback starts at the next row\'s working time');
+  test.state.selected = 0; plays = flacPlays();
+  documentMock.listeners.get('keydown')({key:'ArrowDown', target:{}, preventDefault(){}}); await flush();
+  assert.equal(flacPlays(), plays + 1, 'arrow navigation autoplays too');
+  documentMock.getElementById('autoplay').checked = false; ids.get('autoplay').dispatch('change');
+
+  test.state.done.clear(); test.state.edits.clear(); test.state.selected = 0; queueEl.children = []; test.render();
+  const postsBefore = decisionPosts.length;
+  documentMock.listeners.get('keydown')({key:'A', shiftKey:true, target:{}, preventDefault(){}}); await flush();
+  assert.equal(decisionPosts.length, postsBefore + 1, 'Shift+A records one decision');
+  assert.deepEqual(decisionPosts.at(-1), {entry:1, decision:'change', cs:200, source:'option:ctc-current'}, 'Shift+A takes option A and logs the change');
+  assert.ok(test.state.done.has('0:1'), 'Shift+A marks the row done');
+  assert.equal(test.state.selected, 1, 'Shift+A moves on to the next row');
+  documentMock.listeners.get('keydown')({key:'B', shiftKey:true, target:{}, preventDefault(){}}); await flush();
+  assert.equal(decisionPosts.length, postsBefore + 1, 'Shift+B with no option B does nothing');
+
+  test.state.rows = [mkRow(2, 'low'), mkRow(4, 'low'), Object.assign({}, item, {row:Object.assign({}, item.row, {risk:'normal'})})];
+  test.state.done.clear(); test.state.edits.clear(); test.state.selected = 0; test.state.batchSkip = false; queueEl.children = []; test.render();
+  const batchButton = () => listWrap().find(c => c.className === 'q-fold' && /^全部維持/.test(c.textContent || ''));
+  assert.equal(batchButton(), undefined, 'no batch button unless the setting is on');
+  documentMock.getElementById('batch-skip').checked = true; ids.get('batch-skip').dispatch('change');
+  assert.deepEqual(JSON.parse(storage.get('lrc-review-settings')), {autoplay:false, batchSkip:true}, 'the batch setting is remembered');
+  queueEl.children = []; test.render();
+  assert.match(batchButton().textContent, /全部維持可略過的 2 句/, 'the batch button counts the unreviewed skip-tier lines');
+  const batchBefore = decisionPosts.length;
+  batchButton().dispatch('click'); await flush();
+  assert.equal(decisionPosts.length, batchBefore + 2, 'one click records a keep for each skip-tier line');
+  assert.deepEqual(decisionPosts.slice(-2).map(p => [p.entry, p.decision, p.source]), [[2, 'keep', 'batch-keep'], [4, 'keep', 'batch-keep']], 'batch keeps are logged with their own source');
+  assert.ok(test.state.done.has('0:2') && test.state.done.has('0:4') && !test.state.done.has('0:1'), 'only skip-tier lines are marked done');
+  assert.match(test.state.notice, /已維持 2 句/, 'the page says what it did');
+  queueEl.children = []; test.render();
+  assert.equal(batchButton(), undefined, 'nothing left to batch-keep');
+  documentMock.getElementById('batch-skip').checked = false; ids.get('batch-skip').dispatch('change');
+  console.log('review page settings tests: PASS');
 })().catch(error => { console.error(error.stack || error); process.exitCode=1; });

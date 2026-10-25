@@ -124,6 +124,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   <table>
     <tr><td>空白</td><td>播放目前時間點起 2 秒</td></tr>
     <tr><td>1 / 2 / 3</td><td>選 A / B / 維持並播放</td></tr>
+    <tr><td>Shift+A / Shift+B</td><td>直接採用 A / B，跳下一筆</td></tr>
     <tr><td>← → 或 [ ]</td><td>−0.1 / +0.1 秒（Shift：0.01 秒）</td></tr>
     <tr><td>Enter</td><td>接受目前值，跳下一筆</td></tr>
     <tr><td>K</td><td>維持原值，跳下一筆</td></tr>
@@ -137,6 +138,8 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     <tr><td>Ctrl+S</td><td>儲存</td></tr>
   </table>
   <label><input id="untrusted" type="checkbox"> 也顯示未標記為需審的句子（UNTRUSTED）</label>
+  <div><label><input id="autoplay" type="checkbox"> 換句時自動播放（Enter / K / ↑ ↓ 跳到下一句就先聽開頭）</label></div>
+  <div><label><input id="batch-skip" type="checkbox"> 在「可略過」摺疊處顯示「全部維持」按鈕</label></div>
   <div style="margin-top:12px;text-align:right"><button id="help-close">關閉</button></div>
 </div></div>
 <div class="help imp" id="import" hidden><div class="box glass wide">
@@ -161,7 +164,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   const token = new URLSearchParams(location.search).get('t') || new URLSearchParams(location.hash.slice(1)).get('t');
   const queue = document.getElementById('queue');
   const status = document.getElementById('status');
-  const state = {songs:[], rows:[], edits:new Map(), peaks:new Map(), decoded:new Map(), done:new Set(), dirty:false, selected:0, activeSong:null, showUnreachable:false, showDone:true, showLow:false, showUntrusted:false, mode:'flac', details:false, importEnabled:false, imports:[], jobs:[], jobsSeen:new Set(), player:{audio:new Map(), handlers:new Map(), seq:0, timer:null, active:null, ab:null}, error:'', notice:''};
+  const state = {songs:[], rows:[], edits:new Map(), peaks:new Map(), decoded:new Map(), done:new Set(), dirty:false, selected:0, activeSong:null, showUnreachable:false, showDone:true, showLow:false, showUntrusted:false, autoplay:false, batchSkip:false, mode:'flac', details:false, importEnabled:false, imports:[], jobs:[], jobsSeen:new Set(), player:{audio:new Map(), handlers:new Map(), seq:0, timer:null, active:null, ab:null}, error:'', notice:''};
   const api = async (path, options={}) => {
     const headers = Object.assign({'X-Review-Token':token}, options.body ? {'Content-Type':'application/json'} : {}, options.headers || {});
     const response = await fetch(path, Object.assign({}, options, {headers}));
@@ -287,6 +290,15 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     try { localStorage.setItem(VOLUME_KEY, JSON.stringify(volume)); } catch (_) {}
   }
   function toggleMute() { volume.muted = !volume.muted; applyVolume(); }
+  // Reviewer settings (opt-in, remembered in the browser): autoplay on row change, batch-keep button.
+  const SETTINGS_KEY = 'lrc-review-settings';
+  try { const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null'); if (saved && typeof saved === 'object') { state.autoplay = !!saved.autoplay; state.batchSkip = !!saved.batchSkip; } } catch (_) {}
+  function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({autoplay:state.autoplay, batchSkip:state.batchSkip})); } catch (_) {} }
+  function autoplaySelected() {
+    if (!state.autoplay) return;
+    const item = visible()[state.selected];
+    if (item && working(item) != null) playAround(item, working(item));
+  }
   function playbar(text) { const bar = document.getElementById('playbar'); if (!bar) return; if (text) { document.getElementById('playbar-text').textContent = text; bar.hidden = false; } else bar.hidden = true; }
   function stopPlayer() {
     const player = state.player;
@@ -556,6 +568,14 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     else if (any >= 0) state.selected = any;
     else { state.notice = '本首已審完，可以到下一首。'; state.selected = Math.min(rows.length - 1, state.selected + 1); }
     render();
+    autoplaySelected();
+  }
+  // One click keeps every unreviewed skip-tier line of the song (lines with a staged edit are left alone).
+  function batchKeep(song) {
+    const pending = state.rows.filter(item => item.song.index === song.index && item.row.review === 'REVIEW' && item.row.risk === 'low' && !isDone(item) && !editFor(item));
+    pending.forEach(item => { recordDecision(item, 'keep', item.row.current_cs, 'batch-keep'); markDone(item); });
+    state.notice = '已維持 ' + pending.length + ' 句可略過的句子。';
+    render();
   }
   // Every verdict is logged beside the report (review-decisions.jsonl) so the review thresholds can be tuned on real outcomes.
   function recordDecision(item, decision, cs, source) {
@@ -684,6 +704,17 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       fold.textContent = (state.showLow ? '▾ 收起' : '▸ 展開') + '可略過的 ' + lowCount + ' 句（多個偵測結果一致或前後銜接合理，不計入剩餘）';
       fold.addEventListener('click', () => { state.showLow = !state.showLow; render(); });
       wrap.appendChild(fold);
+      if (state.batchSkip && song && editable(song)) {
+        const pending = state.rows.filter(item => item.song.index === song.index && item.row.review === 'REVIEW' && item.row.risk === 'low' && !isDone(item) && !editFor(item));
+        if (pending.length) {
+          const batch = document.createElement('button');
+          batch.type = 'button';
+          batch.className = 'q-fold';
+          batch.textContent = '全部維持可略過的 ' + pending.length + ' 句';
+          batch.addEventListener('click', () => batchKeep(song));
+          wrap.appendChild(batch);
+        }
+      }
     }
     list.appendChild(wrap);
     queue.appendChild(list);
@@ -846,6 +877,10 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
 
   document.getElementById('save').addEventListener('click', event => { event.currentTarget.blur(); save(); });
   document.getElementById('untrusted').addEventListener('change', event => { state.showUntrusted = event.target.checked; render(); });
+  document.getElementById('autoplay').checked = state.autoplay;
+  document.getElementById('autoplay').addEventListener('change', event => { state.autoplay = event.target.checked; saveSettings(); });
+  document.getElementById('batch-skip').checked = state.batchSkip;
+  document.getElementById('batch-skip').addEventListener('change', event => { state.batchSkip = event.target.checked; saveSettings(); render(); });
   document.getElementById('mode').addEventListener('click', event => { event.currentTarget.blur(); stopPlayer(); state.mode = state.mode === 'flac' ? 'stem' : 'flac'; render(); });
   document.getElementById('help-button').addEventListener('click', () => { document.getElementById('help').hidden = false; });
   document.getElementById('help-close').addEventListener('click', () => { document.getElementById('help').hidden = true; });
@@ -864,8 +899,14 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     if (event.target?.closest?.('button') && (event.key === 'Enter' || event.code === 'Space')) return;
     const rows = visible(), item = rows[state.selected];
     if (!item) return;
-    if (event.key === 'ArrowDown' || event.key.toLowerCase() === 'j') { event.preventDefault(); state.selected = Math.min(rows.length - 1, state.selected + 1); render(); return; }
-    if (event.key === 'ArrowUp') { event.preventDefault(); state.selected = Math.max(0, state.selected - 1); render(); return; }
+    if (event.key === 'ArrowDown' || event.key.toLowerCase() === 'j') { event.preventDefault(); state.selected = Math.min(rows.length - 1, state.selected + 1); render(); autoplaySelected(); return; }
+    if (event.key === 'ArrowUp') { event.preventDefault(); state.selected = Math.max(0, state.selected - 1); render(); autoplaySelected(); return; }
+    if (event.shiftKey && (event.key === 'A' || event.key === 'B')) {
+      event.preventDefault();
+      const option = optionsOf(item.row).find(o => o.label === event.key);
+      if (option && editable(item.song)) { stage(item, option.cs, 'option:' + sourceText(option), 0); accept(item); }
+      return;
+    }
     if (event.key.toLowerCase() === 'k') { event.preventDefault(); keep(item); return; }
     if (event.key.toLowerCase() === 'u') { event.preventDefault(); state.edits.delete(keyFor(item)); setDirty(); render(); return; }
     if (event.key.toLowerCase() === 'v') { event.preventDefault(); stopPlayer(); state.mode = state.mode === 'flac' ? 'stem' : 'flac'; render(); return; }
