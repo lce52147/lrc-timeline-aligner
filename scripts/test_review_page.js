@@ -83,6 +83,9 @@ vm.runInNewContext(script, context, {filename:'review_page/index.html'});
   await flush();
   const test=context.__reviewTest;
   assert.ok(test, 'test hooks did not initialize');
+  assert.equal(test.state.autoplay, true, 'autoplay on row change is on by default');
+  assert.equal(test.state.batchSkip, true, 'the batch-keep button is on by default');
+  test.state.autoplay = false; test.state.batchSkip = false;  // the earlier sections count plays and buttons without them
   const item=test.state.rows[0];
   assert.equal(test.state.player.audio instanceof Map, true, 'player audio cache is a Map');
 
@@ -297,7 +300,7 @@ vm.runInNewContext(script, context, {filename:'review_page/index.html'});
   // ---- reviewer settings: autoplay on row change, batch keep, one-key option accept ----
   const flacAudio = () => AudioMock.instances.filter(audio => audio.src.includes('/0/flac')).at(-1);  // newest element: the cache was cleared earlier
   const flacPlays = () => AudioMock.instances.filter(audio => audio.src.includes('/0/flac')).reduce((n, audio) => n + audio.playCalls.length, 0);
-  test.state.rows = [item, second]; test.state.done.clear(); test.state.edits.clear(); test.state.dirty = false; test.state.selected = 0; test.state.showLow = true; test.state.autoplay = false; test.state.mode = 'flac';
+  test.state.rows = [item, second]; test.state.done.clear(); test.state.edits.clear(); test.state.dirty = false; test.state.selected = 0; test.state.showLow = true; test.state.autoplay = false; test.state.batchSkip = false; test.state.mode = 'flac';
   queueEl.children = []; test.render();
   let plays = flacPlays();
   test.keep(item); await flush();

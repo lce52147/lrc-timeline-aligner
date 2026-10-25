@@ -9,7 +9,7 @@
 - `scripts\file_digest.py`：以 stat 身分記住檔案 SHA-256，64 MiB 以上的檔案另存 `cache\runtime-identity\file-sha256.json`，供 auto_lrc、multimodel consensus 和 WhisperX reviewer 共用。
 
 - **可略過層新規則（R5 審聽工作量研究）**：`review_presentation.line_fit` 用寫出時間與歌詞長度算「前一句唱得完」「這一句塞得進下一句之前」「至少一側相鄰句在 2 s 內」「CTC token span ≤ 預估的 2 倍」，符合的一般層句子歸入可略過（`risk_basis="fit"`）。36 首 BK：多略過 47 句（44 句 ≤0.2 s、3 句 ≤0.5 s、0 句 >0.5 s；留一驗證同樣 0 句 >0.5 s），要人工看的句子 161 → 114；可略過層 >0.5 s 的漏抓維持 2 句。DF 178 首：要人工看 1096 → 824 句。每句多 `risk_basis` 與 `fit`，`review-decisions.jsonl` 多 `risk_basis`。
-- **審核頁操作（預設關閉的設定）**：「換句時自動播放」、可略過層「全部維持」按鈕（來源 `batch-keep`）；新快捷鍵 `Shift+A`／`Shift+B` 一鍵採用 A／B 並跳下一句；候選列加入 `alignment_hypotheses`（36 首裡大錯行正解出現在 A／B 的 13 → 14 句，對的句子選項數不變）。改前基線：每句中位 5.6 s（維持 3.9 s、修改 10.5 s）。
+- **審核頁操作**：「換句時自動播放」與可略過層「全部維持」按鈕（來源 `batch-keep`）預設開啟，`?` 視窗可關，設定記在瀏覽器；新快捷鍵 `Shift+A`／`Shift+B` 一鍵採用 A／B 並跳下一句；候選列加入 `alignment_hypotheses`（36 首裡大錯行正解出現在 A／B 的 13 → 14 句，對的句子選項數不變）。改前基線：每句中位 5.6 s（維持 3.9 s、修改 10.5 s）。
 
 ### 變更
 - **審核頁載入加速**：`review_server` 每次載入只列一次報告目錄、每份報告只解析一次（`_ReportIndex`），`reload()` 重用已解析的資料。原本每個 FLAC 目標都重新解析全部報告（O(n²)）。180 首合成報告（每份約 540 KB）由 FLAC 路徑載入：250.8 秒 → 3.8 秒；資料夾目標 6.8 秒 → 3.4 秒；整個報告目錄 4.2 秒 → 3.0 秒。三種情況的頁面資料與排除清單皆 byte-identical。
