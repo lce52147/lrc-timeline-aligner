@@ -1068,17 +1068,22 @@ def collect_candidates(
     lrclib_unavailable = False
     utanet_unavailable = False
 
+    ambiguous = None
     try:
         candidates.append(utanet_fetcher(identity, client))
     except Exception as exc:
         if _source_unavailable(exc):
             utanet_unavailable = True
             errors.append(f"uta-net: source_unavailable ({exc})")
+        elif getattr(exc, "hits", None):
+            ambiguous = exc
         else:
             errors.append(f"uta-net: {exc}")
 
+    lrclib_candidate = None
     try:
-        candidates.append(lrclib_fetcher(identity, client))
+        lrclib_candidate = lrclib_fetcher(identity, client)
+        candidates.append(lrclib_candidate)
     except Exception as exc:
         if isinstance(exc, HTTPError) and 500 <= exc.code <= 599:
             lrclib_unavailable = True
@@ -1088,6 +1093,24 @@ def collect_candidates(
             errors.append(f"lrclib: source_unavailable ({exc})")
         else:
             errors.append(f"lrclib: {exc}")
+
+    if ambiguous is not None:
+        # Exact-title uta-net rows without artist evidence (covers, romanised
+        # tags): let the independently fetched LRCLIB text pick the row; the
+        # policy still demands full agreement before the row counts.
+        try:
+            from utanet_source import resolve_ambiguous_hits
+        except ModuleNotFoundError:  # pragma: no cover - package import style
+            from lyricsee.utanet_source import resolve_ambiguous_hits
+        reference = [row.original for row in lrclib_candidate.lines] if lrclib_candidate else None
+        try:
+            candidates.insert(0, resolve_ambiguous_hits(identity, client, ambiguous.hits, reference))
+        except Exception as exc:
+            if _source_unavailable(exc):
+                utanet_unavailable = True
+                errors.append(f"uta-net: source_unavailable ({exc})")
+            else:
+                errors.append(f"uta-net: {exc}")
 
     google_urls: list[str] = []
     search_engine = "none"

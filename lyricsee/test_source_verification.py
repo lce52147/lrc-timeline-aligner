@@ -13,7 +13,8 @@ import lyricsee_core as core
 import source_policy
 from lyric_compare import classify_segment, compare_lyrics, canonical_text, is_filler
 from utanet_source import (
-    fetch_utanet_candidate, parse_utanet_search, parse_utanet_song, utanet_search_url,
+    UtanetAmbiguous, fetch_utanet_candidate, parse_utanet_search, parse_utanet_song,
+    resolve_ambiguous_hits, utanet_search_url,
 )
 
 
@@ -249,22 +250,71 @@ class UtanetFetchTests(unittest.TestCase):
         self.assertEqual(candidate.url, "https://www.uta-net.com/song/5/")
         self.assertEqual(len([url for url in client.requests if "/search/" in url]), 2)
 
-    def test_unique_exact_title_without_artist_evidence_is_weak(self):
+    def test_exact_title_without_artist_evidence_is_ambiguous_then_weak(self):
         client = FakeClient({
             "keyword=R.I.P.": search_page([_row("301240", "R.I.P.", "鋭児")]),
             "/song/301240/": song_page("R.I.P.", "鋭児", UTANET_LINES),
         })
         identity = core.TrackIdentity("R.I.P.", "3OH!3", duration=200.0)
-        candidate = fetch_utanet_candidate(identity, client)
+        with self.assertRaises(UtanetAmbiguous) as caught:
+            fetch_utanet_candidate(identity, client)
+        self.assertEqual([hit.song_id for _, hit in caught.exception.hits], ["301240"])
+        # Without any reference a single row is fetched, flagged weak.
+        candidate = resolve_ambiguous_hits(identity, client, caught.exception.hits, None)
         self.assertFalse(candidate.meta["identity"]["strong"])
         self.assertEqual(candidate.meta["identity"]["artist_level"], 0)
+        # A reference lyric of a different song rejects the row.
+        english = [f"english line number {i} of another song" for i in range(12)]
+        with self.assertRaisesRegex(LookupError, "do not match the reference"):
+            resolve_ambiguous_hits(identity, client, caught.exception.hits, english)
 
-    def test_several_exact_titles_without_artist_evidence_are_rejected(self):
+    def test_reference_lyric_picks_among_several_exact_title_rows(self):
+        other_opening = "全く別の歌の歌い出しです　別の言葉が続きます　別の言葉が続きます"
+        konayuki_opening = "　".join(line for line in UTANET_LINES[:6] if line)
+        client = FakeClient({
+            "keyword=": search_page([
+                _row("1", "粉雪", "浅沼晋太郎", other_opening),
+                _row("2", "粉雪", "レミオロメン", konayuki_opening),
+                _row("3", "粉雪", "INSPi", other_opening),
+            ]),
+            "/song/2/": song_page("粉雪", "レミオロメン", UTANET_LINES),
+        })
+        identity = core.TrackIdentity("KONAYUKI", "Remioromen", duration=325.0, hints=("粉雪",))
+        with self.assertRaises(UtanetAmbiguous):
+            fetch_utanet_candidate(identity, client)
+        result = core.collect_candidates(
+            identity, client,
+            lrclib_fetcher=lambda i, c: core.LyricCandidate(
+                source="lrclib", url="https://lrclib.net/api/get/9", title="KONAYUKI", artist="Remioromen",
+                lines=[core.LyricPair(line) for line in LRCLIB_LINES]),
+            google_fetcher=lambda i, c: ([], []),
+        )
+        self.assertEqual([c.source for c in result.candidates], ["uta-net", "lrclib"])
+        self.assertEqual(result.candidates[0].url, "https://www.uta-net.com/song/2/")
+        self.assertFalse(result.candidates[0].meta["identity"]["strong"])
+        self.assertGreater(result.candidates[0].meta["identity"]["opening_matched_reference"], 0.6)
+        self.assertFalse(any("/song/1/" in url or "/song/3/" in url for url in client.requests))
+        chosen, evidence = source_policy.choose_verified_original(identity, result.candidates)
+        self.assertEqual(chosen.source, "uta-net")
+        self.assertEqual(evidence["verification_status"], "verified")
+        self.assertEqual(evidence["original_verified_by"], "two_source_agreement")
+
+    def test_several_exact_titles_without_artist_or_reference_are_rejected(self):
         client = FakeClient({
             "keyword=": search_page([_row("1", "顔", "くるり"), _row("2", "顔", "誰か")]),
         })
-        with self.assertRaisesRegex(LookupError, "no row matched"):
-            fetch_utanet_candidate(core.TrackIdentity("顔", "女王蜂"), client)
+        identity = core.TrackIdentity("顔", "女王蜂")
+        with self.assertRaises(UtanetAmbiguous) as caught:
+            fetch_utanet_candidate(identity, client)
+        with self.assertRaisesRegex(LookupError, "several rows carry this title"):
+            resolve_ambiguous_hits(identity, client, caught.exception.hits, None)
+        result = core.collect_candidates(
+            identity, client,
+            lrclib_fetcher=lambda i, c: (_ for _ in ()).throw(LookupError("no match")),
+            google_fetcher=lambda i, c: ([], []),
+        )
+        self.assertEqual(result.candidates, [])
+        self.assertTrue(any("several rows carry this title" in item for item in result.errors))
 
     def test_server_error_propagates_as_unavailable(self):
         client = FakeClient({"keyword=": HTTPError("u", 503, "busy", {}, None)})
