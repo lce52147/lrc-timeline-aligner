@@ -90,6 +90,15 @@ def _current_candidate(assignment: Mapping[str, object]) -> Mapping[str, object]
     return currents[0]
 
 
+def _sibling_audio(lyrics_path: Path) -> Path:
+    """Audio beside the lyric file when the report did not record one (.flac if none exists)."""
+    for extension in runtime_paths.AUDIO_EXTENSIONS:
+        candidate = lyrics_path.with_suffix(extension)
+        if candidate.is_file():
+            return candidate
+    return lyrics_path.with_suffix(".flac")
+
+
 def build_reviewer_payload(report: Mapping[str, object]) -> dict[str, object]:
     lyrics_value = report.get("lyrics_path")
     vocal_value = report.get("ctc_audio_path")
@@ -105,7 +114,7 @@ def build_reviewer_payload(report: Mapping[str, object]) -> dict[str, object]:
     audio_path = (
         Path(audio_value)
         if isinstance(audio_value, str)
-        else lyrics_path.with_suffix(".flac")
+        else _sibling_audio(lyrics_path)
     )
     if not lyrics_path.is_file():
         raise FileNotFoundError(f"lyric source unavailable: {lyrics_path}")

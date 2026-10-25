@@ -257,7 +257,8 @@ def _relocated(report, anchor=None):
     audio = pathlib.Path(audio_value) if isinstance(audio_value, str) and audio_value else None
     output = pathlib.Path(output_value) if isinstance(output_value, str) and output_value else None
     anchor = pathlib.Path(anchor) if anchor else None
-    audio_names = [audio.name if audio else None, (output.stem + ".flac") if output else None]
+    audio_names = [audio.name if audio else None]
+    audio_names += [(output.stem + ext) if output else None for ext in runtime_paths.AUDIO_EXTENSIONS]
     output_names = [output.name if output else None, (audio.stem + ".lrc") if audio else None]
     new_audio = _find_beside(audio_names, [anchor]) or (audio if _path_is_file(audio) else None)
     new_output = _find_beside(output_names, [anchor]) or (output if _path_is_file(output) else None)
@@ -1011,8 +1012,14 @@ def _find_lyrics(audio):
     return None
 
 
+def _sibling_audio(lyric_base):
+    """First existing audio file named ``lyric_base`` + a supported extension."""
+    return next((lyric_base.with_name(lyric_base.name + ext) for ext in runtime_paths.AUDIO_EXTENSIONS
+                 if lyric_base.with_name(lyric_base.name + ext).is_file()), None)
+
+
 def _expand_audio(paths):
-    """Expand folders to their top-level FLACs; keep FLAC files; drop the rest."""
+    """Expand folders to their top-level audio files; keep audio files; drop the rest."""
     audios, skipped = [], []
     seen = set()
     for raw in paths or []:
@@ -1020,18 +1027,18 @@ def _expand_audio(paths):
             continue
         path = pathlib.Path(raw.strip().strip('"')).expanduser()
         if path.is_dir():
-            found = sorted((c for c in path.iterdir() if c.is_file() and c.suffix.casefold() == ".flac"),
+            found = sorted((c for c in path.iterdir() if c.is_file() and runtime_paths.is_audio_file(c)),
                            key=lambda c: c.name.casefold())
             if not found:
                 skipped.append({"path": str(path), "reason": "no-flac-in-folder"})
-        elif path.is_file() and path.suffix.casefold() == ".flac":
+        elif path.is_file() and runtime_paths.is_audio_file(path):
             found = [path]
         elif path.is_file():
-            # A dropped lyric file stands for the FLAC beside it.
-            sibling = next((path.with_name(path.name[: -len(sfx)] + ".flac") for sfx in _LYRIC_SUFFIXES
-                            if path.name.casefold().endswith(sfx) and path.with_name(path.name[: -len(sfx)] + ".flac").is_file()), None)
-            if sibling is None and path.suffix.casefold() == ".lrc" and path.with_suffix(".flac").is_file():
-                sibling = path.with_suffix(".flac")
+            # A dropped lyric file stands for the audio beside it.
+            sibling = next((s for s in (_sibling_audio(path.with_name(path.name[: -len(sfx)])) for sfx in _LYRIC_SUFFIXES
+                                        if path.name.casefold().endswith(sfx)) if s), None)
+            if sibling is None and path.suffix.casefold() == ".lrc":
+                sibling = _sibling_audio(path.with_name(path.stem))
             found = [sibling] if sibling else []
             if not found:
                 skipped.append({"path": str(path), "reason": "not-a-flac"})
@@ -1063,7 +1070,7 @@ def _inspect_imports(paths):
 def _write_lyrics(audio, text=None, source=None):
     """Save pasted lyrics (or copy a chosen lyric file) as <song>.lyrics.txt beside the FLAC."""
     audio = pathlib.Path(audio)
-    if not audio.is_file() or audio.suffix.casefold() != ".flac":
+    if not audio.is_file() or not runtime_paths.is_audio_file(audio):
         return 400, {"error": "audio not found"}
     if _find_lyrics(audio) is not None:
         return 409, {"error": "lyrics already exist", "lyrics": str(_find_lyrics(audio))}
@@ -1098,7 +1105,7 @@ if kind == "folder":
 elif kind == "lyrics":
     paths = list(filedialog.askopenfilenames(title="選擇歌詞", filetypes=[("Lyrics", "*.txt *.lrc"), ("All", "*.*")]))
 else:
-    paths = list(filedialog.askopenfilenames(title="選擇 FLAC", filetypes=[("FLAC", "*.flac"), ("All", "*.*")]))
+    paths = list(filedialog.askopenfilenames(title="選擇音檔", filetypes=[("Audio", "*.flac *.m4a"), ("All", "*.*")]))
 root.destroy()
 print(json.dumps({"paths": paths}))
 """
@@ -1212,7 +1219,7 @@ class JobRunner:
             if not isinstance(raw, dict):
                 continue
             audio = pathlib.Path(str(raw.get("audio", ""))).expanduser()
-            if not audio.is_file() or audio.suffix.casefold() != ".flac":
+            if not audio.is_file() or not runtime_paths.is_audio_file(audio):
                 rejected.append({"audio": str(audio), "reason": "audio not found"})
                 continue
             if str(audio).casefold() in busy:
@@ -1691,7 +1698,7 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
                 start, end = 0, size - 1
             length = max(0, end - start + 1)
             suffix = raw.suffix.casefold()
-            mime = "audio/flac" if suffix == ".flac" else "audio/mpeg" if suffix == ".mp3" else "audio/wav" if suffix == ".wav" else "application/octet-stream"
+            mime = "audio/flac" if suffix == ".flac" else "audio/mp4" if suffix == ".m4a" else "audio/mpeg" if suffix == ".mp3" else "audio/wav" if suffix == ".wav" else "application/octet-stream"
             self.send_response(status)
             self.send_header("Content-Type", mime)
             self.send_header("Content-Length", str(length))

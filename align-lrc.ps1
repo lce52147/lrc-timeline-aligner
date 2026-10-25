@@ -92,16 +92,18 @@ if (-not (Test-Path -LiteralPath $backend)) {
 }
 
 if (-not $Paths -or $Paths.Count -eq 0) {
-    Write-Host "Drag one or more .flac files onto Align LRC.bat, or run:" -ForegroundColor Yellow
-    Write-Host "  powershell -ExecutionPolicy Bypass -File .\align-lrc.ps1 <song.flac>" -ForegroundColor Yellow
+    Write-Host "Drag one or more .flac/.m4a files onto Align LRC.bat, or run:" -ForegroundColor Yellow
+    Write-Host "  powershell -ExecutionPolicy Bypass -File .\align-lrc.ps1 <song.flac|song.m4a>" -ForegroundColor Yellow
     Write-Host ""
-    Write-Host "Lyrics may be beside the FLAC as <song>.lyrics.lrc, <song>.lyrics.txt, or <song>.txt." -ForegroundColor Yellow
+    Write-Host "Lyrics may be beside the audio file as <song>.lyrics.lrc, <song>.lyrics.txt, or <song>.txt." -ForegroundColor Yellow
     Write-Host "Use an explicit lyric/template file when you need to preserve known text or timestamps." -ForegroundColor Yellow
     exit 2
 }
 
 # A lyric file is a convenient drag target too: resolve its sibling FLAC and
 # feed the dropped file to the backend as the explicit lyric source.
+# Mirrors runtime_paths.AUDIO_EXTENSIONS (PowerShell cannot import it).
+$audioExtensions = @(".flac", ".m4a")
 $normalizedPaths = @()
 $droppedLyrics = $null
 foreach ($rawPath in $Paths) {
@@ -111,40 +113,52 @@ foreach ($rawPath in $Paths) {
     }
 
     $extension = [System.IO.Path]::GetExtension($inputPath).ToLowerInvariant()
-    if ($extension -eq ".flac") {
+    if ($extension -in $audioExtensions) {
         $normalizedPaths += $inputPath
         continue
     }
 
     if ($extension -notin @(".txt", ".lrc")) {
-        throw "Drop a .flac, or a .txt/.lrc lyric file beside its matching FLAC: $inputPath"
+        throw "Drop a $($audioExtensions -join "/") audio file, or a .txt/.lrc lyric file beside its matching audio: $inputPath"
     }
     if ($Paths.Count -ne 1) {
-        throw "A dropped lyric file must be processed by itself. Drop FLAC files together, or one .txt/.lrc file."
+        throw "A dropped lyric file must be processed by itself. Drop audio files together, or one .txt/.lrc file."
     }
     if ($Lyrics) {
-        throw "Do not combine a dropped lyric file with -Lyrics. Drop the FLAC instead."
+        throw "Do not combine a dropped lyric file with -Lyrics. Drop the audio file instead."
     }
 
     $stem = [System.IO.Path]::GetFileNameWithoutExtension($inputPath)
     if ($stem.EndsWith(".lyrics", [System.StringComparison]::OrdinalIgnoreCase)) {
         $stem = $stem.Substring(0, $stem.Length - ".lyrics".Length)
     }
-    # Explorer-created duplicate names can carry an extra trailing dot.
-    $stem = $stem.TrimEnd(".")
-    $flacPath = Join-Path ([System.IO.Path]::GetDirectoryName($inputPath)) ($stem + ".flac")
-    if (-not (Test-Path -LiteralPath $flacPath -PathType Leaf)) {
-        throw "No matching FLAC was found for dropped lyric file: $inputPath`nExpected: $flacPath"
+    # The exact stem wins (a title may itself end in "." as in "08 R.I.P.");
+    # Explorer-created duplicate names can carry an extra trailing dot, so the
+    # trimmed stem is only the fallback.
+    $lyricDir = [System.IO.Path]::GetDirectoryName($inputPath)
+    $audioPath = $null
+    foreach ($candidateStem in @($stem, $stem.TrimEnd("."))) {
+        foreach ($audioExtension in $audioExtensions) {
+            $candidate = Join-Path $lyricDir ($candidateStem + $audioExtension)
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                $audioPath = $candidate
+                break
+            }
+        }
+        if ($audioPath) { break }
+    }
+    if (-not $audioPath) {
+        throw "No matching audio file ($($audioExtensions -join "/")) was found for dropped lyric file: $inputPath`nExpected: $(Join-Path $lyricDir ($stem + $audioExtensions[0]))"
     }
 
-    $normalizedPaths += [System.IO.Path]::GetFullPath($flacPath)
+    $normalizedPaths += [System.IO.Path]::GetFullPath($audioPath)
     $droppedLyrics = $inputPath
 }
 $Paths = $normalizedPaths
 if ($droppedLyrics) {
     $Lyrics = $droppedLyrics
     Write-Host "Dropped lyric source: $Lyrics" -ForegroundColor DarkCyan
-    Write-Host "Resolved FLAC: $($Paths[0])" -ForegroundColor DarkCyan
+    Write-Host "Resolved audio: $($Paths[0])" -ForegroundColor DarkCyan
 }
 
 if ($Lyrics -and $Paths.Count -eq 1) {

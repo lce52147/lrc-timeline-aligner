@@ -39821,8 +39821,10 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
     progress_log(f"processing: {audio_path.name}")
     if not audio_path.exists():
         raise LrcError(f"Audio file not found: {audio_path}")
-    if audio_path.suffix.lower() != ".flac":
-        raise LrcError(f"Only .flac is supported in v0: {audio_path}")
+    if not runtime_paths.is_audio_file(audio_path):
+        raise LrcError(
+            f"Only {', '.join(runtime_paths.AUDIO_EXTENSIONS)} audio is supported: {audio_path}"
+        )
 
     progress_log("resolving lyric source")
     requested_timing_source = str(args.timing_source)

@@ -57,6 +57,15 @@ def _env_path(
     return path.resolve() if resolve else path
 
 
+# Audio inputs the pipeline accepts. ffmpeg decodes every one of them; keep this
+# the only list (align-lrc.ps1 mirrors it because PowerShell cannot import it).
+AUDIO_EXTENSIONS: tuple[str, ...] = (".flac", ".m4a")
+
+
+def is_audio_file(path: "Path | str") -> bool:
+    return Path(path).suffix.casefold() in AUDIO_EXTENSIONS
+
+
 def project_root() -> Path:
     return _PROJECT_ROOT
 

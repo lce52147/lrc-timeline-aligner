@@ -420,10 +420,10 @@ def _expand_inputs(paths):
         path = Path(raw).expanduser()
         if path.is_dir():
             candidates = sorted(
-                (child for child in path.iterdir() if child.is_file() and child.suffix.casefold() == ".flac"),
+                (child for child in path.iterdir() if child.is_file() and runtime_paths.is_audio_file(child)),
                 key=lambda child: child.name.casefold(),
             )
-        elif path.is_file() and path.suffix.casefold() == ".flac":
+        elif path.is_file() and runtime_paths.is_audio_file(path):
             candidates = [path]
         else:
             print(f"WARN: skipped non-FLAC {path}", file=sys.stderr)
