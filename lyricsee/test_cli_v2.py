@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import subprocess
 import tempfile
@@ -454,6 +455,70 @@ class LyricseeV2CliTests(unittest.TestCase):
             )
             self.assertIsNone(status)
             self.assertTrue(replace)
+
+    def test_legacy_pair_is_renamed_and_judged_existing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            audio = root / "Song.flac"
+            audio.write_bytes(b"")
+            legacy_output = root / "txt" / "Song.lyrics.txt"
+            legacy_provenance = root / "report" / "Song.lyrics.sources.json"
+            legacy_output.parent.mkdir(parents=True)
+            legacy_provenance.parent.mkdir(parents=True)
+            lyrics = "line 1\n"
+            legacy_output.write_bytes(lyrics.encode("utf-8"))
+            legacy_provenance.write_text(
+                json.dumps(
+                    {
+                        "txt_sha256": hashlib.sha256(lyrics.encode("utf-8")).hexdigest(),
+                        "verification": {
+                            "policy": source_policy.VERSION,
+                            "source_verified": True,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with redirect_stderr(StringIO()) as stderr:
+                status, _, replace = cli._inspect_existing(
+                    audio,
+                    output_root=root,
+                    overwrite=False,
+                    no_translate=False,
+                )
+            self.assertEqual(status, "existing")
+            self.assertFalse(replace)
+            self.assertEqual(stderr.getvalue(), "renamed legacy output: Song\n")
+            self.assertTrue((root / "txt" / "Song.txt").is_file())
+            self.assertTrue((root / "report" / "Song.sources.json").is_file())
+            self.assertFalse(legacy_output.exists())
+            self.assertFalse(legacy_provenance.exists())
+
+    def test_dry_run_reports_legacy_pair_without_renaming(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            audio = root / "Song.flac"
+            legacy_output = root / "txt" / "Song.lyrics.txt"
+            legacy_provenance = root / "report" / "Song.lyrics.sources.json"
+            legacy_output.parent.mkdir(parents=True)
+            legacy_provenance.parent.mkdir(parents=True)
+            legacy_output.write_text("legacy\n", encoding="utf-8")
+            legacy_provenance.write_text("{}", encoding="utf-8")
+            with redirect_stderr(StringIO()) as stderr:
+                status, _, replace = cli._inspect_existing(
+                    audio,
+                    output_root=root,
+                    overwrite=False,
+                    no_translate=False,
+                    dry_run=True,
+                )
+            self.assertEqual(status, "legacy_unverified")
+            self.assertFalse(replace)
+            self.assertEqual(stderr.getvalue(), "would rename legacy output: Song\n")
+            self.assertTrue(legacy_output.is_file())
+            self.assertTrue(legacy_provenance.is_file())
+            self.assertFalse((root / "txt" / "Song.txt").exists())
+            self.assertFalse((root / "report" / "Song.sources.json").exists())
 
     def test_dry_run_does_not_construct_http_client_process_or_write_reports(self):
         with tempfile.TemporaryDirectory() as tmp:

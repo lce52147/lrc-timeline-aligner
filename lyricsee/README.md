@@ -72,11 +72,11 @@ python .\\publish_oogg_drafts_preserve_org_20261008.py --all-staged
 python .\\publish_oogg_drafts_preserve_org_20261008.py --all-staged --run
 ```
 
-New file: `lyricsee\\txt\\<song>.lyrics.txt`; original: `lyricsee\\txt\\<song>.lyrics.txt.org`. Historical `report\\<song>.lyrics.sources.json` is similarly preserved with `.org` extension. Translation is a **draft only**: provenance marks `translation_semantics_human_checked=false`, `lrc_timing_verified=false`; no approval is entered into the LRC admission ledger.
+New file: `lyricsee\\txt\\<song>.txt`; original: `lyricsee\\txt\\<song>.txt.org`. Historical `report\\<song>.sources.json` is similarly preserved with `.org` extension. Translation is a **draft only**: provenance marks `translation_semantics_human_checked=false`, `lrc_timing_verified=false`; no approval is entered into the LRC admission ledger.
 
 Duplicate audio filenames in the flat `txt` directory are held back to avoid overwriting unrelated songs. 29 certified BK tracks and 62 tracks with no verified original are never touched by this publishing script. New OOGG batch translation uses 4-row chunks and **defers the second QA pass** until the later verification phase.
 
-**Current first-draft progress (2026-10-08):** 19 verified-original songs have new bilingual TXT under the original filename; 18 historical TXT files were moved byte-for-byte to their `.lyrics.txt.org` backups. One song had no historical TXT. All translations are *unapproved drafts*, and the admission gate remains 0. The detailed per-song audit is `report/DF_OOGG_GPT6_ORG_FINAL_AUDIT_20261008.json`.
+**Current first-draft progress (2026-10-08):** 19 verified-original songs have new bilingual TXT under the original filename; 18 historical TXT files were moved byte-for-byte to their `.txt.org` backups. One song had no historical TXT. All translations are *unapproved drafts*, and the admission gate remains 0. The detailed per-song audit is `report/DF_OOGG_GPT6_ORG_FINAL_AUDIT_20261008.json`.
 
 GPT-6 assistant-first-pass translations are recorded in `report/DF_GPT6_TRANSLATION_DRAFTS_20261008.json` and promoted by `publish_gpt6_drafts_preserve_org_20261008.py --run`. This is separate from `--provider oogg` translation and does not use the user's GPU. Existing manual-pass legacy bilingual candidates at indices 165/199 are held under `translation_staging_20261008/legacy_review`, not overwritten or auto-approved.
 

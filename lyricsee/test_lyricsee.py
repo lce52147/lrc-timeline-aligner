@@ -261,7 +261,7 @@ class LyricseeCoreTests(unittest.TestCase):
             root = Path(tmp)
             audio = root / "song.flac"
             audio.write_bytes(b"fake")
-            output = root / "txt" / "song.lyrics.txt"
+            output = root / "txt" / "song.txt"
             output.parent.mkdir()
             output.write_text("existing\n", encoding="utf-8")
             candidate = core.LyricCandidate(
@@ -307,10 +307,10 @@ class LyricseeCoreTests(unittest.TestCase):
                 search_engine="duckduckgo",
             )
             output, provenance = core.write_result(audio, candidate, output_root=root, overwrite=False)
-            self.assertEqual(output, root / "txt" / "song.lyrics.txt")
-            self.assertEqual(provenance, root / "report" / "song.lyrics.sources.json")
-            self.assertFalse((root / "song.lyrics.txt").exists())
-            self.assertFalse((root / "song.lyrics.sources.json").exists())
+            self.assertEqual(output, root / "txt" / "song.txt")
+            self.assertEqual(provenance, root / "report" / "song.sources.json")
+            self.assertFalse((root / "song.txt").exists())
+            self.assertFalse((root / "song.sources.json").exists())
             self.assertEqual(output.read_text(encoding="utf-8"), "original  translation\n")
             payload = json.loads(provenance.read_text(encoding="utf-8"))
             self.assertEqual(payload["selected_source"], "lrclib")

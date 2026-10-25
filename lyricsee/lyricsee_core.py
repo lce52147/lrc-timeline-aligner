@@ -622,8 +622,8 @@ def write_result(
     output_root = Path(output_root)
     txt_dir = output_root / "txt"
     report_dir = output_root / "report"
-    output = txt_dir / f"{audio_path.stem}.lyrics.txt"
-    provenance = report_dir / f"{audio_path.stem}.lyrics.sources.json"
+    output = txt_dir / f"{audio_path.stem}.txt"
+    provenance = report_dir / f"{audio_path.stem}.sources.json"
     if output.exists() and not overwrite:
         raise FileExistsError(f"Refusing to overwrite existing lyrics: {output}")
     if provenance.exists() and not overwrite:
