@@ -679,10 +679,21 @@ def _song_payload(report_path, report, anchor=None):
                 "lyric": "\n".join(line_lyrics(current_lines, indexes)),
             }
 
+        # Neighbour fit uses the LRC as it is now, so a corrected neighbour counts.
+        written = [line_time(current_lines, indexes[0]) for indexes in mapping]
+        speech_rate = review_presentation.song_speech_rate(assignments, written)
+
         for index, line_indexes in enumerate(mapping):
             assignment = assignments[index]
             feature = features.get(index + 1, {})
             current_cs = line_time(current_lines, line_indexes[0])
+            fit = review_presentation.line_fit(
+                assignment, current_cs,
+                assignments[index - 1] if index else None,
+                written[index - 1] if index else None,
+                written[index + 1] if index + 1 < len(written) else None,
+                speech_rate,
+            )
             auto_cs = line_time(auto_lines, line_indexes[0])
             lyrics = line_lyrics(current_lines, line_indexes)
             candidates, extra_candidates = _candidate_rows(assignment, current_cs, auto_cs)
@@ -694,6 +705,12 @@ def _song_payload(report_path, report, anchor=None):
             )
             options = review_presentation.present_options(candidates, extra_candidates, current_cs)
             alternatives = sum(option.get("kind") != "keep" for option in options)
+            risk_tier, risk_basis = (
+                review_presentation.classify_risk(
+                    assignment, reason_codes, _tag_cs(assignment.get("lrc_tag")),
+                    whisperx_entries if isinstance(whisperx_entries, list) else (), fit,
+                ) if status == "REVIEW" else (None, None)
+            )
             row = {
                 "entry": index + 1,
                 "options": options,
@@ -707,10 +724,9 @@ def _song_payload(report_path, report, anchor=None):
                 "previous": adjacent(index - 1),
                 "next": adjacent(index + 1),
                 "review": status,
-                "risk": review_presentation.review_risk(
-                    assignment, reason_codes, _tag_cs(assignment.get("lrc_tag")),
-                    whisperx_entries if isinstance(whisperx_entries, list) else (),
-                ) if status == "REVIEW" else None,
+                "risk": risk_tier,
+                "risk_basis": risk_basis,
+                "fit": fit,
                 "severity_rank": listed_row.get("severity_rank"),
                 "severity_score": feature.get("severity_score", 0),
                 "candidate_spread": feature.get("candidate_spread_s"),
@@ -827,6 +843,7 @@ def _record_decision(song, body):
         "auto_cs": row.get("auto_cs"),
         "review": row.get("review"),
         "risk": row.get("risk"),
+        "risk_basis": row.get("risk_basis"),
         "reason_codes": list(row.get("reason_codes") or []),
         "severity_rank": row.get("severity_rank"),
         "candidate_spread_s": row.get("candidate_spread"),

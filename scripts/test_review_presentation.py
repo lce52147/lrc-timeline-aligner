@@ -121,5 +121,64 @@ class PayloadWiringTests(unittest.TestCase):
         self.assertEqual(review_presentation.review_risk(few, many, 1000), "high")
         self.assertEqual(review_presentation.review_risk(few, many, 1000, [3]), "normal")
 
+    def test_song_speech_rate_uses_trusted_lines_and_skips_breaks(self):
+        trusted = {"verification_status": "trusted", "romaji": "abcdefghij"}  # 10 chars
+        rows = [dict(trusted) for _ in range(6)] + [{"verification_status": "review-required", "romaji": "abcdefghij"}]
+        # six trusted lines 1.0 s apart (0.1 s/char), the last gap is a 10 s instrumental break
+        times = [0, 100, 200, 300, 400, 500, 1500]
+        self.assertAlmostEqual(review_presentation.song_speech_rate(rows, times), 0.1)
+        # too few trusted lines: every line counts
+        rows[0]["verification_status"] = "review-required"; rows[1]["verification_status"] = "review-required"
+        times = [0, 200, 400, 600, 800, 1000, 1200]
+        self.assertAlmostEqual(review_presentation.song_speech_rate(rows, times), 0.2)
+        # nothing usable: default
+        self.assertEqual(review_presentation.song_speech_rate([{"romaji": "abc"}], [0]), review_presentation.FIT_DEFAULT_RATE_S_PER_CHAR)
+        self.assertEqual(review_presentation.song_speech_rate(None, None), review_presentation.FIT_DEFAULT_RATE_S_PER_CHAR)
+
+    def test_line_fit_measures_slack_and_span(self):
+        rate = 0.1
+        spans = lambda start, end: [{"start": start, "end": end, "score": 0.5}]
+        prev = {"romaji": "abcdefghij"}  # expected 1.0 s
+        line = {"romaji": "abcdefghijklmnopqrst", "ctc_token_spans": spans(10.0, 11.8)}  # expected 2.0 s, span 1.8 s
+        fit = review_presentation.line_fit(line, 1000, prev, 850, 1300, rate)
+        self.assertEqual(fit, {"slack_prev_s": 0.5, "slack_next_s": 1.0, "span_ratio": 0.9, "fits": True})
+        # previous line could not have finished (0.9 s short)
+        self.assertFalse(review_presentation.line_fit(line, 1000, prev, 1090, 1300, rate)["fits"])
+        # does not fit before the next line
+        self.assertFalse(review_presentation.line_fit(line, 1000, prev, 850, 1140, rate)["fits"])
+        # last line: no next, still fits
+        self.assertTrue(review_presentation.line_fit(line, 1000, prev, 850, None, rate)["fits"])
+        # both neighbours far away: a shifted block would still fit, so this is not a fit
+        loose = review_presentation.line_fit(line, 1000, prev, 650, 1500, rate)
+        self.assertEqual((loose["slack_prev_s"], loose["slack_next_s"], loose["fits"]), (2.5, 3.0, False))
+        self.assertTrue(review_presentation.line_fit(line, 1000, prev, 650, 1400, rate)["fits"], "one close neighbour pins the line")
+        self.assertFalse(review_presentation.line_fit(line, 1000, prev, 650, None, rate)["fits"], "a last line far from its predecessor is not pinned")
+        # absurd CTC span
+        stretched = dict(line, ctc_token_spans=spans(10.0, 15.0))
+        self.assertFalse(review_presentation.line_fit(stretched, 1000, prev, 850, 1300, rate)["fits"])
+        # no span at all: cannot fit
+        self.assertFalse(review_presentation.line_fit({"romaji": "abcdefghij"}, 1000, prev, 850, 1300, rate)["fits"])
+        # first line or missing data: None
+        self.assertIsNone(review_presentation.line_fit(line, 1000, None, None, 1300, rate))
+        self.assertIsNone(review_presentation.line_fit({"romaji": ""}, 1000, prev, 850, 1300, rate))
+        self.assertIsNone(review_presentation.line_fit(line, None, prev, 850, 1300, rate))
+
+    def test_fit_demotes_normal_lines_only(self):
+        few = {"entry": 3, "candidates": [{"time": 10.0, "source": "a", "score": 0.8}]}
+        fits = {"slack_prev_s": 0.5, "slack_next_s": 0.5, "span_ratio": 1.0, "fits": True}
+        unfit = dict(fits, fits=False)
+        self.assertEqual(review_presentation.classify_risk(few, ["insufficient-minimum-proof"], 1000), ("normal", "default"))
+        self.assertEqual(review_presentation.classify_risk(few, ["insufficient-minimum-proof"], 1000, (), fits), ("low", "fit"))
+        self.assertEqual(review_presentation.classify_risk(few, ["insufficient-minimum-proof"], 1000, (), unfit), ("normal", "default"))
+        self.assertEqual(review_presentation.review_risk(few, ["insufficient-minimum-proof"], 1000, (), fits), "low")
+        # high stays high whatever the fit says
+        self.assertEqual(review_presentation.classify_risk(few, ["model-disagreement"], 1000, (), fits), ("high", "model-disagreement"))
+        many = ["c%d" % i for i in range(7)]
+        self.assertEqual(review_presentation.classify_risk(few, many, 1000, (), fits), ("high", "many-codes"))
+        self.assertEqual(review_presentation.classify_risk(few, many, 1000, [3], fits), ("low", "fit"))
+        # agreement keeps its own basis
+        cands = [{"time": 10.0 + i * 0.05, "source": "s%d" % i, "score": 0.8} for i in range(5)]
+        self.assertEqual(review_presentation.classify_risk({"entry": 3, "candidates": cands}, [], 1000, (), unfit), ("low", "agreement"))
+
 if __name__ == "__main__":
     unittest.main()

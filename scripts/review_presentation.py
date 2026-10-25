@@ -144,13 +144,145 @@ def _seconds_to_cs(value: object) -> int | None:
     return round(number * 100)
 
 
-def review_risk(assignment: dict, codes: object, written_cs: object, whisperx_entries: object = ()) -> str:
-    """Return "high", "normal" or "low" for one REVIEW line.
+# Fit between neighbours (R5 study, same 36 songs): a "normal" line whose written time leaves
+# room for the previous line to finish, fits before the next line and whose CTC path is at most
+# twice its expected length was within 0.2 s of the checked time in 50 of 53 cases and never off
+# by more than 0.5 s; leave-one-song-out kept 49 of them with no >0.5 s leak. Such lines join
+# "low". The expected length of a line is its romaji length times the song's speech rate.
+# At least one neighbour must sit within 2 s of the expected boundary: with both neighbours far
+# away a whole block shifted by several seconds still "fits" (two such lines in the real data).
+FIT_SLACK_MIN_S = -0.5
+FIT_PIN_MAX_S = 2.0
+FIT_SPAN_RATIO_MAX = 2.0
+FIT_RATE_MIN_LINES = 5
+FIT_RATE_MAX_GAP_S = 4.0
+FIT_RATE_MIN_CHARS = 4
+FIT_DEFAULT_RATE_S_PER_CHAR = 0.12
 
-    low: at least five candidate sources (accepted candidates and alignment hypotheses,
-    rejected ones excluded) sit within 0.3 s of the written time, and no accepted candidate
-    more than 0.5 s away scores above 0.7. high: the line carries model-disagreement, or more
-    than six reason codes without WhisperX row evidence. Everything else is normal.
+
+def _romaji_length(assignment: object) -> int:
+    romaji = assignment.get("romaji") if isinstance(assignment, dict) else None
+    return len(romaji) if isinstance(romaji, str) else 0
+
+
+def _token_span_cs(assignment: object) -> int | None:
+    spans = assignment.get("ctc_token_spans") if isinstance(assignment, dict) else None
+    if not isinstance(spans, list):
+        return None
+    starts = [_seconds_to_cs(s.get("start")) for s in spans if isinstance(s, dict)]
+    ends = [_seconds_to_cs(s.get("end")) for s in spans if isinstance(s, dict)]
+    starts = [v for v in starts if v is not None]
+    ends = [v for v in ends if v is not None]
+    if not starts or not ends:
+        return None
+    return max(ends) - min(starts)
+
+
+def _line_trusted(assignment: object) -> bool:
+    return (
+        isinstance(assignment, dict)
+        and assignment.get("verification_status") == "trusted"
+        and assignment.get("overall_trusted") is not False
+    )
+
+
+def song_speech_rate(assignments: object, written_cs: object) -> float:
+    """Seconds sung per romaji character, median over the song's trusted lines.
+
+    ``written_cs`` holds one written time (centiseconds, or None) per assignment. Gaps of
+    4 s or more are instrumental breaks, not singing, and lines under four characters are
+    too short to time; with fewer than five usable trusted lines every line counts, and a
+    song with none falls back to 0.12 s per character.
+    """
+    rows = assignments if isinstance(assignments, list) else []
+    times = list(written_cs) if isinstance(written_cs, (list, tuple)) else []
+
+    def rates(trusted_only: bool) -> list[float]:
+        values: list[float] = []
+        for index, assignment in enumerate(rows):
+            if index + 1 >= len(times) or index >= len(times):
+                break
+            if trusted_only and not _line_trusted(assignment):
+                continue
+            current, following = _int(times[index]), _int(times[index + 1])
+            chars = _romaji_length(assignment)
+            if current is None or following is None or chars < FIT_RATE_MIN_CHARS:
+                continue
+            gap = following - current
+            if 0 < gap < FIT_RATE_MAX_GAP_S * 100:
+                values.append(gap / 100.0 / chars)
+        return values
+
+    values = rates(True)
+    if len(values) < FIT_RATE_MIN_LINES:
+        values = rates(False)
+    if not values:
+        return FIT_DEFAULT_RATE_S_PER_CHAR
+    values.sort()
+    return values[len(values) // 2]
+
+
+def line_fit(
+    assignment: object,
+    written_cs: object,
+    previous: object,
+    previous_cs: object,
+    following_cs: object,
+    rate: float,
+) -> dict[str, Any] | None:
+    """How well a line's written time fits between its neighbours and its own CTC path.
+
+    Returns ``slack_prev_s`` (room left after the previous line's expected end; None for the
+    first line), ``slack_next_s`` (room before the next line; None for the last line),
+    ``span_ratio`` (CTC token span over expected length) and ``fits`` (both slacks above
+    FIT_SLACK_MIN_S, the smaller one at most FIT_PIN_MAX_S, span ratio at most
+    FIT_SPAN_RATIO_MAX). None when the line has no romaji, no written time or no previous
+    line to measure against.
+    """
+    current = _int(written_cs)
+    chars = _romaji_length(assignment)
+    previous_time = _int(previous_cs)
+    previous_chars = _romaji_length(previous)
+    if current is None or chars <= 0 or previous_time is None or previous_chars <= 0:
+        return None
+    expected = chars * rate * 100.0
+    slack_prev = (current - (previous_time + previous_chars * rate * 100.0)) / 100.0
+    following = _int(following_cs)
+    slack_next = (following - (current + expected)) / 100.0 if following is not None else None
+    span = _token_span_cs(assignment)
+    span_ratio = span / expected if span is not None and expected > 0 else None
+    pinned = min(value for value in (slack_prev, slack_next) if value is not None) <= FIT_PIN_MAX_S
+    fits = bool(
+        slack_prev > FIT_SLACK_MIN_S
+        and (slack_next is None or slack_next > FIT_SLACK_MIN_S)
+        and pinned
+        and span_ratio is not None
+        and span_ratio <= FIT_SPAN_RATIO_MAX
+    )
+    return {
+        "slack_prev_s": round(slack_prev, 2),
+        "slack_next_s": round(slack_next, 2) if slack_next is not None else None,
+        "span_ratio": round(span_ratio, 2) if span_ratio is not None else None,
+        "fits": fits,
+    }
+
+
+def classify_risk(
+    assignment: dict,
+    codes: object,
+    written_cs: object,
+    whisperx_entries: object = (),
+    fit: object = None,
+) -> tuple[str, str]:
+    """Return (tier, basis) for one REVIEW line.
+
+    Tiers are "high", "normal" or "low". low: at least five candidate sources (accepted
+    candidates and alignment hypotheses, rejected ones excluded) sit within 0.3 s of the
+    written time, and no accepted candidate more than 0.5 s away scores above 0.7 (basis
+    "agreement"); or the line is not high and ``fit`` (from ``line_fit``) says it fits between
+    its neighbours (basis "fit"). high: the line carries model-disagreement ("model-disagreement"),
+    or more than six reason codes without WhisperX row evidence ("many-codes"). Everything
+    else is normal ("default").
     """
     written = _int(written_cs)
     code_set = {str(code) for code in codes} if isinstance(codes, (list, tuple, set)) else set()
@@ -177,12 +309,27 @@ def review_risk(assignment: dict, codes: object, written_cs: object, whisperx_en
             if cs is not None and abs(cs - written) <= RISK_AGREE_TOLERANCE_CS:
                 agreeing.add(str(item.get("source")))
         if len(agreeing) >= RISK_AGREE_MIN_SOURCES and competitor <= RISK_COMPETITOR_MAX_SCORE:
-            return "low"
+            return "low", "agreement"
     try:
         entries = {int(value) for value in whisperx_entries or ()}
     except (TypeError, ValueError):
         entries = set()
     has_whisperx = _int(assignment.get("entry")) in entries
-    if "model-disagreement" in code_set or (len(code_set) > RISK_MANY_CODES and not has_whisperx):
-        return "high"
-    return "normal"
+    if "model-disagreement" in code_set:
+        return "high", "model-disagreement"
+    if len(code_set) > RISK_MANY_CODES and not has_whisperx:
+        return "high", "many-codes"
+    if isinstance(fit, dict) and fit.get("fits"):
+        return "low", "fit"
+    return "normal", "default"
+
+
+def review_risk(
+    assignment: dict,
+    codes: object,
+    written_cs: object,
+    whisperx_entries: object = (),
+    fit: object = None,
+) -> str:
+    """Return "high", "normal" or "low" for one REVIEW line (see ``classify_risk``)."""
+    return classify_risk(assignment, codes, written_cs, whisperx_entries, fit)[0]

@@ -1155,6 +1155,35 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         )
         self.assertEqual([song["report"] for song in store.songs], [str(self.report.resolve())])
 
+    def test_rows_carry_risk_basis_and_fit_and_decisions_log_them(self) -> None:
+        data = json.loads(self.report.read_text(encoding="utf-8"))
+        # Give every line a romaji and a plausible CTC span so line 3 fits between its neighbours.
+        for item in data["assignments"]:
+            item["romaji"] = "abcdefghij"
+            item["ctc_token_spans"] = [{"start": 0.0, "end": 0.8, "score": 0.5}]
+        data["assignments"][2]["verification_status"] = "review-required"
+        self.report.write_text(json.dumps(data), encoding="utf-8")
+        self.store.reload()
+        rows = {row["entry"]: row for row in self.store.cached_song(0)["rows"]}
+        self.assertEqual(set(rows), {1, 2, 3, 4, 5})
+        for row in rows.values():
+            self.assertIn("risk_basis", row)
+            self.assertIn("fit", row)
+        self.assertIsNone(rows[1]["fit"], "the first line has no previous line to measure against")
+        for entry in (2, 3, 4, 5):
+            self.assertEqual(set(rows[entry]["fit"]), {"slack_prev_s", "slack_next_s", "span_ratio", "fits"})
+            self.assertIn(rows[entry]["risk_basis"], ("fit", "default", "agreement", "model-disagreement", "many-codes"))
+            if rows[entry]["risk_basis"] == "fit":
+                self.assertEqual(rows[entry]["risk"], "low")
+                self.assertTrue(rows[entry]["fit"]["fits"])
+        self.assertIsNone(rows[5]["fit"]["slack_next_s"], "the last line has no next line")
+        self.assertEqual(rows[3]["fit"]["span_ratio"], 0.8, "neighbouring lines 1 s apart over 10 chars give 0.1 s/char; a 0.8 s span is 0.8 of the expected 1 s")
+        status, result = review_server._record_decision(self.store.cached_song(0), {"entry": 3, "decision": "keep"})
+        self.assertEqual(status, 200)
+        logged = json.loads((self.root / "song.review-decisions.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+        self.assertEqual(logged["risk_basis"], rows[3]["risk_basis"])
+        self.assertEqual(logged["risk"], rows[3]["risk"])
+
     def test_many_flac_targets_parse_each_report_once(self) -> None:
         # Loading a 180-song review used to parse every report once per FLAC target (O(n^2)).
         songs = []
