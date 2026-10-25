@@ -146,11 +146,12 @@ def _seconds_to_cs(value: object) -> int | None:
 
 # Fit between neighbours (R5 study, same 36 songs): a "normal" line whose written time leaves
 # room for the previous line to finish, fits before the next line and whose CTC path is at most
-# twice its expected length was within 0.2 s of the checked time in 50 of 53 cases and never off
-# by more than 0.5 s; leave-one-song-out kept 49 of them with no >0.5 s leak. Such lines join
-# "low". The expected length of a line is its romaji length times the song's speech rate.
-# At least one neighbour must sit within 2 s of the expected boundary: with both neighbours far
-# away a whole block shifted by several seconds still "fits" (two such lines in the real data).
+# twice its expected length joins "low". The expected length of a line is its romaji length times
+# the song's speech rate. At least one neighbour must sit within 2 s of the expected boundary:
+# with both neighbours far away a whole block shifted by several seconds still "fits" (two such
+# lines in the real data). With all of this, 47 normal lines move to "low" (44 within 0.2 s of
+# the checked time, 3 within 0.5 s, none further off), and leave-one-song-out picks the same rule
+# every time with the same result. Without the neighbour condition it was 53 lines, 50 within 0.2 s.
 FIT_SLACK_MIN_S = -0.5
 FIT_PIN_MAX_S = 2.0
 FIT_SPAN_RATIO_MAX = 2.0
