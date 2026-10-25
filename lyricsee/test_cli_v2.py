@@ -461,8 +461,8 @@ class LyricseeV2CliTests(unittest.TestCase):
             root = Path(tmp)
             audio = root / "Song.flac"
             audio.write_bytes(b"")
-            legacy_output = root / "txt" / "Song.lyrics.txt"
-            legacy_provenance = root / "report" / "Song.lyrics.sources.json"
+            legacy_output = root / "txt" / "Song.txt"
+            legacy_provenance = root / "report" / "Song.legacy.sources.json"
             legacy_output.parent.mkdir(parents=True)
             legacy_provenance.parent.mkdir(parents=True)
             lyrics = "line 1\n"
@@ -489,7 +489,7 @@ class LyricseeV2CliTests(unittest.TestCase):
             self.assertEqual(status, "existing")
             self.assertFalse(replace)
             self.assertEqual(stderr.getvalue(), "renamed legacy output: Song\n")
-            self.assertTrue((root / "txt" / "Song.txt").is_file())
+            self.assertTrue((root / "txt" / "Song.lyrics.txt").is_file())
             self.assertTrue((root / "report" / "Song.sources.json").is_file())
             self.assertFalse(legacy_output.exists())
             self.assertFalse(legacy_provenance.exists())
@@ -498,8 +498,8 @@ class LyricseeV2CliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             audio = root / "Song.flac"
-            legacy_output = root / "txt" / "Song.lyrics.txt"
-            legacy_provenance = root / "report" / "Song.lyrics.sources.json"
+            legacy_output = root / "txt" / "Song.txt"
+            legacy_provenance = root / "report" / "Song.legacy.sources.json"
             legacy_output.parent.mkdir(parents=True)
             legacy_provenance.parent.mkdir(parents=True)
             legacy_output.write_text("legacy\n", encoding="utf-8")
@@ -517,7 +517,7 @@ class LyricseeV2CliTests(unittest.TestCase):
             self.assertEqual(stderr.getvalue(), "would rename legacy output: Song\n")
             self.assertTrue(legacy_output.is_file())
             self.assertTrue(legacy_provenance.is_file())
-            self.assertFalse((root / "txt" / "Song.txt").exists())
+            self.assertFalse((root / "txt" / "Song.lyrics.txt").exists())
             self.assertFalse((root / "report" / "Song.sources.json").exists())
 
     def test_dry_run_does_not_construct_http_client_process_or_write_reports(self):

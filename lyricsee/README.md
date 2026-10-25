@@ -83,7 +83,7 @@ python .\\publish_oogg_drafts_preserve_org_20261008.py --all-staged
 python .\\publish_oogg_drafts_preserve_org_20261008.py --all-staged --run
 ```
 
-New file: `lyricsee\\txt\\<song>.txt`; original: `lyricsee\\txt\\<song>.txt.org`. Historical `report\\<song>.sources.json` is similarly preserved with `.org` extension. Translation is a **draft only**: provenance marks `translation_semantics_human_checked=false`, `lrc_timing_verified=false`; no approval is entered into the LRC admission ledger.
+New file: `lyricsee\\txt\\<song>.lyrics.txt`; original: `lyricsee\\txt\\<song>.lyrics.txt.org`. Historical `report\\<song>.sources.json` is similarly preserved with `.org` extension. Translation is a **draft only**: provenance marks `translation_semantics_human_checked=false`, `lrc_timing_verified=false`; no approval is entered into the LRC admission ledger.
 
 Duplicate audio filenames in the flat `txt` directory are held back to avoid overwriting unrelated songs. 29 certified BK tracks and 62 tracks with no verified original are never touched by this publishing script. New OOGG batch translation uses 4-row chunks and **defers the second QA pass** until the later verification phase.
 

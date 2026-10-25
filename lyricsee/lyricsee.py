@@ -104,7 +104,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--output-root",
-        help="Output root containing txt/<stem>.txt and report/<stem>.sources.json (CLI > LYRICSEE_OUTPUT_ROOT > script directory)",
+        help="Output root containing txt/<stem>.lyrics.txt and report/<stem>.sources.json (CLI > LYRICSEE_OUTPUT_ROOT > script directory)",
     )
     parser.add_argument(
         "--endpoint",
@@ -225,15 +225,15 @@ def _bk_stems(bk_dir: Path) -> set[str]:
 
 def _output_paths(output_root: Path, audio_path: Path) -> tuple[Path, Path]:
     return (
-        output_root / "txt" / f"{audio_path.stem}.txt",
+        output_root / "txt" / f"{audio_path.stem}.lyrics.txt",
         output_root / "report" / f"{audio_path.stem}.sources.json",
     )
 
 
 def _legacy_output_paths(output_root: Path, audio_path: Path) -> tuple[Path, Path]:
     return (
-        output_root / "txt" / f"{audio_path.stem}.lyrics.txt",
-        output_root / "report" / f"{audio_path.stem}.lyrics.sources.json",
+        output_root / "txt" / f"{audio_path.stem}.txt",
+        output_root / "report" / f"{audio_path.stem}.legacy.sources.json",
     )
 
 
