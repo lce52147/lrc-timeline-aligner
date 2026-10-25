@@ -190,10 +190,11 @@ class LyricDiff(NamedTuple):
     similarity: float          # SequenceMatcher ratio of canonical full texts
     a_lines: int               # non-filler lines in each text
     b_lines: int
-    matched_lines: int         # equal or notation-equal line pairs
+    matched_lines: int         # non-filler lines of a without any real difference
     real_diffs: list[LineDiff]
     notation_diffs: list[LineDiff]
-    pairs: list[tuple[int, int]] = []   # 1-based (a_line, b_line) of matched pairs
+    pairs: list[tuple[int, int]] = []   # 1-based (a_line, b_line) of lines that map 1:1
+    matched_b_lines: int = 0            # non-filler lines of b without any real difference
 
     @property
     def word_diffs(self) -> int:
@@ -205,7 +206,7 @@ class LyricDiff(NamedTuple):
 
     @property
     def coverage_b(self) -> float:
-        return self.matched_lines / self.b_lines if self.b_lines else 0.0
+        return self.matched_b_lines / self.b_lines if self.b_lines else 0.0
 
     def agrees(self, *, min_coverage: float = 0.75) -> bool:
         """Same lyric: no word-level real difference and most lines matched."""
@@ -237,162 +238,194 @@ def _fragment(text: str) -> str:
 class _Line(NamedTuple):
     number: int
     text: str
-    core: str   # canonical without parentheses
-    full: str   # canonical with parentheses kept
+    canon: str   # canonical text, parentheses content kept
+    start: int   # offset of canon inside the joined text
+    end: int
 
 
-def _prepare(lines: list[str]) -> list[_Line]:
+def _prepare(lines: list[str]) -> tuple[list[_Line], str, set[str]]:
+    """Canonical lines with their offsets in the joined text, plus the
+    canonical forms of every parenthesised group (backing vocals)."""
     prepared: list[_Line] = []
+    parens: set[str] = set()
+    offset = 0
     for number, text in enumerate(lines, start=1):
-        core = canonical_text(text, drop_parens=True)
-        full = canonical_text(text, drop_parens=False)
-        if not full:
+        canon = canonical_text(text, drop_parens=False)
+        if not canon:
             continue
-        if not core:
-            core = full  # a line that is only "(ah ah)" keeps its content
-        prepared.append(_Line(number, text, core, full))
-    return prepared
+        prepared.append(_Line(number, text, canon, offset, offset + len(canon)))
+        offset += len(canon)
+        for group in _PAREN_RE.findall(unicodedata.normalize("NFKC", text)):
+            inner = canonical_text(group, drop_parens=False)
+            if inner:
+                parens.add(inner)
+    return prepared, "".join(line.canon for line in prepared), parens
 
 
-def _span_labels(a_text: str, b_text: str) -> list[tuple[str, str, str]]:
-    """(label, a_span, b_span) for every differing span of two canonical strings."""
-    if a_text == b_text:
-        return []
-    matcher = difflib.SequenceMatcher(None, a_text, b_text, autojunk=False)
-    labels = []
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag == "equal":
+def _lines_in_span(lines: list[_Line], start: int, end: int) -> list[tuple[_Line, bool]]:
+    """Lines overlapping [start, end) with a flag for 'entirely inside'."""
+    if start == end:
+        # an insertion point: attribute it to the line that contains it
+        for line in lines:
+            if line.start <= start < line.end:
+                return [(line, False)]
+        return [(lines[-1], False)] if lines else []
+    result = []
+    for line in lines:
+        if line.end <= start or line.start >= end:
             continue
-        a_span, b_span = a_text[i1:i2], b_text[j1:j2]
-        labels.append((classify_segment(a_span, b_span), a_span, b_span))
-    return labels
-
-
-def _compare_pair(a: _Line, b: _Line) -> list[tuple[str, str, str]]:
-    """Labels of all differing spans between two lines.
-
-    One site writes backing vocals in parentheses, another inline, a third
-    drops them.  The pair is therefore compared with parentheses kept and
-    dropped on either side, and the reading with the fewest real differences
-    wins; needing to drop them is itself a notation difference.
-    """
-    if a.full == b.full:
-        return []
-    best: list[tuple[str, str, str]] | None = None
-    best_key = None
-    for a_text, b_text, dropped in (
-        (a.full, b.full, False),
-        (a.core, b.core, True),
-        (a.core, b.full, True),
-        (a.full, b.core, True),
-    ):
-        labels = _span_labels(a_text, b_text)
-        if dropped and a.core == a.full and b.core == b.full:
-            continue
-        key = (sum(1 for label, _, _ in labels if label == "real"), len(labels))
-        if best_key is None or key < best_key:
-            best, best_key = labels, key
-            if dropped and not any(label == "real" for label, _, _ in labels):
-                best = labels + [("notation:parenthesised", "", "")]
-            if key[0] == 0 and key[1] == 0:
-                break
-    return best or []
+        result.append((line, line.start >= start and line.end <= end))
+    return result
 
 
 def compare_lyrics(a_lines: list[str], b_lines: list[str]) -> LyricDiff:
-    """Align two lyric texts and classify every difference."""
-    a_prepared = _prepare(list(a_lines))
-    b_prepared = _prepare(list(b_lines))
-    a_keys = [line.core for line in a_prepared]
-    b_keys = [line.core for line in b_prepared]
-    similarity = difflib.SequenceMatcher(
-        None,
-        "".join(line.full for line in a_prepared),
-        "".join(line.full for line in b_prepared),
-        autojunk=False,
-    ).ratio()
+    """Align two lyric texts character by character and classify every
+    difference, mapping it back to line numbers.
+
+    Alignment is done on the joined canonical texts, so two copies that only
+    break lines differently (one long line against two short ones) still
+    agree.  A span that one side lacks counts as a missing line when it
+    covers a whole line of the other side, as a vocal fill when it is one,
+    and as a parenthesised backing vocal when the other side has it in
+    brackets.
+    """
+    a_prepared, a_text, a_parens = _prepare(list(a_lines))
+    b_prepared, b_text, b_parens = _prepare(list(b_lines))
+    matcher = difflib.SequenceMatcher(None, a_text, b_text, autojunk=False)
+    similarity = matcher.ratio() if a_text and b_text else 0.0
 
     real: list[LineDiff] = []
-    notation: list[LineDiff] = []
-    pairs: list[tuple[int, int]] = []
-    matched = 0
+    notation: dict[tuple[int | None, int | None], set[str]] = {}
+    real_a: set[int] = set()
+    real_b: set[int] = set()
+    seen_real: set[tuple] = set()
 
-    def record_pair(a: _Line, b: _Line) -> None:
-        nonlocal matched
-        labels = _compare_pair(a, b)
-        real_spans = [(a_span, b_span) for label, a_span, b_span in labels if label == "real"]
-        if real_spans:
-            a_span, b_span = real_spans[0]
-            real.append(LineDiff("word", a.number, b.number, a_span[:_FRAGMENT], b_span[:_FRAGMENT]))
+    def add_real(kind: str, a_line, b_line, a_frag: str, b_frag: str) -> None:
+        key = (kind, a_line, b_line)
+        if key in seen_real:
             return
-        pairs.append((a.number, b.number))
-        if not is_filler(a.core, min_length=1) or not is_filler(b.core, min_length=1):
-            matched += 1
-        if labels:
-            kinds = sorted({label.split(":", 1)[1] for label, _, _ in labels})
-            notation.append(
-                LineDiff("notation:" + "+".join(kinds), a.number, b.number, _fragment(a.text), _fragment(b.text))
-            )
+        seen_real.add(key)
+        real.append(LineDiff(kind, a_line, b_line, a_frag[:_FRAGMENT], b_frag[:_FRAGMENT]))
+        if a_line is not None:
+            real_a.add(a_line)
+        if b_line is not None:
+            real_b.add(b_line)
 
-    def record_missing(line: _Line, side: str) -> None:
-        if is_filler(line.core, min_length=1):
-            notation.append(
-                LineDiff(
-                    "notation:filler",
-                    line.number if side == "b" else None,
-                    line.number if side == "a" else None,
-                    _fragment(line.text) if side == "b" else "",
-                    _fragment(line.text) if side == "a" else "",
-                )
-            )
-            return
-        if side == "b":   # present in a, missing in b
-            real.append(LineDiff("missing_in_b", line.number, None, _fragment(line.text), ""))
-        else:
-            real.append(LineDiff("missing_in_a", None, line.number, "", _fragment(line.text)))
+    def add_notation(kind: str, a_line, b_line) -> None:
+        notation.setdefault((a_line, b_line), set()).add(kind.split(":", 1)[1])
 
-    matcher = difflib.SequenceMatcher(None, a_keys, b_keys, autojunk=False)
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
-            for offset in range(i2 - i1):
-                record_pair(a_prepared[i1 + offset], b_prepared[j1 + offset])
             continue
-        a_block = a_prepared[i1:i2]
-        b_block = b_prepared[j1:j2]
-        if tag == "replace":
-            # Pair the lines inside the block so a single differing word stays
-            # a word difference instead of one missing line plus one extra
-            # line: a notation-only pair wins outright, otherwise the most
-            # similar line (at least half its characters shared).
-            unused_b = list(range(len(b_block)))
-            for a_line in a_block:
-                best_index, best_key = None, None
-                for index in unused_b:
-                    other = b_block[index]
-                    labels = _compare_pair(a_line, other)
-                    real_count = sum(1 for label, _, _ in labels if label == "real")
-                    ratio = difflib.SequenceMatcher(None, a_line.core, other.core, autojunk=False).ratio()
-                    if real_count and ratio < 0.5:
-                        continue
-                    key = (real_count > 0, -ratio)
-                    if best_key is None or key < best_key:
-                        best_index, best_key = index, key
-                if best_index is not None:
-                    unused_b.remove(best_index)
-                    record_pair(a_line, b_block[best_index])
+        a_seg, b_seg = a_text[i1:i2], b_text[j1:j2]
+        label = classify_segment(a_seg, b_seg)
+        if label == "real" and (
+            (not b_seg and a_seg in a_parens)
+            or (not a_seg and b_seg in b_parens)
+            or (a_seg in a_parens and is_filler(b_seg))
+            or (b_seg in b_parens and is_filler(a_seg))
+        ):
+            label = "notation:parenthesised"
+        a_hits = _lines_in_span(a_prepared, i1, i2)
+        b_hits = _lines_in_span(b_prepared, j1, j2)
+        a_first = a_hits[0][0].number if a_hits else None
+        b_first = b_hits[0][0].number if b_hits else None
+        if label != "real":
+            add_notation(label, a_first, b_first)
+            continue
+        if not b_seg:
+            # text present in a, absent in b
+            for line, whole in a_hits:
+                if whole:
+                    if is_filler(line.canon, min_length=1):
+                        add_notation("notation:filler", line.number, None)
+                    elif line.canon in a_parens:
+                        add_notation("notation:parenthesised", line.number, None)
+                    else:
+                        add_real("missing_in_b", line.number, None, _fragment(line.text), "")
                 else:
-                    record_missing(a_line, "b")
-            for index in unused_b:
-                record_missing(b_block[index], "a")
+                    part = a_text[max(i1, line.start):min(i2, line.end)]
+                    if is_filler(part) or part in a_parens:
+                        add_notation("notation:filler" if is_filler(part) else "notation:parenthesised", line.number, b_first)
+                    else:
+                        add_real("word", line.number, b_first, part, "")
             continue
-        for a_line in a_block:
-            record_missing(a_line, "b")
-        for b_line in b_block:
-            record_missing(b_line, "a")
+        if not a_seg:
+            for line, whole in b_hits:
+                if whole:
+                    if is_filler(line.canon, min_length=1):
+                        add_notation("notation:filler", None, line.number)
+                    elif line.canon in b_parens:
+                        add_notation("notation:parenthesised", None, line.number)
+                    else:
+                        add_real("missing_in_a", None, line.number, "", _fragment(line.text))
+                else:
+                    part = b_text[max(j1, line.start):min(j2, line.end)]
+                    if is_filler(part) or part in b_parens:
+                        add_notation("notation:filler" if is_filler(part) else "notation:parenthesised", a_first, line.number)
+                    else:
+                        add_real("word", a_first, line.number, "", part)
+            continue
+        # replaced text: a word difference on every line it touches
+        for line, _whole in a_hits:
+            part = a_text[max(i1, line.start):min(i2, line.end)]
+            b_line = None
+            for other, _ in b_hits:
+                b_line = other.number
+                break
+            add_real("word", line.number, b_line, part, b_seg)
+        for line, _whole in b_hits:
+            if line.number not in real_b:
+                part = b_text[max(j1, line.start):min(j2, line.end)]
+                add_real("word", a_first, line.number, a_seg, part)
 
-    a_count = sum(1 for line in a_prepared if not is_filler(line.core, min_length=1))
-    b_count = sum(1 for line in b_prepared if not is_filler(line.core, min_length=1))
-    return LyricDiff(similarity, a_count, b_count, matched, real, notation, pairs)
+    real_keys = {(d.a_line, d.b_line) for d in real}
+    by_number_a = {line.number: line for line in a_prepared}
+    by_number_b = {line.number: line for line in b_prepared}
+    notation_diffs = [
+        LineDiff(
+            "notation:" + "+".join(sorted(kinds)),
+            a_line,
+            b_line,
+            _fragment(by_number_a[a_line].text) if a_line in by_number_a else "",
+            _fragment(by_number_b[b_line].text) if b_line in by_number_b else "",
+        )
+        for (a_line, b_line), kinds in notation.items()
+        if (a_line, b_line) not in real_keys
+    ]
+
+    a_nonfiller = [line for line in a_prepared if not is_filler(line.canon, min_length=1)]
+    b_nonfiller = [line for line in b_prepared if not is_filler(line.canon, min_length=1)]
+    matched_a = sum(1 for line in a_nonfiller if line.number not in real_a)
+    matched_b = sum(1 for line in b_nonfiller if line.number not in real_b)
+
+    # 1:1 line pairs: an a line without real differences whose span maps onto
+    # exactly one b line (notation differences inside the line are fine).
+    # start_pos maps an a offset to b *after* any insertion at that point,
+    # end_pos to b *before* it, so an a line keeps its span when b adds lines.
+    start_pos = [0] * (len(a_text) + 1)
+    end_pos = [0] * (len(a_text) + 1)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "insert":
+            end_pos[i1] = j1
+            start_pos[i1] = j2
+            continue
+        for k in range(i1, i2):
+            mapped = j1 + (k - i1) if tag == "equal" else j1
+            start_pos[k] = end_pos[k] = mapped
+        start_pos[i2] = end_pos[i2] = j2
+    b_by_span = {(line.start, line.end): line for line in b_prepared}
+    pairs: list[tuple[int, int]] = []
+    for line in a_prepared:
+        if line.number in real_a:
+            continue
+        other = b_by_span.get((start_pos[line.start], end_pos[line.end]))
+        if other is not None and other.number not in real_b:
+            pairs.append((line.number, other.number))
+
+    return LyricDiff(
+        similarity, len(a_nonfiller), len(b_nonfiller), matched_a, real, notation_diffs, pairs, matched_b
+    )
 
 
 def diff_lines_for_report(diff: LyricDiff, *, limit: int = 20) -> list[dict]:
