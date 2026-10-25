@@ -23,7 +23,6 @@ try:
         SEARCH_USER_AGENT,
         TrackIdentity,
         _is_credit_line,
-        _looks_like_non_lyric_web_text,
         artist_match_level,
         title_match_level,
         title_search_keywords,
@@ -35,7 +34,6 @@ except ModuleNotFoundError:  # pragma: no cover - package import style
         SEARCH_USER_AGENT,
         TrackIdentity,
         _is_credit_line,
-        _looks_like_non_lyric_web_text,
         artist_match_level,
         title_match_level,
         title_search_keywords,
@@ -262,7 +260,10 @@ def _lyric_lines(raw: str) -> list[str]:
         text = re.sub(r"[ \t　]+", " ", part).strip()
         if not text:
             continue
-        if _UTANET_NOISE_RE.search(text) or _is_credit_line(text) or _looks_like_non_lyric_web_text(text):
+        # kashi_area holds only the lyric; the broad page-noise regex used for
+        # blogs is not applied here because it would also drop lyric lines
+        # that begin with 唄 or contain "MV".
+        if _UTANET_NOISE_RE.search(text) or _is_credit_line(text):
             continue
         lines.append(text)
     return lines

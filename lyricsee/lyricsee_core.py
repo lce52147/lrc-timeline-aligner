@@ -879,10 +879,28 @@ def artist_match_level(identity: TrackIdentity, candidate_artist: str) -> int:
         for other in candidate:
             if min(len(part), len(other)) >= 3 and (part in other or other in part):
                 return 1
-    hint_text = _normalized(" ".join(identity.hints))
-    if hint_text and any(len(other) >= 2 and other in hint_text for other in candidate):
+    if identity.hints and any(_artist_in_hints(other, identity.hints) for other in candidate):
         return 1
     return 0
+
+
+def _artist_in_hints(name: str, hints: tuple[str, ...]) -> bool:
+    """Does a normalized artist name appear in the album / folder hints?
+
+    Latin names must match whole words ("Lia" in "Lia, 多田葵", not in
+    "Australia"); CJK names of two or more characters match as substrings.
+    """
+    if len(name) < 2:
+        return False
+    joined = unicodedata.normalize("NFKC", " ".join(hints)).casefold()
+    if re.fullmatch(r"[a-z0-9]+", name):
+        loose = re.sub(r"[^\w]+", " ", joined)
+        pattern = r"(?<![a-z0-9])" + re.escape(name) + r"(?![a-z0-9])"
+        if re.search(pattern, re.sub(r"\s+", "", loose)) or re.search(pattern, loose):
+            return True
+        # "the red jumpsuit apparatus" written with spaces in the folder name
+        return bool(re.search(r"(?<![a-z0-9])" + r"\s*".join(map(re.escape, name)) + r"(?![a-z0-9])", loose)) and len(name) >= 4
+    return name in _normalized(joined)
 
 
 def _plain_lyric_pairs(text: str) -> list[LyricPair]:

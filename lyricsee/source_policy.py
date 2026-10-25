@@ -21,7 +21,6 @@ translation is ever invented from search snippets.
 from __future__ import annotations
 
 import hashlib
-import re
 import unicodedata
 from urllib.parse import urlparse
 
