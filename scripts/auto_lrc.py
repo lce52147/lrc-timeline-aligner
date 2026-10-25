@@ -45,6 +45,8 @@ import runtime_paths
 import file_digest
 import model_cache
 from model_cache import ModelCacheMiss
+import segment_realign
+import segment_skeleton
 from multimodel_consensus import (
     PROTOCOL_REVISION as MULTIMODEL_PROTOCOL_REVISION,
     active_model_specs,
@@ -73,7 +75,7 @@ DEFAULT_PROBE_DIR = runtime_paths.probes_dir()
 DEFAULT_VOCAL_CACHE_DIR = runtime_paths.vocal_cache_dir()
 DEFAULT_MODEL_CACHE_DIR = runtime_paths.model_cache_dir()
 MODEL_CACHE_SCHEMA = model_cache.MODEL_CACHE_SCHEMA
-LRC_ALGORITHM_REVISION = "2026-09-28-lrc-v1.2-hubert-generalized-predecessor-tail"
+LRC_ALGORITHM_REVISION = "2026-10-25-lrc-v2.0-segment-realign"
 
 def _evidence_worker_count() -> int:
     """Parallel evidence workers (resident model copies per model family).
@@ -11308,6 +11310,374 @@ def apply_ctc_local_window_realign(
 CTC_LOCAL_WINDOW_SHADOW_RADII = (2, 3)
 
 
+# ---------------------------------------------------------------------------
+# V2 segment-level realignment (LRC 2.0).
+#
+# ``segment_realign.structural_row_map`` reads the whole-song CTC onsets against
+# the lyric structure (repeated-chorus gap templates, a voiced-time syllable
+# rate, monotonic order) and flags the short runs of rows the structure cannot
+# accept: a chorus line sung in the next occurrence, a block placed in an
+# instrumental break, rows that run backwards.  Each run is re-aligned with the
+# bounded CTC helper inside the time window of its unflagged neighbours and
+# published as ``segment-realign-ctc`` hypotheses.  Central decides; nothing
+# here writes a timestamp, and a song with no flagged run makes no helper call.
+SEGMENT_REALIGN_REVISION = "2026-10-25-v2.0-row-structure-1"
+SEGMENT_REALIGN_SOURCE = "segment-realign-ctc"
+SEGMENT_REALIGN_STAGE = "segment-realign"
+SEGMENT_REALIGN_MAX_RUNS = 6
+SEGMENT_REALIGN_MIN_WINDOW_SECONDS = 1.0
+SEGMENT_REALIGN_MAX_WINDOW_SECONDS = 60.0
+SEGMENT_REALIGN_MIN_ANCHOR_SHARE = 0.35
+SEGMENT_REALIGN_RAW_AGREE_SECONDS = 0.45
+SEGMENT_REALIGN_RAW_DISAGREE_SECONDS = 0.75
+SEGMENT_REALIGN_ANCHOR_CTC_SCORE = 0.25
+
+
+def segment_realign_mode(args: argparse.Namespace) -> str:
+    """``auto`` (default) or ``off``; ``LRC_SEGMENT_REALIGN`` overrides the CLI flag."""
+    env = os.environ.get("LRC_SEGMENT_REALIGN", "").strip().lower()
+    if env in {"off", "0", "false", "no"}:
+        return "off"
+    if env in {"auto", "on", "1", "true", "yes"}:
+        return "auto"
+    return "off" if str(getattr(args, "segment_realign", "auto") or "auto").lower() == "off" else "auto"
+
+
+def segment_realign_row_status(
+    entries: list[LyricEntry],
+    index: int,
+    ctc_time: float,
+    ctc_assignment: object,
+    raw_assignment: object,
+) -> str:
+    """Pre-Central stand-in for the output trust tier.
+
+    TRUSTED: an independent raw-ASR onset (trusted score, not borrowed,
+    unambiguous lyric prefix) agrees with the CTC onset.  UNTRUSTED: a confident,
+    uncollapsed CTC row that a trusted raw onset does not contradict.  Everything
+    else is REVIEW and may be moved by the structural map.
+    """
+    if not isinstance(ctc_assignment, dict) or assignment_ctc_path_collapsed(ctc_assignment):
+        return "REVIEW"
+    try:
+        ctc_score = float(ctc_assignment.get("ctc_score", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        ctc_score = 0.0
+    raw_time: float | None = None
+    raw_trusted = False
+    if isinstance(raw_assignment, dict) and not raw_assignment.get("borrowed"):
+        try:
+            raw_time = float(raw_assignment.get("timestamp"))
+            raw_score = float(raw_assignment.get("score", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            raw_time = None
+            raw_score = 0.0
+        raw_trusted = (
+            raw_time is not None
+            and math.isfinite(raw_time)
+            and raw_score >= TRUSTED_ALIGNMENT_SCORE
+            and not has_ambiguous_lyric_prefix(entries, index)
+        )
+    if raw_trusted and raw_time is not None:
+        if abs(raw_time - ctc_time) <= SEGMENT_REALIGN_RAW_AGREE_SECONDS:
+            return "TRUSTED"
+        if abs(raw_time - ctc_time) >= SEGMENT_REALIGN_RAW_DISAGREE_SECONDS:
+            return "REVIEW"
+    return "UNTRUSTED" if ctc_score >= SEGMENT_REALIGN_ANCHOR_CTC_SCORE else "REVIEW"
+
+
+def _segment_realign_observations(
+    entries: list[LyricEntry],
+    timestamps: list[float],
+    assignments: list[object],
+    raw_assignments: list[object],
+) -> tuple[list[segment_realign.RowObservation], list[str], list[str]]:
+    texts = [segment_skeleton._text_for_match(entry_sung_text(entry), japanese_romaji) for entry in entries]
+    observations: list[segment_realign.RowObservation] = []
+    statuses: list[str] = []
+    for index in range(len(entries)):
+        try:
+            current: float | None = float(timestamps[index])
+        except (TypeError, ValueError, IndexError):
+            current = None
+        if current is not None and not math.isfinite(current):
+            current = None
+        assignment = assignments[index] if index < len(assignments) else None
+        raw_assignment = raw_assignments[index] if index < len(raw_assignments) else None
+        status = (
+            "REVIEW" if current is None
+            else segment_realign_row_status(entries, index, current, assignment, raw_assignment)
+        )
+        hints: list[float] = []
+        if isinstance(assignment, dict):
+            for hypothesis in assignment.get("alignment_hypotheses") or []:
+                if isinstance(hypothesis, dict):
+                    try:
+                        hints.append(float(hypothesis.get("raw_candidate_time")))
+                    except (TypeError, ValueError):
+                        continue
+        if isinstance(raw_assignment, dict):
+            try:
+                hints.append(float(raw_assignment.get("timestamp")))
+            except (TypeError, ValueError):
+                pass
+        try:
+            confidence = float(assignment.get("ctc_score", 0.0) or 0.0) if isinstance(assignment, dict) else 0.0
+        except (TypeError, ValueError):
+            confidence = 0.0
+        observations.append(segment_realign.RowObservation(
+            current,
+            max(1, len(texts[index])),
+            status,
+            tuple(sorted({round(hint, 3) for hint in hints if math.isfinite(hint)})),
+            confidence,
+        ))
+        statuses.append(status)
+    return observations, statuses, texts
+
+
+def apply_segment_realign(
+    audio_path: Path,
+    entries: list[LyricEntry],
+    timestamps: list[float],
+    ctc_report: dict[str, object],
+    raw_report: dict[str, object] | None,
+    duration: float,
+    args: argparse.Namespace,
+    *,
+    window_cache: dict[tuple[int, int, str, str], list[object]] | None = None,
+) -> dict[str, object]:
+    """Bounded CTC passes over the runs the structural map flags; hypotheses only.
+
+    Diagnostics go to ``ctc_report["segment_realign"]``.  Rows keep their
+    timestamps; every accepted helper onset becomes a ``segment-realign-ctc``
+    hypothesis in the row's ledger for Central to weigh.
+    """
+    diagnostics: dict[str, object] = {
+        "revision": SEGMENT_REALIGN_REVISION,
+        "status": "skipped",
+        "reason": None,
+        "runs": [],
+        "errors": [],
+    }
+    ctc_report["segment_realign"] = diagnostics
+    assignments = ctc_report.get("assignments")
+    if (
+        not entries
+        or not isinstance(assignments, list)
+        or len(assignments) != len(entries)
+        or len(timestamps) != len(entries)
+    ):
+        diagnostics["reason"] = "no-assignments"
+        return diagnostics
+    raw_assignments = raw_report.get("assignments") if isinstance(raw_report, dict) else None
+    if not isinstance(raw_assignments, list):
+        raw_assignments = []
+    observations, statuses, texts = _segment_realign_observations(entries, timestamps, assignments, raw_assignments)
+    diagnostics["row_status"] = {key: statuses.count(key) for key in ("TRUSTED", "UNTRUSTED", "REVIEW")}
+    try:
+        segments = [(float(start), float(end)) for start, end in analyze_audio(audio_path, duration).segments]
+    except (LrcError, OSError, ValueError, subprocess.SubprocessError) as exc:
+        diagnostics["reason"] = f"audio-analysis-failed: {exc}"[:200]
+        return diagnostics
+    structure = segment_realign.structural_row_map(
+        observations, segments, duration=duration, sim=segment_realign.line_similarity(texts),
+    )
+    diagnostics["structure"] = {"status": structure.status, "reason": structure.reason, **structure.diagnostics}
+    if structure.status != "READY":
+        diagnostics["reason"] = structure.reason
+        return diagnostics
+    anchors = int(structure.diagnostics.get("anchors", 0))
+    if anchors < SEGMENT_REALIGN_MIN_ANCHOR_SHARE * len(entries):
+        # Too little the structure can hold on to (the Choir class): leave the
+        # song to the output-stage whole-song risk marking.
+        diagnostics["status"] = "weak-anchors"
+        diagnostics["reason"] = f"{anchors}/{len(entries)} anchored rows"
+        return diagnostics
+    diagnostics["flagged_entries"] = [row.row + 1 for row in structure.rows if row.flagged]
+    if not structure.runs:
+        diagnostics["status"] = "no-runs"
+        return diagnostics
+
+    def displacement(run: segment_realign.RealignRun) -> float:
+        moves = [
+            abs(proposed - observations[row].time)
+            for row, proposed in zip(range(run.first_row, run.last_row + 1), run.proposed)
+            if observations[row].time is not None
+        ]
+        return max(moves) if moves else 0.0
+
+    runs = sorted(structure.runs, key=lambda run: (-displacement(run), run.first_row))[:SEGMENT_REALIGN_MAX_RUNS]
+    runs.sort(key=lambda run: run.first_row)
+    python_exe = default_ctc_python()
+    helper = Path(__file__).resolve().parent / "ctc_align.py"
+    try:
+        stem_sha = _stable_file_sha256(audio_path)
+        helper_sha = _stable_file_sha256(helper)
+    except OSError:
+        stem_sha = helper_sha = "unresolved"
+    vocal_levels: VocalStemLevels | None = None
+    generated = 0
+    with tempfile.TemporaryDirectory(prefix="lrc-segment-realign-") as temp_name:
+        temp_dir = Path(temp_name)
+        for number, run in enumerate(runs, start=1):
+            first, last = run.first_row, run.last_row
+            run_report: dict[str, object] = {
+                "entries": list(range(first + 1, last + 2)),
+                "proposed": [round(value, 3) for value in run.proposed],
+                "start": round(run.start, 3),
+                "end": round(run.end, 3),
+                "candidates": 0,
+                "rejected": [],
+            }
+            diagnostics["runs"].append(run_report)
+            # The preceding unflagged row is CTC context when the window starts
+            # at its onset (as the local window does); a narrowed window has none.
+            previous = structure.rows[first - 1] if first > 0 else None
+            context_index = first - 1 if previous is not None and abs(previous.proposed - run.start) < 0.011 else None
+            alignment_start_index = first if context_index is None else context_index
+            start_time = max(0.0, run.start - 0.05) if context_index is not None else max(0.0, run.start)
+            end_time = duration if last + 1 >= len(entries) else max(start_time, run.end - 0.04)
+            window_duration = end_time - start_time
+            if not SEGMENT_REALIGN_MIN_WINDOW_SECONDS <= window_duration <= SEGMENT_REALIGN_MAX_WINDOW_SECONDS:
+                run_report["skipped"] = f"window {window_duration:.1f}s outside the allowed range"
+                continue
+            transcript = [entry_sung_text(entry) for entry in entries[alignment_start_index:last + 1]]
+            cache_key = (alignment_start_index, last, f"{start_time:.3f}", f"{end_time:.3f}")
+            rows = window_cache.get(cache_key) if window_cache is not None else None
+            window_request = {
+                "alignment_start_index": alignment_start_index,
+                "end_index": last,
+                "start_time": round(start_time, 3),
+                "end_time": round(end_time, 3),
+                "transcript": transcript,
+            }
+            window_identity = model_cache.identity_local_window_ctc(
+                stem_sha256=stem_sha,
+                model_revision=_BOUNDED_RETRY_MODEL_IDENTITY,
+                model_blob_sha256=_ctc_model_blob_sha256(),
+                helper_protocol_revision=_bounded_retry_protocol_revision(helper_sha),
+                helper_sha256=helper_sha,
+                request=window_request,
+            )
+            window_digest = model_cache.key_from_identity("local-window-ctc", window_identity)
+            helper_state = "in-process-cache"
+            if rows is None:
+                persisted = _model_cache_read("local-window-ctc", window_digest, window_identity, args)
+                if isinstance(persisted, list):
+                    rows = persisted
+                    helper_state = "model-cache"
+            if rows is None:
+                transcript_path = temp_dir / f"run-{number}.json"
+                output_path = temp_dir / f"run-{number}.result.json"
+                transcript_path.write_text(json.dumps(transcript, ensure_ascii=False), encoding="utf-8")
+                command = [
+                    str(python_exe), str(helper), "--audio", str(audio_path), "--transcript", str(transcript_path),
+                    "--output", str(output_path), "--device", args.whisperx_device,
+                    "--start", f"{start_time:.3f}", "--end", f"{end_time:.3f}",
+                ]
+                proc = _run_model_helper_command(command, mode="ctc")
+                if proc.returncode != 0 or not output_path.exists():
+                    message = (proc.stderr or proc.stdout).strip()[:240]
+                    run_report["error"] = message
+                    diagnostics["errors"].append(f"run-{number}: {message}")
+                    continue
+                rows = json.loads(output_path.read_text(encoding="utf-8")).get("entries")
+                helper_state = "helper"
+                if isinstance(rows, list):
+                    if window_cache is not None:
+                        window_cache[cache_key] = rows
+                    _model_cache_write("local-window-ctc", window_digest, window_identity, rows, args)
+            run_report["helper"] = helper_state
+            if not isinstance(rows, list) or len(rows) != last - alignment_start_index + 1:
+                run_report["error"] = "invalid helper output"
+                diagnostics["errors"].append(f"run-{number}: invalid helper output")
+                continue
+            window = {"start": round(start_time, 3), "end": round(end_time, 3)}
+            for offset, row in enumerate(rows):
+                index = alignment_start_index + offset
+                if index < first or not isinstance(row, dict) or not isinstance(row.get("start"), (int, float)):
+                    continue
+                timestamp = float(row["start"])
+                if not start_time <= timestamp <= end_time:
+                    continue
+                edge = ctc_right_edge_pileup_evidence(
+                    {"ctc_local_window": dict(window), "ctc_token_spans": row.get("token_spans")}
+                )
+                if edge.get("right_edge_pileup"):
+                    run_report["rejected"].append(
+                        {"entry": index + 1, "candidate": round(timestamp, 3), "reason": "right-edge-pileup"}
+                    )
+                    continue
+                if vocal_levels is None:
+                    vocal_levels = vocal_stem_levels(ctc_report)
+                if vocal_levels.absent(round(timestamp, 2)):
+                    run_report["rejected"].append(
+                        {"entry": index + 1, "candidate": round(timestamp, 3), "reason": "vocal-absent"}
+                    )
+                    continue
+                assignment = assignments[index]
+                if not isinstance(assignment, dict):
+                    continue
+                try:
+                    score = float(row.get("ctc_score", 0.0) or 0.0)
+                except (TypeError, ValueError):
+                    score = 0.0
+                spans = row.get("token_spans")
+                record_alignment_hypothesis(
+                    assignment,
+                    source=SEGMENT_REALIGN_SOURCE,
+                    stage=SEGMENT_REALIGN_STAGE,
+                    raw_time=timestamp,
+                    confidence=score,
+                    spans=spans,
+                    identity_support="supported" if isinstance(spans, list) and spans else "unavailable",
+                    sequence_support="supported",
+                    parent_source="ctc-global-mms",
+                    parent_time=float(timestamps[index]),
+                    window=dict(window),
+                    mode=f"run-{first + 1}-{last + 1}",
+                )
+                assignment["segment_realign_candidate_generated"] = True
+                run_report["candidates"] = int(run_report["candidates"]) + 1
+                generated += 1
+    diagnostics["status"] = "candidates" if generated else "no-candidates"
+    diagnostics["generated"] = generated
+    return diagnostics
+
+
+def run_segment_realign_stage(
+    audio_path: Path,
+    entries: list[LyricEntry],
+    timestamps: list[float],
+    ctc_report: dict[str, object],
+    raw_report: dict[str, object] | None,
+    duration: float,
+    args: argparse.Namespace,
+    window_cache: dict[tuple[int, int, str, str], list[object]] | None,
+) -> None:
+    """Production entry point: honours ``--segment-realign`` and never raises."""
+    if segment_realign_mode(args) == "off":
+        ctc_report["segment_realign"] = {"revision": SEGMENT_REALIGN_REVISION, "status": "off"}
+        return
+    try:
+        result = apply_segment_realign(
+            audio_path, entries, timestamps, ctc_report, raw_report, duration, args, window_cache=window_cache,
+        )
+    except Exception as exc:  # a V2 candidate stage must never break production
+        ctc_report["segment_realign"] = {
+            "revision": SEGMENT_REALIGN_REVISION,
+            "status": "error",
+            "reason": f"{type(exc).__name__}: {exc}"[:240],
+        }
+        progress_log(f"segment realign failed: {type(exc).__name__}: {exc}")
+        return
+    progress_change_log(
+        "segment realign candidate generated",
+        [run for run in result.get("runs", []) if isinstance(run, dict) and run.get("candidates")],
+    )
+
+
 def run_ctc_local_window_shadows(
     audio_path: Path,
     entries: list[LyricEntry],
@@ -15187,6 +15557,16 @@ def run_auto_backend_competition(
                     args,
                     local_window_cache,
                 )
+                run_segment_realign_stage(
+                    ctc_alignment_audio_path(ctc_candidate["report"], audio_path),
+                    entries,
+                    list(ctc_candidate["timestamps"]),
+                    window_report,
+                    raw_diagnostic_report,
+                    duration,
+                    args,
+                    local_window_cache,
+                )
             progress_change_log("CTC local window candidate generated", local_window_changes)
             window_report.update(inactive_legacy_timing_diagnostics())
             ctc_candidate["timestamps"] = window_timestamps
@@ -18632,6 +19012,12 @@ def plan_local_whisper_requests(
                      if item.source == "segment-constrained-ctc"
                      and item.spans and not item.window_truncated
                      and not item.right_edge_pileup]
+        if not proposals:
+            # V2 segment-realign proposals get the same capped independent probe.
+            proposals = [item for item in items
+                         if item.source == SEGMENT_REALIGN_SOURCE
+                         and item.spans and not item.window_truncated
+                         and not item.right_edge_pileup]
         if len(proposals) == 1:
             segment_by_row[index] = proposals[0]
             gap = abs(proposals[0].written_time.seconds - state.decisions[index].written_time.seconds)
@@ -23453,7 +23839,7 @@ def _augment_local_ctc_candidates_with_runtime_backend_consensus(
     # may corroborate the SAME bounded candidate only if they already
     # satisfy the normal 0.18 s consensus and revision-bound occurrence.
     # Bare S1 CTC / vocal presence is never upgraded on its own.
-    local_sources = {"ctc-local-window", "ctc-opening-local-retry", "segment-constrained-ctc"}
+    local_sources = {"ctc-local-window", "ctc-opening-local-retry", "segment-constrained-ctc", SEGMENT_REALIGN_SOURCE}
     augmented: list[tuple[TimingCandidate, ...]] = []
     for index, items in enumerate(candidate_sets):
         rows = list(items)
@@ -40011,6 +40397,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--skeleton", choices=("segment", "ctc"), default="segment",
         help="Option A: segment-vocal-DP-local-CTC current (whole-song fail-closed to CTC); "
              "ctc: original whole-song MMS CTC skeleton.",
+    )
+    parser.add_argument(
+        "--segment-realign", choices=("auto", "off"), default="auto",
+        help="LRC 2.0: bounded CTC re-alignment of the row runs the lyric structure flags "
+             "(hypotheses for Central only); LRC_SEGMENT_REALIGN=off disables it.",
     )
     parser.add_argument("--whisper-cli", help="Path to whisper.cpp whisper-cli.exe.")
     parser.add_argument("--whisper-model", help="Path to whisper.cpp ggml model.")

@@ -14,7 +14,7 @@ button:hover:not(:disabled){background:var(--panel-3);border-color:var(--line-2)
 .num{font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-variant-numeric:tabular-nums}
 .glass{background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:0 12px 40px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.05);backdrop-filter:blur(18px) saturate(1.3);-webkit-backdrop-filter:blur(18px) saturate(1.3)}
 header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--line);background:rgba(12,15,26,.7);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);position:sticky;top:0;z-index:2}
-header .song-name{font-weight:600;font-size:15px;max-width:34vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}header .spacer{flex:1}.muted{color:var(--fg-3)}
+header .song-name{font-weight:600;font-size:15px;max-width:34vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}header .risk{padding:2px 8px;border-radius:999px;background:rgba(255,99,71,.22);color:#ffb4a2;font-size:12px;white-space:nowrap}header .spacer{flex:1}.muted{color:var(--fg-3)}
 .vol{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--fg-2)}.vol button{padding:4px 8px;min-width:34px}.vol input{width:110px;accent-color:var(--accent-2);cursor:pointer}.vol .num{min-width:64px;text-align:right;font-family:ui-monospace,Consolas,monospace}
 .tile{display:flex;align-items:center;gap:8px;padding:4px 10px;border-radius:10px;background:var(--panel-2);border:1px solid var(--line)}
 .tile .lbl{font-size:11px;color:var(--fg-3);letter-spacing:.04em}.tile .val{font-size:16px;font-weight:600}
@@ -98,6 +98,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
 <body>
 <header>
   <span class="song-name" id="song-name">LRC review</span>
+  <span class="risk" id="song-risk" hidden title="整首高風險：合唱／疊聲類，請整首聽過">整首高風險</span>
   <span class="spacer"></span>
   <span id="status" class="status">loading</span>
   <span id="server-mode" class="muted"></span>
@@ -610,6 +611,10 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     const current = rows[state.selected];
     // header
     document.getElementById('song-name').textContent = song ? song.song : 'LRC review';
+    const risk = song?.detail?.song_risk || song?.song_risk;
+    const riskBadge = document.getElementById('song-risk');
+    riskBadge.hidden = !(risk && risk.class === 'choir');
+    if (risk && risk.class === 'choir') riskBadge.textContent = '整首高風險 ' + (risk.review_rows ?? '?') + '/' + (risk.rows ?? '?') + ' 句需審';
     const doneHere = rows.filter(isDone).length;
     document.getElementById('pos').textContent = doneHere;
     document.getElementById('pos-total').textContent = rows.length;
@@ -666,6 +671,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       const notes = [];
       if (r2?.skipped) notes.push('R2 skipped: ' + esc(r2.reason || 'unknown'));
       if (song.detail?.load_error) notes.push('load error: ' + esc(song.detail.load_error));
+      if (risk && risk.class === 'choir') notes.push('整首高風險（' + esc((risk.reasons || []).join(', ')) + '）：合唱／疊聲類，建議整首聽過再逐句確認');
       if (song.read_only || song.detail?.server_read_only) notes.push('唯讀：' + esc(song.read_only_reason || (song.detail?.server_read_only ? 'server' : 'unknown')));
       if (state.notice) notes.push(esc(state.notice));
       if (notes.length) { const note = document.createElement('div'); note.className = 'meta'; note.innerHTML = notes.join(' · '); queue.appendChild(note); }

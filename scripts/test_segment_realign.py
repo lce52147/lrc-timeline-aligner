@@ -134,5 +134,75 @@ class MappingTests(unittest.TestCase):
         self.assertEqual(plan.windows, ())
 
 
+# --- row-level structural map (V2 P2) -------------------------------------------------
+
+# verse 1 (4 rows), chorus (3 rows, gaps 3 s and 8 s), verse 2, chorus, bridge, chorus
+TIMES = [10.0, 14.0, 18.0, 22.0, 30.0, 33.0, 41.0, 55.0, 59.0, 63.0, 67.0, 80.0, 83.0, 91.0, 100.0, 110.0, 113.0, 121.0]
+SEGMENTS = [(10.0, 26.0), (30.0, 47.0), (55.0, 71.0), (80.0, 97.0), (100.0, 108.0), (110.0, 127.0)]
+DURATION = 130.0
+
+
+def observations(times, review=(), chars=20):
+    return [sr.RowObservation(t, chars, "REVIEW" if i in review else "TRUSTED") for i, t in enumerate(times)]
+
+
+class StructuralRowMapTests(unittest.TestCase):
+    def test_consistent_song_is_left_alone(self):
+        result = sr.structural_row_map(observations(TIMES, review={5, 9, 16}), SEGMENTS, duration=DURATION,
+                                       sim=sr.line_similarity(LYRICS))
+        self.assertEqual(result.status, "READY")
+        self.assertEqual([r.row for r in result.rows if r.flagged], [])
+        self.assertEqual(result.runs, ())
+        self.assertTrue(all(abs(r.proposed - t) <= 0.3 for r, t in zip(result.rows, TIMES)))
+        self.assertGreater(result.diagnostics["sibling_pairs"], 0)
+
+    def test_chorus_line_sung_in_the_next_occurrence_is_pulled_back(self):
+        times = list(TIMES)
+        times[13] = 125.0            # last line of chorus 2 placed 34 s late, after the bridge
+        result = sr.structural_row_map(observations(times, review={13}), SEGMENTS, duration=DURATION,
+                                       sim=sr.line_similarity(LYRICS))
+        self.assertEqual(result.status, "READY")
+        self.assertEqual([r.row for r in result.rows if r.flagged], [13])
+        self.assertEqual(result.rows[12].gap_model, "sibling")   # the gap into row 13 is judged by the sibling chorus
+        self.assertAlmostEqual(result.rows[13].proposed, 91.0, delta=0.5)
+        (run,) = result.runs
+        self.assertEqual((run.first_row, run.last_row), (13, 13))
+        self.assertLessEqual(run.start, 91.0)
+        self.assertGreaterEqual(run.end, 91.0)
+        self.assertAlmostEqual(run.start, 83.0, delta=0.11)
+        self.assertAlmostEqual(run.end, 100.0, delta=0.11)
+
+    def test_backwards_row_is_moved_forward(self):
+        times = list(TIMES)
+        times[5] = 29.0              # middle chorus line placed before the chorus starts
+        result = sr.structural_row_map(observations(times, review={5}), SEGMENTS, duration=DURATION,
+                                       sim=sr.line_similarity(LYRICS))
+        self.assertEqual([r.row for r in result.rows if r.flagged], [5])
+        self.assertGreater(result.rows[5].proposed, 30.0)
+        self.assertAlmostEqual(result.rows[5].proposed, 33.0, delta=0.5)
+
+    def test_anchor_rows_do_not_move_far(self):
+        times = list(TIMES)
+        times[8] = 61.0              # a trusted row off by 2 s stays where it is reported
+        result = sr.structural_row_map(observations(times), SEGMENTS, duration=DURATION, sim=sr.line_similarity(LYRICS))
+        self.assertEqual([r.row for r in result.rows if r.flagged], [])
+
+    def test_too_few_anchors_blocks(self):
+        result = sr.structural_row_map(observations(TIMES, review=set(range(len(TIMES)))), SEGMENTS, duration=DURATION)
+        self.assertEqual(result.status, "BLOCKED")
+        self.assertEqual(result.reason, "too-few-anchors")
+
+    def test_long_run_window_is_narrowed(self):
+        times = list(TIMES)
+        times[13] = 125.0
+        obs = observations(times, review={13})
+        # no anchor between the chorus and the end: the run would span to the song's end
+        obs = obs[:14] + [sr.RowObservation(t, 20, "REVIEW") for t in times[14:]]
+        result = sr.structural_row_map(obs, SEGMENTS, duration=DURATION, sim=sr.line_similarity(LYRICS))
+        self.assertEqual(result.status, "READY")
+        for run in result.runs:
+            self.assertLessEqual(run.end - run.start, sr.RUN_WINDOW_MAX_S + 0.2)
+
+
 if __name__ == "__main__":
     unittest.main()

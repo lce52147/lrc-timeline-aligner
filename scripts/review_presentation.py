@@ -325,6 +325,42 @@ def classify_risk(
     return "normal", "default"
 
 
+SONG_RISK_REVIEW_SHARE = 0.5
+SONG_RISK_MIN_ROWS = 8
+
+
+def song_risk(report: object) -> dict[str, Any]:
+    """Whole-song risk class for the review page (LRC 2.0 P4, the Choir class).
+
+    ``"choir"`` when the song gave the structural map too few anchored rows (the
+    segment-realign stage reported ``weak-anchors``: no independent corroboration
+    for most lines, as with choirs, doubled vocals and heavy effects) or when at
+    least half of its lines (eight or more) need review.  Such a song is listened
+    to as a whole rather than line by line; nothing in the alignment changes.
+    """
+    rows = report.get("assignments") if isinstance(report, dict) else None
+    rows = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+    review_rows = sum(1 for row in rows if row.get("review_required"))
+    share = review_rows / len(rows) if rows else 0.0
+    stage = report.get("segment_realign") if isinstance(report, dict) else None
+    stage = stage if isinstance(stage, dict) else {}
+    structure = stage.get("structure") if isinstance(stage.get("structure"), dict) else {}
+    reasons: list[str] = []
+    if stage.get("status") == "weak-anchors":
+        reasons.append("weak-anchors")
+    if len(rows) >= SONG_RISK_MIN_ROWS and share >= SONG_RISK_REVIEW_SHARE:
+        reasons.append("review-share")
+    return {
+        "class": "choir" if reasons else None,
+        "reasons": reasons,
+        "rows": len(rows),
+        "review_rows": review_rows,
+        "review_share": round(share, 3),
+        "anchors": structure.get("anchors"),
+        "segment_realign": stage.get("status"),
+    }
+
+
 def review_risk(
     assignment: dict,
     codes: object,

@@ -758,6 +758,7 @@ def _song_payload(report_path, report, anchor=None):
         "output_path": str(output_path) if output_path else "",
         "base_sha256": _sha256_bytes(current_data),
         "duration_seconds": _number(report.get("duration_seconds")) or 0.0,
+        "song_risk": review_presentation.song_risk(report),
         "r2": report.get("r2"),
         "report_data": report,
         "output": output_path,
@@ -1523,7 +1524,7 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
                 self._send(403, b"forbidden\n", "text/plain; charset=utf-8")
                 return
             with self.server.store.lock:
-                payload = [{"index": index, "song": song["song"], "rows": len(song["rows"]), "review_rows": song["review_rows"], "read_only": song["read_only"], "read_only_reason": song["read_only_reason"], "load_error": song.get("load_error"), "server_read_only": self.server.store.read_only} for index, song in enumerate(self.server.store.songs)]
+                payload = [{"index": index, "song": song["song"], "rows": len(song["rows"]), "review_rows": song["review_rows"], "read_only": song["read_only"], "read_only_reason": song["read_only_reason"], "load_error": song.get("load_error"), "song_risk": song.get("song_risk"), "server_read_only": self.server.store.read_only} for index, song in enumerate(self.server.store.songs)]
             self._json(200, payload)
             return
         if parsed.path == "/api/version":

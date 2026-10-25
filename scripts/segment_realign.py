@@ -412,3 +412,276 @@ def plan_segment_realign(
     sections = lyric_sections(canon, sim=sim)
     passages = vocal_passages(segments, duration=duration)
     return map_sections(sections, passages, duration=duration, line_chars=chars, priors=priors, pair_similarity=pair_similarity)
+
+
+# ---------------------------------------------------------------------------
+# Row-level structural map (V2 P2).
+#
+# The whole-song CTC path is right for about 95 % of the lines; its failures are
+# short runs of lines sung in another section, placed in an instrumental break,
+# or collapsed on top of a repeated line.  Instead of mapping sections to coarse
+# voiced passages (consecutive sections rarely have a 1.5 s gap between them),
+# this map runs a Viterbi path over a 0.1 s grid for the rows themselves:
+#   * rows with independent corroboration (``status`` TRUSTED / UNTRUSTED) are
+#     observations with a strong weight and a narrow state range;
+#   * review rows are weak observations that may move anywhere between their
+#     nearest anchors;
+#   * the time between two consecutive rows must fit the lyric structure: inside
+#     a repeated section (chorus) it must equal the same gap in a sibling
+#     occurrence (median absolute difference on the evaluation set 0.02 s, 95th
+#     percentile 0.33 s); elsewhere the *voiced* time between the onsets must
+#     match the line's length times the song's syllable rate (5th/95th
+#     percentile of the ratio 0.57 / 1.41 on the evaluation set).
+# Rows the path moves by more than a second are flagged; consecutive flagged
+# rows form a realign run bounded by the neighbouring unflagged rows.  The run
+# bounds are what a bounded CTC pass needs; the proposed time is only a hint.
+
+import numpy as np
+
+GRID_S = 0.1
+VOICED_FLOOR_S = 0.3            # a line may start in a VAD gap (10 % of true onsets do)
+OBS_WEIGHT = {"TRUSTED": 3.0, "UNTRUSTED": 2.0}   # cost per second of displacement
+OBS_WEIGHT_REVIEW = 0.3
+# A review row with a decent CTC score resists moving more than a near-zero one.
+REVIEW_WEIGHT_TIERS = ((0.15, OBS_WEIGHT_REVIEW), (math.inf, 0.6))   # (ctc score below, weight)
+OBS_CAP_S = 8.0
+OBS_RANGE = {"TRUSTED": 2.0, "UNTRUSTED": 4.0}    # half range of the state grid around an anchor
+REVIEW_RANGE_S = 60.0           # a review row with no anchor on one side still stays within this
+HINT_BONUS = 0.4                # a time some backend already proposed is a little cheaper
+HINT_TOL_S = 0.25
+VAD_ABSENT_COST = 0.15
+W_RATE = 1.4                    # per unit |ln(voiced gap / expected)| beyond the dead zone
+RATE_DEAD_ZONE = 0.47           # ln(1.6): gaps within 0.62x..1.6x of the expectation cost nothing
+W_SIBLING = 1.0 / 0.3           # per second of disagreement with the sibling chorus gap
+MIN_GAP_RATIO = 0.3             # a line lasts at least this share of its expected time
+MIN_GAP_S = 0.15
+DEFAULT_RATE_S_PER_CHAR = 0.18  # romaji characters; evaluation-set medians 0.10-0.30
+MIN_RATE_PAIRS = 5
+MIN_ANCHORS = 3
+FLAG_MOVE_REVIEW_S = 1.0
+FLAG_MOVE_ANCHOR_S = 2.5
+RUN_WINDOW_MAX_S = 45.0
+RUN_WINDOW_SLACK_S = 6.0
+
+
+@dataclass(frozen=True)
+class RowObservation:
+    """What the pipeline knows about one lyric row before Central runs."""
+
+    time: float | None                  # current (whole-song CTC) onset in seconds
+    chars: int                          # romaji length used for the rate model
+    status: str = "REVIEW"              # TRUSTED / UNTRUSTED are anchors, anything else is weak
+    hints: tuple[float, ...] = ()       # other onset proposals (hypotheses / candidates), seconds
+    confidence: float = 0.0             # the row's own CTC score; sets a review row's weight
+
+
+@dataclass(frozen=True)
+class RowPlacement:
+    row: int
+    current: float | None
+    proposed: float
+    flagged: bool
+    anchor: bool
+    gap_model: str                      # how the gap to the next row was judged: sibling / rate / none
+
+
+@dataclass(frozen=True)
+class RealignRun:
+    first_row: int
+    last_row: int
+    start: float                        # bounded by the neighbouring unflagged rows
+    end: float
+    proposed: tuple[float, ...]
+
+
+@dataclass(frozen=True)
+class StructuralMap:
+    status: str
+    reason: str
+    rows: tuple[RowPlacement, ...]
+    runs: tuple[RealignRun, ...]
+    diagnostics: dict
+
+
+def voiced_cumulative(segments: Sequence[tuple[float, float]], duration: float, grid: float = GRID_S) -> np.ndarray:
+    """Cumulative voiced seconds at every grid point (length ``int(duration/grid)+1``)."""
+    n = int(math.floor(max(0.0, duration) / grid)) + 1
+    voiced = np.zeros(n, dtype=float)
+    for start, end in segments:
+        a = max(0, int(math.floor(float(start) / grid)))
+        b = min(n, int(math.ceil(float(end) / grid)))
+        if b > a:
+            voiced[a:b] = 1.0
+    return np.concatenate(([0.0], np.cumsum(voiced) * grid))[:n]
+
+
+def sibling_gap_templates(sim: Sequence[Sequence[float]], obs: Sequence[RowObservation]) -> dict[int, float]:
+    """Row index -> gap to the next row measured on a sibling occurrence of the same chorus.
+
+    Only sibling pairs whose two rows are anchors contribute; the template is their median.
+    """
+    templates: dict[int, float] = {}
+    for length, starts in chorus_families(sim):
+        for offset in range(length - 1):
+            gaps: list[tuple[int, float]] = []
+            for start in starts:
+                r0, r1 = start + offset, start + offset + 1
+                if r1 >= len(obs):
+                    continue
+                a, b = obs[r0], obs[r1]
+                if a.status in OBS_WEIGHT and b.status in OBS_WEIGHT and a.time is not None and b.time is not None and b.time > a.time:
+                    gaps.append((start, b.time - a.time))
+            for start in starts:
+                others = sorted(g for s, g in gaps if s != start)
+                if others:
+                    templates[start + offset] = others[len(others) // 2]
+    return templates
+
+
+def song_syllable_rate(obs: Sequence[RowObservation], voiced: np.ndarray, grid: float = GRID_S) -> tuple[float, int]:
+    """Median voiced seconds per romaji character over consecutive anchor pairs."""
+    rates: list[float] = []
+    for a, b in zip(obs, obs[1:]):
+        if a.status not in OBS_WEIGHT or b.status not in OBS_WEIGHT or a.time is None or b.time is None:
+            continue
+        if b.time <= a.time:
+            continue
+        ia, ib = _grid_index(a.time, voiced, grid), _grid_index(b.time, voiced, grid)
+        gap = float(voiced[ib] - voiced[ia]) + VOICED_FLOOR_S
+        rates.append(gap / max(1, a.chars))
+    if len(rates) < MIN_RATE_PAIRS:
+        return DEFAULT_RATE_S_PER_CHAR, len(rates)
+    rates.sort()
+    return rates[len(rates) // 2], len(rates)
+
+
+def review_weight(confidence: float) -> float:
+    """Observation weight (cost per second of displacement) of a non-anchor row."""
+    for ceiling, weight in REVIEW_WEIGHT_TIERS:
+        if confidence < ceiling:
+            return weight
+    return REVIEW_WEIGHT_TIERS[-1][1]
+
+
+def _grid_index(t: float, voiced: np.ndarray, grid: float) -> int:
+    return min(len(voiced) - 1, max(0, int(round(t / grid))))
+
+
+def structural_row_map(
+    obs: Sequence[RowObservation],
+    segments: Sequence[tuple[float, float]],
+    *,
+    duration: float,
+    sim: Sequence[Sequence[float]] | None = None,
+    grid: float = GRID_S,
+) -> StructuralMap:
+    """Viterbi path for every row; flags the rows the lyric structure moves."""
+    obs = tuple(obs)
+    n = len(obs)
+    if n == 0 or duration <= grid:
+        return StructuralMap("BLOCKED", "no-rows", (), (), {})
+    anchors = [o.status in OBS_WEIGHT and o.time is not None for o in obs]
+    if sum(anchors) < MIN_ANCHORS:
+        return StructuralMap("BLOCKED", "too-few-anchors", (), (), {"anchors": sum(anchors), "rows": n})
+    voiced = voiced_cumulative(segments, duration, grid)
+    T = len(voiced)
+    times = np.arange(T) * grid
+    in_vad = np.zeros(T, dtype=bool)
+    for start, end in segments:
+        a = max(0, int(math.floor(float(start) / grid)))
+        b = min(T, int(math.ceil(float(end) / grid)) + 1)
+        in_vad[a:b] = True
+    rate, rate_pairs = song_syllable_rate(obs, voiced, grid)
+    templates = sibling_gap_templates(sim, obs) if sim is not None else {}
+
+    # state range per row
+    ranges: list[tuple[int, int]] = []
+    for i, o in enumerate(obs):
+        if anchors[i]:
+            half = OBS_RANGE[o.status]
+            lo, hi = o.time - half, o.time + half
+        else:
+            prev_anchor = next((obs[j].time for j in range(i - 1, -1, -1) if anchors[j]), None)
+            next_anchor = next((obs[j].time for j in range(i + 1, n) if anchors[j]), None)
+            lo = prev_anchor - OBS_RANGE["UNTRUSTED"] if prev_anchor is not None else (o.time - REVIEW_RANGE_S if o.time is not None else 0.0)
+            hi = next_anchor + OBS_RANGE["UNTRUSTED"] if next_anchor is not None else (o.time + REVIEW_RANGE_S if o.time is not None else duration)
+        k0 = max(0, min(T - 1, int(math.floor(lo / grid))))
+        k1 = max(k0, min(T - 1, int(math.ceil(hi / grid))))
+        ranges.append((k0, k1))
+
+    def observation_cost(i: int, idx: np.ndarray) -> np.ndarray:
+        o = obs[i]
+        t = times[idx]
+        cost = np.where(in_vad[idx], 0.0, VAD_ABSENT_COST)
+        if o.time is not None:
+            weight = OBS_WEIGHT.get(o.status) or review_weight(float(o.confidence or 0.0))
+            cost = cost + weight * np.minimum(np.abs(t - o.time), OBS_CAP_S)
+        if o.hints:
+            hints = np.asarray(o.hints, dtype=float)
+            near = np.min(np.abs(t[:, None] - hints[None, :]), axis=1) <= HINT_TOL_S
+            cost = cost - HINT_BONUS * near
+        return cost
+
+    gap_models: list[str] = []
+    idx_prev = np.arange(ranges[0][0], ranges[0][1] + 1)
+    cost_prev = observation_cost(0, idx_prev)
+    back: list[np.ndarray] = []
+    for i in range(1, n):
+        idx = np.arange(ranges[i][0], ranges[i][1] + 1)
+        t0, t1 = times[idx_prev], times[idx]
+        dt = t1[None, :] - t0[:, None]
+        template = templates.get(i - 1)
+        expected_rate = rate * max(1, obs[i - 1].chars)
+        if template is not None:
+            trans = W_SIBLING * np.abs(dt - template)
+            min_gap = max(MIN_GAP_S, MIN_GAP_RATIO * template)
+            gap_models.append("sibling")
+        else:
+            vg = voiced[idx][None, :] - voiced[idx_prev][:, None] + VOICED_FLOOR_S
+            trans = W_RATE * np.maximum(np.abs(np.log(np.maximum(vg, 1e-3) / expected_rate)) - RATE_DEAD_ZONE, 0.0)
+            min_gap = max(MIN_GAP_S, MIN_GAP_RATIO * expected_rate)
+            gap_models.append("rate")
+        trans = np.where(dt >= min_gap, trans, np.inf)
+        total = cost_prev[:, None] + trans
+        best_prev = np.argmin(total, axis=0)
+        cost_here = total[best_prev, np.arange(len(idx))]
+        if not np.isfinite(cost_here).any():
+            return StructuralMap("BLOCKED", f"no-monotonic-path-at-row-{i}", (), (), {"anchors": sum(anchors), "rows": n})
+        back.append(idx_prev[best_prev])
+        cost_prev = cost_here + observation_cost(i, idx)
+        idx_prev = idx
+    gap_models.append("none")
+    path_idx = [int(idx_prev[int(np.argmin(cost_prev))])]
+    for i in range(n - 1, 0, -1):
+        prev_idx = back[i - 1]
+        local = path_idx[-1] - ranges[i][0]
+        path_idx.append(int(prev_idx[local]))
+    path_idx.reverse()
+    path = [float(times[k]) for k in path_idx]
+
+    rows: list[RowPlacement] = []
+    for i, o in enumerate(obs):
+        moved = abs(path[i] - o.time) if o.time is not None else 0.0
+        threshold = FLAG_MOVE_ANCHOR_S if anchors[i] else FLAG_MOVE_REVIEW_S
+        rows.append(RowPlacement(i, o.time, round(path[i], 3), bool(o.time is not None and moved > threshold), anchors[i], gap_models[i]))
+    runs: list[RealignRun] = []
+    i = 0
+    while i < n:
+        if not rows[i].flagged:
+            i += 1
+            continue
+        j = i
+        while j + 1 < n and rows[j + 1].flagged:
+            j += 1
+        start = path[i - 1] if i > 0 else 0.0
+        end = path[j + 1] if j + 1 < n else duration
+        if end - start > RUN_WINDOW_MAX_S:
+            start = max(start, min(path[i:j + 1]) - RUN_WINDOW_SLACK_S)
+            end = min(end, max(path[i:j + 1]) + RUN_WINDOW_SLACK_S)
+        runs.append(RealignRun(i, j, round(start, 3), round(end, 3), tuple(round(p, 3) for p in path[i:j + 1])))
+        i = j + 1
+    return StructuralMap("READY", "ok", tuple(rows), tuple(runs), {
+        "rows": n, "anchors": sum(anchors), "rate_s_per_char": round(rate, 4), "rate_pairs": rate_pairs,
+        "sibling_pairs": len(templates), "flagged": sum(r.flagged for r in rows), "runs": len(runs),
+        "cost": round(float(np.min(cost_prev)), 4),
+    })

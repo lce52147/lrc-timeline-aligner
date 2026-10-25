@@ -180,5 +180,29 @@ class PayloadWiringTests(unittest.TestCase):
         cands = [{"time": 10.0 + i * 0.05, "source": "s%d" % i, "score": 0.8} for i in range(5)]
         self.assertEqual(review_presentation.classify_risk({"entry": 3, "candidates": cands}, [], 1000, (), unfit), ("low", "agreement"))
 
+class SongRiskTests(unittest.TestCase):
+    def rows(self, n, review):
+        return [{"entry": i + 1, "review_required": i < review} for i in range(n)]
+
+    def test_half_of_the_lines_in_review_is_the_choir_class(self):
+        risk = review_presentation.song_risk({"assignments": self.rows(44, 37)})
+        self.assertEqual(risk["class"], "choir")
+        self.assertEqual(risk["reasons"], ["review-share"])
+        self.assertEqual((risk["rows"], risk["review_rows"]), (44, 37))
+
+    def test_weak_anchors_from_the_segment_stage_is_the_choir_class(self):
+        report = {"assignments": self.rows(40, 10), "segment_realign": {"status": "weak-anchors", "structure": {"anchors": 7}}}
+        risk = review_presentation.song_risk(report)
+        self.assertEqual((risk["class"], risk["reasons"], risk["anchors"]), ("choir", ["weak-anchors"], 7))
+
+    def test_ordinary_song_has_no_class(self):
+        risk = review_presentation.song_risk({"assignments": self.rows(43, 19), "segment_realign": {"status": "no-runs"}})
+        self.assertIsNone(risk["class"])
+        self.assertEqual(risk["review_share"], 0.442)
+        # too few rows for the share rule
+        self.assertIsNone(review_presentation.song_risk({"assignments": self.rows(6, 5)})["class"])
+        self.assertIsNone(review_presentation.song_risk({})["class"])
+
+
 if __name__ == "__main__":
     unittest.main()
