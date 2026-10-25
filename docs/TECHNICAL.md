@@ -18,6 +18,49 @@ Checked reference timestamps are never part of normal automatic inference. Expli
 
 The `reviewer-validity` selector now compares reviewer support before a reviewer-endorsed current timestamp can yield to a distant independent-consensus candidate. Candidate seed ranking also uses acoustic score and producer semantics before provenance identity. The R2 reviewer payload now applies the same generated-title-card filtering as the timing backend. On the 27-song development split, PCO@0.2 improved from 87.24% to 91.49%, rows over 500 ms fell from 69 to 49, and rows over 1 s fell from 36 to 30, with no newly created rows over either threshold. A descriptive evaluation of the full 37-song pool improved PCO@0.2 from 82.89% to 86.92%, reduced rows over 500 ms from 141 to 115 and rows over 1 s from 95 to 87, and created no new rows over either threshold. These are dev27 validation plus a full-pool descriptive evaluation; the former acceptance set is part of that pool, so the results have not been independently validated.
 
+## Segment realign (LRC 2.0)
+
+`scripts/segment_realign.py` + `auto_lrc.apply_segment_realign`, run after the CTC
+local-window stage and before Central (same branch as the local window: raw ASR
+available, skeleton not SEGMENT_CURRENT).
+
+- **Structural row map** (`structural_row_map`): a Viterbi path over a 0.1 s grid.
+  Rows with independent corroboration are anchors (raw ASR within 0.45 s of the CTC
+  onset → TRUSTED, weight 3.0/s, ±2 s; uncollapsed CTC score ≥ 0.25 that raw does not
+  contradict → UNTRUSTED, 2.0/s, ±4 s); other rows are weak observations (0.3/s, or
+  0.6/s when their CTC score is ≥ 0.15) that may move between their nearest anchors.
+  Transition costs: inside a repeated section the gap must equal the same gap in a
+  sibling occurrence (1.0 per 0.3 s; median sibling disagreement on the evaluation set
+  0.02 s, 95th percentile 0.33 s); elsewhere the *voiced* time between onsets (VAD
+  segments of the vocal stem) must match the row's romaji length times the song's
+  median rate, free within 0.62×–1.6× (`RATE_DEAD_ZONE`), then 1.4 per log unit.
+  Monotonic order is a hard constraint. Rows moved by more than 1.0 s (anchors 2.5 s)
+  are flagged; consecutive flagged rows form a run bounded by the neighbouring
+  unflagged rows (narrowed to proposed ±6 s when wider than 45 s). Fewer than 3
+  anchors → BLOCKED; anchors below 35 % of the rows → `weak-anchors` (Choir class).
+- **Bounded CTC runs**: at most 6 runs per song, window 1–60 s, preceding row as
+  CTC context (as the local window does), `ctc_align.py --start --end` through the
+  resident helper, model cache under the `local-window-ctc` kind (identical windows
+  share entries with the local window), right-edge-pileup and vocal-absent rejection,
+  then `record_alignment_hypothesis(source="segment-realign-ctc", stage="segment-realign",
+  identity_support="supported" when spans exist, sequence_support="supported",
+  parent_source="ctc-global-mms")`. Nothing writes a timestamp; a song without a run
+  makes no helper call and its LRC is byte-identical to the pre-2.0 output.
+- **Central hooks**: the source joins the local-CTC Raw/WhisperX corroboration set and
+  the ≥ 3 s displaced-row local Whisper probe (only when no `segment-constrained-ctc`
+  proposal exists). `CORROBORATED_REALIGNMENT_SOURCES` is untouched.
+- **Switches / diagnostics**: `--segment-realign {auto,off}`, `LRC_SEGMENT_REALIGN=off`;
+  report key `segment_realign` (status, row_status, structure, flagged_entries, runs,
+  generated, errors, revision `SEGMENT_REALIGN_REVISION`).
+- **Output stage**: `review_presentation.song_risk` marks the Choir class
+  (`weak-anchors`, or ≥ 50 % of ≥ 8 rows in review) and the review page shows a
+  whole-song badge; alignment is unchanged.
+- **Evaluation** (36 BK songs, cloud, `F:\_RuntimePrompt\LRC20\reports\`): flagged
+  rows independent 2 (1 true / 1 false), derived without Choir 7 (6 / 1), Choir 7
+  (4 / 3); run windows contain the BK onset in 15/16 flagged true errors; 6 of the 23
+  ≥ 1 s errors are caught (My Dearest ×5, 影色舞 e2). Sub-second line errors and 2–5 s
+  block shifts are out of scope.
+
 ## Final timing self-check (F1–F4, post-Central)
 
 After Central selects immutable lyric times, the final report audits every line and can **only reduce trust**, not replace, shift, or sort timestamps. Flagged lines receive timing_trusted=false, overall_trusted=false, review_required=true, and explicit self_check_flags. The trust label does not guarantee manually correct onset.

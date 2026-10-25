@@ -2,6 +2,14 @@
 
 v1.7 以後用中文記錄；v1.6 以前保留原本的英文內容。
 
+## v2.0（草稿，版本號與發佈由 EvanOG 決定）
+
+### v2.0.0（未發佈）
+- **段落級重對齊（segment realign）。** 全曲 CTC 與 local window 之後、Central 之前多一個階段：用歌詞結構（副歌各次出現的對應行間隔必須一樣、每行長度要對得上有人聲的秒數、時間必須單調遞增）在 0.1 秒格上重算每一行該在哪裡；有 raw ASR 佐證或 CTC 分數夠高的行是錨點。被結構推開超過 1 秒的連續幾行組成一個 run，在前後沒被動到的行之間的時間窗內再跑一次 bounded CTC，結果以 `segment-realign-ctc` 候選交給 Central 決定。不改任何時間、不碰輸出；錨點不到 35% 的歌整首不碰；沒有 run 的歌零模型呼叫，LRC 完全相同。`--segment-realign {auto,off}`（預設 auto）或 `LRC_SEGMENT_REALIGN=off` 可關閉。報告多 `segment_realign` 區塊；`LRC_ALGORITHM_REVISION` 改為 `2026-10-25-lrc-v2.0-segment-realign`。鎖定的錯誤：副歌某行唱成下一次出現、整段被排到間奏、時間倒退——36 首驗證集上抓到 6 行 ≥ 1 秒的大錯（My Dearest 5 行、影色舞 1 行），誤報 2 行；2–5 秒的整段平移和 0.5–1 秒的行級偏移不在範圍。
+- **整首高風險（Choir 類）。** 結構圖抓不到足夠錨點（可信行 < 35%）或至少一半（≥ 8 行）的句子需審的歌，審核頁標題旁顯示「整首高風險 N/M 句需審」並在工作區說明，建議整首聽過再逐句確認。對齊本身不變。
+- **評估集重建。** 37 份校正 LRC 裡 22 份是從工具輸出改來的；改以 15 份獨立校正（562 行）為主，22 份衍生校正（813 行）只當回歸，審聽紀錄 37 行另計。起點：independent bad（> 0.5 秒）16 行、derived 40 行（Choir 17 行）。
+- **測試。** `scripts\test_segment_realign.py`（+6）、`scripts\test_v2_segment_realign_stage.py`（新，fake helper 6 題）、`scripts\test_review_presentation.py`（+3）；`check_public.py` 納入新測試。
+
 ## v1.8
 
 ### v1.8.0

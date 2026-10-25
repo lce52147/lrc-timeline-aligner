@@ -88,6 +88,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -Prefetch
 
 頂欄的音量滑桿以 dB 顯示（0 ～ −100 dB，跟 foobar2000 一樣），滾輪每次 ±1 dB，`M` 靜音；音量會記在瀏覽器裡，下次打開仍然有效。
 
+標題旁出現紅色的「整首高風險 N/M 句需審」時，表示這首歌（通常是合唱、疊聲或效果很重的歌）大部分句子都沒有獨立證據可以確認，建議先整首聽過再逐句確認。
+
 按 `?` 打開的視窗裡有兩個可選的設定：「換句時自動播放」會在按 `Enter`／`K`／`↑`／`↓` 跳到下一句時先播開頭，聽完直接按一個鍵決定；「全部維持」按鈕會出現在可略過句子的摺疊處，一鍵把這首還沒看的可略過句子全部記成維持。兩個預設都開啟，可以在同一個視窗關掉，設定會記在瀏覽器裡。
 
 之後想再審，雙擊 `Review LRC.bat` 會打開所有跑過的歌：左側上方是「待確認」，還有句子沒審；下方是「已確認」，已經審完，點標題可以收合。把資料夾、FLAC 或 LRC 拖到 `Review LRC.bat`，則審核那裡的檔案。關掉黑色的主控台視窗就會停止審核頁。
@@ -152,3 +154,7 @@ powershell -ExecutionPolicy Bypass -File .\align-lrc.ps1 "D:\Music\Song.flac"
 - 不需要音檔和模型的檢查（GitHub 上的「Public checks」也是跑這個）：`python .\scripts\check_public.py`
 - 完整測試要在裝好執行環境的電腦上跑：`python -m unittest discover -s scripts -p "test_*.py"`，以及 `node scripts\test_review_page.js`。
 - 這個 repo 不包含音檔、模型、產生的 LRC 和私人參考答案。
+
+### 段落級重對齊（2.0）
+
+對齊時會多檢查一次歌詞的結構：同一段副歌每次出現的行距應該一樣、每一行唱的時間要對得上它的長度、時間不能倒退。被結構推開超過 1 秒的句子會在前後可信句子之間再對一次，結果當成多一個候選交給原本的判斷流程，不會直接改時間；沒有這種句子的歌，結果和以前完全相同。要關掉可以用 `align-lrc.ps1 ... --segment-realign off` 或設環境變數 `LRC_SEGMENT_REALIGN=off`。
