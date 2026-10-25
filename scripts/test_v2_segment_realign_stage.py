@@ -234,7 +234,7 @@ class SegmentRealignStageTests(unittest.TestCase):
         finally:
             del os.environ["LRC_SEGMENT_REALIGN"]
         self.assertEqual(auto_lrc.segment_realign_mode(args()), "auto")
-        self.assertEqual(auto_lrc.segment_realign_mode(type("Args", (), {})()), "auto")
+        self.assertEqual(auto_lrc.segment_realign_mode(type("Args", (), {})()), "off", "off by default until the 2.0 replay is accepted")
 
     def test_row_status_proxy(self) -> None:
         rows = entries()

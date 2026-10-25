@@ -11334,13 +11334,13 @@ SEGMENT_REALIGN_ANCHOR_CTC_SCORE = 0.25
 
 
 def segment_realign_mode(args: argparse.Namespace) -> str:
-    """``auto`` (default) or ``off``; ``LRC_SEGMENT_REALIGN`` overrides the CLI flag."""
+    """``off`` (default until the 2.0 replay is accepted) or ``auto``; ``LRC_SEGMENT_REALIGN`` overrides the CLI flag."""
     env = os.environ.get("LRC_SEGMENT_REALIGN", "").strip().lower()
     if env in {"off", "0", "false", "no"}:
         return "off"
     if env in {"auto", "on", "1", "true", "yes"}:
         return "auto"
-    return "off" if str(getattr(args, "segment_realign", "auto") or "auto").lower() == "off" else "auto"
+    return "auto" if str(getattr(args, "segment_realign", "off") or "off").lower() == "auto" else "off"
 
 
 def segment_realign_row_status(
@@ -40401,9 +40401,10 @@ def build_parser() -> argparse.ArgumentParser:
              "ctc: original whole-song MMS CTC skeleton.",
     )
     parser.add_argument(
-        "--segment-realign", choices=("auto", "off"), default="auto",
+        "--segment-realign", choices=("auto", "off"), default="off",
         help="LRC 2.0: bounded CTC re-alignment of the row runs the lyric structure flags "
-             "(hypotheses for Central only); LRC_SEGMENT_REALIGN=off disables it.",
+             "(hypotheses for Central only). Off by default until the 2.0 replay is accepted; "
+             "--segment-realign auto or LRC_SEGMENT_REALIGN=auto turns it on.",
     )
     parser.add_argument("--whisper-cli", help="Path to whisper.cpp whisper-cli.exe.")
     parser.add_argument("--whisper-model", help="Path to whisper.cpp ggml model.")
