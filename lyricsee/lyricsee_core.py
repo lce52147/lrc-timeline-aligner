@@ -1065,6 +1065,14 @@ def _default_utanet_fetcher(identity: TrackIdentity, client) -> LyricCandidate:
     return fetch_utanet_candidate(identity, client)
 
 
+def _default_utaten_fetcher(identity: TrackIdentity, client) -> LyricCandidate:
+    try:
+        from utaten_source import fetch_utaten_candidate
+    except ModuleNotFoundError:  # pragma: no cover - package import style
+        from lyricsee.utaten_source import fetch_utaten_candidate
+    return fetch_utaten_candidate(identity, client)
+
+
 def _source_unavailable(exc: Exception) -> bool:
     if isinstance(exc, HTTPError):
         return 500 <= exc.code <= 599
@@ -1076,27 +1084,32 @@ def collect_candidates(
     client,
     *,
     utanet_fetcher=_default_utanet_fetcher,
+    utaten_fetcher=_default_utaten_fetcher,
     lrclib_fetcher=fetch_lrclib_candidate,
     google_fetcher=fetch_google_candidates,
 ) -> CollectionResult:
-    """Gather every source for the recording: uta-net first, then LRCLIB,
-    then translation pages found through web search."""
+    """Gather every source for the recording: the publisher sites (uta-net,
+    then UtaTen) first, then LRCLIB, then translation pages found through web
+    search."""
     candidates: list[LyricCandidate] = []
     errors: list[str] = []
     lrclib_unavailable = False
     utanet_unavailable = False
 
-    ambiguous = None
-    try:
-        candidates.append(utanet_fetcher(identity, client))
-    except Exception as exc:
-        if _source_unavailable(exc):
-            utanet_unavailable = True
-            errors.append(f"uta-net: source_unavailable ({exc})")
-        elif getattr(exc, "hits", None):
-            ambiguous = exc
-        else:
-            errors.append(f"uta-net: {exc}")
+    ambiguous: list = []
+    for name, fetcher in (("uta-net", utanet_fetcher), ("utaten", utaten_fetcher)):
+        if fetcher is None:
+            continue
+        try:
+            candidates.append(fetcher(identity, client))
+        except Exception as exc:
+            if _source_unavailable(exc):
+                utanet_unavailable = True
+                errors.append(f"{name}: source_unavailable ({exc})")
+            elif getattr(exc, "hits", None):
+                ambiguous.append((name, exc))
+            else:
+                errors.append(f"{name}: {exc}")
 
     lrclib_candidate = None
     try:
@@ -1112,23 +1125,26 @@ def collect_candidates(
         else:
             errors.append(f"lrclib: {exc}")
 
-    if ambiguous is not None:
-        # Exact-title uta-net rows without artist evidence (covers, romanised
-        # tags): let the independently fetched LRCLIB text pick the row; the
-        # policy still demands full agreement before the row counts.
+    if ambiguous:
+        # Exact-title rows without artist evidence (covers, romanised tags):
+        # let the independently fetched LRCLIB text pick the row; the policy
+        # still demands full agreement before the row counts.
         try:
-            from utanet_source import resolve_ambiguous_hits
+            from lyric_sites import resolve_ambiguous_hits
         except ModuleNotFoundError:  # pragma: no cover - package import style
-            from lyricsee.utanet_source import resolve_ambiguous_hits
+            from lyricsee.lyric_sites import resolve_ambiguous_hits
         reference = [row.original for row in lrclib_candidate.lines] if lrclib_candidate else None
-        try:
-            candidates.insert(0, resolve_ambiguous_hits(identity, client, ambiguous.hits, reference))
-        except Exception as exc:
-            if _source_unavailable(exc):
-                utanet_unavailable = True
-                errors.append(f"uta-net: source_unavailable ({exc})")
-            else:
-                errors.append(f"uta-net: {exc}")
+        resolved: list[LyricCandidate] = []
+        for name, exc in ambiguous:
+            try:
+                resolved.append(resolve_ambiguous_hits(exc.site, identity, client, exc.hits, reference))
+            except Exception as inner:
+                if _source_unavailable(inner):
+                    utanet_unavailable = True
+                    errors.append(f"{name}: source_unavailable ({inner})")
+                else:
+                    errors.append(f"{name}: {inner}")
+        candidates[0:0] = resolved
 
     google_urls: list[str] = []
     search_engine = "none"
@@ -1158,7 +1174,7 @@ def collect_candidates(
     # those rows when independently retrieved structured originals disagree.
     structured = [
         item for item in candidates
-        if item.source in {"lrclib", "uta-net"} and len(item.lines) >= 8
+        if item.source in {"lrclib", "uta-net", "utaten"} and len(item.lines) >= 8
     ]
     safe_candidates: list[LyricCandidate] = []
     for candidate in candidates:
@@ -1495,7 +1511,7 @@ def identity_hints(path: Path, *, album: str = "") -> tuple[str, ...]:
     return tuple(hints)
 
 
-HOST_INTERVALS = {"www.uta-net.com": 1.0}
+HOST_INTERVALS = {"www.uta-net.com": 1.0, "utaten.com": 1.0}
 
 
 class HttpClient:

@@ -258,7 +258,7 @@ class UtanetFetchTests(unittest.TestCase):
         identity = core.TrackIdentity("R.I.P.", "3OH!3", duration=200.0)
         with self.assertRaises(UtanetAmbiguous) as caught:
             fetch_utanet_candidate(identity, client)
-        self.assertEqual([hit.song_id for _, hit in caught.exception.hits], ["301240"])
+        self.assertEqual([hit.url for _, hit in caught.exception.hits], ["https://www.uta-net.com/song/301240/"])
         # Without any reference a single row is fetched, flagged weak.
         candidate = resolve_ambiguous_hits(identity, client, caught.exception.hits, None)
         self.assertFalse(candidate.meta["identity"]["strong"])
@@ -546,3 +546,109 @@ class CliVerificationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+UTATEN_SEARCH = '''<html><body><section class="contentBox"><div class="contentBox__body">
+<table class="searchResult artistLyricList">
+  <tr><th class="searchResult__head">楽曲・タイトル</th><th class="searchResult__artist">アーティスト</th><th>歌詞・歌い出し</th></tr>
+  <tr>
+    <td><p class="searchResult__title">
+          <a href="/lyric/mi24011216/">
+          革命前線        </a>
+    </p></td>
+    <td class="searchResult__artist"><p>
+          <a href="/artist/34415/">
+          ツユ        </a></p>
+      <div class="searchResult__lyricist"><p>作詞：<span class="songWriters"><a href="/songWriter/48503/">ぷす</a></span></p>
+      <p>作曲：<span class="songWriters"><a href="/songWriter/48503/">ぷす</a></span></p></div>
+    </td>
+    <td class="lyricList__beginning"><a href="/lyric/mi24011216/">
+          あの日の覚悟も 全部溶けてしまったんだ  ほら欲に塗れた 見苦しい悪魔            </a></td>
+  </tr>
+  <tr>
+    <td><p class="searchResult__title"><a href="/lyric/xx1/">革命前線 (Remix)</a></p></td>
+    <td class="searchResult__artist"><p><a href="/artist/1/">誰か</a></p></td>
+    <td class="lyricList__beginning"><a href="/lyric/xx1/">別の歌い出し</a></td>
+  </tr>
+</table></div></section></body></html>'''
+
+UTATEN_PAGE = '''<html><head><title>革命前線 歌詞 ツユ ふりがな付 - うたてん</title></head><body>
+<h2 class="newLyricTitle__main">革命前線 <span class="newLyricTitle_afterTxt">歌詞</span></h2>
+<div style="margin-top: 0px" class="lyricBody " oncontextmenu="return false">
+  <div class="medium">
+    <div class="hiragana" >
+      あの<span class="ruby"><span class="rb">日</span><span class="rt">ひ</span></span>の<span class="ruby"><span class="rb">覚悟</span><span class="rt">かくご</span></span>も<br />
+<span class="ruby"><span class="rb">全部</span><span class="rt">ぜんぶ</span></span><span class="ruby"><span class="rb">溶</span><span class="rt">と</span></span>けてしまったんだ<br />
+<br />
+ほら<span class="ruby"><span class="rb">欲</span><span class="rt">よく</span></span>に<span class="ruby"><span class="rb">塗</span><span class="rt">まみ</span></span>れた<br />
+そうさ <span class="ruby"><span class="rb">君</span><span class="rt">きみ</span></span>だって<br />
+    </div>
+    <div class="romaji" style="display: none;">ano hi no kakugo mo<br /></div>
+  </div>
+</div></body></html>'''
+
+
+class UtatenSourceTests(unittest.TestCase):
+    def test_search_rows_and_no_result_page(self):
+        from utaten_source import parse_utaten_search, utaten_search_url
+        hits = parse_utaten_search(UTATEN_SEARCH)
+        self.assertEqual([(h.url, h.title, h.artist) for h in hits], [
+            ("https://utaten.com/lyric/mi24011216/", "革命前線", "ツユ"),
+            ("https://utaten.com/lyric/xx1/", "革命前線 (Remix)", "誰か"),
+        ])
+        self.assertTrue(hits[0].opening.startswith("あの日の覚悟も"))
+        self.assertEqual(hits[0].lyricist, "ぷす")
+        self.assertEqual(parse_utaten_search('<p class="noItem">ごめんなさい。</p><table class="newestList"><tr><td><a href="/lyric/z/">x</a></td></tr></table>'), [])
+        self.assertIn("title=%E9%9D%A9%E5%91%BD%E5%89%8D%E7%B7%9A", utaten_search_url("革命前線"))
+
+    def test_page_drops_furigana_and_keeps_lines(self):
+        from utaten_source import parse_utaten_page
+        page = parse_utaten_page(UTATEN_PAGE)
+        self.assertEqual((page.title, page.artist), ("革命前線", "ツユ"))
+        self.assertEqual(page.lines, ["あの日の覚悟も", "全部溶けてしまったんだ", "ほら欲に塗れた", "そうさ 君だって"])
+        with self.assertRaisesRegex(LookupError, "hiragana"):
+            parse_utaten_page("<html><body>nothing</body></html>")
+
+    def test_fetch_picks_exact_title_and_artist_row(self):
+        from utaten_source import fetch_utaten_candidate
+        client = FakeClient({"utaten.com/search?": UTATEN_SEARCH, "/lyric/mi24011216/": UTATEN_PAGE})
+        candidate = fetch_utaten_candidate(core.TrackIdentity("革命前線", "ツユ", duration=200.0), client)
+        self.assertEqual(candidate.source, "utaten")
+        self.assertEqual(candidate.url, "https://utaten.com/lyric/mi24011216/")
+        self.assertTrue(candidate.meta["identity"]["strong"])
+        self.assertEqual(candidate.meta["trust"], "publisher")
+        self.assertEqual(len(candidate.lines), 4)
+
+    def test_two_publisher_sites_agreeing_verify_without_lrclib(self):
+        utanet = _utanet()
+        utaten = core.LyricCandidate(
+            source="utaten", url="https://utaten.com/lyric/x/", title="ALIVE", artist="ClariS",
+            lines=[core.LyricPair(line) for line in LRCLIB_LINES],
+            meta={"trust": "publisher", "identity": {"title_level": 3, "artist_level": 2, "strong": True}},
+        )
+        chosen, evidence = source_policy.choose_verified_original(core.TrackIdentity("ALIVE", "ClariS", duration=240.0), [utaten, utanet])
+        self.assertEqual(chosen.source, "uta-net")
+        self.assertEqual(evidence["original_verified_by"], "two_source_agreement")
+        self.assertEqual(evidence["sources_used"], ["uta-net", "utaten"])
+
+    def test_collect_resolves_ambiguous_rows_for_each_site(self):
+        from lyric_sites import AmbiguousHits, HitScore, SiteHit
+        from utaten_source import UTATEN
+        hits = [(HitScore(2, 0), SiteHit("https://utaten.com/lyric/a/", "粉雪", "レミオロメン", "　".join(l for l in UTANET_LINES[:6] if l)))]
+        client = FakeClient({"/lyric/a/": UTATEN_PAGE.replace("革命前線", "粉雪").replace("ツユ", "レミオロメン")})
+
+        def utaten(identity, c):
+            raise AmbiguousHits("utaten: ambiguous", hits, UTATEN)
+
+        result = core.collect_candidates(
+            core.TrackIdentity("KONAYUKI", "Remioromen", duration=325.0, hints=("粉雪",)), client,
+            utanet_fetcher=lambda i, c: (_ for _ in ()).throw(LookupError("no row")),
+            utaten_fetcher=utaten,
+            lrclib_fetcher=lambda i, c: core.LyricCandidate(
+                source="lrclib", url="l", title="KONAYUKI", artist="Remioromen",
+                lines=[core.LyricPair(line) for line in LRCLIB_LINES]),
+            google_fetcher=lambda i, c: ([], []),
+        )
+        self.assertEqual([c.source for c in result.candidates], ["utaten", "lrclib"])
+        self.assertFalse(result.candidates[0].meta["identity"]["strong"])
+        self.assertIn("opening_matched_reference", result.candidates[0].meta["identity"])

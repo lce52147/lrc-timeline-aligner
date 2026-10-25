@@ -13,30 +13,19 @@ import html as html_module
 import re
 from html.parser import HTMLParser
 from typing import NamedTuple
-from urllib.error import HTTPError
 from urllib.parse import urlencode
 
 try:
-    from lyricsee_core import (
-        LyricCandidate,
-        LyricPair,
-        SEARCH_USER_AGENT,
-        TrackIdentity,
-        _is_credit_line,
-        artist_match_level,
-        title_match_level,
-        title_search_keywords,
+    from lyricsee_core import SEARCH_USER_AGENT, _is_credit_line
+    from lyric_sites import (
+        AmbiguousHits, LyricSite, SiteHit, fetch_site_candidate,
+        resolve_ambiguous_hits as _resolve,
     )
 except ModuleNotFoundError:  # pragma: no cover - package import style
-    from lyricsee.lyricsee_core import (
-        LyricCandidate,
-        LyricPair,
-        SEARCH_USER_AGENT,
-        TrackIdentity,
-        _is_credit_line,
-        artist_match_level,
-        title_match_level,
-        title_search_keywords,
+    from lyricsee.lyricsee_core import SEARCH_USER_AGENT, _is_credit_line
+    from lyricsee.lyric_sites import (
+        AmbiguousHits, LyricSite, SiteHit, fetch_site_candidate,
+        resolve_ambiguous_hits as _resolve,
     )
 
 SOURCE = "uta-net"
@@ -47,7 +36,6 @@ HEADERS = {
     "User-Agent": SEARCH_USER_AGENT,
     "Accept-Language": "ja,en-US;q=0.8,zh-TW;q=0.6",
 }
-MAX_SEARCHES = 4
 _SONG_HREF_RE = re.compile(r"^(?:https?://(?:www\.)?uta-net\.com)?/song/(\d+)/?$")
 _DESCRIPTION_RE = re.compile(r"^(?P<artist>.+?)の「(?P<title>.+)」歌詞ページです")
 _OG_TITLE_RE = re.compile(r"^「(?P<title>.+)/(?P<artist>[^/]+)」の歌詞")
@@ -278,183 +266,30 @@ def parse_utanet_song(document: str) -> UtanetSong:
     return UtanetSong(title, artist, _lyric_lines("".join(parser.parts)))
 
 
-class UtanetAmbiguous(LookupError):
-    """Rows carry the exact title but none names the artist.
-
-    ``hits`` are the (score, row) pairs; ``resolve_ambiguous_hits`` can pick
-    the row whose 歌い出し matches an independently fetched lyric.
-    """
-
-    def __init__(self, message: str, hits: list) -> None:
-        super().__init__(message)
-        self.hits = hits
+# Backwards-compatible name: exact-title rows without artist evidence.
+UtanetAmbiguous = AmbiguousHits
 
 
-class HitScore(NamedTuple):
-    title: int   # 0 none, 1 contains, 2 same after stripping feat/brackets, 3 identical
-    artist: int  # 0 none, 1 partial or album/folder hint, 2 identical
+def _site_hits(document: str) -> list[SiteHit]:
+    return [
+        SiteHit(hit.url, hit.title, hit.artist, hit.opening, hit.lyricist, hit.composer)
+        for hit in parse_utanet_search(document)
+    ]
 
 
-def score_hit(identity: TrackIdentity, hit: UtanetHit) -> HitScore:
-    return HitScore(
-        title_match_level(identity, hit.title),
-        artist_match_level(identity, hit.artist),
-    )
+UTANET = LyricSite(SOURCE, "publisher", utanet_search_url, _site_hits, parse_utanet_song, HEADERS)
 
 
-def _strong(score: HitScore) -> bool:
-    return score.title >= 2 and score.artist >= 1
-
-
-def _describe(hit: UtanetHit, score: HitScore) -> str:
-    return f"{hit.title} / {hit.artist or '?'} (title={score.title}, artist={score.artist})"
-
-
-def fetch_utanet_candidate(identity: TrackIdentity, client) -> LyricCandidate:
+def fetch_utanet_candidate(identity, client):
     """Search uta-net for the recording and return its lyrics as a candidate.
 
-    Raises ``LookupError`` with the rejected rows when no row matches both
-    title and artist.  A row with the exact title but no artist evidence is
-    returned flagged ``identity.strong == False`` only when it is the single
-    such row; the policy layer admits it solely through agreement with an
-    independent source.
+    Raises ``LookupError`` naming the rejected rows when no row matches both
+    title and artist, or ``UtanetAmbiguous`` (carrying the rows) when rows
+    have the exact title but no artist evidence; ``resolve_ambiguous_hits``
+    settles those against an independent text.
     """
-    keywords = title_search_keywords(identity)
-    rejected: list[str] = []
-    weak: list[tuple[HitScore, UtanetHit]] = []
-    searched: list[str] = []
-    chosen: tuple[HitScore, UtanetHit] | None = None
-    search_url = ""
-    for keyword in keywords[:MAX_SEARCHES]:
-        url = utanet_search_url(keyword)
-        searched.append(keyword)
-        try:
-            document = client.get_text(url, headers=HEADERS, retries=2)
-        except HTTPError as exc:
-            if exc.code == 404:
-                continue  # uta-net answers 404 for a keyword without matches
-            raise
-        hits = parse_utanet_search(document)
-        scored = sorted(
-            ((score_hit(identity, hit), hit) for hit in hits),
-            key=lambda item: (item[0].title, item[0].artist),
-            reverse=True,
-        )
-        strong = [item for item in scored if _strong(item[0])]
-        if strong:
-            chosen = strong[0]
-            search_url = url
-            break
-        for score, hit in scored:
-            if score.title >= 2:
-                weak.append((score, hit))
-            if score.title >= 1 and len(rejected) < 6:
-                rejected.append(_describe(hit, score))
-    if chosen is None:
-        exact_weak = list({hit.song_id: (score, hit) for score, hit in weak if score.title >= 2}.values())
-        detail = "; ".join(rejected) if rejected else "no row with this title"
-        message = f"uta-net: no row matched title and artist for {' | '.join(searched)}; rejected: {detail}"
-        if exact_weak:
-            raise UtanetAmbiguous(message, exact_weak)
-        raise LookupError(message)
-
-    return fetch_utanet_song_candidate(identity, client, chosen, search_url=search_url, rejected=rejected, searched=searched)
+    return fetch_site_candidate(UTANET, identity, client)
 
 
-def opening_matches(opening: str, reference_lines: list[str], *, min_ratio: float = 0.6) -> float:
-    """Similarity of a search row's 歌い出し to the start of a reference lyric
-    (notation folded); 0.0 when either side is empty."""
-    try:
-        from lyric_compare import canonical_text
-    except ModuleNotFoundError:  # pragma: no cover - package import style
-        from lyricsee.lyric_compare import canonical_text
-    import difflib
-
-    head = canonical_text(opening)[:160]
-    reference = canonical_text(" ".join(reference_lines))[:160]
-    if len(head) < 12 or len(reference) < 12:
-        return 0.0
-    size = min(len(head), len(reference))
-    ratio = difflib.SequenceMatcher(None, head[:size], reference[:size], autojunk=False).ratio()
-    return ratio if ratio >= min_ratio else 0.0
-
-
-def resolve_ambiguous_hits(
-    identity: TrackIdentity,
-    client,
-    hits: list,
-    reference_lines: list[str] | None,
-) -> LyricCandidate:
-    """Pick among exact-title rows without artist evidence.
-
-    With an independent reference (LRCLIB) the row whose opening text matches
-    it is fetched; the policy then still requires full-text agreement.
-    Without a reference only a single row is fetched, flagged weak.
-    """
-    if reference_lines:
-        scored = sorted(
-            ((opening_matches(hit.opening, reference_lines), score, hit) for score, hit in hits),
-            key=lambda item: item[0],
-            reverse=True,
-        )
-        best_ratio, score, hit = scored[0]
-        if best_ratio <= 0.0:
-            raise LookupError(
-                "uta-net: exact-title rows do not match the reference lyric: "
-                + "; ".join(_describe(h, s) for s, h in hits[:6])
-            )
-        candidate = fetch_utanet_song_candidate(identity, client, (score, hit), search_url="", rejected=[], searched=[])
-        candidate.meta["identity"]["opening_matched_reference"] = round(best_ratio, 3)
-        return candidate
-    if len(hits) == 1:
-        return fetch_utanet_song_candidate(identity, client, hits[0], search_url="", rejected=[], searched=[])
-    raise LookupError(
-        "uta-net: several rows carry this title and none names the artist: "
-        + "; ".join(_describe(h, s) for s, h in hits[:6])
-    )
-
-
-def fetch_utanet_song_candidate(
-    identity: TrackIdentity,
-    client,
-    chosen: tuple,
-    *,
-    search_url: str,
-    rejected: list[str],
-    searched: list[str],
-) -> LyricCandidate:
-    score, hit = chosen
-    document = client.get_text(hit.url, headers=HEADERS, retries=2)
-    song = parse_utanet_song(document)
-    page_title = song.title or hit.title
-    page_artist = song.artist or hit.artist
-    page_score = HitScore(
-        title_match_level(identity, page_title),
-        artist_match_level(identity, page_artist),
-    )
-    if page_score.title < 2 and score.title >= 2:
-        raise LookupError(f"uta-net: song page title {page_title!r} does not match the search row {hit.title!r}")
-    if not song.lines:
-        raise LookupError("uta-net: song page has no lyric lines")
-    final = HitScore(max(score.title, page_score.title), max(score.artist, page_score.artist))
-    return LyricCandidate(
-        source=SOURCE,
-        url=hit.url,
-        title=page_title,
-        artist=page_artist,
-        lines=[LyricPair(line) for line in song.lines],
-        search_url=search_url,
-        search_engine="uta-net",
-        meta={
-            "trust": "publisher",
-            "identity": {
-                "title_level": final.title,
-                "artist_level": final.artist,
-                "strong": _strong(final),
-                "keywords": searched,
-            },
-            "lyricist": hit.lyricist,
-            "composer": hit.composer,
-            "rejected": rejected,
-        },
-    )
+def resolve_ambiguous_hits(identity, client, hits, reference_lines):
+    return _resolve(UTANET, identity, client, hits, reference_lines)

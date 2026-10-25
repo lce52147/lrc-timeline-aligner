@@ -749,17 +749,25 @@ class LyricseeCoreTests(unittest.TestCase):
             calls.append("google")
             return ["https://example.com"], []
 
+        def utaten(identity, client):
+            calls.append("utaten")
+            raise LookupError("no row with this title")
+
         result = core.collect_candidates(
             core.TrackIdentity("Song", "Artist"),
             object(),
             utanet_fetcher=utanet,
+            utaten_fetcher=utaten,
             lrclib_fetcher=lrclib,
             google_fetcher=google,
         )
-        self.assertEqual(calls, ["uta-net", "lrclib", "google"])
+        self.assertEqual(calls, ["uta-net", "utaten", "lrclib", "google"])
         self.assertEqual(len(result.candidates), 1)
         self.assertEqual(result.google_urls, ["https://example.com"])
-        self.assertEqual(result.errors, ["uta-net: no row matched title and artist"])
+        self.assertEqual(
+            result.errors,
+            ["uta-net: no row matched title and artist", "utaten: no row with this title"],
+        )
         self.assertFalse(result.utanet_unavailable)
 
     def test_local_llm_translation_batches_twelve_and_preserves_order(self):
