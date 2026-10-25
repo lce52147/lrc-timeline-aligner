@@ -1,4 +1,4 @@
-# LRC Timeline Aligner — v1.7.2
+# LRC Timeline Aligner — v1.8.0（版本號待確認）
 
 在 Windows 本機替歌曲產生 LRC 時間軸。你提供 FLAC 和歌詞，工具會聽音訊、找出每一句開始唱的時間，寫出同名的 `.lrc`，再開一個審核頁，讓你確認它沒把握的句子。
 
@@ -86,6 +86,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -Prefetch
 
 每首歌下方的「本首待審」清單依風險分組：「高風險」最可能抓錯，請先聽；接著是「一般」；「可略過」是多個偵測結果都同意的句子，預設收起來，也不算在剩餘句數裡，想確認時點「展開」。
 
+頂欄的音量滑桿以 dB 顯示（0 ～ −100 dB，跟 foobar2000 一樣），滾輪每次 ±1 dB，`M` 靜音；音量會記在瀏覽器裡，下次打開仍然有效。
+
 之後想再審，雙擊 `Review LRC.bat` 會打開所有跑過的歌：左側上方是「待確認」，還有句子沒審；下方是「已確認」，已經審完，點標題可以收合。把資料夾、FLAC 或 LRC 拖到 `Review LRC.bat`，則審核那裡的檔案。關掉黑色的主控台視窗就會停止審核頁。
 
 ### 審核頁快捷鍵
@@ -102,6 +104,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -Prefetch
 | `P` / `N` | 播上一句／下一句的開頭 |
 | `B` | 在目前時間和選定時間之間交替播放 |
 | `V` | 切換播放原曲（FLAC）或只有人聲（stem） |
+| `M` | 靜音／取消靜音（音量在頂欄調整） |
 | `Tab` | 展開／收起詳細資料 |
 | `Ctrl+S` | 儲存 |
 | `?` | 顯示快捷鍵 |

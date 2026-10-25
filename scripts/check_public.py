@@ -34,6 +34,7 @@ PUBLIC_SAFE_TESTS = [
     "scripts/test_installation.py",
     "scripts/test_runtime_paths.py",
     "scripts/test_file_digest.py",
+    "scripts/test_final_pass_memo.py",
     "scripts/test_model_cache.py",
     "scripts/test_r2_pipeline.py",
     "scripts/test_review_presentation.py",

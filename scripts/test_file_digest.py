@@ -47,6 +47,27 @@ class FileDigestTests(unittest.TestCase):
                 self.assertEqual(file_digest.sha256(path), first)
         self.assertTrue(file_digest.memo_path("file-sha256.json").is_file())
 
+    def test_memo_store_merges_keys_and_survives_corrupt_files(self):
+        self.assertEqual(file_digest.memo_load("lookups.json"), {})
+        file_digest.memo_store("lookups.json", "a", [1, "x"])
+        file_digest.memo_store("lookups.json", "b", {"nested": True})
+        self.assertEqual(file_digest.memo_load("lookups.json"), {"a": [1, "x"], "b": {"nested": True}})
+        self.assertEqual(file_digest.memo_path("lookups.json").parent.name, "runtime-identity")
+        self.assertEqual(file_digest.memo_path("lookups.json").parent.parent, self.root / "cache")
+        file_digest.memo_path("lookups.json").write_text("{not json", encoding="utf-8")
+        self.assertEqual(file_digest.memo_load("lookups.json"), {})
+        file_digest.memo_path("lookups.json").write_text("[1, 2]", encoding="utf-8")
+        self.assertEqual(file_digest.memo_load("lookups.json"), {})
+        file_digest.memo_store("lookups.json", "c", 3)
+        self.assertEqual(file_digest.memo_load("lookups.json"), {"c": 3}, "a corrupt memo is replaced, not appended to")
+        self.assertEqual([p.name for p in file_digest.memo_path("lookups.json").parent.iterdir()], ["lookups.json"], "no temp files left behind")
+
+    def test_memo_store_failure_is_silent(self):
+        blocker = self.root / "cache"
+        blocker.write_bytes(b"not a directory")
+        file_digest.memo_store("lookups.json", "a", 1)
+        self.assertEqual(file_digest.memo_load("lookups.json"), {})
+
     def test_missing_file_raises_oserror(self):
         with self.assertRaises(OSError):
             file_digest.sha256(self.root / "missing.bin")
