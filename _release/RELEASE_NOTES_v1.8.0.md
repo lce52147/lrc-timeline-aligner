@@ -1,4 +1,4 @@
-## LRC Timeline Aligner v1.8.0（草稿，版本號待確認）
+## LRC Timeline Aligner v1.8.0
 
 審核頁改版與速度改善。對齊結果、報告格式和存檔流程與 v1.7.2 相同（`LRC_ALGORITHM_REVISION` 未變）。
 
@@ -16,6 +16,7 @@
 - **最終 pass 加速**：不再每首重算模型權重摘要；WhisperX 對齊模型查詢（另開直譯器 import whisperx）記在 `cache\runtime-identity\whisperx-align-model.json`，直譯器、helper、語言、hub cache 任一改變即失效，`unresolved` 不記；尾音證據 context 的驗證結果與候選區段分析依物件身分記住。
 - 長歌名不再讓 reviewer 暫存路徑超過 Windows MAX_PATH。
 - lyricsee 輸出改名為 `<歌名>.txt`，並自動搬移舊的 `.lyrics` 檔。
+- **lyricsee 歌詞來源改為 uta-net 優先並交叉驗證**：標題與歌手都對上才採用 uta-net，LRCLIB 與歌詞頁改為備援；兩個獨立來源同意（寫法差異不算）或 uta-net 加內容健全性檢查才記為 `verified`，只有單一來源記為 `unverified`。run table 與 provenance 新增 `verification`、`verified_by`、`sources`、`diff_lines`、`notation_diffs`。
 
 ### 測試
 - 新增 `scripts\test_final_pass_memo.py`（7 題）：尾音 context 驗證依物件記住且有上限、WhisperX 模型查詢跨程序記住並在 hub／helper／語言改變時重探、`unresolved` 不寫入、hub 指紋追蹤 snapshots 與 refs。已加入 `check_public.py` 的公開安全測試集。

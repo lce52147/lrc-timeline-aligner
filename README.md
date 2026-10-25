@@ -1,4 +1,4 @@
-# LRC Timeline Aligner — v1.8.0（版本號待確認）
+# LRC Timeline Aligner — v1.8.0
 
 在 Windows 本機替歌曲產生 LRC 時間軸。你提供 FLAC 和歌詞，工具會聽音訊、找出每一句開始唱的時間，寫出同名的 `.lrc`，再開一個審核頁，讓你確認它沒把握的句子。
 
