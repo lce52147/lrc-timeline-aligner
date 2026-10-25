@@ -38,6 +38,7 @@ PUBLIC_SAFE_TESTS = [
     "scripts/test_model_cache.py",
     "scripts/test_r2_pipeline.py",
     "scripts/test_review_presentation.py",
+    "scripts/test_segment_realign.py",
     "scripts/test_lrc14_review_server.py",
     "scripts/test_multimodel_extra_models.py",
     "scripts/test_compare_report_runs.py",
