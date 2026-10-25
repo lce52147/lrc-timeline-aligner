@@ -710,8 +710,21 @@ class SearchResult:
         yield self.candidates
 
 
+_LATIN_DIACRITIC_RE = re.compile(r"[\u00C0-\u024F]")
+
+
+def _strip_latin_diacritics(match: re.Match[str]) -> str:
+    decomposed = unicodedata.normalize("NFD", match.group())
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+
+
 def _normalized(value: str) -> str:
-    return re.sub(r"[^\w]+", "", value, flags=re.UNICODE).casefold()
+    """Comparison key for titles and artists: NFKC width folding, Latin
+    diacritics dropped (Música = Musica), punctuation and spaces removed,
+    case folded.  Kana are left intact (NFD would split dakuten)."""
+    folded = unicodedata.normalize("NFKC", value)
+    folded = _LATIN_DIACRITIC_RE.sub(_strip_latin_diacritics, folded)
+    return re.sub(r"[^\w]+", "", folded, flags=re.UNICODE).casefold()
 
 
 def _metadata_score(
@@ -806,6 +819,10 @@ def title_search_keywords(identity: TrackIdentity) -> list[str]:
     head = _TILDE_TAIL_RE.sub("", bare)
     if len(_normalized(head)) >= 2:
         add(head)
+    # Accented Latin letters (Música): the site may index the plain spelling.
+    plain_ascii = _LATIN_DIACRITIC_RE.sub(_strip_latin_diacritics, bare)
+    if plain_ascii != bare:
+        add(plain_ascii)
     # Characters a site search may choke on (?, quotes, slashes): retry with
     # the plain words only, then with the longest word alone.
     if re.search(r"[?？'‘’\"“”/／]", bare):
@@ -970,6 +987,22 @@ def duckduckgo_search_url(identity: TrackIdentity) -> str:
     return "https://html.duckduckgo.com/html/?q=" + quote(_search_query(identity))
 
 
+# A search engine that keeps timing out costs 40 s per track; after this many
+# consecutive timeouts in one run it is skipped for the remaining tracks.
+DUCKDUCKGO_MAX_FAILURES = 2
+
+
+def _search_state(client) -> dict:
+    state = getattr(client, "_lyricsee_search_state", None)
+    if state is None:
+        state = {}
+        try:
+            setattr(client, "_lyricsee_search_state", state)
+        except (AttributeError, TypeError):
+            pass
+    return state
+
+
 def fetch_google_candidates(
     identity: TrackIdentity,
     client,
@@ -1002,7 +1035,10 @@ def fetch_google_candidates(
         search_engine = "google"
         search_url = direct_google_url
 
-    if not urls:
+    search_state = _search_state(client)
+    if not urls and search_state.get("duckduckgo_failures", 0) >= DUCKDUCKGO_MAX_FAILURES:
+        search_errors.append("duckduckgo: skipped after repeated timeouts in this run")
+    elif not urls:
         ddg_url = duckduckgo_search_url(identity)
         try:
             ddg_document = client.get_text(
@@ -1014,9 +1050,12 @@ def fetch_google_candidates(
                 },
             )
             urls = parse_duckduckgo_results(ddg_document)
+            search_state["duckduckgo_failures"] = 0
         except Exception as exc:
             search_errors.append(f"duckduckgo: {exc}")
             urls = []
+            if isinstance(exc, (URLError, TimeoutError)) or "timed out" in str(exc):
+                search_state["duckduckgo_failures"] = search_state.get("duckduckgo_failures", 0) + 1
         if urls:
             search_engine = "duckduckgo"
             search_url = ddg_url
@@ -1073,6 +1112,14 @@ def _default_utaten_fetcher(identity: TrackIdentity, client) -> LyricCandidate:
     return fetch_utaten_candidate(identity, client)
 
 
+def _default_jlyric_fetcher(identity: TrackIdentity, client) -> LyricCandidate:
+    try:
+        from jlyric_source import fetch_jlyric_candidate
+    except ModuleNotFoundError:  # pragma: no cover - package import style
+        from lyricsee.jlyric_source import fetch_jlyric_candidate
+    return fetch_jlyric_candidate(identity, client)
+
+
 def _source_unavailable(exc: Exception) -> bool:
     if isinstance(exc, HTTPError):
         return 500 <= exc.code <= 599
@@ -1085,19 +1132,20 @@ def collect_candidates(
     *,
     utanet_fetcher=_default_utanet_fetcher,
     utaten_fetcher=_default_utaten_fetcher,
+    jlyric_fetcher=_default_jlyric_fetcher,
     lrclib_fetcher=fetch_lrclib_candidate,
     google_fetcher=fetch_google_candidates,
 ) -> CollectionResult:
     """Gather every source for the recording: the publisher sites (uta-net,
-    then UtaTen) first, then LRCLIB, then translation pages found through web
-    search."""
+    UtaTen, J-Lyric) first, then LRCLIB, then translation pages found through
+    web search."""
     candidates: list[LyricCandidate] = []
     errors: list[str] = []
     lrclib_unavailable = False
     utanet_unavailable = False
 
     ambiguous: list = []
-    for name, fetcher in (("uta-net", utanet_fetcher), ("utaten", utaten_fetcher)):
+    for name, fetcher in (("uta-net", utanet_fetcher), ("utaten", utaten_fetcher), ("j-lyric", jlyric_fetcher)):
         if fetcher is None:
             continue
         try:
@@ -1174,7 +1222,7 @@ def collect_candidates(
     # those rows when independently retrieved structured originals disagree.
     structured = [
         item for item in candidates
-        if item.source in {"lrclib", "uta-net", "utaten"} and len(item.lines) >= 8
+        if item.source in {"lrclib", "uta-net", "utaten", "j-lyric"} and len(item.lines) >= 8
     ]
     safe_candidates: list[LyricCandidate] = []
     for candidate in candidates:
@@ -1511,7 +1559,7 @@ def identity_hints(path: Path, *, album: str = "") -> tuple[str, ...]:
     return tuple(hints)
 
 
-HOST_INTERVALS = {"www.uta-net.com": 1.0, "utaten.com": 1.0}
+HOST_INTERVALS = {"www.uta-net.com": 1.0, "utaten.com": 1.0, "j-lyric.net": 1.0}
 
 
 class HttpClient:

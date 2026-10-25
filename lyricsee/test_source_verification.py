@@ -652,3 +652,69 @@ class UtatenSourceTests(unittest.TestCase):
         self.assertEqual([c.source for c in result.candidates], ["utaten", "lrclib"])
         self.assertFalse(result.candidates[0].meta["identity"]["strong"])
         self.assertIn("opening_matched_reference", result.candidates[0].meta["identity"])
+
+
+JLYRIC_SEARCH = '''<div class="cap"><h2>検索結果.</h2></div><div class="bdy"><p class="mid"><a href="/artist/a0651f8/l06473f.html" title="Ave Mujica 顔 歌詞">顔</a></p><p class="sml">歌：<a href="/artist/a0651f8/" title="Ave Mujica 歌詞リスト">Ave Mujica</a></p><p class="sml">歌詞：事を/事を拗らせてるの/せてるのアルレッキーノ　コルセットを ...</p></div><div class="bdy"><p class="mid"><a href="/artist/a000001/l000001.html" title="くるり 朝顔 歌詞">朝顔</a></p><p class="sml">歌：<a href="/artist/a000001/" title="くるり 歌詞リスト">くるり</a></p><p class="sml">歌詞：別の歌い出し ...</p></div><div id="pager"><a class="sel" href="/search.php?p=1">1</a></div>'''
+
+JLYRIC_PAGE = '''<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>顔／Ave Mujica 歌詞</title><meta name="description" content="Ave Mujicaの「顔」歌詞ページ。「顔」は、作詞：Diggy-MO&#039;、作曲：木下龍平(SUPA LOVE)・Diggy-MO&#039;です。"></head><body>
+<div class="cap"><h2>「顔」歌詞</h2></div><div class="lbdy"><p class="sml">歌：<a href="/artist/a0651f8/" title="Ave Mujica 歌詞リスト">Ave Mujica</a></p><p class="sml">作詞：Diggy-MO&#039;　作曲：木下龍平(SUPA LOVE)・Diggy-MO&#039;</p><p id="Lyric">願った　勇敢な<ruby>選択<rt>せんたく</rt></ruby>の<br>未来を今照らしてく<br><br>利己的な感情　ぶつけあっちゃ(まだ)見えないね<br></p><div class="fnt">文字サイズ：</div></div>
+<div class="cap"><h2>お願い</h2></div><div class="bdy"><p class="ss">歌詞検索J-Lyric.netでは、無料で歌詞の検索・閲覧サービスを提供しておりますが</p></div></body></html>'''
+
+
+class JlyricSourceTests(unittest.TestCase):
+    def test_search_rows_use_exact_title_mode_and_relative_links(self):
+        from jlyric_source import jlyric_search_url, parse_jlyric_search
+        self.assertIn("ct=1", jlyric_search_url("顔"))
+        hits = parse_jlyric_search(JLYRIC_SEARCH)
+        self.assertEqual([(h.url, h.title, h.artist) for h in hits], [
+            ("https://j-lyric.net/artist/a0651f8/l06473f.html", "顔", "Ave Mujica"),
+            ("https://j-lyric.net/artist/a000001/l000001.html", "朝顔", "くるり"),
+        ])
+        self.assertTrue(hits[0].opening.startswith("事を/事を"))
+
+    def test_page_parses_lyric_block_title_and_artist(self):
+        from jlyric_source import parse_jlyric_page
+        page = parse_jlyric_page(JLYRIC_PAGE)
+        self.assertEqual((page.title, page.artist), ("顔", "Ave Mujica"))
+        self.assertEqual(page.lines, ["願った 勇敢な選択の", "未来を今照らしてく", "利己的な感情 ぶつけあっちゃ(まだ)見えないね"])
+        with self.assertRaisesRegex(LookupError, "Lyric"):
+            parse_jlyric_page("<html><body>nothing</body></html>")
+
+    def test_fetch_rejects_lookalike_title_and_accepts_the_exact_row(self):
+        from jlyric_source import fetch_jlyric_candidate
+        client = FakeClient({"search.php?": JLYRIC_SEARCH, "/l06473f.html": JLYRIC_PAGE})
+        candidate = fetch_jlyric_candidate(core.TrackIdentity("顔", "Ave Mujica", duration=240.0), client)
+        self.assertEqual(candidate.source, "j-lyric")
+        self.assertEqual(candidate.url, "https://j-lyric.net/artist/a0651f8/l06473f.html")
+        self.assertTrue(candidate.meta["identity"]["strong"])
+        self.assertFalse(any("l000001" in url for url in client.requests))
+
+    def test_accented_title_matches_plain_spelling(self):
+        identity = core.TrackIdentity("天球のMúsica", "Ave Mujica")
+        self.assertEqual(core.title_match_level(identity, "天球のMusica"), 3)
+        self.assertIn("天球のMusica", core.title_search_keywords(identity))
+        self.assertEqual(core._normalized("がぎぐ Música"), "がぎぐmusica")
+
+
+class SearchDegradationTests(unittest.TestCase):
+    def test_duckduckgo_is_skipped_after_repeated_timeouts_in_one_run(self):
+        from urllib.error import URLError
+
+        class Client:
+            def __init__(self):
+                self.ddg_calls = 0
+
+            def get_text(self, url, params=None, headers=None, retries=1, timeout=20):
+                if "google.com/search" in url:
+                    return "<html></html>"
+                if "duckduckgo.com" in url:
+                    self.ddg_calls += 1
+                    raise URLError("timed out")
+                raise AssertionError(url)
+
+        client = Client()
+        for _ in range(4):
+            result = core.fetch_google_candidates(core.TrackIdentity("Song", "Artist"), client)
+        self.assertEqual(client.ddg_calls, core.DUCKDUCKGO_MAX_FAILURES)
+        self.assertTrue(any("skipped after repeated timeouts" in item for item in result.errors))
+        self.assertEqual(result.search_engine, "none")

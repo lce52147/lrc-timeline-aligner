@@ -758,6 +758,7 @@ class LyricseeCoreTests(unittest.TestCase):
             object(),
             utanet_fetcher=utanet,
             utaten_fetcher=utaten,
+            jlyric_fetcher=None,
             lrclib_fetcher=lrclib,
             google_fetcher=google,
         )

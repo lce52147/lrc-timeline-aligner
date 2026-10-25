@@ -1,7 +1,7 @@
 """Fail-closed source policy for lyricsee.
 
 Order of preference for the original lyrics: the publisher-licensed sites
-(uta-net, then UtaTen) first, then LRCLIB and lyric/translation pages as
+(uta-net, UtaTen, J-Lyric) first, then LRCLIB and lyric/translation pages as
 backups.  A result counts
 as **verified** only when
 
@@ -41,7 +41,7 @@ except ModuleNotFoundError:  # pragma: no cover - package import style
     from lyricsee.lyric_compare import canonical_text, compare_lyrics, diff_lines_for_report, is_filler
 
 VERSION = "2026-10-25-utanet-primary-cross-verified"
-PUBLISHER_SOURCES = {"uta-net", "utaten"}
+PUBLISHER_SOURCES = {"uta-net", "utaten", "j-lyric"}
 WEB_HOSTS = {
     "home.gamer.com.tw", "forum.gamer.com.tw",
     "marumaru-x.com", "www.marumaru-x.com",
@@ -230,7 +230,7 @@ def assess_candidates(identity: TrackIdentity, candidates: list[LyricCandidate])
     return assessed
 
 
-SOURCE_PREFERENCE = {"uta-net": 0, "utaten": 1, "lrclib": 2}
+SOURCE_PREFERENCE = {"uta-net": 0, "utaten": 1, "j-lyric": 2, "lrclib": 3}
 
 
 def _primary_rank(item: Assessment) -> tuple:
