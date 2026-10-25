@@ -1155,6 +1155,28 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         )
         self.assertEqual([song["report"] for song in store.songs], [str(self.report.resolve())])
 
+    def test_many_flac_targets_parse_each_report_once(self) -> None:
+        # Loading a 180-song review used to parse every report once per FLAC target (O(n^2)).
+        songs = []
+        for index in range(12):
+            audio = self.root / f"many-{index:02d}.flac"
+            output = self.root / f"many-{index:02d}.lrc"
+            audio.write_bytes(b"flac")
+            output.write_bytes(self.original)
+            data = json.loads(self.report.read_text(encoding="utf-8"))
+            data.update({"audio_path": str(audio), "output_path": str(output), "ctc_audio_path": ""})
+            (self.root / f"many-{index:02d}.align-report.json").write_text(json.dumps(data), encoding="utf-8")
+            songs.append(audio)
+        expected = review_server.ReviewStore(self.root, songs, scan_report_dir=False).songs
+        with mock.patch.object(review_server, "_load_report", wraps=review_server._load_report) as parses, \
+             mock.patch.object(review_server.json, "loads", wraps=review_server.json.loads) as decodes:
+            store = review_server.ReviewStore(self.root, songs, scan_report_dir=False)
+        reports_in_dir = len(list(self.root.glob("*.align-report.json")))
+        self.assertEqual(parses.call_count, reports_in_dir)
+        self.assertEqual(decodes.call_count, reports_in_dir)
+        self.assertEqual([song["song"] for song in store.songs], [f"many-{index:02d}" for index in range(12)])
+        self.assertEqual(json.dumps(store.songs, default=str, sort_keys=True), json.dumps(expected, default=str, sort_keys=True))
+
 if __name__ == "__main__":
     unittest.main()
 

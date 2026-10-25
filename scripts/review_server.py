@@ -294,9 +294,53 @@ def _newest(reports):
     return [max(reports, key=lambda item: item.stat().st_mtime_ns)]
 
 
-def _report_files(targets, report_dir, *, scan_report_dir=True, anchors=None):
+class _ReportIndex:
+    """Every report under ``report_dir`` parsed once per load, however many targets ask about it.
+
+    Each FLAC/LRC target used to re-glob the report directory and re-parse every report, so a
+    180-song review took 180 x 180 JSON loads. The index lists the directory once, parses each
+    report at most once (``cache`` is shared with ``ReviewStore.reload`` so the page build does
+    not parse it again) and remembers the casefolded paths and names the matching needs.
+    """
+
+    def __init__(self, report_dir, cache=None):
+        self.report_dir = report_dir
+        self.cache = cache if cache is not None else {}
+        self._listing = None
+        self._keys = {}
+
+    def load(self, report):
+        if report not in self.cache:
+            self.cache[report] = _load_report(report)
+        return self.cache[report]
+
+    def listing(self):
+        if self._listing is None:
+            self._listing = list(self.report_dir.glob("*.align-report.json"))
+        return self._listing
+
+    def entries(self):
+        """``(report, data, audio_casefold, output_casefold, names)`` for every parseable report."""
+        for report in self.listing():
+            data = self.load(report)
+            if data is None:
+                yield report, None, None, None, None
+                continue
+            keys = self._keys.get(report)
+            if keys is None:
+                keys = (
+                    str(data.get("audio_path", "")).casefold(),
+                    str(data.get("output_path", "")).casefold(),
+                    _names_of(data),
+                )
+                self._keys[report] = keys
+            yield (report, data) + keys
+
+
+def _report_files(targets, report_dir, *, scan_report_dir=True, anchors=None, cache=None):
     found = []
     excluded = []
+    index = _ReportIndex(report_dir, cache)
     targets = list(targets or [])
     if not targets and scan_report_dir:
         targets = [report_dir]
@@ -309,15 +353,15 @@ def _report_files(targets, report_dir, *, scan_report_dir=True, anchors=None):
             candidates = []
             by_name = []
             target = str(path).casefold()
-            for report in report_dir.glob("*.align-report.json"):
-                data = _load_report(report)
+            target_name = path.name.casefold()
+            for report, data, audio_key, output_key, names in index.entries():
                 if data is None:
                     if report not in excluded:
                         excluded.append(report)
                     continue
-                if target in (str(data.get("audio_path", "")).casefold(), str(data.get("output_path", "")).casefold()):
+                if target in (audio_key, output_key):
                     candidates.append(report)
-                elif path.name.casefold() in _names_of(data):
+                elif target_name in names:
                     by_name.append(report)
             # A song moved after alignment is still the same song: match it by file name.
             candidates = candidates or _newest(by_name)
@@ -337,13 +381,12 @@ def _report_files(targets, report_dir, *, scan_report_dir=True, anchors=None):
                 here = {item.name.casefold() for item in path.iterdir() if item.is_file()}
                 candidates = []
                 by_name = {}
-                for report in report_dir.glob("*.align-report.json"):
-                    data = _load_report(report)
+                for report, data, audio_key, _output_key, _names in index.entries():
                     if data is None:
                         if report not in excluded:
                             excluded.append(report)
                         continue
-                    if str(data.get("audio_path", "")).casefold().startswith(prefix):
+                    if audio_key.startswith(prefix):
                         candidates.append(report)
                     else:
                         # Songs moved into this folder after alignment: match by file name.
@@ -359,7 +402,7 @@ def _report_files(targets, report_dir, *, scan_report_dir=True, anchors=None):
         if not (path.is_file() and not path.name.endswith(".align-report.json")) and not path.is_dir():
             anchor = None
         for report in candidates:
-            data = _load_report(report)
+            data = index.load(report)
             if data is None:
                 if report not in excluded:
                     excluded.append(report)
@@ -1353,12 +1396,16 @@ class ReviewStore:
     def reload(self):
         self.songs = []
         anchors = {}
+        parsed = {}
         reports, self.excluded = _report_files(
-            self.targets, self.report_dir, scan_report_dir=self.scan_report_dir, anchors=anchors
+            self.targets, self.report_dir, scan_report_dir=self.scan_report_dir, anchors=anchors, cache=parsed
         )
         for path in reports:
             try:
-                report = json.loads(path.read_text(encoding="utf-8-sig"))
+                # Discovery already parsed this report; only re-read it if that parse failed.
+                report = parsed.get(path)
+                if not isinstance(report, dict):
+                    report = json.loads(path.read_text(encoding="utf-8-sig"))
                 if isinstance(report, dict):
                     self.songs.append(_song_payload(path, report, anchors.get(path)))
                 else:
