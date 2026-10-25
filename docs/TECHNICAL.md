@@ -26,8 +26,8 @@ available, skeleton not SEGMENT_CURRENT).
 
 - **Structural row map** (`structural_row_map`): a Viterbi path over a 0.1 s grid.
   Rows with independent corroboration are anchors (raw ASR within 0.45 s of the CTC
-  onset → TRUSTED, weight 3.0/s, ±2 s; uncollapsed CTC score ≥ 0.25 that raw does not
-  contradict → UNTRUSTED, 2.0/s, ±4 s); other rows are weak observations (0.3/s, or
+  onset → TRUSTED, weight 3.0/s, ±2 s; uncollapsed CTC score ≥ 0.12 that raw does not
+  contradict → UNTRUSTED, 2.0/s, ±4 s; 0.25 left the first replay song with 8 of 35 anchors); other rows are weak observations (0.3/s, or
   0.6/s when their CTC score is ≥ 0.15) that may move between their nearest anchors.
   Transition costs: inside a repeated section the gap must equal the same gap in a
   sibling occurrence (1.0 per 0.3 s; median sibling disagreement on the evaluation set
@@ -55,7 +55,7 @@ available, skeleton not SEGMENT_CURRENT).
   report key `segment_realign` (status, row_status, structure, flagged_entries, runs,
   generated, errors, revision `SEGMENT_REALIGN_REVISION`).
 - **Output stage**: `review_presentation.song_risk` marks the Choir class
-  (`weak-anchors`, or ≥ 50 % of ≥ 8 rows in review) and the review page shows a
+  (`weak-anchors` with under 20 % of the rows anchored, or ≥ 50 % of ≥ 8 rows in review) and the review page shows a
   whole-song badge; alignment is unchanged.
 - **Evaluation** (36 BK songs, cloud, `F:\_RuntimePrompt\LRC20\reports\`): flagged
   rows independent 2 (1 true / 1 false), derived without Choir 7 (6 / 1), Choir 7

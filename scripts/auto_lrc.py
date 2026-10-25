@@ -11330,7 +11330,10 @@ SEGMENT_REALIGN_MAX_WINDOW_SECONDS = 60.0
 SEGMENT_REALIGN_MIN_ANCHOR_SHARE = 0.35
 SEGMENT_REALIGN_RAW_AGREE_SECONDS = 0.45
 SEGMENT_REALIGN_RAW_DISAGREE_SECONDS = 0.75
-SEGMENT_REALIGN_ANCHOR_CTC_SCORE = 0.25
+# CTC score at or above which an uncontradicted row anchors the structural map.  The
+# 0.10-0.25 band is 1.9 % wrong (> 0.5 s) on the evaluation set, 1.4 % above 0.30; at 0.25
+# songs with a quiet CTC path keep too few anchors (2 of 35 rows on the first replay song).
+SEGMENT_REALIGN_ANCHOR_CTC_SCORE = 0.12
 
 
 def segment_realign_mode(args: argparse.Namespace) -> str:

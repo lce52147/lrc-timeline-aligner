@@ -327,15 +327,16 @@ def classify_risk(
 
 SONG_RISK_REVIEW_SHARE = 0.5
 SONG_RISK_MIN_ROWS = 8
+SONG_RISK_ANCHOR_SHARE = 0.20
 
 
 def song_risk(report: object) -> dict[str, Any]:
     """Whole-song risk class for the review page (LRC 2.0 P4, the Choir class).
 
-    ``"choir"`` when the song gave the structural map too few anchored rows (the
-    segment-realign stage reported ``weak-anchors``: no independent corroboration
-    for most lines, as with choirs, doubled vocals and heavy effects) or when at
-    least half of its lines (eight or more) need review.  Such a song is listened
+    ``"choir"`` when the song gave the structural map almost no anchored rows (the
+    segment-realign stage reported ``weak-anchors`` with under 20 % of the rows
+    anchored: no corroboration for most lines, as with choirs, doubled vocals and
+    heavy effects) or when at least half of its lines (eight or more) need review.  Such a song is listened
     to as a whole rather than line by line; nothing in the alignment changes.
     """
     rows = report.get("assignments") if isinstance(report, dict) else None
@@ -346,7 +347,15 @@ def song_risk(report: object) -> dict[str, Any]:
     stage = stage if isinstance(stage, dict) else {}
     structure = stage.get("structure") if isinstance(stage.get("structure"), dict) else {}
     reasons: list[str] = []
-    if stage.get("status") == "weak-anchors":
+    anchors = structure.get("anchors")
+    anchor_rows = structure.get("rows")
+    if (
+        stage.get("status") == "weak-anchors"
+        and isinstance(anchors, int)
+        and isinstance(anchor_rows, int)
+        and anchor_rows > 0
+        and anchors / anchor_rows < SONG_RISK_ANCHOR_SHARE
+    ):
         reasons.append("weak-anchors")
     if len(rows) >= SONG_RISK_MIN_ROWS and share >= SONG_RISK_REVIEW_SHARE:
         reasons.append("review-share")
@@ -356,7 +365,8 @@ def song_risk(report: object) -> dict[str, Any]:
         "rows": len(rows),
         "review_rows": review_rows,
         "review_share": round(share, 3),
-        "anchors": structure.get("anchors"),
+        "anchors": anchors,
+        "anchor_rows": anchor_rows,
         "segment_realign": stage.get("status"),
     }
 

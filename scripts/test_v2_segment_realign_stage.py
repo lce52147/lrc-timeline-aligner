@@ -247,6 +247,9 @@ class SegmentRealignStageTests(unittest.TestCase):
             "UNTRUSTED",
         )
         self.assertEqual(auto_lrc.segment_realign_row_status(rows, 0, 10.0, strong, None), "UNTRUSTED")
+        quiet = {"ctc_score": 0.12, "ctc_token_spans": spans(10.0)}
+        self.assertEqual(auto_lrc.segment_realign_row_status(rows, 0, 10.0, quiet, None), "UNTRUSTED")
+        self.assertEqual(auto_lrc.segment_realign_row_status(rows, 0, 10.0, {"ctc_score": 0.10, "ctc_token_spans": spans(10.0)}, None), "REVIEW")
         self.assertEqual(auto_lrc.segment_realign_row_status(rows, 0, 10.0, weak, None), "REVIEW")
         self.assertEqual(auto_lrc.segment_realign_row_status(rows, 0, 10.0, None, None), "REVIEW")
 

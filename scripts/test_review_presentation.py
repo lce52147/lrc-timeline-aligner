@@ -191,9 +191,12 @@ class SongRiskTests(unittest.TestCase):
         self.assertEqual((risk["rows"], risk["review_rows"]), (44, 37))
 
     def test_weak_anchors_from_the_segment_stage_is_the_choir_class(self):
-        report = {"assignments": self.rows(40, 10), "segment_realign": {"status": "weak-anchors", "structure": {"anchors": 7}}}
+        report = {"assignments": self.rows(44, 10), "segment_realign": {"status": "weak-anchors", "structure": {"anchors": 7, "rows": 44}}}
         risk = review_presentation.song_risk(report)
         self.assertEqual((risk["class"], risk["reasons"], risk["anchors"]), ("choir", ["weak-anchors"], 7))
+        # the stage skips a song below 35 % anchors, but only under 20 % is the whole song at risk
+        report = {"assignments": self.rows(45, 10), "segment_realign": {"status": "weak-anchors", "structure": {"anchors": 9, "rows": 45}}}
+        self.assertIsNone(review_presentation.song_risk(report)["class"])
 
     def test_ordinary_song_has_no_class(self):
         risk = review_presentation.song_risk({"assignments": self.rows(43, 19), "segment_realign": {"status": "no-runs"}})
