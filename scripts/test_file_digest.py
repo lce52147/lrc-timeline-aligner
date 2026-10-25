@@ -53,7 +53,7 @@ class FileDigestTests(unittest.TestCase):
         file_digest.memo_store("lookups.json", "b", {"nested": True})
         self.assertEqual(file_digest.memo_load("lookups.json"), {"a": [1, "x"], "b": {"nested": True}})
         self.assertEqual(file_digest.memo_path("lookups.json").parent.name, "runtime-identity")
-        self.assertEqual(file_digest.memo_path("lookups.json").parent.parent, self.root / "cache")
+        self.assertEqual(file_digest.memo_path("lookups.json").parent.parent.resolve(), (self.root / "cache").resolve())
         file_digest.memo_path("lookups.json").write_text("{not json", encoding="utf-8")
         self.assertEqual(file_digest.memo_load("lookups.json"), {})
         file_digest.memo_path("lookups.json").write_text("[1, 2]", encoding="utf-8")
