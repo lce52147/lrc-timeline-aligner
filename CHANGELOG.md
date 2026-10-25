@@ -14,7 +14,7 @@ v1.7 以後用中文記錄；v1.6 以前保留原本的英文內容。
 - **最終 pass 加速。** 檔案摘要依 stat 身分記住（`scripts\file_digest.py`，64 MiB 以上的檔案另外存在 `cache\runtime-identity`），同一個程序不再重讀 3 GB 的 Whisper 模型；WhisperX 對齊模型查詢結果記在磁碟，只要直譯器、helper、語言和 hub cache 沒變就不再重新探測；尾音證據的 context 驗證和候選區段分析依物件身分記住。
 - **長歌名修正。** reviewer 暫存路徑不再超過 Windows MAX_PATH。
 - **lyricsee。** 輸出改名為 `<歌名>.txt`，舊的 `.lyrics` 檔自動搬移。
-- **lyricsee 歌詞來源改為 uta-net 優先並交叉驗證。** 先以標題搜尋 uta-net，只接受標題與歌手都對上的那一列，再取 `div#kashi_area`；LRCLIB 與歌詞頁改為備援。兩個獨立來源同意（假名／漢字、ラララ、標點、全半形等寫法差異不算，不同字才算）或 uta-net 加內容健全性檢查才記為 `verified`；只有單一來源時記為 `unverified` 並在下次執行重抓。run table 與 provenance 新增 `verification`、`verified_by`、`sources`、`diff_lines`、`notation_diffs`，差異只記行號與片段。抓錯歌（例如 `Call you` 對到 `I Call Your Name`）在標題／歌手關卡就被擋下。
+- **lyricsee 歌詞來源改為 uta-net 優先並交叉驗證。** 先以標題搜尋 uta-net，只接受標題與歌手都對上的那一列，再取 `div#kashi_area`；LRCLIB 與歌詞頁改為備援。兩個獨立來源同意（假名／漢字、ラララ、標點、全半形等寫法差異不算，不同字才算）或 uta-net 加內容健全性檢查才記為 `verified`；只有單一來源時記為 `unverified` 並在下次執行重抓。run table 與 provenance 新增 `verification`、`verified_by`、`sources`、`diff_lines`、`notation_diffs`，差異只記行號與片段。抓錯歌（例如 `Call you` 對到 `I Call Your Name`）在標題／歌手關卡就被擋下；同名多列但歌手對不上時，用 LRCLIB 的文字挑出歌い出し相符的那一列，仍須全文同意才採用。兩份歌詞的比對是在整段文字上對齊再回推行號，所以 uta-net 與 LRCLIB 斷行方式不同也不會被當成缺行。
 - **測試。** 新增 `scripts\test_final_pass_memo.py`（尾音 context 驗證記憶、WhisperX 模型查詢磁碟記憶、hub 指紋）、`file_digest` 的 memo 讀寫測試、審核頁的音量滑桿／待確認已確認分組／風險分組測試、以及審核頁「每份報告只解析一次」的回歸測試。
 
 ## v1.7
