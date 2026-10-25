@@ -92,6 +92,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
 .queue-list .q-fold{margin-top:8px;text-align:left;background:transparent;border:1px dashed var(--fg-3);color:var(--fg-2);border-radius:10px;padding:8px 10px;cursor:pointer;font:inherit;font-size:12px}
 .q{padding:10px 14px;border-radius:12px;background:rgba(0,0,0,.22);border:1px solid transparent;grid-template-columns:40px 84px minmax(0,1fr) auto}
 .q:hover{background:rgba(0,0,0,.3)}.q.cur{background:rgba(109,124,255,.14);border-color:rgba(154,166,255,.35);box-shadow:none}
+.q.other{opacity:.62}
 .q .st{padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.06)}
 </style>
 </head>
@@ -138,7 +139,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     <tr><td>Tab</td><td>展開 / 收起詳細</td></tr>
     <tr><td>Ctrl+S</td><td>儲存</td></tr>
   </table>
-  <label><input id="untrusted" type="checkbox"> 也顯示未標記為需審的句子（UNTRUSTED）</label>
+  <label><input id="untrusted" type="checkbox"> 顯示整首歌詞（照歌詞順序列出每一句，包含沒被標為待審的句子）</label>
   <div><label><input id="autoplay" type="checkbox"> 換句時自動播放（Enter / K / ↑ ↓ 跳到下一句就先聽開頭）</label></div>
   <div><label><input id="batch-skip" type="checkbox"> 在「可略過」摺疊處顯示「全部維持」按鈕</label></div>
   <div style="margin-top:12px;text-align:right"><button id="help-close">關閉</button></div>
@@ -165,7 +166,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   const token = new URLSearchParams(location.search).get('t') || new URLSearchParams(location.hash.slice(1)).get('t');
   const queue = document.getElementById('queue');
   const status = document.getElementById('status');
-  const state = {songs:[], rows:[], edits:new Map(), peaks:new Map(), decoded:new Map(), done:new Set(), dirty:false, selected:0, activeSong:null, showUnreachable:false, showDone:true, showLow:false, showUntrusted:false, autoplay:true, batchSkip:true, mode:'flac', details:false, importEnabled:false, imports:[], jobs:[], jobsSeen:new Set(), player:{audio:new Map(), handlers:new Map(), seq:0, timer:null, active:null, ab:null}, error:'', notice:''};
+  const state = {songs:[], rows:[], edits:new Map(), peaks:new Map(), decoded:new Map(), done:new Set(), dirty:false, selected:0, activeSong:null, showUnreachable:false, showDone:true, showLow:false, showAll:true, autoplay:true, batchSkip:true, mode:'flac', details:false, importEnabled:false, imports:[], jobs:[], jobsSeen:new Set(), player:{audio:new Map(), handlers:new Map(), seq:0, timer:null, active:null, ab:null}, error:'', notice:''};
   const api = async (path, options={}) => {
     const headers = Object.assign({'X-Review-Token':token}, options.body ? {'Content-Type':'application/json'} : {}, options.headers || {});
     const response = await fetch(path, Object.assign({}, options, {headers}));
@@ -179,9 +180,13 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   // REVIEW lines are grouped by risk (high first); low-risk lines stay folded until opened and are not counted as left.
   const riskRank = item => item.row.review !== 'REVIEW' ? 3 : ({high:0, normal:1, low:2}[item.row.risk] ?? 1);
   const counted = item => item.row.review === 'REVIEW' && item.row.risk !== 'low';
-  const visible = () => state.rows
-    .filter(item => (state.activeSong == null || item.song.index === state.activeSong) && (item.row.review === 'REVIEW' || state.showUntrusted) && (riskRank(item) !== 2 || state.showLow))
-    .map((item, index) => [item, index]).sort((a, b) => riskRank(a[0]) - riskRank(b[0]) || a[1] - b[1]).map(pair => pair[0]);
+  // Whole-song view (default): every line in lyric order, so a wrong line the detector missed can still be fixed and logged.
+  const visible = () => {
+    const rows = state.rows.filter(item => state.activeSong == null || item.song.index === state.activeSong);
+    if (state.showAll) return rows;
+    return rows.filter(item => item.row.review === 'REVIEW' && (riskRank(item) !== 2 || state.showLow))
+      .map((item, index) => [item, index]).sort((a, b) => riskRank(a[0]) - riskRank(b[0]) || a[1] - b[1]).map(pair => pair[0]);
+  };
   const keyFor = item => String(item.song.index) + ':' + String(item.row.entry);
   const editFor = item => state.edits.get(keyFor(item));
   const conflicted = item => { const edit = editFor(item); return !!edit && edit.base_cs !== item.row.current_cs; };
@@ -293,8 +298,8 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   function toggleMute() { volume.muted = !volume.muted; applyVolume(); }
   // Reviewer settings (on by default, remembered in the browser): autoplay on row change, batch-keep button.
   const SETTINGS_KEY = 'lrc-review-settings';
-  try { const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null'); if (saved && typeof saved === 'object') { state.autoplay = !!saved.autoplay; state.batchSkip = !!saved.batchSkip; } } catch (_) {}
-  function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({autoplay:state.autoplay, batchSkip:state.batchSkip})); } catch (_) {} }
+  try { const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null'); if (saved && typeof saved === 'object') { state.autoplay = !!saved.autoplay; state.batchSkip = !!saved.batchSkip; if (typeof saved.showAll === 'boolean') state.showAll = saved.showAll; } } catch (_) {}
+  function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({autoplay:state.autoplay, batchSkip:state.batchSkip, showAll:state.showAll})); } catch (_) {} }
   function autoplaySelected() {
     if (!state.autoplay) return;
     const item = visible()[state.selected];
@@ -559,6 +564,16 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     stage(item, cs, existing?.source || 'nudge', (existing?.nudge_cs || 0) + actualDelta);
     playAround(item, cs);
   }
+  function setShowAll(on) {
+    const current = visible()[state.selected];
+    state.showAll = !!on;
+    const box = document.getElementById('untrusted');
+    if (box) box.checked = state.showAll;
+    saveSettings();
+    state.selected = 0;
+    if (current) select(current);
+    render();
+  }
   function markDone(item) { state.done.add(keyFor(item)); }
   function nextRow() {
     const rows = visible();
@@ -680,14 +695,19 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     else { const empty = document.createElement('div'); empty.className = 'meta'; empty.textContent = song ? (unreachable(song) ? unreachableText(song) : '這首沒有需要審的句子。') : emptyText(); queue.appendChild(empty); }
     const list = document.createElement('section');
     list.className = 'queue-list glass';
-    list.innerHTML = '<h3>本首待審</h3>';
+    list.innerHTML = '<h3>' + (state.showAll ? '整首歌詞' : '本首待審') + '</h3>';
+    const viewToggle = document.createElement('button');
+    viewToggle.type = 'button';
+    viewToggle.className = 'q-fold';
+    viewToggle.textContent = state.showAll ? '只看待審的句子' : '顯示整首歌詞';
+    viewToggle.addEventListener('click', () => setShowAll(!state.showAll));
     const wrap = document.createElement('div');
     wrap.className = 'list';
     const riskTitles = ['高風險：先聽這些', '一般', '可略過：多個偵測結果一致，或前後銜接合理', '其他（未要求審核）'];
     let lastRank = null;
     rows.forEach((item, index) => {
       const row = item.row, edit = editFor(item), done = isDone(item);
-      if (riskRank(item) !== lastRank) {
+      if (!state.showAll && riskRank(item) !== lastRank) {
         lastRank = riskRank(item);
         const head = document.createElement('div');
         head.className = 'q-sec';
@@ -695,15 +715,16 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
         wrap.appendChild(head);
       }
       const line = document.createElement('div');
-      line.className = 'q' + (index === state.selected ? ' cur' : '') + (done ? ' done' : '');
+      line.className = 'q' + (index === state.selected ? ' cur' : '') + (done ? ' done' : '') + (state.showAll && row.review !== 'REVIEW' && !edit && !done ? ' other' : '');
       const options = optionsOf(row).filter(option => option.kind !== 'keep');
-      const hint = done ? (edit ? '已改 ' + deltaText(edit.cs - row.current_cs) : '已確認') : edit ? '暫存 ' + deltaText(edit.cs - row.current_cs) : options.length ? (options.every(o => o.kind === 'earlier') ? '提早?' : options.every(o => o.kind === 'later') ? '延後?' : '不一致') : '確認';
+      const tier = state.showAll ? (row.review !== 'REVIEW' ? '' : ['高風險 · ', '待審 · ', '可略過 · '][riskRank(item)] || '') : '';
+      const hint = done ? (edit ? '已改 ' + deltaText(edit.cs - row.current_cs) : '已確認') : edit ? '暫存 ' + deltaText(edit.cs - row.current_cs) : row.review !== 'REVIEW' ? '未標記' : tier + (options.length ? (options.every(o => o.kind === 'earlier') ? '提早?' : options.every(o => o.kind === 'later') ? '延後?' : '不一致') : '確認');
       line.innerHTML = '<span class="num">' + row.entry + '</span><span class="num">' + time(working(item)) + '</span><span class="ly">' + esc((row.lyrics || [row.lyric || ''])[0]) + '</span><span class="st">' + hint + '</span>';
       line.addEventListener('click', () => { select(item); state.notice = ''; render(); });
       wrap.appendChild(line);
     });
     const lowCount = song ? lowOf(song) : 0;
-    if (lowCount) {
+    if (lowCount && !state.showAll) {
       const fold = document.createElement('button');
       fold.type = 'button';
       fold.className = 'q-fold';
@@ -723,6 +744,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       }
     }
     list.appendChild(wrap);
+    list.appendChild(viewToggle);
     queue.appendChild(list);
     const globalReadOnly = serverReadOnly();
     status.textContent = state.error || (state.dirty ? state.edits.size + ' 筆已改，未儲存' : '未變更');
@@ -882,7 +904,8 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   }
 
   document.getElementById('save').addEventListener('click', event => { event.currentTarget.blur(); save(); });
-  document.getElementById('untrusted').addEventListener('change', event => { state.showUntrusted = event.target.checked; render(); });
+  document.getElementById('untrusted').checked = state.showAll;
+  document.getElementById('untrusted').addEventListener('change', event => { setShowAll(event.target.checked); });
   document.getElementById('autoplay').checked = state.autoplay;
   document.getElementById('autoplay').addEventListener('change', event => { state.autoplay = event.target.checked; saveSettings(); });
   document.getElementById('batch-skip').checked = state.batchSkip;

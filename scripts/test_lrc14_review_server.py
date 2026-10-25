@@ -765,7 +765,7 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
 """.replace("SOURCE", json.dumps(source))
         result = subprocess.run(["node", "-"], input=harness, capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout), {"tabs": [True], "sections": ["待確認 1"], "key": "0:1", "queue": ["q-sec", "q cur", "q"], "audio": True, "nudge": True, "options": 3, "extras": True})
+        self.assertEqual(json.loads(result.stdout), {"tabs": [True], "sections": ["待確認 1"], "key": "0:1", "queue": ["q cur", "q"], "audio": True, "nudge": True, "options": 3, "extras": True})
 
     def test_acceptance_save_three_entries_and_second_save(self) -> None:
         detail = self._detail()
