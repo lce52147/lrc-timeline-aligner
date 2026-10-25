@@ -49,7 +49,9 @@ available, skeleton not SEGMENT_CURRENT).
 - **Central hooks**: the source joins the local-CTC Raw/WhisperX corroboration set and
   the ≥ 3 s displaced-row local Whisper probe (only when no `segment-constrained-ctc`
   proposal exists). `CORROBORATED_REALIGNMENT_SOURCES` is untouched.
-- **Switches / diagnostics**: `--segment-realign {auto,off}`, `LRC_SEGMENT_REALIGN=off`;
+- **Switches / diagnostics**: `--segment-realign {auto,off}` (default `off` until the 2.0
+  replay is accepted; `auto` or `LRC_SEGMENT_REALIGN=auto` turns it on, the environment
+  variable wins);
   report key `segment_realign` (status, row_status, structure, flagged_entries, runs,
   generated, errors, revision `SEGMENT_REALIGN_REVISION`).
 - **Output stage**: `review_presentation.song_risk` marks the Choir class

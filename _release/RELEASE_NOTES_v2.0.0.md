@@ -1,6 +1,6 @@
 ## LRC Timeline Aligner v2.0.0（草稿；版本號與發佈由 EvanOG 決定）
 
-段落級重對齊（segment realign）。對齊演算法改變：`LRC_ALGORITHM_REVISION` 改為 `2026-10-25-lrc-v2.0-segment-realign`。沒有被新階段動到的歌，LRC 與 v1.8.0 完全相同；報告多一個 `segment_realign` 區塊。審核頁新增「整首高風險」標記。
+段落級重對齊（segment realign），預設關閉、以 `--segment-realign auto` 啟用。`LRC_ALGORITHM_REVISION` 改為 `2026-10-25-lrc-v2.0-segment-realign`。關閉時與沒有被新階段動到的歌，LRC 與 v1.8.0 完全相同；報告多一個 `segment_realign` 區塊。審核頁新增「整首高風險」標記。
 
 ### 新增
 - **段落級重對齊**（`scripts\segment_realign.py`、`auto_lrc.apply_segment_realign`）：全曲 CTC 與 local window 之後、Central 之前，用歌詞結構重算每一行該在哪裡——同一首副歌不同次出現的對應行間隔必須一樣（驗證集上差的中位數 0.02 s、95 百分位 0.33 s）、兩個起唱點之間的有人聲秒數要對得上這一行的長度（整首中位速率的 0.62–1.6 倍免費）、時間必須單調遞增；有 raw ASR 佐證或 CTC 分數夠高的行是錨點，其他行可以在錨點之間移動。被推開超過 1 秒的連續幾行組成一個 run，在前後沒被動到的行之間的時間窗（最多 6 個 run、每個 1–60 秒）再跑一次 bounded CTC，通過右緣堆積與人聲缺席檢查的起唱點寫成 `segment-realign-ctc` 候選交給 Central。不改任何時間、不碰輸出；錨點不到 35% 的歌整首不碰；沒有 run 的歌零模型呼叫。
@@ -8,7 +8,7 @@
 - **可信評估集**：37 份校正 LRC 裡 22 份是從工具輸出改來的（與某次輸出到百分秒相同的行數比例 > 0.10）。評估改以 15 份獨立校正（562 行）為主，22 份衍生校正（813 行）只當回歸（不能變差），審聽紀錄（37 行）另計。起點：independent bad（> 0.5 s）16 行、derived 40 行（Choir ‘S’ Choir 17 行）。
 
 ### 變更
-- CLI 新增 `--segment-realign {auto,off}`（預設 auto）；環境變數 `LRC_SEGMENT_REALIGN=off` 蓋過 CLI。
+- CLI 新增 `--segment-realign {auto,off}`，**預設 off**（2.0 replay 驗收前先不開，EvanOG 在 `19b4b53` 定的）；`--segment-realign auto` 或環境變數 `LRC_SEGMENT_REALIGN=auto` 才啟用，環境變數蓋過 CLI。預設關閉時每首歌的 LRC 都與 v1.8.0 相同，報告只多 `segment_realign: {status: off}`。
 - `segment-realign-ctc` 加入 local CTC 候選的 Raw/WhisperX 佐證來源，以及位移 ≥ 3 秒時的 local Whisper 探針（沒有 `segment-constrained-ctc` 候選時才接手；原有行為不變）。
 - 報告新增 `segment_realign`：status（off / skipped / weak-anchors / no-runs / no-candidates / candidates / error）、row_status、structure（錨點數、速率、副歌模板對數）、flagged_entries、每個 run 的 entries / proposed / 時間窗 / 候選數 / 拒絕原因、generated、revision。
 
