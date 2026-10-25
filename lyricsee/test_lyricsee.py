@@ -727,9 +727,13 @@ class LyricseeCoreTests(unittest.TestCase):
         self.assertFalse(result.lrclib_unavailable)
         self.assertIn("lrclib: no match", result.errors)
 
-    def test_collect_candidates_attempts_google_even_when_structured_sources_succeed(self):
+    def test_collect_candidates_asks_utanet_first_then_lrclib_then_google(self):
         core = load_core()
         calls = []
+
+        def utanet(identity, client):
+            calls.append("uta-net")
+            raise LookupError("no row matched title and artist")
 
         def lrclib(identity, client):
             calls.append("lrclib")
@@ -748,13 +752,15 @@ class LyricseeCoreTests(unittest.TestCase):
         result = core.collect_candidates(
             core.TrackIdentity("Song", "Artist"),
             object(),
+            utanet_fetcher=utanet,
             lrclib_fetcher=lrclib,
             google_fetcher=google,
         )
-        self.assertEqual(calls, ["lrclib", "google"])
+        self.assertEqual(calls, ["uta-net", "lrclib", "google"])
         self.assertEqual(len(result.candidates), 1)
         self.assertEqual(result.google_urls, ["https://example.com"])
-        self.assertEqual(result.errors, [])
+        self.assertEqual(result.errors, ["uta-net: no row matched title and artist"])
+        self.assertFalse(result.utanet_unavailable)
 
     def test_local_llm_translation_batches_twelve_and_preserves_order(self):
         core = load_core()

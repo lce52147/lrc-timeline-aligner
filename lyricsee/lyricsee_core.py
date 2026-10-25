@@ -28,6 +28,11 @@ class TrackIdentity(NamedTuple):
     artist: str = ""
     album: str = ""
     duration: float | None = None
+    # Extra strings that may name the song or artist: the file name without
+    # its track number, the album tag, the folder name.  Used only to confirm
+    # a candidate (e.g. the artist spelled in kanji in the folder name while
+    # the tag says "Sasaki Eri"), never to search.
+    hints: tuple[str, ...] = ()
 
 
 class TimedLine(NamedTuple):
@@ -54,6 +59,7 @@ class LyricCandidate:
         search_engine: str = "none",
         google_search: str | None = None,
         translator: str | None = None,
+        meta: dict | None = None,
     ) -> None:
         self.source = source
         self.url = url
@@ -64,6 +70,9 @@ class LyricCandidate:
         self.search_url = search_url if search_url is not None else google_search
         self.search_engine = search_engine
         self.translator = translator
+        # Source-specific facts for the verification policy: trust class,
+        # identity match levels, rejected alternatives.  Never lyric text.
+        self.meta = dict(meta or {})
 
     @property
     def google_search(self) -> str | None:
@@ -101,8 +110,16 @@ def _is_credit_line(text: str) -> bool:
     return line.casefold().startswith(_METADATA_PREFIXES) or bool(_CREDIT_LINE_RE.match(line))
 
 
+_TRACK_NUMBER_RE = re.compile(r"^\s*\d{1,3}(?:[-.]\d{1,3})?\s*[.\-_ ]+\s*")
+
+
+def strip_track_number(value: str) -> str:
+    """'01. ALIVE' / '3-12. Lasting Moment' / '001-君と光' without the number."""
+    return _TRACK_NUMBER_RE.sub("", value).strip() or value.strip()
+
+
 def identity_from_filename(path: Path) -> TrackIdentity:
-    stem = path.stem.strip()
+    stem = strip_track_number(path.stem.strip())
     if " - " in stem:
         artist, title = (part.strip() for part in stem.split(" - ", 1))
         if artist and title:
@@ -630,8 +647,15 @@ def write_result(
         raise FileExistsError(f"Refusing to overwrite existing provenance: {provenance}")
 
     lyrics_text = render_lyrics(candidate.lines)
+    verification = getattr(candidate, "verification", None) or {}
     payload = {
         "txt_sha256": hashlib.sha256(lyrics_text.encode("utf-8")).hexdigest(),
+        "verification_status": verification.get("verification_status")
+        or ("verified" if verification.get("source_verified") else ""),
+        "verified_by": verification.get("original_verified_by", ""),
+        "sources_used": list(verification.get("sources_used") or []),
+        "diff_line_count": verification.get("diff_line_count", 0),
+        "notation_diff_line_count": verification.get("notation_diff_line_count", 0),
         "verification": getattr(candidate, "verification", None),
         "selected_source": candidate.source,
         "source_url": candidate.url,
@@ -663,6 +687,7 @@ class CollectionResult(NamedTuple):
     search_engine: str = "none"
     search_url: str = ""
     lrclib_unavailable: bool = False
+    utanet_unavailable: bool = False
 
 
 class SearchResult:
@@ -713,6 +738,151 @@ def _metadata_score(
         else 9999.0
     )
     return title_score, artist_score, -duration_penalty
+
+
+_BRACKET_RE = re.compile(r"\s*(?:[（(\[【<＜][^（()）\[\]【】<>＜＞]*[)）\]】>＞])\s*")
+_FEAT_TAIL_RE = re.compile(r"\s*(?:feat\.?|ft\.?|featuring)\s+.*$", flags=re.IGNORECASE)
+_TILDE_TAIL_RE = re.compile(r"\s*[～~〜].*$")
+_ARTIST_SPLIT_RE = re.compile(
+    r"\s*(?:,|、|/|／|&|＆|×|\+|;|；|\bfeat\.?\s|\bft\.?\s|\bfeaturing\s|\bwith\s|\bvs\.?\s|\bx\s)\s*",
+    flags=re.IGNORECASE,
+)
+_CV_RE = re.compile(r"[（(]\s*(?:cv|c\.v\.|voice|声)?\s*[.:：]?\s*([^（()）]+?)\s*[)）]", flags=re.IGNORECASE)
+
+
+def _bare_title(value: str) -> str:
+    """Title without bracketed additions and feat. tails."""
+    stripped = _BRACKET_RE.sub(" ", value)
+    stripped = _FEAT_TAIL_RE.sub("", stripped)
+    return re.sub(r"\s+", " ", stripped).strip() or value.strip()
+
+
+def title_forms(value: str) -> list[str]:
+    """Normalized spellings of a title, strongest first.
+
+    [0] is the full title; the others drop feat./bracket additions, split on
+    slashes (Fuyubiyori/ふゆびより) and cut a ～subtitle～ tail.
+    """
+    forms: list[str] = []
+
+    def add(text: str) -> None:
+        normalized = _normalized(text)
+        if normalized and normalized not in forms:
+            forms.append(normalized)
+
+    add(value)
+    bare = _bare_title(value)
+    add(bare)
+    for part in re.split(r"\s*[/／]\s*", bare):
+        if len(_normalized(part)) >= 2:
+            add(part)
+    head = _TILDE_TAIL_RE.sub("", bare)
+    if len(_normalized(head)) >= 2:
+        add(head)
+    return forms
+
+
+def title_search_keywords(identity: TrackIdentity) -> list[str]:
+    """Keywords to type into a title search, most specific first."""
+    keywords: list[str] = []
+
+    def add(text: str) -> None:
+        text = re.sub(r"\s+", " ", text).strip()
+        if len(_normalized(text)) >= 1 and text not in keywords:
+            keywords.append(text)
+
+    bare = _bare_title(identity.title)
+    parts = [part for part in re.split(r"\s*[/／]\s*", bare) if len(_normalized(part)) >= 2]
+    if len(parts) > 1:
+        # "Fuyubiyori/ふゆびより": the Japanese spelling is the published title.
+        parts.sort(key=lambda part: (not _KANA_RE.search(part) and not _HAN_RE.search(part)))
+        for part in parts:
+            add(part)
+    add(bare)
+    for hint in identity.hints[:1]:
+        hint_title = _bare_title(strip_track_number(hint))
+        if hint_title and _normalized(hint_title) not in title_forms(identity.title):
+            add(hint_title)
+    head = _TILDE_TAIL_RE.sub("", bare)
+    if len(_normalized(head)) >= 2:
+        add(head)
+    # Characters a site search may choke on (?, quotes, slashes): retry with
+    # the plain words only, then with the longest word alone.
+    if re.search(r"[?？'‘’\"“”/／]", bare):
+        plain = re.sub(r"['‘’\"“”]", "", bare)
+        tokens = [token for token in re.split(r"[\s/／]+", plain) if len(_normalized(token)) >= 2]
+        if tokens:
+            add(" ".join(tokens))
+        words = sorted(re.findall(r"[\w\u3040-\u30ff\u3400-\u9fff]{3,}", plain), key=len, reverse=True)
+        if words:
+            add(words[0])
+    return keywords
+
+
+def title_match_level(identity: TrackIdentity, candidate_title: str) -> int:
+    """3 identical, 2 identical after stripping feat./brackets or a slash
+    variant, 1 one contains the other, 0 unrelated."""
+    requested = title_forms(identity.title)
+    for hint in identity.hints[:1]:
+        for form in title_forms(strip_track_number(hint)):
+            if form not in requested:
+                requested.append(form)
+    candidate = title_forms(candidate_title)
+    if not requested or not candidate:
+        return 0
+    if requested[0] == candidate[0]:
+        return 3
+    if any(form == candidate[0] for form in requested) or any(form == requested[0] for form in candidate):
+        return 2
+    if any(form == other for form in requested for other in candidate if len(form) >= 2):
+        return 2
+    longest = requested[0]
+    if len(longest) >= 4 and (longest in candidate[0] or candidate[0] in longest):
+        return 1
+    return 0
+
+
+def artist_parts(value: str) -> list[str]:
+    """Normalized artist names in a credit string.
+
+    "エミリア(CV：高橋李依)" gives both the character and the voice actor;
+    "TRUE & 茅原実里" gives each singer.
+    """
+    parts: list[str] = []
+    for raw in _ARTIST_SPLIT_RE.split(value or ""):
+        raw = raw.strip()
+        if not raw:
+            continue
+        inner = [match.strip() for match in _CV_RE.findall(raw)]
+        outer = _CV_RE.sub(" ", raw).strip()
+        for piece in [outer, *inner]:
+            normalized = _normalized(piece)
+            if len(normalized) >= 2 and normalized not in parts:
+                parts.append(normalized)
+    return parts
+
+
+def artist_match_level(identity: TrackIdentity, candidate_artist: str) -> int:
+    """2 same artist, 1 partial match or the candidate artist appears in the
+    album / folder hints, 0 no evidence."""
+    candidate_full = _normalized(candidate_artist or "")
+    requested_full = _normalized(identity.artist or "")
+    if not candidate_full:
+        return 0
+    if requested_full and requested_full == candidate_full:
+        return 2
+    requested = artist_parts(identity.artist)
+    candidate = artist_parts(candidate_artist)
+    if any(part == other for part in requested for other in candidate):
+        return 2
+    for part in requested:
+        for other in candidate:
+            if min(len(part), len(other)) >= 3 and (part in other or other in part):
+                return 1
+    hint_text = _normalized(" ".join(identity.hints))
+    if hint_text and any(len(other) >= 2 and other in hint_text for other in candidate):
+        return 1
+    return 0
 
 
 def _plain_lyric_pairs(text: str) -> list[LyricPair]:
@@ -869,16 +1039,43 @@ def fetch_google_candidates(
     return SearchResult(urls, candidates, search_engine, search_url, search_errors)
 
 
+def _default_utanet_fetcher(identity: TrackIdentity, client) -> LyricCandidate:
+    try:
+        from utanet_source import fetch_utanet_candidate
+    except ModuleNotFoundError:  # pragma: no cover - package import style
+        from lyricsee.utanet_source import fetch_utanet_candidate
+    return fetch_utanet_candidate(identity, client)
+
+
+def _source_unavailable(exc: Exception) -> bool:
+    if isinstance(exc, HTTPError):
+        return 500 <= exc.code <= 599
+    return isinstance(exc, (URLError, TimeoutError))
+
+
 def collect_candidates(
     identity: TrackIdentity,
     client,
     *,
+    utanet_fetcher=_default_utanet_fetcher,
     lrclib_fetcher=fetch_lrclib_candidate,
     google_fetcher=fetch_google_candidates,
 ) -> CollectionResult:
+    """Gather every source for the recording: uta-net first, then LRCLIB,
+    then translation pages found through web search."""
     candidates: list[LyricCandidate] = []
     errors: list[str] = []
     lrclib_unavailable = False
+    utanet_unavailable = False
+
+    try:
+        candidates.append(utanet_fetcher(identity, client))
+    except Exception as exc:
+        if _source_unavailable(exc):
+            utanet_unavailable = True
+            errors.append(f"uta-net: source_unavailable ({exc})")
+        else:
+            errors.append(f"uta-net: {exc}")
 
     try:
         candidates.append(lrclib_fetcher(identity, client))
@@ -920,7 +1117,7 @@ def collect_candidates(
     # those rows when independently retrieved structured originals disagree.
     structured = [
         item for item in candidates
-        if item.source == "lrclib" and len(item.lines) >= 8
+        if item.source in {"lrclib", "uta-net"} and len(item.lines) >= 8
     ]
     safe_candidates: list[LyricCandidate] = []
     for candidate in candidates:
@@ -959,6 +1156,7 @@ def collect_candidates(
         search_engine,
         search_url,
         lrclib_unavailable,
+        utanet_unavailable,
     )
 
 
@@ -1242,18 +1440,40 @@ def probe_audio(path: Path, *, runner=subprocess.run) -> TrackIdentity:
         artist=str(tags.get("artist") or fallback.artist).strip(),
         album=str(tags.get("album") or "").strip(),
         duration=duration,
+        hints=identity_hints(path, album=str(tags.get("album") or "")),
     )
+
+
+def identity_hints(path: Path, *, album: str = "") -> tuple[str, ...]:
+    """(file title without track number, album, parent folder) for matching."""
+    hints: list[str] = []
+    for value in (strip_track_number(identity_from_filename(path).title), album, path.parent.name):
+        value = str(value or "").strip()
+        if value and value not in hints:
+            hints.append(value)
+    return tuple(hints)
+
+
+HOST_INTERVALS = {"www.uta-net.com": 1.0}
 
 
 class HttpClient:
     def __init__(self, *, user_agent: str = "Lyricsee/0.1 (local LRC tools helper)") -> None:
         self.user_agent = user_agent
         self._last_request = 0.0
+        self._last_by_host: dict[str, float] = {}
 
-    def _throttle(self) -> None:
+    def _throttle(self, host: str = "") -> None:
         remaining = 0.25 - (time.monotonic() - self._last_request)
+        if host in HOST_INTERVALS:
+            remaining = max(
+                remaining,
+                HOST_INTERVALS[host] - (time.monotonic() - self._last_by_host.get(host, 0.0)),
+            )
         if remaining > 0:
             time.sleep(remaining)
+        if host:
+            self._last_by_host[host] = time.monotonic()
 
     def _request(
         self,
@@ -1278,8 +1498,9 @@ class HttpClient:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             request_headers["Content-Type"] = "application/json"
         request = Request(url, data=body, headers=request_headers, method="POST" if body else "GET")
+        host = (urlparse(url).hostname or "").casefold()
         for attempt in range(retries):
-            self._throttle()
+            self._throttle(host)
             try:
                 with urlopen(request, timeout=timeout) as response:
                     raw = response.read(8 * 1024 * 1024)

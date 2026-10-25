@@ -47,6 +47,11 @@ RUN_FIELDS = (
     "translation_error",
     "oogg_endpoint",
     "line_count",
+    "verification",
+    "verified_by",
+    "sources",
+    "diff_lines",
+    "notation_diffs",
     "original_source_url",
     "search_engine",
     "search_url",
@@ -278,6 +283,16 @@ def _inspect_existing(
     if overwrite:
         return None, payload, True
 
+    status = str(
+        payload.get("verification_status")
+        or (payload.get("verification") or {}).get("verification_status")
+        or ""
+    )
+    if status == "unverified":
+        # A single-source result is never "existing": retry it so a newly
+        # available second source can verify or correct it.
+        return None, payload, True
+
     if inspect_output.is_file() and inspect_provenance.is_file():
         try:
             current = verified_provenance_is_current(payload, inspect_output.read_bytes())
@@ -301,6 +316,11 @@ def _base_row(index: int, audio_path: Path, **updates: object) -> dict:
         "translation_error": "",
         "oogg_endpoint": "",
         "line_count": 0,
+        "verification": "",
+        "verified_by": "",
+        "sources": "",
+        "diff_lines": 0,
+        "notation_diffs": 0,
         "original_source_url": "",
         "search_engine": "none",
         "search_url": "",
@@ -313,8 +333,24 @@ def _base_row(index: int, audio_path: Path, **updates: object) -> dict:
     return row
 
 
+def _verification_fields(verification: dict | None) -> dict:
+    """Run-table columns derived from a verification evidence dict."""
+    verification = verification or {}
+    sources = verification.get("sources_used") or []
+    return {
+        "verification": str(verification.get("verification_status") or ""),
+        "verified_by": str(verification.get("original_verified_by") or ""),
+        "sources": "+".join(str(item) for item in sources),
+        "diff_lines": int(verification.get("diff_line_count") or 0),
+        "notation_diffs": int(verification.get("notation_diff_line_count") or 0),
+    }
+
+
 def _existing_row(index: int, audio_path: Path, output_root: Path, status: str, payload: dict) -> dict:
     output, provenance = _output_paths(output_root, audio_path)
+    verification = dict(payload.get("verification") or {})
+    if payload.get("verification_status") and not verification.get("verification_status"):
+        verification["verification_status"] = payload["verification_status"]
     return _base_row(
         index,
         audio_path,
@@ -323,6 +359,7 @@ def _existing_row(index: int, audio_path: Path, output_root: Path, status: str, 
         translation_error=str(payload.get("translation_error") or ""),
         oogg_endpoint=str(payload.get("oogg_endpoint") or ""),
         line_count=int(payload.get("line_count") or 0),
+        **_verification_fields(verification),
         original_source_url=str(payload.get("source_url") or ""),
         search_engine=str(payload.get("search_engine") or "none"),
         search_url=str(payload.get("search_url") or payload.get("google_search_url") or ""),
@@ -442,10 +479,12 @@ def _process_track(
         except Exception as exc:
             details = list(collected.errors)
             details.append(f"{type(exc).__name__}: {exc}")
+            unavailable = collected.lrclib_unavailable or getattr(collected, "utanet_unavailable", False)
             return _base_row(
                 index,
                 audio_path,
-                status=("source_unavailable" if collected.lrclib_unavailable else "no_original"),
+                status=("source_unavailable" if unavailable else "no_original"),
+                verification="none",
                 search_engine=search_engine,
                 search_url=search_url,
                 embedded_lyrics_lines=embedded_lines,
@@ -453,6 +492,10 @@ def _process_track(
             )
 
         original_url = original.url
+        verification_fields = _verification_fields({
+            "verification_status": evidence.get("verification_status", "verified"),
+            **{key: value for key, value in evidence.items() if key != "verification_status"},
+        })
         translation_method = "none"
         translation_error = ""
         oogg_endpoint = ""
@@ -616,6 +659,7 @@ def _process_track(
             translation_error=translation_error,
             oogg_endpoint=oogg_endpoint,
             line_count=len(selected.lines),
+            **verification_fields,
             original_source_url=original_url,
             search_engine=search_engine,
             search_url=search_url,
@@ -645,11 +689,20 @@ def render_markdown(rows: list[dict]) -> str:
     lines = ["# Status counts", ""]
     for status, count in sorted(counts.items()):
         lines.append(f"- {status}: {count}")
+    verification = Counter(
+        f"{row.get('verification')}" + (f" ({row.get('verified_by')})" if row.get("verified_by") else "")
+        for row in rows
+        if row.get("verification")
+    )
+    if verification:
+        lines.extend(["", "# Verification counts", ""])
+        for key, count in sorted(verification.items()):
+            lines.append(f"- {key}: {count}")
     lines.extend(
         [
             "",
-            "| index | audio | stem | status | translation_method | translation_error | oogg_endpoint | line_count | original_source_url | search_engine | search_url | embedded_lyrics_lines | error | output_txt | output_json |",
-            "|---:|---|---|---|---|---|---|---:|---|---|---|---:|---|---|---|",
+            "| " + " | ".join(RUN_FIELDS) + " |",
+            "|---:|---|---|---|---|---|---|---:|---|---|---|---:|---:|---|---|---|---:|---|---|---|",
         ]
     )
     for row in rows:
@@ -758,7 +811,8 @@ def run(args: argparse.Namespace) -> tuple[list[dict], tuple[Path, Path] | None]
             client=client,
         )
         append_row(row)
-        print(f"{index}/{len(tracks)} {row['status']} {path}", flush=True)
+        verification = f" {row['verification']}" if row.get("verification") else ""
+        print(f"{index}/{len(tracks)} {row['status']}{verification} {path}", flush=True)
 
     if args.dry_run:
         print(render_markdown(rows), end="")
