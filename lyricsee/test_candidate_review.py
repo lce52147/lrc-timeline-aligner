@@ -12,6 +12,8 @@ from candidate_review import (
     load_candidates_metadata,
     record_review_decision,
     load_review_decisions,
+    accept_candidate,
+    reject_candidate,
 )
 from lyricsee_core import LyricCandidate, LyricPair
 
@@ -82,7 +84,7 @@ class CandidateReviewTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
 
-            record_review_decision(root, "song1", "accept", 0)
+            record_review_decision(root, "song1", "accept", 0, execute=False)
 
             decisions = load_review_decisions(root)
             self.assertIn("song1", decisions)
@@ -93,7 +95,7 @@ class CandidateReviewTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
 
-            record_review_decision(root, "song2", "reject", None)
+            record_review_decision(root, "song2", "reject", None, execute=False)
 
             decisions = load_review_decisions(root)
             self.assertIn("song2", decisions)
@@ -104,9 +106,9 @@ class CandidateReviewTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
 
-            record_review_decision(root, "song1", "accept", 1)
-            record_review_decision(root, "song2", "reject", None)
-            record_review_decision(root, "song3", "accept", 0)
+            record_review_decision(root, "song1", "accept", 1, execute=False)
+            record_review_decision(root, "song2", "reject", None, execute=False)
+            record_review_decision(root, "song3", "accept", 0, execute=False)
 
             decisions = load_review_decisions(root)
             self.assertEqual(len(decisions), 3)
@@ -179,6 +181,114 @@ class CandidateReviewTests(unittest.TestCase):
 
             content = lyrics_file.read_text(encoding="utf-8")
             self.assertEqual(content, "First line\nSecond line\nThird line")
+
+    def test_accept_candidate_saves_lyrics(self):
+        """Test that accepting a candidate saves the lyrics."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            candidate = LyricCandidate(
+                source="utanet",
+                url="http://uta-net.com/lyrics/123",
+                title="Song",
+                artist="Artist",
+                lines=[LyricPair("Line 1"), LyricPair("Line 2")],
+            )
+
+            save_candidates(root, "accept_test", [candidate])
+
+            # Accept the candidate
+            accept_candidate(root, "accept_test", 0)
+
+            # Check that the lyrics file was created
+            lyrics_file = root / "txt" / "accept_test.lyrics.txt"
+            self.assertTrue(lyrics_file.exists())
+            content = lyrics_file.read_text(encoding="utf-8")
+            self.assertEqual(content, "Line 1\nLine 2\n")
+
+            # Check that provenance was created with human_approved
+            provenance_file = root / "report" / "accept_test.sources.json"
+            self.assertTrue(provenance_file.exists())
+            provenance = json.loads(provenance_file.read_text(encoding="utf-8"))
+            self.assertTrue(provenance["human_approved"])
+            self.assertEqual(provenance["verification_status"], "human_approved")
+            self.assertEqual(provenance["verified_by"], "review_page")
+
+    def test_accept_candidate_with_record_decision(self):
+        """Test that recording accept decision saves the lyrics."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            candidate = LyricCandidate(
+                source="utanet",
+                url="http://uta-net.com/lyrics/456",
+                title="Song 2",
+                artist="Artist 2",
+                lines=[LyricPair("Verse 1"), LyricPair("Verse 2")],
+            )
+
+            save_candidates(root, "song_test", [candidate])
+
+            # Record accept decision
+            record_review_decision(root, "song_test", "accept", 0)
+
+            # Check that the lyrics file was created
+            lyrics_file = root / "txt" / "song_test.lyrics.txt"
+            self.assertTrue(lyrics_file.exists())
+
+    def test_reject_candidate_marks_rejected(self):
+        """Test that rejecting a candidate marks it as rejected."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            candidates = [
+                LyricCandidate(
+                    source="source1",
+                    url="http://example.com/1",
+                    title="Song",
+                    artist="Artist",
+                    lines=[LyricPair("Line 1")],
+                ),
+                LyricCandidate(
+                    source="source2",
+                    url="http://example.com/2",
+                    title="Song",
+                    artist="Artist",
+                    lines=[LyricPair("Line 2")],
+                ),
+            ]
+
+            save_candidates(root, "reject_test", candidates)
+
+            # Reject all candidates
+            reject_candidate(root, "reject_test")
+
+            # Check that metadata is marked as rejected
+            metadata = load_candidates_metadata(root, "reject_test")
+            for item in metadata:
+                self.assertTrue(item.get("rejected_by_user", False))
+
+    def test_reject_candidate_with_record_decision(self):
+        """Test that recording reject decision marks as rejected."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            candidate = LyricCandidate(
+                source="source",
+                url="http://example.com",
+                title="Song",
+                artist="Artist",
+                lines=[LyricPair("Line")],
+            )
+
+            save_candidates(root, "reject_test2", [candidate])
+
+            # Record reject decision
+            record_review_decision(root, "reject_test2", "reject", None)
+
+            # Check that metadata is marked as rejected
+            metadata = load_candidates_metadata(root, "reject_test2")
+            self.assertTrue(metadata[0].get("rejected_by_user", False))
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import NamedTuple
 from urllib.parse import parse_qs, urlparse
 
-from candidate_review import load_candidates_metadata, load_review_decisions, record_review_decision
+from candidate_review import load_candidates_metadata, load_review_decisions, record_review_decision, accept_candidate, reject_candidate
 
 
 class ReviewServerConfig(NamedTuple):
@@ -125,10 +125,14 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
                 self.send_error(400, "Missing stem or decision")
                 return
 
+            if decision not in ("accept", "reject"):
+                self.send_error(400, f"Invalid decision: {decision}")
+                return
+
             record_review_decision(self.output_root, stem, decision, candidate_idx)
             self.send_json_response({"status": "ok"})
         except Exception as e:
-            self.send_error(400, f"Error: {e}")
+            self.send_error(400, f"Error: {str(e)}")
 
     def send_json_response(self, data: dict) -> None:
         """Send a JSON response."""
