@@ -1265,6 +1265,74 @@ def collect_candidates(
     )
 
 
+def collect_all_candidates_for_review(
+    identity: TrackIdentity,
+    client,
+    *,
+    utanet_fetcher=_default_utanet_fetcher,
+    utaten_fetcher=_default_utaten_fetcher,
+    jlyric_fetcher=_default_jlyric_fetcher,
+    lrclib_fetcher=fetch_lrclib_candidate,
+    google_fetcher=fetch_google_candidates,
+) -> list[LyricCandidate]:
+    """Gather all candidates including unverified ones for human review."""
+    candidates: list[LyricCandidate] = []
+    errors: list[str] = []
+
+    for name, fetcher in (("uta-net", utanet_fetcher), ("utaten", utaten_fetcher), ("j-lyric", jlyric_fetcher)):
+        if fetcher is None:
+            continue
+        try:
+            candidates.append(fetcher(identity, client))
+        except Exception:
+            pass
+
+    try:
+        candidates.append(lrclib_fetcher(identity, client))
+    except Exception:
+        pass
+
+    google_urls: list[str] = []
+    search_engine = "none"
+    search_url = ""
+    try:
+        fetched = google_fetcher(identity, client)
+        google_urls, google_candidates = fetched
+        if isinstance(fetched, SearchResult):
+            search_engine = fetched.search_engine
+            search_url = fetched.search_url
+        elif google_urls:
+            search_engine = "google"
+            search_url = google_search_url(identity)
+        candidates.extend(google_candidates)
+    except Exception:
+        pass
+
+    for candidate in candidates:
+        candidate.lines = _sanitize_candidate_lines(candidate.lines, identity)
+
+    # Keep all candidates with content, including those that would be filtered
+    candidates = [candidate for candidate in candidates if candidate.lines]
+
+    # Filter out music.163.com as per task requirements
+    candidates = [
+        candidate for candidate in candidates
+        if not extract_host(candidate.url).endswith("music.163.com")
+    ]
+
+    for candidate in candidates:
+        candidate.discovered_urls = list(google_urls)
+        candidate.search_engine = search_engine
+        candidate.search_url = search_url
+
+    return candidates
+
+
+def extract_host(url: str) -> str:
+    """Extract hostname from URL."""
+    return (urlparse(url).hostname or "").lower()
+
+
 def _translation_messages(
     title: str,
     numbered_lines: list[tuple[str, str]],

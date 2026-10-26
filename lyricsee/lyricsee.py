@@ -19,6 +19,8 @@ from lyricsee_core import (
     SUPPORTED_AUDIO_EXTENSIONS,
     _atomic_write_text,
     collect_candidates,
+    collect_all_candidates_for_review,
+    extract_host,
     probe_audio,
     write_result,
 )
@@ -30,6 +32,12 @@ from source_policy import (
     verified_provenance_is_current,
 )
 from translation_oogg import translate_oogg
+from candidate_review import (
+    save_candidates,
+    load_candidates_metadata,
+    record_review_decision,
+    load_review_decisions,
+)
 
 
 HERE = Path(__file__).resolve().parent
@@ -94,7 +102,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "inputs",
-        nargs="+",
+        nargs="*",
         metavar="audio|playlist.m3u8",
         help="Audio path(s) and/or .m3u8 playlist path(s)",
     )
@@ -128,6 +136,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="Only evaluate BK/existing/duplicate skips; no ffprobe, HTTP, or file writes",
+    )
+    parser.add_argument(
+        "--review",
+        action="store_true",
+        help="Start review server for candidate lyrics (use with --output-root)",
     )
     return parser
 
@@ -477,6 +490,27 @@ def _process_track(
         try:
             original, evidence = choose_verified_original(identity, collected.candidates)
         except Exception as exc:
+            # Try to collect all candidates for review if no verified original found
+            try:
+                all_candidates = collect_all_candidates_for_review(identity, client)
+                if all_candidates:
+                    # Save candidates for human review
+                    unavailable = collected.lrclib_unavailable or getattr(collected, "utanet_unavailable", False)
+                    rejection_reason = "source_unavailable" if unavailable else "no_original"
+                    save_candidates(config.output_root, audio_path.stem, all_candidates, rejection_reason)
+                    return _base_row(
+                        index,
+                        audio_path,
+                        status="needs_review",
+                        verification="none",
+                        search_engine=search_engine,
+                        search_url=search_url,
+                        embedded_lyrics_lines=embedded_lines,
+                        error="; ".join(f"{len(all_candidates)} candidates saved for review"),
+                    )
+            except Exception:
+                pass
+
             details = list(collected.errors)
             details.append(f"{type(exc).__name__}: {exc}")
             unavailable = collected.lrclib_unavailable or getattr(collected, "utanet_unavailable", False)
@@ -830,6 +864,28 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
         sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
     args = build_parser().parse_args(argv)
+
+    if args.review:
+        if not args.output_root:
+            print("Error: --review requires --output-root", file=sys.stderr)
+            return 1
+        from review_server import ReviewServerConfig, start_review_server
+        config = ReviewServerConfig(output_root=Path(args.output_root).expanduser())
+        url, server = start_review_server(config)
+        print(f"Review server started: {url}")
+        print("Press Ctrl+C to stop")
+        try:
+            import time
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print("\nServer stopped")
+        return 0
+
+    if not args.inputs:
+        print("Error: inputs required when not using --review", file=sys.stderr)
+        return 1
+
     rows, _ = run(args)
     return 1 if any(row["status"] == "failed" for row in rows) else 0
 

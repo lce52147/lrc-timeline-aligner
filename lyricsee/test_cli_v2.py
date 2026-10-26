@@ -381,6 +381,7 @@ class LyricseeV2CliTests(unittest.TestCase):
                 mock.patch.object(cli, "probe_embedded_lyrics", return_value=cli.EmbeddedInfo("Artist", "Song", False, 0, 0)),
                 mock.patch.object(cli, "probe_audio", return_value=core.TrackIdentity("Song", "Artist")),
                 mock.patch.object(cli, "collect_candidates", return_value=collected),
+                mock.patch.object(cli, "collect_all_candidates_for_review", return_value=[]),
                 mock.patch.object(cli, "choose_verified_original", side_effect=LookupError("Cannot verify original")),
             ):
                 row = cli._process_track(
