@@ -9,3 +9,4 @@ unidic-lite==1.0.8
 transformers==4.57.6
 huggingface-hub==0.36.2
 pyopenjtalk-plus==0.4.1.post3
+mutagen==1.48.1

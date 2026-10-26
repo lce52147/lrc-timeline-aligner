@@ -52,7 +52,7 @@ const row = {
 const song={index:0,song:'demo',has_flac:true,has_stem:true,read_only:false,detail:{has_flac:true,has_stem:true,base_sha256:'base',rows:[row]}};
 let peakCalls = 0;
 const jobsState = {import_enabled:true, jobs:[]};
-const jobsPosts = [], inspectPosts = [], decisionPosts = [];
+const jobsPosts = [], inspectPosts = [], decisionPosts = [], exportPosts = [];
 let loadCalls = 0;
 async function fetchMock(url, options={}) {
   // the server answers 415 to any POST that is not declared as JSON
@@ -65,6 +65,7 @@ async function fetchMock(url, options={}) {
   if (url === '/api/song/0/decision') { decisionPosts.push(JSON.parse(options.body)); return {ok:true,json:async()=>({recorded:'x'})}; }
   if (url === '/api/song/0') return {ok:true,json:async()=>song.detail};
   if (url.startsWith('/api/song/0/peaks')) { peakCalls++; return {ok:true,json:async()=>({from_cs:0,to_cs:600,bins:120,sample_rate:16000,peaks:Array.from({length:120},()=>[0,0])})}; }
+  if (url === '/api/song/0/export') { const body = JSON.parse(options.body); exportPosts.push(body); return body.check ? {ok:true,json:async()=>({targets:[{name:'demo.flac',tag:'LYRICS',has_lyrics:true,lines:7},{name:'demo.m4a',tag:'©lyr',has_lyrics:false,lines:0}],lrc_lines:9})} : {ok:true,json:async()=>({name:body.audio,tag:'LYRICS',lines:9})}; }
   if (url === '/api/song/0/save') return {ok:true,json:async()=>song.detail};
   throw new Error('unexpected fetch '+url);
 }
@@ -360,5 +361,26 @@ vm.runInNewContext(script, context, {filename:'review_page/index.html'});
   queueEl.children = []; test.render();
   assert.equal(batchButton(), undefined, 'nothing left to batch-keep');
   documentMock.getElementById('batch-skip').checked = false; ids.get('batch-skip').dispatch('change');
+  // export to the audio tag: Ctrl+Shift+S opens a confirm dialog, Ctrl+S is unchanged
+  const exportKey = (extra) => documentMock.listeners.get('keydown')(Object.assign({key:'S', ctrlKey:true, shiftKey:true, target:{}, preventDefault(){}}, extra));
+  exportKey(); await flush();
+  assert.equal(documentMock.getElementById('export-box').hidden, false, 'Ctrl+Shift+S opens the export dialog');
+  assert.deepEqual(exportPosts.at(-1), {audio:'', check:true}, 'opening only asks what the targets are');
+  assert.equal(documentMock.getElementById('export-target').children.length, 2, 'one option per matching audio file');
+  assert.match(documentMock.getElementById('export-info').textContent, /已有內嵌歌詞（7 行）/, 'the dialog says the first target already has lyrics');
+  documentMock.getElementById('export-target').value = '1'; ids.get('export-target').dispatch('change');
+  assert.match(documentMock.getElementById('export-info').textContent, /沒有內嵌歌詞/, 'switching target updates the note');
+  assert.equal(documentMock.getElementById('export-go').disabled, false, 'export is enabled once a target is chosen');
+  ids.get('export-cancel').dispatch('click');
+  assert.equal(documentMock.getElementById('export-box').hidden, true, 'cancel closes the dialog');
+  assert.equal(exportPosts.filter(post => !post.check).length, 0, 'cancel writes nothing');
+  exportKey(); await flush();
+  documentMock.getElementById('export-target').value = '0'; ids.get('export-target').dispatch('change');
+  ids.get('export-go').dispatch('click'); await flush(); await flush();
+  assert.deepEqual(exportPosts.at(-1), {audio:'demo.flac'}, 'confirming exports the chosen file');
+  assert.equal(test.state.notice, '已寫入 demo.flac 的 LYRICS 標籤（9 行）', 'the page reports what was written');
+  assert.equal(documentMock.getElementById('export-box').hidden, true, 'the dialog closes after export');
+  documentMock.listeners.get('keydown')({key:'s', ctrlKey:true, target:{}, preventDefault(){}}); await flush();
+  assert.equal(documentMock.getElementById('export-box').hidden, true, 'plain Ctrl+S does not open the export dialog');
   console.log('review page settings tests: PASS');
 })().catch(error => { console.error(error.stack || error); process.exitCode=1; });

@@ -106,6 +106,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   <span class="vol" id="vol-box" title="音量 0 ～ −100 dB（滾輪 ±1 dB，M 靜音）"><button id="vol-mute" title="靜音">🔊</button><input id="vol" type="range" min="0" max="1000" step="1" value="1000" aria-label="音量（dB）"><span class="num" id="vol-text">0.0 dB</span></span>
   <button id="mode">音源: FLAC</button>
   <button id="save">儲存 <span class="num">Ctrl+S</span></button>
+  <button id="export" title="把目前的 LRC 寫進音檔的歌詞標籤">匯出到音檔 <span class="num">Ctrl+Shift+S</span></button>
   <button id="help-button" aria-label="快捷鍵與設定">?</button>
 </header>
 <div class="layout">
@@ -137,12 +138,23 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     <tr><td>V</td><td>切換 FLAC / 人聲 stem</td></tr>
     <tr><td>M</td><td>靜音 / 取消靜音（音量在頂欄調整）</td></tr>
     <tr><td>Tab</td><td>展開 / 收起詳細</td></tr>
-    <tr><td>Ctrl+S</td><td>儲存</td></tr>
+    <tr><td>Ctrl+S</td><td>儲存（寫入 .lrc）</td></tr>
+    <tr><td>Ctrl+Shift+S</td><td>匯出到音檔（把 LRC 寫進 FLAC / M4A 的歌詞標籤）</td></tr>
   </table>
   <label><input id="untrusted" type="checkbox"> 顯示整首歌詞（照歌詞順序列出每一句，包含沒被標為待審的句子）</label>
   <div><label><input id="autoplay" type="checkbox"> 換句時自動播放（Enter / K / ↑ ↓ 跳到下一句就先聽開頭）</label></div>
   <div><label><input id="batch-skip" type="checkbox"> 在「可略過」摺疊處顯示「全部維持」按鈕</label></div>
   <div style="margin-top:12px;text-align:right"><button id="help-close">關閉</button></div>
+</div></div>
+<div class="help" id="export-box" hidden><div class="box glass">
+  <b>匯出到音檔</b>
+  <div class="muted" style="margin:6px 0 8px">把這首歌的 LRC 寫進音檔的歌詞標籤（不重新編碼，音訊不變）。.lrc 檔案照常保留。</div>
+  <select id="export-target" aria-label="目標音檔"></select>
+  <div id="export-info" style="margin-top:8px"></div>
+  <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+    <button type="button" id="export-go" disabled>匯出</button>
+    <button type="button" id="export-cancel">取消</button>
+  </div>
 </div></div>
 <div class="help imp" id="import" hidden><div class="box glass wide">
   <b>新增歌曲</b>
@@ -750,6 +762,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     status.textContent = state.error || (state.dirty ? state.edits.size + ' 筆已改，未儲存' : '未變更');
     status.className = state.error ? 'warning' : state.dirty ? 'status dirty' : 'status';
     document.getElementById('save').disabled = globalReadOnly || !state.dirty;
+    document.getElementById('export').disabled = globalReadOnly;
     document.getElementById('save').title = state.dirty ? '' : '沒有改動，不需要儲存';
     document.getElementById('server-mode').textContent = globalReadOnly ? 'server read-only' : '';
     const shownSong = state.songs.find(song => song.index === state.activeSong) || null;
@@ -903,6 +916,59 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     state.error = failures.join('; '); setDirty(); render();
   }
 
+  const exportBox = () => document.getElementById('export-box');
+  const exportSong = () => state.songs.find(item => item.index === state.activeSong) || null;
+  const exportTargets = [];
+  function renderExportInfo() {
+    const select = document.getElementById('export-target');
+    const target = exportTargets[Number(select.value)] || null;
+    const lines = [];
+    if (target) lines.push(target.has_lyrics ? '這個檔案已有內嵌歌詞（' + target.lines + ' 行），匯出會取代它。' : '這個檔案目前沒有內嵌歌詞。');
+    if (state.dirty) lines.push('有尚未儲存的改動，匯出時會先儲存（等同 Ctrl+S）。');
+    document.getElementById('export-info').textContent = lines.join(' ');
+    document.getElementById('export-go').disabled = !target;
+  }
+  async function openExport() {
+    stopPlayer();
+    const song = exportSong();
+    if (serverReadOnly() || !song || song.read_only) { state.error = '無法匯出：這首歌是唯讀'; render(); return; }
+    try {
+      const data = await api('/api/song/' + song.index + '/export', {method:'POST', body:JSON.stringify({audio:'', check:true})});
+      exportTargets.length = 0;
+      const select = document.getElementById('export-target');
+      select.innerHTML = '';
+      data.targets.forEach((target, i) => {
+        exportTargets.push(target);
+        const option = document.createElement('option');
+        option.value = String(i);
+        option.textContent = target.name + '（' + target.tag + '）';
+        select.appendChild(option);
+      });
+      select.value = '0';
+      renderExportInfo();
+      exportBox().hidden = false;
+    } catch (error) { state.error = '匯出失敗：' + error.message; render(); }
+  }
+  async function doExport() {
+    const song = exportSong();
+    const target = exportTargets[Number(document.getElementById('export-target').value)];
+    if (!song || !target) return;
+    exportBox().hidden = true;
+    if (state.dirty) {
+      await save();
+      if (state.error) return;
+    }
+    try {
+      const data = await api('/api/song/' + song.index + '/export', {method:'POST', body:JSON.stringify({audio:target.name})});
+      state.error = '';
+      state.notice = '已寫入 ' + data.name + ' 的 LYRICS 標籤（' + data.lines + ' 行）';
+    } catch (error) { state.error = '匯出失敗：' + error.message; }
+    render();
+  }
+  document.getElementById('export').addEventListener('click', event => { event.currentTarget.blur(); openExport(); });
+  document.getElementById('export-target').addEventListener('change', renderExportInfo);
+  document.getElementById('export-go').addEventListener('click', () => { doExport(); });
+  document.getElementById('export-cancel').addEventListener('click', () => { exportBox().hidden = true; });
   document.getElementById('save').addEventListener('click', event => { event.currentTarget.blur(); save(); });
   document.getElementById('untrusted').checked = state.showAll;
   document.getElementById('untrusted').addEventListener('change', event => { setShowAll(event.target.checked); });
@@ -919,9 +985,10 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   document.getElementById('vol-mute').addEventListener('click', event => { toggleMute(); event.currentTarget.blur(); });
   applyVolume();
   document.addEventListener('keydown', event => {
+    if (event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey && event.key.toLowerCase() === 's') { event.preventDefault(); openExport(); return; }
     if (event.ctrlKey && !event.altKey && !event.metaKey && event.key.toLowerCase() === 's') { event.preventDefault(); save(); return; }
     if (event.altKey || event.metaKey || event.ctrlKey) return;
-    if (event.key === 'Escape') { document.getElementById('help').hidden = true; importBox().hidden = true; return; }
+    if (event.key === 'Escape') { document.getElementById('help').hidden = true; importBox().hidden = true; exportBox().hidden = true; return; }
     if (event.key === '?') { event.preventDefault(); document.getElementById('help').hidden = false; return; }
     if (event.target?.closest?.('input,textarea,select,[contenteditable]') && event.target?.type !== 'checkbox') return;
     if (event.key.toLowerCase() === 'm') { event.preventDefault(); toggleMute(); return; }

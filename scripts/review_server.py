@@ -22,6 +22,7 @@ import wave
 from datetime import datetime, timezone
 
 import lrc_review_tsv
+import lyrics_tag_export
 import review_presentation
 import runtime_paths
 from lrc_manual_edits import review_artifact_paths
@@ -868,6 +869,32 @@ def _record_decision(song, body):
     return 200, {"recorded": path.name}
 
 
+def _export_song(song, body, report_dir):
+    """Embed the saved .lrc into the song's own audio file (check=true only describes the targets)."""
+    if song["read_only"]:
+        return 403, {"error": song["read_only_reason"] or "read-only"}
+    if set(body) - {"audio", "check"} or not isinstance(body.get("audio", ""), str):
+        return 400, {"error": "body must contain audio (and optionally check)"}
+    output = song["output"]
+    if output is None or not output.is_file():
+        return 403, {"error": "lrc-missing"}
+    audio_value = song.get("audio_path") or ""
+    if not audio_value or not _path_is_file(audio_value):
+        return 403, {"error": "找不到這首歌的音檔"}
+    targets = lyrics_tag_export.candidates(pathlib.Path(audio_value))
+    try:
+        if body.get("check"):
+            lrc_lines = lyrics_tag_export._line_count(lyrics_tag_export.lrc_text(output.read_bytes()))
+            return 200, {"targets": [lyrics_tag_export.info(item) for item in targets], "lrc_lines": lrc_lines}
+        chosen = next((item for item in targets if item.name == body.get("audio")), None)
+        if chosen is None:
+            return 400, {"error": "audio is not one of this song's audio files"}
+        work_dir = report_dir.parent if report_dir.name.casefold() == "reports" else report_dir
+        return 200, lyrics_tag_export.export(chosen, output.read_bytes(), work_dir)
+    except lyrics_tag_export.ExportError as exc:
+        return 422, {"error": str(exc)}
+
+
 def _save_song(song, body):
     if song["read_only"]:
         return 403, {"error": song["read_only_reason"] or "read-only"}
@@ -1593,7 +1620,7 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
         if not self._check_host():
             return
         parsed = urllib.parse.urlsplit(self.path)
-        match = re.fullmatch(r"/api/song/(\d+)/(save|decision)", parsed.path)
+        match = re.fullmatch(r"/api/song/(\d+)/(save|decision|export)", parsed.path)
         cancel = re.fullmatch(r"/api/jobs/([A-Za-z0-9_]+)/cancel", parsed.path)
         if not match and not cancel and parsed.path not in self._IMPORT_POSTS:
             self._send(404, b"not found\n", "text/plain; charset=utf-8")
@@ -1629,6 +1656,9 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
                 return
             if match.group(2) == "decision":
                 self._json(*_record_decision(song, body))
+                return
+            if match.group(2) == "export":
+                self._json(*_export_song(song, body, self.server.store.report_dir))
                 return
             status, result = _save_song(song, body)
             self._json(status, _public_song(result, self.server.store.read_only) if status == 200 else result)

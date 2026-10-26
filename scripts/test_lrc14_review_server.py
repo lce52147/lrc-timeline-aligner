@@ -797,6 +797,50 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         self.assertEqual(len(json.loads(edits.read_text())["edits"]), 4)
         self.assertEqual(self.output.read_bytes().splitlines()[3], b"[00:01.10]one")
 
+    def _real_flac(self) -> None:
+        import shutil
+        try:
+            import mutagen.flac  # noqa: F401
+        except ImportError:
+            self.skipTest("needs mutagen")
+        if shutil.which(review_server.runtime_paths.ffmpeg()) is None:
+            self.skipTest("needs ffmpeg")
+        subprocess.run([review_server.runtime_paths.ffmpeg(), "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+                        "-c:a", "flac", str(self.audio)], check=True)
+        self.store.refresh_if_changed()
+
+    def test_export_writes_the_saved_lrc_into_the_audio_tag(self) -> None:
+        self._real_flac()
+        status, _headers, data = self._json_request("POST", "/api/song/0/export", {"audio": "", "check": True})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(data), {"targets": [{"name": "song.flac", "tag": "LYRICS", "has_lyrics": False, "lines": 0}], "lrc_lines": 9})
+        lrc_before = self.output.read_bytes()
+        status, _headers, data = self._json_request("POST", "/api/song/0/export", {"audio": "song.flac"})
+        self.assertEqual((status, json.loads(data)), (200, {"name": "song.flac", "tag": "LYRICS", "lines": 9}))
+        import mutagen.flac
+        text = mutagen.flac.FLAC(str(self.audio))["LYRICS"][0]
+        self.assertEqual(text, __import__("lyrics_tag_export").lrc_text(lrc_before))
+        self.assertEqual(self.output.read_bytes(), lrc_before, "export leaves the .lrc as saved")
+        self.assertTrue((self.root / "export-log.jsonl").is_file())
+
+    def test_export_rejects_foreign_audio_unknown_fields_and_bad_origin(self) -> None:
+        self._real_flac()
+        other = self.root / "other.flac"
+        other.write_bytes(b"x")
+        for body in ({"audio": "other.flac"}, {"audio": str(other)}, {"audio": "song.flac", "path": "x"}):
+            self.assertEqual(self._json_request("POST", "/api/song/0/export", body)[0], 400)
+        self.assertEqual(self._json_request("POST", "/api/song/0/export", {"audio": "song.flac"}, Origin="http://evil")[0], 403)
+        self.assertEqual(other.read_bytes(), b"x")
+
+    def test_export_refuses_a_fake_audio_file_and_leaves_it_intact(self) -> None:
+        try:
+            import mutagen.flac  # noqa: F401
+        except ImportError:
+            self.skipTest("needs mutagen")
+        status, _headers, data = self._json_request("POST", "/api/song/0/export", {"audio": "song.flac"})
+        self.assertEqual(status, 422)
+        self.assertEqual(self.audio.read_bytes(), b"0123456789")
+
     def test_successful_save_changes_only_review_output_whitelist(self) -> None:
         before = {
             path: (path.read_bytes(), path.stat().st_mtime_ns)
