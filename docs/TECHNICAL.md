@@ -45,14 +45,20 @@ available, skeleton not SEGMENT_CURRENT).
   stray spans dropped; `mode` ends in `-onset-shifted`), `ctc_align.py --start --end` through the
   resident helper, model cache under the `local-window-ctc` kind (identical windows
   share entries with the local window), right-edge-pileup and vocal-absent rejection, an
-  onset within 0.5 s of the row's current timestamp (`SEGMENT_REALIGN_MIN_SHIFT_SECONDS`)
-  recorded as an `agrees-with-current` rejection with no hypothesis (third replay: a 0.006 s
-  confirmation on 終点 e21 flipped that row to selected inside Central, shrank the multi-model
-  consensus window of e20 from 32 s to 10 s, and the consensus then moved e20 1.03 s off its
-  reference), then `record_alignment_hypothesis(source="segment-realign-ctc", stage="segment-realign",
-  identity_support="supported" when spans exist, sequence_support="supported",
-  parent_source="ctc-global-mms")`. Nothing writes a timestamp; a song without a run
-  makes no helper call and its LRC is byte-identical to the pre-2.0 output.
+  onset within 0.5 s of the CTC timestamp the stage was given (`SEGMENT_REALIGN_MIN_SHIFT_SECONDS`)
+  recorded as an `agrees-with-current` rejection with no hypothesis (fourth replay: 14 of the 20
+  round-3 hypotheses were such confirmations), then `record_alignment_hypothesis(
+  source="segment-realign-ctc", stage="segment-realign", identity_support="unavailable",
+  sequence_support="supported", parent_source="ctc-global-mms")`. Identity stays unavailable,
+  as for the local-window wide fallback: a bounded CTC path is not identity evidence, so the
+  candidate can neither satisfy Central's minimum proof on its own nor be certified by the joint
+  previous+current boundary observation (`_augment_candidates_with_joint_boundary_consensus`
+  requires a parent with supported identity); only Raw/WhisperX corroboration or the displaced-row
+  Whisper probe can lift it. Replays 3 and 4: the 終点 e21 hypothesis (79.616; stage input 76.585,
+  Central's own choice 79.61) claimed identity, was certified into a `ctc-joint-boundary-consensus`
+  candidate, flipped e21 to selected, shrank the multi-model consensus window of e20 from 32 s to
+  10 s, and the consensus moved e20 1.03 s off its reference. Nothing writes a timestamp; a song
+  without a run makes no helper call and its LRC is byte-identical to the pre-2.0 output.
 - **Central hooks**: the source joins the local-CTC Raw/WhisperX corroboration set and
   the ≥ 3 s displaced-row local Whisper probe (only when no `segment-constrained-ctc`
   proposal exists). `CORROBORATED_REALIGNMENT_SOURCES` is untouched.
@@ -67,11 +73,15 @@ available, skeleton not SEGMENT_CURRENT).
 - **Replay** (PC, `F:\_RuntimePrompt\LRC20\reports\V2_P5_REPLAY.md`; 39 B2w_input songs, 36 with a
   checked reference, plus a 20-song DF sample; auto vs off): round 2 (`2b3bac5c`) 39/39 LRC
   byte-identical, 0 fixed / 0 new bad, pipeline time +1.3 %; round 3 (`d7524a7b`) 38/39, 0 fixed /
-  1 new bad (the 終点 e20 chain above, closed by the 0.5 s confirmation guard), pipeline +15 %
-  (the two bounded runs of that song start the CTC helper cold in the baseline pass). The one
-  true error that received a candidate (夢遊 e14: candidate 85.70, reference 85.45, current 83.16)
-  is rejected by Central with `previous-tail-ownership-unknown` / `insufficient-minimum-proof`,
-  like every other candidate of that row: structural corroboration is not proof Central knows.
+  1 new bad (the 終点 e20 chain above), pipeline +15 % (the two bounded runs of that song start
+  the CTC helper cold in the baseline pass); round 4 (`ae8e845e`, the 13 songs with hypotheses
+  re-run) 38/39 with the same new bad: the 0.5 s guard removed 14 of 20 hypotheses, but the e21
+  one is 3.0 s from the stage input; round 5 (identity unavailable, the 5 songs still writing
+  hypotheses re-run): pending. The one true error that ever received a candidate (夢遊 e14,
+  round 3: candidate 85.70, reference 85.45, written 83.16, global CTC 85.59) was rejected by
+  Central with `previous-tail-ownership-unknown` / `insufficient-minimum-proof` like every other
+  candidate of that row, and since round 4 the guard treats it as a confirmation of the global
+  CTC onset: the error there is Central's provisional choice, not the CTC path.
 - **Evaluation** (36 BK songs, cloud, `F:\_RuntimePrompt\LRC20\reports\`): flagged
   rows independent 2 (1 true / 1 false), derived without Choir 7 (6 / 1), Choir 7
   (4 / 3); run windows contain the BK onset in 15/16 flagged true errors; 6 of the 23

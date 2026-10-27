@@ -173,7 +173,8 @@ class SegmentRealignStageTests(unittest.TestCase):
         (item,) = found[14]
         self.assertEqual(item["raw_candidate_time"], 91.0)
         self.assertEqual(item["stage"], auto_lrc.SEGMENT_REALIGN_STAGE)
-        self.assertEqual(item["identity_support"], "supported")
+        self.assertEqual(item["identity_support"], "unavailable", "a bounded CTC path is not identity evidence")
+        self.assertTrue(item["spans"], "spans stay for tail bounding and corroboration")
         self.assertEqual(item["sequence_support"], "supported")
         self.assertEqual(item["mode"], "run-14-14")
         self.assertEqual(item["parent"]["source"], "ctc-global-mms")

@@ -11321,7 +11321,7 @@ CTC_LOCAL_WINDOW_SHADOW_RADII = (2, 3)
 # bounded CTC helper inside the time window of its unflagged neighbours and
 # published as ``segment-realign-ctc`` hypotheses.  Central decides; nothing
 # here writes a timestamp, and a song with no flagged run makes no helper call.
-SEGMENT_REALIGN_REVISION = "2026-10-27-v2.0-row-structure-2"
+SEGMENT_REALIGN_REVISION = "2026-10-27-v2.0-row-structure-3"
 SEGMENT_REALIGN_SOURCE = "segment-realign-ctc"
 SEGMENT_REALIGN_STAGE = "segment-realign"
 SEGMENT_REALIGN_MAX_RUNS = 6
@@ -11334,11 +11334,9 @@ SEGMENT_REALIGN_RAW_AGREE_SECONDS = 0.45
 # 2.0 replay: stray token 3.7 s early, dense run 0.25 s from the checked onset).
 SEGMENT_REALIGN_STRAY_TOKEN_GAP_SECONDS = 1.5
 SEGMENT_REALIGN_DENSE_TOKEN_GAP_SECONDS = 1.0
-# A bounded pass whose onset lands within this of the row's current timestamp confirms
-# the row (the structural flag was a false alarm) and writes no hypothesis.  Third
-# replay: a 0.006 s confirmation on 終点 e21 flipped that row to selected inside Central,
-# shrank the multi-model consensus window of e20 from 32 s to 10 s, and the consensus
-# then moved e20 1.03 s off its reference.
+# A bounded pass whose onset lands within this of the CTC timestamp the stage was given
+# confirms that row (the structural flag was a false alarm) and writes no hypothesis; on
+# the fourth replay 14 of the 20 round-3 hypotheses were such confirmations.
 SEGMENT_REALIGN_MIN_SHIFT_SECONDS = 0.5
 # CTC score at or above which an uncontradicted row anchors the structural map.  The
 # 0.10-0.25 band is 1.9 % wrong (> 0.5 s) on the evaluation set, 1.4 % above 0.30; at 0.25
@@ -11648,11 +11646,9 @@ def apply_segment_realign(
                     run_report["onset_shifted"] = int(run_report.get("onset_shifted", 0)) + 1
                 current = float(timestamps[index])
                 if abs(timestamp - current) < SEGMENT_REALIGN_MIN_SHIFT_SECONDS:
-                    # The bounded pass agrees with the row as it stands: the structural
-                    # flag was a false alarm.  A confirming hypothesis would still change
-                    # Central's view of the row (third replay: one on 終点 e21 flipped it
-                    # to selected, shrank the multi-model consensus window of e20 and that
-                    # row moved 1.03 s off its reference), so none is written.
+                    # The bounded pass agrees with the CTC onset the stage was given: the
+                    # structural flag was a false alarm and a confirmation carries no
+                    # correction, so none is written.
                     run_report["rejected"].append({
                         "entry": index + 1, "candidate": round(timestamp, 3),
                         "current": round(current, 3), "reason": "agrees-with-current",
@@ -11680,6 +11676,15 @@ def apply_segment_realign(
                     score = float(row.get("ctc_score", 0.0) or 0.0)
                 except (TypeError, ValueError):
                     score = 0.0
+                # Identity stays unavailable, as for the local-window wide fallback: a
+                # bounded CTC path is not identity evidence.  With identity claimed, the
+                # third and fourth replays saw the 終点 e21 hypothesis (79.616, 3.0 s from
+                # the global CTC onset, equal to Central's own choice) certified by the
+                # joint previous+current boundary observation into a selected
+                # ctc-joint-boundary-consensus row; that shrank the multi-model consensus
+                # window of e20 from 32 s to 10 s and moved e20 1.03 s off its reference.
+                # Raw/WhisperX corroboration and the displaced-row Whisper probe can still
+                # lift the candidate; it never satisfies Central's minimum proof alone.
                 record_alignment_hypothesis(
                     assignment,
                     source=SEGMENT_REALIGN_SOURCE,
@@ -11687,7 +11692,7 @@ def apply_segment_realign(
                     raw_time=timestamp,
                     confidence=score,
                     spans=spans,
-                    identity_support="supported" if isinstance(spans, list) and spans else "unavailable",
+                    identity_support="unavailable",
                     sequence_support="supported",
                     parent_source="ctc-global-mms",
                     parent_time=float(timestamps[index]),
