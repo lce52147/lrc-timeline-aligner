@@ -29,8 +29,9 @@ MAX_QUERIES = 16
 # A blocked engine rests this long (seconds) and is then tried once more; Google, which
 # always answers HTTP clients with a JavaScript wall, rests for the whole run.
 BLOCK_COOLDOWN = 180.0
+BLOCK_COOLDOWN_MAX = 900.0  # each repeated block doubles the rest, up to this
 # Yahoo! JAPAN answers 429 to a burst of about fifty requests at 2 s spacing; it gets more room.
-ENGINE_INTERVAL = {"yahoojp": 5.0}
+ENGINE_INTERVAL = {"yahoojp": 8.0}
 # An engine that times out this many requests in a row is dropped for the run.
 ENGINE_MAX_TIMEOUTS = 2
 
@@ -52,7 +53,7 @@ _SKIP_RESULT_HOSTS = (
 _ENGINE_HOST_MARKERS = {
     "google": ("google.",),
     "duckduckgo": ("duckduckgo.com",),
-    "yahoojp": ("yahoo.co.jp", "yimg.jp", "lycorp.co.jp", "yahoo.com", "yahooapis.jp"),
+    "yahoojp": ("yahoo.co.jp", "yimg.jp", "lycorp.co.jp", "lycbiz.com", "yahoo-net.jp", "yahoo.com", "yahooapis.jp"),
     "bing": ("bing.com", "microsoft.com", "msn.com", "live.com"),
 }
 
@@ -144,9 +145,10 @@ def query_variants(title: str, artist: str = "", *, limit: int = MAX_QUERIES) ->
     add(f"{typed} 歌詞 翻譯")
     add(f"{typed} 中文歌詞")
     add(f"{typed} lyrics")
+    # The query lyricsee has always sent: finds the 歌詞中文翻譯 posts.
     if who:
-        # The query lyricsee has always sent: finds the 歌詞中文翻譯 posts.
         add(f"{typed} {who} 歌詞 中文翻譯")
+    add(f"{typed} 歌詞 中文翻譯")
     for site in SITE_QUERIES:
         add(f"site:{site} {typed}")
     # Spelling variants of the title for the two plain queries.
@@ -295,6 +297,7 @@ class SearchSession:
         self.blocked: dict[str, str] = {}
         self.timeouts: dict[str, int] = {}
         self.blocked_at: dict[str, float] = {}
+        self.block_count: dict[str, int] = {}
         self.records: list[dict] = []
         self.errors: dict[str, str] = {}
         self.last_url = ""
@@ -358,10 +361,14 @@ class SearchSession:
     def _block(self, engine: str, reason: str) -> None:
         self.blocked[engine] = reason
         self.blocked_at[engine] = self.clock()
+        self.block_count[engine] = self.block_count.get(engine, 0) + 1
+
+    def _cooldown(self, engine: str) -> float:
+        return min(BLOCK_COOLDOWN * 2 ** (self.block_count.get(engine, 1) - 1), BLOCK_COOLDOWN_MAX)
 
     def available(self) -> list[str]:
         for engine in list(self.blocked):
-            if engine != "google" and self.clock() - self.blocked_at.get(engine, 0.0) >= BLOCK_COOLDOWN:
+            if engine != "google" and self.clock() - self.blocked_at.get(engine, 0.0) >= self._cooldown(engine):
                 del self.blocked[engine]
                 self.timeouts[engine] = ENGINE_MAX_TIMEOUTS - 1
         return [engine for engine in self.engines if engine not in self.blocked]

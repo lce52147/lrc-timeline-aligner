@@ -32,7 +32,9 @@ class QueryVariantTests(unittest.TestCase):
         queries = ws.query_variants("Song", "Artist")
         self.assertEqual(queries[:5], ['"Song" 歌詞', "Song Artist 歌詞", "Song 歌詞 翻譯", "Song 中文歌詞", "Song lyrics"])
         self.assertEqual(queries[5], "Song Artist 歌詞 中文翻譯")
-        self.assertEqual(queries[6], "site:home.gamer.com.tw Song")
+        self.assertEqual(queries[6], "Song 歌詞 中文翻譯")
+        self.assertEqual(queries[7], "site:home.gamer.com.tw Song")
+        self.assertEqual(ws.query_variants("Song", "")[4:6], ["Song 歌詞 中文翻譯", "site:home.gamer.com.tw Song"])
         for site in ws.SITE_QUERIES:
             self.assertIn(f"site:{site} Song", queries)
 
@@ -136,6 +138,11 @@ class SessionTests(unittest.TestCase):
         now[0] = ws.BLOCK_COOLDOWN + 1
         self.assertEqual(session.available(), ["duckduckgo", "yahoojp", "bing"])
         self.assertIn("google", session.blocked)
+        session._block("yahoojp", "error:429")
+        now[0] += ws.BLOCK_COOLDOWN + 1
+        self.assertNotIn("yahoojp", session.available())  # second block rests twice as long
+        now[0] += ws.BLOCK_COOLDOWN
+        self.assertIn("yahoojp", session.available())
 
     def test_rate_limit_waits_between_requests_to_one_host(self):
         now = [100.0]
@@ -201,12 +208,14 @@ def page_handler(search_pages):
 
 
 class FetchTests(unittest.TestCase):
-    def test_stops_once_two_full_length_pages_agree(self):
+    def test_stops_once_two_full_length_pages_agree_after_the_gamer_query(self):
         client = FakeClient(page_handler(['<a href="https://a.example/1">a</a><a href="https://b.example/1">b</a>']))
         result = core.fetch_google_candidates(core.TrackIdentity("Song", "Artist"), client)
         self.assertEqual(len(result.candidates), 2)
         self.assertEqual(result.search_engine, "yahoojp")
-        self.assertEqual(len([r for r in client.requests if "search.yahoo" in r[0]]), 1)
+        queries = [params["p"] for url, params in client.requests if "search.yahoo" in url]
+        self.assertEqual(len(queries), 8)
+        self.assertEqual(queries[-1], "site:home.gamer.com.tw Song")
         self.assertIn("google: blocked (captcha)", result.errors)
 
     def test_keeps_searching_when_pages_do_not_agree_and_dedupes_urls(self):
@@ -221,6 +230,19 @@ class FetchTests(unittest.TestCase):
         self.assertEqual([c.url for c in result.candidates], ["https://a.example/1", "https://b.example/2"])
         queries = [params["p"] for url, params in client.requests if "search.yahoo" in url]
         self.assertEqual(queries[:3], ['"Song" 歌詞', "Song Artist 歌詞", "Song 歌詞 翻譯"])
+
+    def test_publisher_pages_agreeing_do_not_stop_before_a_translation_post(self):
+        def cand(name, post=False):
+            return core.LyricCandidate(
+                source=f"google:{name}", url=f"https://{name}.example/", title="t", artist="",
+                lines=[core.LyricPair(f"原文の行{i}", f"譯{i}") for i in range(10)],
+                meta={"artist_confirmed": True} if post else {},
+            )
+
+        self.assertTrue(core._agreeing_full_length([cand("a"), cand("b")]))
+        self.assertFalse(core._agreeing_full_length([cand("a"), cand("b")], need_post=True))
+        self.assertTrue(core._agreeing_full_length([cand("a"), cand("b", post=True)], need_post=True))
+        self.assertFalse(core._agreeing_full_length([cand("a", post=True)], need_post=True))
 
     def test_banned_host_result_is_not_fetched(self):
         pages = ['<a href="https://music.163.com/song?id=1">n</a><a href="https://a.example/1">a</a>']

@@ -1004,7 +1004,8 @@ def duckduckgo_search_url(identity: TrackIdentity) -> str:
     return "https://html.duckduckgo.com/html/?q=" + quote(_search_query(identity))
 
 
-MAX_PAGES_PER_SONG = 16
+MAX_PAGES_PER_SONG = 30
+MAX_PAGES_PER_QUERY = 4
 FULL_LENGTH_LINES = 8
 AGREE_RATIO = 0.7
 
@@ -1046,22 +1047,24 @@ def _page_candidate(identity: TrackIdentity, client, url: str, engine: str, sear
     )
 
 
-def _agreeing_full_length(candidates: list[LyricCandidate]) -> bool:
-    """True when two candidates from different pages are full length and carry the same original text."""
+def _agreeing_full_length(candidates: list[LyricCandidate], *, need_post: bool = False) -> bool:
+    """True when two full-length pages carry the same original text.  With
+    ``need_post`` one of the two must also be a translation post: publisher
+    pages agree with each other without ever supplying the human translation."""
     import difflib
 
     try:
         from lyric_compare import canonical_text
     except ModuleNotFoundError:  # pragma: no cover - package import style
         from lyricsee.lyric_compare import canonical_text
-    texts = [
-        "".join(canonical_text(pair.original) for pair in candidate.lines)
-        for candidate in candidates
-        if len(candidate.lines) >= FULL_LENGTH_LINES
-    ]
+    full = [candidate for candidate in candidates if len(candidate.lines) >= FULL_LENGTH_LINES]
+    texts = ["".join(canonical_text(pair.original) for pair in candidate.lines) for candidate in full]
+    posts = ["artist_confirmed" in candidate.meta for candidate in full]
     for i, first in enumerate(texts):
-        for second in texts[i + 1:]:
-            if first and second and difflib.SequenceMatcher(None, first, second, autojunk=False).ratio() >= AGREE_RATIO:
+        for j in range(i + 1, len(texts)):
+            if need_post and not (posts[i] or posts[j]):
+                continue
+            if first and texts[j] and difflib.SequenceMatcher(None, first, texts[j], autojunk=False).ratio() >= AGREE_RATIO:
                 return True
     return False
 
@@ -1090,9 +1093,12 @@ def fetch_google_candidates(
     search_url = ""
     search_errors: list[str] = []
 
+    gamer_query_sent = False
     for query in query_variants(identity.title, identity.artist):
-        if _agreeing_full_length(candidates) or len(tried) >= MAX_PAGES_PER_SONG:
+        # Until the gamer.com.tw site query has run, only a translation post settles the search.
+        if _agreeing_full_length(candidates, need_post=not gamer_query_sent) or len(tried) >= MAX_PAGES_PER_SONG:
             break
+        gamer_query_sent = gamer_query_sent or query.startswith("site:home.gamer.com.tw")
         found, engine = session.find_urls(query)
         if not found:
             continue
@@ -1102,7 +1108,9 @@ def fetch_google_candidates(
         for url in found:
             if url not in urls:
                 urls.append(url)
-        fresh = sorted((url for url in found if url not in tried), key=result_priority)[:max_pages]
+        ranked = sorted((url for url in found if url not in tried), key=result_priority)
+        # Every gamer.com.tw hit is fetched (the translation posts live there); other hosts are capped.
+        fresh = [url for index, url in enumerate(ranked) if result_priority(url) == 0 or index < MAX_PAGES_PER_QUERY]
         for url in fresh:
             if len(tried) >= MAX_PAGES_PER_SONG:
                 break
