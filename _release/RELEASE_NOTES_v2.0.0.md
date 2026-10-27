@@ -26,5 +26,5 @@
 
 ### 已知限制
 - independent 組 16 行 bad 有 11 行是 0.5–1 秒的行級偏移，段落級方法不處理；「bad 砍半」要靠行級邊界修正。
-- 生產環境的錨點代理（raw 一致 → TRUSTED、CTC 分數 ≥ 0.12 且 raw 不反對 → UNTRUSTED）在雲端只能部分驗證；第一首 replay 歌用 0.25 只剩 8/35 個錨點，所以降到 0.12；誤報多寡以 P5 報告的 `flagged_entries` 為準。
+- 生產環境的錨點代理（raw 一致 → TRUSTED、CTC 分數 ≥ 0.12 → UNTRUSTED）：第一首 replay 歌用 0.25 只剩 8/35 個錨點，所以降到 0.12；raw 反對不再把高分 CTC 行降級（評估集上這種行 267 對 / 6 錯，降級讓 My Dearest 只剩 13/43 個錨點而被跳過）。誤報多寡以 P5 報告的 `flagged_entries` 為準。
 - Choir 類只標記；換 stem／WhisperX 當主來源的實驗排在 P5 之後。

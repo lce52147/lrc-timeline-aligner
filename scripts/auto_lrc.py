@@ -11329,7 +11329,11 @@ SEGMENT_REALIGN_MIN_WINDOW_SECONDS = 1.0
 SEGMENT_REALIGN_MAX_WINDOW_SECONDS = 60.0
 SEGMENT_REALIGN_MIN_ANCHOR_SHARE = 0.35
 SEGMENT_REALIGN_RAW_AGREE_SECONDS = 0.45
-SEGMENT_REALIGN_RAW_DISAGREE_SECONDS = 0.75
+# A helper row whose first token sits alone this far before the dense run of tokens
+# grabbed a breath or noise; the onset is the first dense token (09.夢遊 e14 on the
+# 2.0 replay: stray token 3.7 s early, dense run 0.25 s from the checked onset).
+SEGMENT_REALIGN_STRAY_TOKEN_GAP_SECONDS = 1.5
+SEGMENT_REALIGN_DENSE_TOKEN_GAP_SECONDS = 1.0
 # CTC score at or above which an uncontradicted row anchors the structural map.  The
 # 0.10-0.25 band is 1.9 % wrong (> 0.5 s) on the evaluation set, 1.4 % above 0.30; at 0.25
 # songs with a quiet CTC path keep too few anchors (2 of 35 rows on the first replay song).
@@ -11357,8 +11361,12 @@ def segment_realign_row_status(
 
     TRUSTED: an independent raw-ASR onset (trusted score, not borrowed,
     unambiguous lyric prefix) agrees with the CTC onset.  UNTRUSTED: a confident,
-    uncollapsed CTC row that a trusted raw onset does not contradict.  Everything
-    else is REVIEW and may be moved by the structural map.
+    uncollapsed CTC row.  Everything else is REVIEW and may be moved by the
+    structural map.  A raw onset that contradicts a confident CTC row does not
+    demote it: on the evaluation set such rows are right 267 times out of 273
+    (raw ASR is the unreliable party there), and demoting them left 01 My
+    Dearest with 13 of 43 anchors so the stage skipped the very song it was
+    built for.
     """
     if not isinstance(ctc_assignment, dict) or assignment_ctc_path_collapsed(ctc_assignment):
         return "REVIEW"
@@ -11381,12 +11389,38 @@ def segment_realign_row_status(
             and raw_score >= TRUSTED_ALIGNMENT_SCORE
             and not has_ambiguous_lyric_prefix(entries, index)
         )
-    if raw_trusted and raw_time is not None:
-        if abs(raw_time - ctc_time) <= SEGMENT_REALIGN_RAW_AGREE_SECONDS:
-            return "TRUSTED"
-        if abs(raw_time - ctc_time) >= SEGMENT_REALIGN_RAW_DISAGREE_SECONDS:
-            return "REVIEW"
+    if raw_trusted and raw_time is not None and abs(raw_time - ctc_time) <= SEGMENT_REALIGN_RAW_AGREE_SECONDS:
+        return "TRUSTED"
     return "UNTRUSTED" if ctc_score >= SEGMENT_REALIGN_ANCHOR_CTC_SCORE else "REVIEW"
+
+
+def segment_realign_onset(row: dict[str, object]) -> tuple[float | None, list[object] | None, bool]:
+    """Onset of a bounded-CTC helper row as (seconds, spans, shifted).
+
+    The first token is the onset unless it sits alone more than
+    ``SEGMENT_REALIGN_STRAY_TOKEN_GAP_SECONDS`` before the first dense pair of
+    tokens; then the onset is that dense token and the stray leading spans are
+    dropped, so Central does not read a seconds-long gap inside the opening.
+    """
+    start = row.get("start")
+    if not isinstance(start, (int, float)) or not math.isfinite(float(start)):
+        return None, None, False
+    spans = row.get("token_spans")
+    span_list = [span for span in spans if isinstance(span, dict)] if isinstance(spans, list) else []
+    starts: list[float] = []
+    for span in span_list:
+        value = span.get("start")
+        if not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+            return float(start), spans if isinstance(spans, list) else None, False
+        starts.append(float(value))
+    if len(starts) < 3:
+        return float(start), spans if isinstance(spans, list) else None, False
+    for index in range(len(starts) - 1):
+        if starts[index + 1] - starts[index] <= SEGMENT_REALIGN_DENSE_TOKEN_GAP_SECONDS:
+            if index > 0 and starts[index] - starts[0] > SEGMENT_REALIGN_STRAY_TOKEN_GAP_SECONDS:
+                return starts[index], span_list[index:], True
+            break
+    return float(start), spans if isinstance(spans, list) else None, False
 
 
 def _segment_realign_observations(
@@ -11599,13 +11633,15 @@ def apply_segment_realign(
             window = {"start": round(start_time, 3), "end": round(end_time, 3)}
             for offset, row in enumerate(rows):
                 index = alignment_start_index + offset
-                if index < first or not isinstance(row, dict) or not isinstance(row.get("start"), (int, float)):
+                if index < first or not isinstance(row, dict):
                     continue
-                timestamp = float(row["start"])
-                if not start_time <= timestamp <= end_time:
+                timestamp, spans, onset_shifted = segment_realign_onset(row)
+                if timestamp is None or not start_time <= timestamp <= end_time:
                     continue
+                if onset_shifted:
+                    run_report["onset_shifted"] = int(run_report.get("onset_shifted", 0)) + 1
                 edge = ctc_right_edge_pileup_evidence(
-                    {"ctc_local_window": dict(window), "ctc_token_spans": row.get("token_spans")}
+                    {"ctc_local_window": dict(window), "ctc_token_spans": spans}
                 )
                 if edge.get("right_edge_pileup"):
                     run_report["rejected"].append(
@@ -11626,7 +11662,6 @@ def apply_segment_realign(
                     score = float(row.get("ctc_score", 0.0) or 0.0)
                 except (TypeError, ValueError):
                     score = 0.0
-                spans = row.get("token_spans")
                 record_alignment_hypothesis(
                     assignment,
                     source=SEGMENT_REALIGN_SOURCE,
@@ -11639,7 +11674,7 @@ def apply_segment_realign(
                     parent_source="ctc-global-mms",
                     parent_time=float(timestamps[index]),
                     window=dict(window),
-                    mode=f"run-{first + 1}-{last + 1}",
+                    mode=f"run-{first + 1}-{last + 1}" + ("-onset-shifted" if onset_shifted else ""),
                 )
                 assignment["segment_realign_candidate_generated"] = True
                 run_report["candidates"] = int(run_report["candidates"]) + 1

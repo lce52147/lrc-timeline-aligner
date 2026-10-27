@@ -26,8 +26,9 @@ available, skeleton not SEGMENT_CURRENT).
 
 - **Structural row map** (`structural_row_map`): a Viterbi path over a 0.1 s grid.
   Rows with independent corroboration are anchors (raw ASR within 0.45 s of the CTC
-  onset → TRUSTED, weight 3.0/s, ±2 s; uncollapsed CTC score ≥ 0.12 that raw does not
-  contradict → UNTRUSTED, 2.0/s, ±4 s; 0.25 left the first replay song with 8 of 35 anchors); other rows are weak observations (0.3/s, or
+  onset → TRUSTED, weight 3.0/s, ±2 s; uncollapsed CTC score ≥ 0.12 → UNTRUSTED, 2.0/s, ±4 s; 0.25 left the first replay song
+  with 8 of 35 anchors, and demoting rows that raw ASR contradicts left 01 My Dearest with
+  13 of 43, so neither rule remains); other rows are weak observations (0.3/s, or
   0.6/s when their CTC score is ≥ 0.15) that may move between their nearest anchors.
   Transition costs: inside a repeated section the gap must equal the same gap in a
   sibling occurrence (1.0 per 0.3 s; median sibling disagreement on the evaluation set
@@ -39,7 +40,9 @@ available, skeleton not SEGMENT_CURRENT).
   unflagged rows (narrowed to proposed ±6 s when wider than 45 s). Fewer than 3
   anchors → BLOCKED; anchors below 35 % of the rows → `weak-anchors` (Choir class).
 - **Bounded CTC runs**: at most 6 runs per song, window 1–60 s, preceding row as
-  CTC context (as the local window does), `ctc_align.py --start --end` through the
+  CTC context (as the local window does), onset = the helper row's first token unless it
+  sits alone more than 1.5 s before the dense run of tokens (then that run's first token,
+  stray spans dropped; `mode` ends in `-onset-shifted`), `ctc_align.py --start --end` through the
   resident helper, model cache under the `local-window-ctc` kind (identical windows
   share entries with the local window), right-edge-pileup and vocal-absent rejection,
   then `record_alignment_hypothesis(source="segment-realign-ctc", stage="segment-realign",

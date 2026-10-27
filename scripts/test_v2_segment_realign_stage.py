@@ -64,8 +64,9 @@ def raw_report(times: list[float], weak: set[int] = frozenset()) -> dict[str, ob
 class FakeHelper:
     """Stands in for ctc_align.py: answers each window with the onsets it was given per lyric."""
 
-    def __init__(self, onsets: dict[str, float]) -> None:
+    def __init__(self, onsets: dict[str, float], stray: dict[str, float] | None = None) -> None:
         self.onsets = onsets
+        self.stray = stray or {}          # lyric -> time of a lone first token before the real onset
         self.calls: list[tuple[float, float, list[str]]] = []
 
     def __call__(self, command, **_kwargs):  # type: ignore[no-untyped-def]
@@ -76,7 +77,11 @@ class FakeHelper:
         rows = []
         for offset, text in enumerate(transcript):
             onset = self.onsets.get(text, start + 0.5 + offset)
-            rows.append({"start": onset, "ctc_score": 0.6, "token_spans": spans(onset), "first_token_candidates": []})
+            row = {"start": onset, "ctc_score": 0.6, "token_spans": spans(onset), "first_token_candidates": []}
+            if text in self.stray:
+                row["start"] = self.stray[text]
+                row["token_spans"] = spans(self.stray[text], 1) + spans(onset)
+            rows.append(row)
         Path(command[command.index("--output") + 1]).write_text(json.dumps({"entries": rows}), encoding="utf-8")
 
         class Result:
@@ -179,6 +184,27 @@ class SegmentRealignStageTests(unittest.TestCase):
         self.assertEqual(result["runs"][0]["entries"], [14])
         self.assertEqual(result["runs"][0]["helper"], "helper")
 
+    def test_stray_first_token_does_not_set_the_onset(self) -> None:
+        times = list(TIMES)
+        times[13] = 125.0
+        report = ctc_report(times, weak={13})
+        helper = FakeHelper({LYRICS[13]: 91.0}, stray={LYRICS[13]: 87.2})   # breath 3.8 s before the line
+        with Patched(helper):
+            result = auto_lrc.apply_segment_realign(
+                Path("dummy.flac"), entries(), list(times), report, raw_report(times, weak={13}), DURATION, args()
+            )
+        self.assertEqual(result["status"], "candidates", result)
+        (item,) = hypotheses(report)[14]
+        self.assertEqual(item["raw_candidate_time"], 91.0)
+        self.assertEqual(item["mode"], "run-14-14-onset-shifted")
+        self.assertEqual(item["spans"][0]["start"], 91.0, "the stray span is dropped")
+        self.assertEqual(result["runs"][0]["onset_shifted"], 1)
+        # a row whose tokens are dense from the first one keeps its first token
+        self.assertEqual(auto_lrc.segment_realign_onset({"start": 5.0, "token_spans": spans(5.0)}), (5.0, spans(5.0), False))
+        # a sustained first vowel (one 1.2 s gap, then dense) is not a stray token
+        held = [{"char": "a", "start": 5.0, "end": 5.02, "score": 0.4}] + spans(6.2)
+        self.assertEqual(auto_lrc.segment_realign_onset({"start": 5.0, "token_spans": held})[0], 5.0)
+
     def test_consistent_song_makes_no_helper_call(self) -> None:
         report = ctc_report(TIMES)
         helper = FakeHelper({})
@@ -241,7 +267,8 @@ class SegmentRealignStageTests(unittest.TestCase):
         strong = {"ctc_score": 0.5, "ctc_token_spans": spans(10.0)}
         weak = {"ctc_score": 0.02, "ctc_token_spans": spans(10.0)}
         self.assertEqual(auto_lrc.segment_realign_row_status(rows, 0, 10.0, strong, {"timestamp": 10.2, "score": 0.9}), "TRUSTED")
-        self.assertEqual(auto_lrc.segment_realign_row_status(rows, 0, 10.0, strong, {"timestamp": 12.0, "score": 0.9}), "REVIEW")
+        # a trusted raw onset that disagrees no longer demotes a confident CTC row
+        self.assertEqual(auto_lrc.segment_realign_row_status(rows, 0, 10.0, strong, {"timestamp": 12.0, "score": 0.9}), "UNTRUSTED")
         self.assertEqual(
             auto_lrc.segment_realign_row_status(rows, 0, 10.0, strong, {"timestamp": 12.0, "score": 0.9, "borrowed": True}),
             "UNTRUSTED",
