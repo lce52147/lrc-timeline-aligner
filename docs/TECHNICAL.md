@@ -76,8 +76,9 @@ available, skeleton not SEGMENT_CURRENT).
   1 new bad (the 終点 e20 chain above), pipeline +15 % (the two bounded runs of that song start
   the CTC helper cold in the baseline pass); round 4 (`ae8e845e`, the 13 songs with hypotheses
   re-run) 38/39 with the same new bad: the 0.5 s guard removed 14 of 20 hypotheses, but the e21
-  one is 3.0 s from the stage input; round 5 (identity unavailable, the 5 songs still writing
-  hypotheses re-run): pending. The one true error that ever received a candidate (夢遊 e14,
+  one is 3.0 s from the stage input; round 5 (`2a689a4a`, identity unavailable, the 5 songs still
+  writing hypotheses re-run) 39/39, 0 fixed / 0 new bad, df 20/20; 終点 e21 is back on its
+  identity-unavailable `ctc-local-window-wide` provisional, as in off. The one true error that ever received a candidate (夢遊 e14,
   round 3: candidate 85.70, reference 85.45, written 83.16, global CTC 85.59) was rejected by
   Central with `previous-tail-ownership-unknown` / `insufficient-minimum-proof` like every other
   candidate of that row, and since round 4 the guard treats it as a confirmation of the global
