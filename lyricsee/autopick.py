@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 from candidate_review import accept_candidate, load_candidates_metadata
-from candidate_text import asr_match, char_similarity, clean_lyric_lines, fold
+from candidate_text import AGREE_SIM, asr_match, char_similarity, clean_lyric_lines, fold
 
 # --- thresholds, calibrated on 12 verified songs (README "Auto-pick"): correct lyrics scored
 # 0.25-0.62 against their own audio (2.6-6.4 cleaned chars/s), wrong songs at most 0.13 ------
@@ -30,7 +30,7 @@ MIN_CHARS_ABS = 60          # ... or shorter than this in absolute terms
 ASR_FLOOR = 0.20            # best candidate must reach this ASR score
 ASR_MARGIN = 0.10           # ... and beat the next *different* candidate by this
 ASR_STRICT_FLOOR = 0.40     # without a second agreeing source the ASR score must reach this
-AGREE_SIM = 0.35            # candidate-to-candidate similarity that counts as "same lyric" (same song 0.46-0.98, different songs <= 0.19)
+# AGREE_SIM (candidate_text): candidate-to-candidate similarity that counts as "same lyric"
 
 DEFAULT_WHISPER_LANGUAGE = "auto"
 

@@ -9,7 +9,9 @@ from pathlib import Path
 from typing import NamedTuple
 from urllib.parse import urlparse
 
-from candidate_text import char_similarity, clean_lyric_lines, fold
+from candidate_text import (
+    AGREE_SIM, char_similarity, clean_lyric_lines, clean_original_lines, fold, has_inline_furigana,
+)
 from lyricsee_core import LyricCandidate
 
 
@@ -153,6 +155,40 @@ def record_review_decision(
             reject_candidate(output_root, stem)
 
 
+def cleaned_candidate_lines(candidates_dir: Path, candidate_idx: int, count: int) -> tuple[list[str], dict]:
+    """Cleaned original lines of one candidate, preferring an agreeing candidate over inline furigana.
+
+    furigana in cleaning: none | replaced_by_agreeing_candidate | unresolved (kept, to be fixed by hand or another source).
+
+    Returns (lines, cleaning) where cleaning records what was done, for the sources.json provenance.
+    """
+    def read(idx: int) -> list[str]:
+        path = candidates_dir / f"candidate_{idx}.txt"
+        return path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+
+    lines = clean_original_lines(read(candidate_idx))
+    cleaning: dict = {"furigana": "none", "furigana_from_idx": None}
+    if not has_inline_furigana(lines):
+        return lines, cleaning
+    mine = fold("".join(lines))
+    others = []
+    for idx in range(count):
+        if idx == candidate_idx:
+            continue
+        other = clean_original_lines(read(idx))
+        sim = char_similarity(mine, fold("".join(other)))
+        if sim >= AGREE_SIM and other and not has_inline_furigana(other):
+            others.append((sim, idx, other))
+    if others:
+        sim, idx, other = max(others)
+        cleaning.update(furigana="replaced_by_agreeing_candidate", furigana_from_idx=idx, furigana_agree_sim=round(sim, 4))
+        return other, cleaning
+    # no agreeing candidate: a reading cannot be told from okurigana by rule (e.g. a kanji run whose
+    # reading ends in the okurigana), so the text is kept as is and flagged rather than half-stripped
+    cleaning["furigana"] = "unresolved"
+    return lines, cleaning
+
+
 def accept_candidate(
     output_root: Path,
     stem: str,
@@ -161,8 +197,11 @@ def accept_candidate(
     verification_status: str = "human_approved",
     verified_by: str = "review_page",
     extra: dict | None = None,
+    lyrics_lines: list[str] | None = None,
 ) -> None:
     """Accept a candidate and save it as an approved original.
+
+    The saved text is the cleaned original (see cleaned_candidate_lines), not the raw page text.
 
     Args:
         output_root: Root output directory
@@ -170,6 +209,7 @@ def accept_candidate(
         candidate_idx: Index of the accepted candidate
         verification_status / verified_by: provenance labels (auto_consensus for the auto-pick)
         extra: more provenance fields (scores) merged into the sources.json payload
+        lyrics_lines: already-cleaned lines to save instead of this candidate's (caller states why in extra)
     """
     candidates_dir = output_root / "candidates" / stem
     txt_dir = output_root / "txt"
@@ -191,7 +231,10 @@ def accept_candidate(
     if not lyrics_file.exists():
         raise FileNotFoundError(f"Candidate file not found: {lyrics_file}")
 
-    lyrics_text = lyrics_file.read_text(encoding="utf-8")
+    if lyrics_lines is None:
+        lyrics_lines, cleaning = cleaned_candidate_lines(candidates_dir, candidate_idx, len(metadata))
+        extra = {**(extra or {}), "cleaning": cleaning}
+    lyrics_text = "\n".join(lyrics_lines)
     if not lyrics_text.endswith("\n"):
         lyrics_text += "\n"
 

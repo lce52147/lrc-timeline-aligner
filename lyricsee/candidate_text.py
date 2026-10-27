@@ -10,6 +10,8 @@ import re
 import unicodedata
 from collections import Counter
 
+AGREE_SIM = 0.35  # candidate-to-candidate similarity that counts as "same lyric" (same song 0.46-0.98, different songs <= 0.19)
+
 _KANA_RE = re.compile(r"[぀-ヿㇰ-ㇿ]")
 _CJK_RE = re.compile(r"[㐀-鿿]")
 _LATIN_RE = re.compile(r"[A-Za-z]")
@@ -129,3 +131,90 @@ def asr_match(candidate: str, transcript: str) -> dict[str, float]:
     coverage = len(set(ca) & set(cc)) / len(set(ca))
     score = 0.0 if precision + coverage == 0 else 2 * precision * coverage / (precision + coverage)
     return {"precision": round(precision, 4), "coverage": round(coverage, 4), "score": round(score, 4)}
+
+
+# --- cleaned original lyrics (what gets written as <stem>.lyrics.txt) ---------
+
+_CREDIT2_RE = re.compile(r"^\s*(作詞|作词|作曲|編曲|编曲)\s*[・/／、&＆].{0,16}?[:：]")
+_ANNOT_INLINE_RE = re.compile(r"\s*[（(\[]?\s*[註注]\s*\d+\s*[）)\]]?")
+_ANNOT_TAIL_RE = re.compile(r"\s*※.*$")
+_FOOTNOTE_RE = re.compile(r"^\s*(?:※|[註注]\s*\d*\s*[:：.．])")
+_KANJI_RUBY_RE = re.compile(r"([一-鿿々]+)([ぁ-ゖ]+)")
+FURIGANA_MIN_HITS = 3
+
+
+def _is_page_noise(line: str) -> bool:
+    folded = unicodedata.normalize("NFKC", line)
+    return bool(_CREDIT_RE.match(folded) or _CREDIT2_RE.match(folded) or _HEADER_WORD_RE.search(folded)
+                or (_SECTION_RE.match(folded) and _SECTION_WORD_RE.search(folded)))
+
+
+def strip_annotations(line: str) -> str:
+    """Drop footnote marks such as 註1 / (注2) and a trailing ※ remark from one lyric line."""
+    return _ANNOT_TAIL_RE.sub("", _ANNOT_INLINE_RE.sub("", line)).strip()
+
+
+def clean_original_lines(lines: list[str], lang: str | None = None) -> list[str]:
+    """Original-language lyric lines for writing: no header/credit/annotation/translation/romaji lines.
+
+    Unlike clean_lyric_lines this keeps the lyric's own layout (one blank line between stanzas,
+    original punctuation) and keeps kanji-only Japanese lines of up to 6 characters; a longer
+    line without kana in a Japanese song is a Chinese translation.
+    """
+    lang = lang or detect_language(lines)
+    kept: list[str] = []
+    for raw in lines:
+        line = raw.strip()
+        if not line:
+            if kept and kept[-1]:
+                kept.append("")
+            continue
+        if _FOOTNOTE_RE.match(line) or _is_page_noise(line):
+            continue
+        line = strip_annotations(line)
+        if not line:
+            continue
+        kind = _line_kind(unicodedata.normalize("NFKC", line))
+        if lang == "ja" and (kind == "latin" or (kind == "cjk" and len(line) > 6) or kind == "other"):
+            continue
+        if lang == "en" and kind != "latin":
+            continue
+        kept.append(line)
+    while kept and not kept[-1]:
+        kept.pop()
+    return kept
+
+
+def _kakasi():
+    try:
+        import pykakasi  # type: ignore
+    except ImportError:
+        return None
+    return pykakasi.kakasi()
+
+
+def _reading(kakasi, kanji: str) -> str:
+    return "".join(item["hira"] for item in kakasi.convert(kanji))
+
+
+def furigana_runs(lines: list[str]) -> list[tuple[str, str, str]]:
+    """(kanji, kana, reading) for each kanji run immediately followed by a kana run that starts with its own reading.
+
+    Needs a reading source (pykakasi); without one nothing is detected. Only readings of 2+ kana count:
+    genuine text almost never repeats a word's reading right behind it.
+    """
+    kakasi = _kakasi()
+    if kakasi is None:
+        return []
+    hits = []
+    for line in lines:
+        for match in _KANJI_RUBY_RE.finditer(line):
+            kanji, kana = match.groups()
+            reading = _reading(kakasi, kanji)
+            if len(reading) >= 2 and kana.startswith(reading):
+                hits.append((kanji, kana, reading))
+    return hits
+
+
+def has_inline_furigana(lines: list[str]) -> bool:
+    return len(furigana_runs(lines)) >= FURIGANA_MIN_HITS
