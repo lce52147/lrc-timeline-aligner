@@ -715,6 +715,6 @@ class SearchDegradationTests(unittest.TestCase):
         client = Client()
         for _ in range(4):
             result = core.fetch_google_candidates(core.TrackIdentity("Song", "Artist"), client)
-        self.assertEqual(client.ddg_calls, core.DUCKDUCKGO_MAX_FAILURES)
-        self.assertTrue(any("skipped after repeated timeouts" in item for item in result.errors))
+        self.assertEqual(client.ddg_calls, 2)  # web_search.ENGINE_MAX_TIMEOUTS
+        self.assertTrue(any("blocked (timeouts)" in item for item in result.errors))
         self.assertEqual(result.search_engine, "none")

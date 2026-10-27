@@ -1004,20 +1004,66 @@ def duckduckgo_search_url(identity: TrackIdentity) -> str:
     return "https://html.duckduckgo.com/html/?q=" + quote(_search_query(identity))
 
 
-# A search engine that keeps timing out costs 40 s per track; after this many
-# consecutive timeouts in one run it is skipped for the remaining tracks.
-DUCKDUCKGO_MAX_FAILURES = 2
+MAX_PAGES_PER_SONG = 16
+FULL_LENGTH_LINES = 8
+AGREE_RATIO = 0.7
 
 
-def _search_state(client) -> dict:
-    state = getattr(client, "_lyricsee_search_state", None)
-    if state is None:
-        state = {}
-        try:
-            setattr(client, "_lyricsee_search_state", state)
-        except (AttributeError, TypeError):
-            pass
-    return state
+def _page_candidate(identity: TrackIdentity, client, url: str, engine: str, search_url: str):
+    """Fetch one result page; a LyricCandidate when it carries lyric rows for this song."""
+    try:
+        from translation_posts import extract_post_rows, is_translation_post_title, names_artist
+    except ModuleNotFoundError:  # pragma: no cover - package import style
+        from lyricsee.translation_posts import extract_post_rows, is_translation_post_title, names_artist
+    try:
+        document = client.get_text(url, retries=1)
+        page_title = _page_title(document)
+        if not _page_matches_identity(identity, page_title):
+            return None
+        pairs = extract_bilingual_pairs(document)
+        artist_confirmed = None
+        if is_translation_post_title(page_title, identity):
+            post_rows = extract_post_rows(document)
+            if len(post_rows) >= len(pairs):
+                pairs = post_rows
+            parser = _VisibleTextParser()
+            parser.feed(document)
+            artist_confirmed = names_artist(identity, page_title + " " + "".join(parser.parts))
+    except Exception:
+        return None
+    if len(pairs) < 2:
+        return None
+    host = urlparse(url).hostname or "page"
+    return LyricCandidate(
+        source=f"google:{host}",
+        url=url,
+        title=page_title or identity.title,
+        artist="",
+        lines=pairs,
+        search_engine=engine,
+        search_url=search_url,
+        meta={} if artist_confirmed is None else {"artist_confirmed": artist_confirmed},
+    )
+
+
+def _agreeing_full_length(candidates: list[LyricCandidate]) -> bool:
+    """True when two candidates from different pages are full length and carry the same original text."""
+    import difflib
+
+    try:
+        from lyric_compare import canonical_text
+    except ModuleNotFoundError:  # pragma: no cover - package import style
+        from lyricsee.lyric_compare import canonical_text
+    texts = [
+        "".join(canonical_text(pair.original) for pair in candidate.lines)
+        for candidate in candidates
+        if len(candidate.lines) >= FULL_LENGTH_LINES
+    ]
+    for i, first in enumerate(texts):
+        for second in texts[i + 1:]:
+            if first and second and difflib.SequenceMatcher(None, first, second, autojunk=False).ratio() >= AGREE_RATIO:
+                return True
+    return False
 
 
 def fetch_google_candidates(
@@ -1026,56 +1072,48 @@ def fetch_google_candidates(
     *,
     max_pages: int = 5,
 ) -> SearchResult:
-    query = _search_query(identity)
-    google_url = google_search_url(identity)
-    direct_google_url = google_url + "&udm=14"
+    """Web search for pages carrying this song's lyrics, over plain HTTP.
+
+    Queries run in priority order (see web_search.query_variants); each goes
+    to the first engine that answers it.  An engine that shows a challenge is
+    dropped for the rest of the run.  Stops once two full-length pages agree."""
+    try:
+        from web_search import query_variants, result_priority, session_for
+    except ModuleNotFoundError:  # pragma: no cover - package import style
+        from lyricsee.web_search import query_variants, result_priority, session_for
+    session = session_for(client)
+    session.context = identity.title
     urls: list[str] = []
+    candidates: list[LyricCandidate] = []
+    tried: set[str] = set()
     search_engine = "none"
     search_url = ""
     search_errors: list[str] = []
 
-    try:
-        search_document = client.get_text(
-            "https://www.google.com/search",
-            params={"q": query, "udm": "14"},
-            retries=2,
-            headers={
-                "User-Agent": SEARCH_USER_AGENT,
-                "Accept-Language": "zh-TW,ja;q=0.8",
-            },
-        )
-        urls = parse_google_results(search_document)
-    except Exception as exc:
-        search_errors.append(f"google_http: {exc}")
-        urls = []
-    if urls:
-        search_engine = "google"
-        search_url = direct_google_url
-
-    search_state = _search_state(client)
-    if not urls and search_state.get("duckduckgo_failures", 0) >= DUCKDUCKGO_MAX_FAILURES:
-        search_errors.append("duckduckgo: skipped after repeated timeouts in this run")
-    elif not urls:
-        ddg_url = duckduckgo_search_url(identity)
-        try:
-            ddg_document = client.get_text(
-                ddg_url,
-                retries=2,
-                headers={
-                    "User-Agent": SEARCH_USER_AGENT,
-                    "Accept-Language": "zh-TW,ja;q=0.8",
-                },
-            )
-            urls = parse_duckduckgo_results(ddg_document)
-            search_state["duckduckgo_failures"] = 0
-        except Exception as exc:
-            search_errors.append(f"duckduckgo: {exc}")
-            urls = []
-            if isinstance(exc, (URLError, TimeoutError)) or "timed out" in str(exc):
-                search_state["duckduckgo_failures"] = search_state.get("duckduckgo_failures", 0) + 1
-        if urls:
-            search_engine = "duckduckgo"
-            search_url = ddg_url
+    for query in query_variants(identity.title, identity.artist):
+        if _agreeing_full_length(candidates) or len(tried) >= MAX_PAGES_PER_SONG:
+            break
+        found, engine = session.find_urls(query)
+        if not found:
+            continue
+        request_url = session.last_url
+        if search_engine == "none":
+            search_engine, search_url = engine, request_url
+        for url in found:
+            if url not in urls:
+                urls.append(url)
+        fresh = sorted((url for url in found if url not in tried), key=result_priority)[:max_pages]
+        for url in fresh:
+            if len(tried) >= MAX_PAGES_PER_SONG:
+                break
+            tried.add(url)
+            candidate = _page_candidate(identity, client, url, engine, request_url)
+            if candidate is not None:
+                candidates.append(candidate)
+    for engine, detail in session.errors.items():
+        search_errors.append(f"{engine}: {detail}")
+    for engine, reason in session.blocked.items():
+        search_errors.append(f"{engine}: blocked ({reason})")
 
     if not urls and hasattr(client, "google_search_urls"):
         try:
@@ -1084,46 +1122,11 @@ def fetch_google_candidates(
             urls = []
         if urls:
             search_engine = "headless_chrome"
-            search_url = google_url
-
-    candidates: list[LyricCandidate] = []
-    for url in urls[:max_pages]:
-        try:
-            document = client.get_text(url, retries=1)
-            page_title = _page_title(document)
-            if not _page_matches_identity(identity, page_title):
-                continue
-            pairs = extract_bilingual_pairs(document)
-            artist_confirmed = None
-            try:
-                from translation_posts import extract_post_rows, is_translation_post_title, names_artist
-            except ModuleNotFoundError:  # pragma: no cover - package import style
-                from lyricsee.translation_posts import extract_post_rows, is_translation_post_title, names_artist
-            is_post = is_translation_post_title(page_title, identity)
-            if is_post:
-                post_rows = extract_post_rows(document)
-                if len(post_rows) >= len(pairs):
-                    pairs = post_rows
-                parser = _VisibleTextParser()
-                parser.feed(document)
-                artist_confirmed = names_artist(identity, page_title + " " + "".join(parser.parts))
-        except Exception:
-            continue
-        if len(pairs) < 2:
-            continue
-        host = urlparse(url).hostname or "page"
-        candidates.append(
-            LyricCandidate(
-                source=f"google:{host}",
-                url=url,
-                title=page_title or identity.title,
-                artist="",
-                lines=pairs,
-                search_engine=search_engine,
-                search_url=search_url,
-                meta={} if artist_confirmed is None else {"artist_confirmed": artist_confirmed},
-            )
-        )
+            search_url = google_search_url(identity)
+            for url in urls[:max_pages]:
+                candidate = _page_candidate(identity, client, url, search_engine, search_url)
+                if candidate is not None:
+                    candidates.append(candidate)
     return SearchResult(urls, candidates, search_engine, search_url, search_errors)
 
 
@@ -1664,6 +1667,7 @@ HOST_INTERVALS = {"www.uta-net.com": 1.0, "utaten.com": 1.0, "j-lyric.net": 1.0}
 class HttpClient:
     def __init__(self, *, user_agent: str = "Lyricsee/0.1 (local LRC tools helper)") -> None:
         self.user_agent = user_agent
+        self.search_interval = 2.0  # seconds between search-engine requests to one host
         self._last_request = 0.0
         self._last_by_host: dict[str, float] = {}
 
