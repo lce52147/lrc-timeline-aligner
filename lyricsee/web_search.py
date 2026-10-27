@@ -161,6 +161,63 @@ def query_variants(title: str, artist: str = "", *, limit: int = MAX_QUERIES) ->
     return queries[:limit]
 
 
+MAX_IDENTITY_QUERIES = 40
+SHORT_TRACK_SECONDS = 100.0
+SHORT_TRACK_QUERIES = 12
+
+
+def identity_query_variants(identity, *, limit: int = MAX_IDENTITY_QUERIES) -> list[str]:
+    """Queries built from what the file's own tags and album folder say (see track_identity).
+
+    Per title alias and per artist name (tag artist, singer, character, voice actor, folder-spelled names):
+    ``"<alias>" <artist> 歌詞``, ``<alias> <album> 歌詞``, and for Chinese songs ``<alias> 歌词``; then the
+    plain title queries (query_variants), then ``site:`` queries for the secondary aliases.  An identity
+    without tag-derived extras gets exactly query_variants(title, artist).
+    """
+    if identity.duration and identity.duration < SHORT_TRACK_SECONDS:
+        # a likely interlude: look briefly, the run records likely_instrumental_or_interlude if nothing names it
+        limit = min(limit, SHORT_TRACK_QUERIES)
+    base = query_variants(identity.title, identity.artist)
+    aliases = [typed_title(alias) for alias in getattr(identity, "aliases", ()) if alias.strip()]
+    names = [name for name in getattr(identity, "artist_names", ()) if name.strip()]
+    if not aliases and not names:
+        return base
+    try:
+        from track_identity import looks_chinese, norm
+    except ModuleNotFoundError:  # pragma: no cover - package import style
+        from lyricsee.track_identity import looks_chinese, norm
+    seen_alias: set[str] = set()
+    uniq_aliases: list[str] = []
+    for alias in [typed_title(identity.title), *aliases]:
+        if alias and norm(alias) not in seen_alias:
+            seen_alias.add(norm(alias))
+            uniq_aliases.append(alias)
+    queries: list[str] = []
+
+    def add(query: str) -> None:
+        query = _squash(query)
+        if query and query not in queries:
+            queries.append(query)
+
+    # the two likeliest spellings with every artist name, the rest with the first only
+    for index, alias in enumerate(uniq_aliases[:3]):
+        for who in names[:4] if index < 2 else names[:1]:
+            add(f'"{alias}" {who} 歌詞')
+    album = _squash(identity.album)
+    if album and norm(typed_title(album)) not in {norm(a) for a in uniq_aliases}:
+        for alias in uniq_aliases[:2]:
+            add(f"{alias} {album} 歌詞")
+    if looks_chinese(identity):
+        for alias in uniq_aliases[:2]:
+            add(f"{alias} 歌词")
+    for query in base:
+        add(query)
+    for alias in uniq_aliases[1:3]:
+        for site in SITE_QUERIES:
+            add(f"site:{site} {alias}")
+    return queries[:limit]
+
+
 # -- parsing ---------------------------------------------------------------
 
 class _Anchors(HTMLParser):

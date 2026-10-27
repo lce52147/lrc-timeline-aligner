@@ -157,15 +157,11 @@ def names_artist(identity, haystack: str) -> bool:
     other than the song title itself. A same-titled post for another artist's song names none of them.
     """
     from lyricsee_core import _normalized, artist_parts
+    from track_identity import gate_tokens
 
     page = _normalized(haystack)
-    title = _normalized(identity.title)
-    tokens = list(artist_parts(identity.artist))
-    for hint in identity.hints:
-        for piece in re.split(r"\s[-–—]\s|[-–—―/／、,，]", hint):
-            token = _normalized(piece)
-            if len(token) >= 3 and token != title and title not in token:
-                tokens.append(token)
+    # artist / singer / CV / folder-spelled names, the album, the work titles, the album-folder pieces
+    tokens = list(artist_parts(identity.artist)) + gate_tokens(identity)
     return any(token and token in page for token in tokens)
 
 

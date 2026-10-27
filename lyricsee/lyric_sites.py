@@ -36,6 +36,7 @@ except ModuleNotFoundError:  # pragma: no cover - package import style
     from lyricsee.lyric_compare import canonical_text
 
 MAX_SEARCHES = 4
+MAX_ARTIST_LOOKUPS = 3
 HEADERS = {
     "User-Agent": SEARCH_USER_AGENT,
     "Accept-Language": "ja,en-US;q=0.8,zh-TW;q=0.6",
@@ -64,6 +65,8 @@ class LyricSite(NamedTuple):
     parse_search: Callable[[str], list[SiteHit]]
     parse_page: Callable[[str], SitePage]
     headers: dict = HEADERS
+    # (client, artist name, identity) -> the song rows of that artist's page(s); None: no artist lookup
+    artist_hits: Callable | None = None
 
 
 class HitScore(NamedTuple):
@@ -82,6 +85,28 @@ class AmbiguousHits(LookupError):
         super().__init__(message)
         self.hits = hits
         self.site = site
+
+
+def lookup_names(identity: TrackIdentity) -> list[str]:
+    """Artist names to look up on a publisher site: singer, character and voice actor from the tags and folder."""
+    try:
+        from track_identity import split_names
+    except ModuleNotFoundError:  # pragma: no cover - package import style
+        from lyricsee.track_identity import split_names
+    names = list(identity.artist_names) or split_names(identity.artist)
+    return list(dict.fromkeys(name for name in names if name.strip()))
+
+
+def pick_artists(rows: list[tuple[str, str]], name: str, limit: int = 2) -> list[str]:
+    """Ids of the artist rows named ``name`` (exact first, then containing it); rows are (id, shown name)."""
+    try:
+        from track_identity import norm
+    except ModuleNotFoundError:  # pragma: no cover - package import style
+        from lyricsee.track_identity import norm
+    wanted = norm(name)
+    exact = [ident for ident, shown in rows if norm(shown) == wanted]
+    loose = [ident for ident, shown in rows if len(wanted) >= 3 and wanted in norm(shown) and ident not in exact]
+    return (exact + loose)[:limit]
 
 
 def score_hit(identity: TrackIdentity, hit: SiteHit) -> HitScore:
@@ -133,6 +158,34 @@ def fetch_site_candidate(site: LyricSite, identity: TrackIdentity, client) -> Ly
                 weak.setdefault(hit.url, (score, hit))
             if score.title >= 1 and len(rejected) < 6:
                 rejected.append(describe_hit(hit, score))
+    if chosen is None and site.artist_hits is not None:
+        # The title search missed (the tag title is "Love Song", the site lists ラブソング, or the title is
+        # too common to page through): open the artist's own song list and pick the row that matches an alias.
+        for name in lookup_names(identity)[:MAX_ARTIST_LOOKUPS]:
+            searched.append(f"artist:{name}")
+            try:
+                rows = site.artist_hits(client, name, identity)
+            except HTTPError as exc:
+                if exc.code == 404:
+                    continue
+                raise
+            except LookupError:
+                continue
+            scored = sorted(
+                ((score_hit(identity, hit), hit) for hit in rows),
+                key=lambda item: (item[0].title, item[0].artist),
+                reverse=True,
+            )
+            strong = [item for item in scored if is_strong(item[0])]
+            if strong:
+                chosen = strong[0]
+                search_url = f"artist:{name}"
+                break
+            for score, hit in scored:
+                if score.title >= 2:
+                    weak.setdefault(hit.url, (score, hit))
+                if score.title >= 1 and len(rejected) < 6:
+                    rejected.append(describe_hit(hit, score))
     if chosen is None:
         detail = "; ".join(rejected) if rejected else "no row with this title"
         message = f"{site.name}: no row matched title and artist for {' | '.join(searched)}; rejected: {detail}"

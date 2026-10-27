@@ -99,7 +99,9 @@ def save_candidates(
             "reason": rejection_reason or "no_matching_verified_source",
         }
         rows = clean_pairs(candidate.lines)
-        if identity is not None and any(row["translation"] for row in rows)                 and is_translation_post_title(candidate.title, identity):
+        if candidate.meta.get("identity_evidence") is not None:
+            info["identity_evidence"] = candidate.meta["identity_evidence"]
+        if identity is not None and any(row["translation"] for row in rows)                and is_translation_post_title(candidate.title, identity):
             info["translation_post"] = True
             info["page_title"] = candidate.title
             info["page_author"] = post_author(candidate.title)

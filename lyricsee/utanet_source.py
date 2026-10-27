@@ -66,8 +66,9 @@ class UtanetSong(NamedTuple):
     lines: list[str]
 
 
-def utanet_search_url(keyword: str, *, match: str = "in") -> str:
-    return SEARCH_URL + "?" + urlencode({"target": "so", "type": match, "keyword": keyword})
+def utanet_search_url(keyword: str, *, match: str = "in", target: str = "so") -> str:
+    """target 'so' searches song titles, 'art' artist names."""
+    return SEARCH_URL + "?" + urlencode({"target": target, "type": match, "keyword": keyword})
 
 
 class _SearchParser(HTMLParser):
@@ -277,7 +278,41 @@ def _site_hits(document: str) -> list[SiteHit]:
     ]
 
 
-UTANET = LyricSite(SOURCE, "publisher", utanet_search_url, _site_hits, parse_utanet_song, HEADERS)
+_ARTIST_ROW_RE = re.compile(
+    r'<a[^>]+href="(?:https?://(?:www\.)?uta-net\.com)?/artist/(\d+)/?"[^>]*>\s*<span class="fw-bold">(.*?)</span>', re.S
+)
+
+
+def parse_utanet_artists(document: str) -> list[tuple[str, str]]:
+    """(artist id, name) rows of the 歌手名 search (``target=art``)."""
+    seen: set[str] = set()
+    rows: list[tuple[str, str]] = []
+    for artist_id, name in _ARTIST_ROW_RE.findall(document):
+        if artist_id not in seen:
+            seen.add(artist_id)
+            rows.append((artist_id, _clean(re.sub(r"<[^>]+>", "", name))))
+    return rows
+
+
+def utanet_artist_hits(client, artist_name: str, identity=None) -> list[SiteHit]:
+    """Song rows of the artist(s) named ``artist_name``: search 歌手名, open ``/artist/<id>/`` (first page)."""
+    try:
+        from lyric_sites import pick_artists
+    except ModuleNotFoundError:  # pragma: no cover - package import style
+        from lyricsee.lyric_sites import pick_artists
+
+    document = client.get_text(utanet_search_url(artist_name, target="art"), headers=HEADERS, retries=2)
+    hits: list[SiteHit] = []
+    for artist_id in pick_artists(parse_utanet_artists(document), artist_name):
+        page = client.get_text(f"https://{HOST}/artist/{artist_id}/", headers=HEADERS, retries=2)
+        hits.extend(
+            SiteHit(hit.url, hit.title, hit.artist or artist_name, hit.opening, hit.lyricist, hit.composer)
+            for hit in parse_utanet_search(page)
+        )
+    return hits
+
+
+UTANET = LyricSite(SOURCE, "publisher", utanet_search_url, _site_hits, parse_utanet_song, HEADERS, utanet_artist_hits)
 
 
 def fetch_utanet_candidate(identity, client):

@@ -33,6 +33,14 @@ class TrackIdentity(NamedTuple):
     # a candidate (e.g. the artist spelled in kanji in the folder name while
     # the tag says "Sasaki Eri"), never to search.
     hints: tuple[str, ...] = ()
+    # From the tags and the album folder (track_identity.py): other tags, the spellings of the title a page
+    # may carry, singer / character / voice-actor names, and the work titles quoted in the folder name.
+    albumartist: str = ""
+    composer: str = ""
+    lyricist: str = ""
+    aliases: tuple[str, ...] = ()
+    artist_names: tuple[str, ...] = ()
+    work_titles: tuple[str, ...] = ()
 
 
 class TimedLine(NamedTuple):
@@ -462,6 +470,10 @@ def _page_matches_identity(identity: TrackIdentity, page_title: str) -> bool:
     requested = _normalized(identity.title)
     if requested and requested in actual:
         return True
+    for alias in identity.aliases:
+        key = _normalized(alias)
+        if len(key) >= 2 and key in actual:
+            return True
 
     slash_parts = [
         _normalized(value)
@@ -833,6 +845,11 @@ def title_search_keywords(identity: TrackIdentity) -> list[str]:
         hint_title = _bare_title(strip_track_number(hint))
         if hint_title and _normalized(hint_title) not in title_forms(identity.title):
             add(hint_title)
+    # Spellings from the stem and the album folder name (ED「ラブソング」 for the tag title "Love Song").
+    for alias in identity.aliases:
+        alias_title = _bare_title(alias)
+        if _normalized(alias_title) not in title_forms(identity.title):
+            add(alias_title)
     head = _TILDE_TAIL_RE.sub("", bare)
     if len(_normalized(head)) >= 2:
         add(head)
@@ -859,6 +876,10 @@ def title_match_level(identity: TrackIdentity, candidate_title: str) -> int:
     requested = title_forms(identity.title)
     for hint in identity.hints[:1]:
         for form in title_forms(strip_track_number(hint)):
+            if form not in requested:
+                requested.append(form)
+    for alias in identity.aliases:
+        for form in title_forms(alias):
             if form not in requested:
                 requested.append(form)
     candidate = title_forms(candidate_title)
@@ -906,6 +927,11 @@ def artist_match_level(identity: TrackIdentity, candidate_artist: str) -> int:
     if requested_full and requested_full == candidate_full:
         return 2
     requested = artist_parts(identity.artist)
+    # singer / CV names the folder name spells (テレサ・ワーグナー for a Latin-script artist tag)
+    for name in (*identity.artist_names, identity.albumartist):
+        for part in artist_parts(name):
+            if part not in requested:
+                requested.append(part)
     candidate = artist_parts(candidate_artist)
     if any(part == other for part in requested for other in candidate):
         return 2
@@ -1023,18 +1049,27 @@ def _page_candidate(identity: TrackIdentity, client, url: str, engine: str, sear
             return None
         pairs = extract_bilingual_pairs(document)
         artist_confirmed = None
+        parser = _VisibleTextParser()
+        parser.feed(document)
+        page_text = page_title + " " + "".join(parser.parts)
         if is_translation_post_title(page_title, identity):
             post_rows = extract_post_rows(document)
             if len(post_rows) >= len(pairs):
                 pairs = post_rows
-            parser = _VisibleTextParser()
-            parser.feed(document)
-            artist_confirmed = names_artist(identity, page_title + " " + "".join(parser.parts))
+            artist_confirmed = names_artist(identity, page_text)
+        try:
+            from track_identity import identity_evidence
+        except ModuleNotFoundError:  # pragma: no cover - package import style
+            from lyricsee.track_identity import identity_evidence
+        evidence = identity_evidence(identity, page_text)
     except Exception:
         return None
     if len(pairs) < 2:
         return None
     host = urlparse(url).hostname or "page"
+    meta = {} if artist_confirmed is None else {"artist_confirmed": artist_confirmed}
+    # which of the tag artist / CV / album / folder work names the page carries (every page, not only posts)
+    meta["identity_evidence"] = evidence[:6]
     return LyricCandidate(
         source=f"google:{host}",
         url=url,
@@ -1043,7 +1078,7 @@ def _page_candidate(identity: TrackIdentity, client, url: str, engine: str, sear
         lines=pairs,
         search_engine=engine,
         search_url=search_url,
-        meta={} if artist_confirmed is None else {"artist_confirmed": artist_confirmed},
+        meta=meta,
     )
 
 
@@ -1081,9 +1116,9 @@ def fetch_google_candidates(
     to the first engine that answers it.  An engine that shows a challenge is
     dropped for the rest of the run.  Stops once two full-length pages agree."""
     try:
-        from web_search import query_variants, result_priority, session_for
+        from web_search import identity_query_variants, result_priority, session_for
     except ModuleNotFoundError:  # pragma: no cover - package import style
-        from lyricsee.web_search import query_variants, result_priority, session_for
+        from lyricsee.web_search import identity_query_variants, result_priority, session_for
     session = session_for(client)
     session.context = identity.title
     urls: list[str] = []
@@ -1094,7 +1129,7 @@ def fetch_google_candidates(
     search_errors: list[str] = []
 
     gamer_query_sent = False
-    for query in query_variants(identity.title, identity.artist):
+    for query in identity_query_variants(identity):
         # Until the gamer.com.tw site query has run, only a translation post settles the search.
         if _agreeing_full_length(candidates, need_post=not gamer_query_sent) or len(tried) >= MAX_PAGES_PER_SONG:
             break
@@ -1624,7 +1659,7 @@ def probe_audio(path: Path, *, runner=subprocess.run) -> TrackIdentity:
         "-v",
         "error",
         "-show_entries",
-        "format=duration:format_tags=title,artist,album",
+        "format=duration:format_tags=title,artist,album,album_artist,albumartist,composer,lyricist",
         "-of",
         "json",
         str(path),
@@ -1650,12 +1685,24 @@ def probe_audio(path: Path, *, runner=subprocess.run) -> TrackIdentity:
         duration = float(duration_value) if duration_value not in (None, "") else None
     except (TypeError, ValueError, json.JSONDecodeError):
         return fallback
+    title = str(tags.get("title") or fallback.title).strip()
+    artist = str(tags.get("artist") or fallback.artist).strip()
+    album = str(tags.get("album") or "").strip()
+    albumartist = str(tags.get("album_artist") or tags.get("albumartist") or "").strip()
+    try:
+        from track_identity import build_identity_fields
+    except ModuleNotFoundError:  # pragma: no cover - package import style
+        from lyricsee.track_identity import build_identity_fields
     return TrackIdentity(
-        title=str(tags.get("title") or fallback.title).strip(),
-        artist=str(tags.get("artist") or fallback.artist).strip(),
-        album=str(tags.get("album") or "").strip(),
+        title=title,
+        artist=artist,
+        album=album,
         duration=duration,
-        hints=identity_hints(path, album=str(tags.get("album") or "")),
+        hints=identity_hints(path, album=album),
+        albumartist=albumartist,
+        composer=str(tags.get("composer") or "").strip(),
+        lyricist=str(tags.get("lyricist") or "").strip(),
+        **build_identity_fields(path, title=title, artist=artist, album=album, albumartist=albumartist),
     )
 
 

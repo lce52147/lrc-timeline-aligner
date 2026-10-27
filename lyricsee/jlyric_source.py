@@ -15,13 +15,13 @@ from urllib.parse import urlencode
 try:
     from lyricsee_core import _is_credit_line
     from lyric_sites import (
-        AmbiguousHits, LyricSite, SiteHit, SitePage, fetch_site_candidate,
+        AmbiguousHits, HEADERS, LyricSite, SiteHit, SitePage, fetch_site_candidate,
         resolve_ambiguous_hits as _resolve,
     )
 except ModuleNotFoundError:  # pragma: no cover - package import style
     from lyricsee.lyricsee_core import _is_credit_line
     from lyricsee.lyric_sites import (
-        AmbiguousHits, LyricSite, SiteHit, SitePage, fetch_site_candidate,
+        AmbiguousHits, HEADERS, LyricSite, SiteHit, SitePage, fetch_site_candidate,
         resolve_ambiguous_hits as _resolve,
     )
 
@@ -106,7 +106,69 @@ def parse_jlyric_page(document: str) -> SitePage:
     return SitePage(title, artist, lines)
 
 
-JLYRIC = LyricSite(SOURCE, "publisher", jlyric_search_url, parse_jlyric_search, parse_jlyric_page)
+_ARTIST_LINK_RE = re.compile(r'<a class="artist" href="(/artist/[^"/]+)/"[^>]*>(.*?)</a>', re.S)
+_ARTIST_SONG_BLOCK_RE = re.compile(r'<div id="ly\d+" class="bdy">(.*?)</div>', re.S)
+_ARTIST_SONG_RE = re.compile(r'<p class="ttl"><a href="([^"]+\.html)"[^>]*>(.*?)</a>', re.S)
+_ARTIST_WRITERS_RE = re.compile(r"作詞：(.*?)\s*作曲：(.*?)</p>", re.S)
+
+
+def jlyric_artist_search_url(artist_name: str) -> str:
+    return f"https://{HOST}/search.php?" + urlencode(
+        {"ka": artist_name, "ca": 1, "kt": "", "ct": 2, "kl": "", "cl": 2}
+    )
+
+
+def parse_jlyric_artists(document: str) -> list[tuple[str, str]]:
+    """(artist page path, name) rows of the 歌手名 search."""
+    return [(path, _clean(name)) for path, name in _ARTIST_LINK_RE.findall(document)]
+
+
+def parse_jlyric_artist_page(document: str, artist_name: str = "") -> list[SiteHit]:
+    """Song rows of an artist page (``/artist/<id>/``): title link, 作詞/作曲, 歌詞 opening."""
+    hits: list[SiteHit] = []
+    for block in _ARTIST_SONG_BLOCK_RE.findall(document):
+        song = _ARTIST_SONG_RE.search(block)
+        if not song:
+            continue
+        url = song.group(1)
+        if url.startswith("/"):
+            url = f"https://{HOST}" + url
+        opening = _OPENING_RE.search(block)
+        writers = _ARTIST_WRITERS_RE.search(block)
+        hits.append(
+            SiteHit(
+                url,
+                _clean(song.group(2)),
+                artist_name,
+                _clean(opening.group(1)).rstrip(" .…") if opening else "",
+                _clean(writers.group(1)) if writers else "",
+                _clean(writers.group(2)) if writers else "",
+            )
+        )
+    return hits
+
+
+def jlyric_artist_hits(client, artist_name: str, identity=None) -> list[SiteHit]:
+    """Song rows of the artist(s) named ``artist_name``: search 歌手名, open the artist page."""
+    try:
+        from lyric_sites import pick_artists
+    except ModuleNotFoundError:  # pragma: no cover - package import style
+        from lyricsee.lyric_sites import pick_artists
+
+    document = client.get_text(jlyric_artist_search_url(artist_name), headers=HEADERS, retries=2)
+    rows = parse_jlyric_artists(document)
+    by_path = dict(rows)
+    hits: list[SiteHit] = []
+    for path in pick_artists(rows, artist_name):
+        page = client.get_text(f"https://{HOST}{path}/", headers=HEADERS, retries=2)
+        hits.extend(parse_jlyric_artist_page(page, by_path[path]))
+    return hits
+
+
+JLYRIC = LyricSite(
+    SOURCE, "publisher", jlyric_search_url, parse_jlyric_search, parse_jlyric_page,
+    artist_hits=jlyric_artist_hits,
+)
 
 
 def fetch_jlyric_candidate(identity, client):

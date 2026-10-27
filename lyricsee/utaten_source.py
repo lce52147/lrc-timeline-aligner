@@ -15,13 +15,13 @@ from urllib.parse import urlencode
 try:
     from lyricsee_core import _is_credit_line
     from lyric_sites import (
-        AmbiguousHits, LyricSite, SiteHit, SitePage, fetch_site_candidate,
+        AmbiguousHits, HEADERS, LyricSite, SiteHit, SitePage, fetch_site_candidate,
         resolve_ambiguous_hits as _resolve,
     )
 except ModuleNotFoundError:  # pragma: no cover - package import style
     from lyricsee.lyricsee_core import _is_credit_line
     from lyricsee.lyric_sites import (
-        AmbiguousHits, LyricSite, SiteHit, SitePage, fetch_site_candidate,
+        AmbiguousHits, HEADERS, LyricSite, SiteHit, SitePage, fetch_site_candidate,
         resolve_ambiguous_hits as _resolve,
     )
 
@@ -100,7 +100,31 @@ def parse_utaten_page(document: str) -> SitePage:
     return SitePage(title, artist, lines)
 
 
-UTATEN = LyricSite(SOURCE, "publisher", utaten_search_url, parse_utaten_search, parse_utaten_page)
+def utaten_artist_search_url(artist_name: str, title: str = "") -> str:
+    return f"https://{HOST}/search?" + urlencode(
+        {"sort": "popular_sort_asc", "artist_name": artist_name, "title": title, "show_artists": 1}
+    )
+
+
+def utaten_artist_hits(client, artist_name: str, identity=None) -> list[SiteHit]:
+    """Song rows credited to ``artist_name``: the artist's most popular songs, then the artist narrowed by each title alias."""
+    queries = [utaten_artist_search_url(artist_name)]
+    for alias in getattr(identity, "aliases", ())[:3]:
+        queries.append(utaten_artist_search_url(artist_name, alias))
+    hits: list[SiteHit] = []
+    seen: set[str] = set()
+    for url in queries:
+        for hit in parse_utaten_search(client.get_text(url, headers=HEADERS, retries=2)):
+            if hit.url not in seen:
+                seen.add(hit.url)
+                hits.append(hit)
+    return hits
+
+
+UTATEN = LyricSite(
+    SOURCE, "publisher", utaten_search_url, parse_utaten_search, parse_utaten_page,
+    artist_hits=utaten_artist_hits,
+)
 
 
 def fetch_utaten_candidate(identity, client):

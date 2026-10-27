@@ -60,6 +60,48 @@ def whisper_paths() -> tuple[Path, Path]:
     return runtime_paths.whisper_cli(), runtime_paths.whisper_model()
 
 
+MIN_WAV_BYTES = 1024
+
+
+def _ffmpeg_wav16k(source: Path, wav: Path, run=subprocess.run) -> None:
+    run(
+        ["ffmpeg", "-y", "-v", "error", "-i", str(source), "-vn", "-ac", "1", "-ar", "16000", str(wav)],
+        check=True, capture_output=True,
+    )
+
+
+def _wav_is_empty(wav: Path) -> bool:
+    return not wav.exists() or wav.stat().st_size < MIN_WAV_BYTES
+
+
+def decode_to_wav16k(audio: Path, wav: Path, native_wav: Path, run=subprocess.run) -> str:
+    """16 kHz mono WAV of ``audio``; returns the decoder that produced it ('ffmpeg' or 'libsndfile').
+
+    ffmpeg exits 0 with a 44-byte-header WAV and no samples for a FLAC whose first frames are damaged (the
+    demuxer reads the stream start, finds no frame, and reports EOF; the audio is not path- or argument-related).
+    libFLAC, behind soundfile, resynchronises, so an empty ffmpeg result is retried through it: decode to a
+    native-rate WAV in the work dir, then let ffmpeg resample that. The source file is only read.
+    """
+    _ffmpeg_wav16k(audio, wav, run)
+    if not _wav_is_empty(wav):
+        return "ffmpeg"
+    try:
+        import soundfile
+    except ImportError as exc:
+        raise RuntimeError("audio_undecodable: ffmpeg wrote an empty WAV and soundfile is not installed") from exc
+    try:
+        samples, rate = soundfile.read(str(audio), dtype="int16", always_2d=True)
+        soundfile.write(str(native_wav), samples, rate, subtype="PCM_16", format="WAV")
+        _ffmpeg_wav16k(native_wav, wav, run)
+    except Exception as exc:
+        raise RuntimeError(f"audio_undecodable: ffmpeg wrote an empty WAV and libsndfile failed ({exc})") from exc
+    finally:
+        native_wav.unlink(missing_ok=True)
+    if _wav_is_empty(wav):
+        raise RuntimeError("audio_undecodable: no decoder produced samples")
+    return "libsndfile"
+
+
 def transcribe(audio: Path, cache_dir: Path, work_dir: Path | None = None) -> dict:
     """Whisper (whisper.cpp large-v3, the LRC tools path) transcript of the audio, cached under cache_dir.
 
@@ -80,12 +122,7 @@ def transcribe(audio: Path, cache_dir: Path, work_dir: Path | None = None) -> di
     work_dir.mkdir(parents=True, exist_ok=True)
     wav = work_dir / f"{key}.wav"
     try:
-        subprocess.run(
-            ["ffmpeg", "-y", "-v", "error", "-i", str(audio), "-ac", "1", "-ar", "16000", str(wav)],
-            check=True, capture_output=True,
-        )
-        if wav.stat().st_size < 1024:
-            raise RuntimeError("audio_undecodable: ffmpeg wrote an empty WAV")
+        decode_to_wav16k(audio, wav, work_dir / f"{key}.native.wav")
         base = work_dir / key
         proc = subprocess.run(
             [str(cli), "-m", str(model), "-l", DEFAULT_WHISPER_LANGUAGE, "-oj", "-of", str(base), str(wav)],
@@ -205,6 +242,35 @@ def _decide_by_asr(entries: list[dict]) -> dict:
     return {"decision": "review", "reason": "no_independent_agreement", **info}
 
 
+# --- short tracks -----------------------------------------------------------
+
+INSTRUMENTAL_MAX_SECONDS = 100.0   # a track shorter than this with no lyric page naming it is likely an interlude
+
+
+def instrumental_evidence(duration: float | None, entries: list[dict], transcript_text: str) -> dict | None:
+    """Evidence that a short track is an instrumental / interlude, or None.
+
+    Only a hint for a human, never a fact: the track is under INSTRUMENTAL_MAX_SECONDS and no saved candidate is
+    a full-length text that the audio supports (ASR score >= ASR_FLOOR).  Whisper's own text on such a track is
+    recorded so a reader can see whether any singing was heard.
+    """
+    if not duration or duration >= INSTRUMENTAL_MAX_SECONDS:
+        return None
+    if any(not e["snippet"] and e["asr"]["score"] >= ASR_FLOOR for e in entries):
+        return None
+    heard = len(fold(transcript_text))
+    return {
+        "duration": round(duration, 1),
+        "candidates": len(entries),
+        "full_length_candidates": sum(1 for e in entries if not e["snippet"]),
+        "best_asr_score": max((e["asr"]["score"] for e in entries), default=None),
+        "transcript_chars": heard,
+        "transcript_chars_per_sec": round(heard / duration, 2),
+        "transcript_reliable": transcript_reliable(transcript_text),
+        "note": "short track and no lyric page for it that the audio supports; not proof",
+    }
+
+
 # --- per-song run -----------------------------------------------------------
 
 def autopick_song(
@@ -218,6 +284,10 @@ def autopick_song(
     """Score the saved candidates of one stem, update candidates.json, accept if the rule says so."""
     metadata = load_candidates_metadata(output_root, stem)
     if not metadata:
+        evidence = instrumental_evidence(duration, [], transcript_text)
+        if evidence:
+            return {"stem": stem, "duration": duration, "decision": "review",
+                    "reason": "likely_instrumental_or_interlude", "likely_instrumental_or_interlude": evidence}
         return {"stem": stem, "decision": "skip", "reason": "no_candidates"}
     cand_dir = output_root / "candidates" / stem
     raw: dict[int, list[str]] = {}
@@ -231,6 +301,11 @@ def autopick_song(
         entry["artist_confirmed"] = bool(metadata[entry["idx"]].get("artist_confirmed"))
         entry["post_complete"] = entry["translation_post"] and entry["cleaned_lines"] >= MIN_POST_LINES             and post_is_complete(load_post_rows(output_root, stem, entry["idx"]))
     verdict = decide(entries, asr_reliable=transcript_reliable(transcript_text))
+    if verdict["decision"] == "review":
+        evidence = instrumental_evidence(duration, entries, transcript_text)
+        if evidence:
+            evidence["decided_otherwise_as"] = verdict["reason"]
+            verdict = {**verdict, "reason": "likely_instrumental_or_interlude", "likely_instrumental_or_interlude": evidence}
 
     for entry in entries:
         item = metadata[entry["idx"]]
