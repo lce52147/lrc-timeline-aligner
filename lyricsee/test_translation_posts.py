@@ -29,10 +29,10 @@ def post_html(wrap=("【", "】"), inline=False) -> str:
     return f"<html><head><title>{TITLE}</title></head><body>{body}</body></html>"
 
 
-def post_candidate(title=TITLE, orig=ORIG, trans=TRANS):
+def post_candidate(title=TITLE, orig=ORIG, trans=TRANS, artist_confirmed=True):
     lines = [LyricPair(o, f"【{t}】") for o, t in zip(orig, trans)]
     return LyricCandidate(source="google:home.gamer.com.tw", url="https://home.gamer.com.tw/artwork.php?sn=1",
-                          title=title, artist="", lines=lines)
+                          title=title, artist="", lines=lines, meta={"artist_confirmed": artist_confirmed})
 
 
 class ParseTests(unittest.TestCase):
@@ -61,11 +61,38 @@ class ParseTests(unittest.TestCase):
             self.assertEqual([r["translation"] for r in rows], TRANS)
             self.assertEqual([r["original"] for r in rows], ORIG)
 
+    def test_post_rows_triple_layout_drops_romaji(self):
+        body = "".join(f"<p>{o}</p><p>romaji {i} line here</p><p>{t}</p>" for i, (o, t) in enumerate(zip(ORIG, TRANS)))
+        rows = tp.extract_post_rows(f"<html><body><p>作詞：誰か</p>{body}<p>#歌詞翻譯#テスト</p><p>留言</p></body></html>")
+        self.assertEqual([(r.original, r.translation) for r in rows], list(zip(ORIG, TRANS)))
+
+    def test_post_rows_stanza_blocks_align_by_line(self):
+        body = "".join(f"<p>{ORIG[i]}</p><p>{ORIG[i + 1]}</p><p>{TRANS[i]}</p><p>{TRANS[i + 1]}</p>" for i in (0, 2, 4))
+        rows = tp.extract_post_rows(f"<html><body><p>歌：テスト</p>{body}<p>謝謝大家觀看這篇翻譯貼文</p></body></html>")
+        self.assertEqual([(r.original, r.translation) for r in rows], list(zip(ORIG[:6], TRANS[:6])))
+
+    def test_post_rows_uneven_stanza_left_for_oogg_and_note_not_a_row(self):
+        body = (f"<p>{ORIG[0]}</p><p>{ORIG[1]}</p><p>{TRANS[0]}</p>"          # 2 originals, 1 translation line
+                f"<p>{ORIG[2]}</p><p>{TRANS[2]}</p>"
+                f"<p>{ORIG[3]}</p><p>{TRANS[3]}</p>")
+        note = "標題不翻譯的原因是「クラムボン」這個詞到現在仍然沒有明確的定義所以這邊暫且先保留不翻譯，希望大家多多包涵與指教喔"
+        rows = tp.extract_post_rows(f"<html><body>{body}<p>{note}</p></body></html>")
+        self.assertEqual([(r.original, r.translation) for r in rows],
+                         [(ORIG[0], None), (ORIG[1], None), (ORIG[2], TRANS[2]), (ORIG[3], TRANS[3])])
+
+    def test_romaji_only_post_is_not_complete(self):
+        rows = [{"original": f"kyou mo shinzou ni ame wo {i}", "translation": t} for i, t in enumerate(TRANS)]
+        self.assertFalse(tp.post_is_complete(rows))
+
     def test_title_recognition(self):
         self.assertTrue(tp.is_translation_post_title(TITLE, IDENT))
         self.assertFalse(tp.is_translation_post_title("そらのうた 歌詞 - uta-net", IDENT))  # no translation marker
         self.assertFalse(tp.is_translation_post_title("【歌詞翻譯】「べつのうた」 - 巴哈姆特", IDENT))  # other song
         self.assertFalse(tp.is_translation_post_title("", IDENT))
+        for marker in ("【歌詞中文翻譯】そらのうた／テスト", "【知声】そらのうた【中、日、羅歌詞】", "そらのうた 中日歌詞", "【歌词翻译】そらのうた"):
+            self.assertTrue(tp.is_translation_post_title(marker, IDENT), marker)
+        # a song-sharing post that merely mentions Chinese-Japanese lyrics is not a translation post
+        self.assertFalse(tp.is_translation_post_title("【音樂分享】そらのうた(三首附中日文歌詞)", IDENT))
         self.assertEqual(tp.post_author(TITLE), "tester")
 
     def test_post_shape(self):
@@ -129,6 +156,22 @@ class SaveAndAcceptTests(unittest.TestCase):
         self.assertEqual(sources["translation_method"], "page_human")
         self.assertEqual(sources["translation_author"], "tester")
         self.assertEqual(sources["translation_source_url"], "https://home.gamer.com.tw/artwork.php?sn=1")
+
+    def test_post_for_another_artist_is_not_accepted_without_a_real_transcript(self):
+        self.save([post_candidate(artist_confirmed=False)])
+        result = autopick.autopick_song(self.out, "song", "한글자막 by 한효정\n" * 9, 249.0)
+        self.assertEqual((result["decision"], result["reason"]), ("review", "translation_post_artist_unconfirmed"))
+
+    def test_unconfirmed_artist_is_fine_when_a_real_transcript_matches(self):
+        self.save([post_candidate(artist_confirmed=False)])
+        result = autopick.autopick_song(self.out, "song", "\n".join(ORIG), 249.0)
+        self.assertEqual(result["decision"], "accept")
+
+    def test_names_artist_uses_artist_and_folder_hints_not_the_title(self):
+        ident = TrackIdentity(title="そらのうた", artist="テスト歌手", hints=("そらのうた", "Some Album - Original Soundtrack"))
+        self.assertTrue(tp.names_artist(ident, "【歌詞翻譯】そらのうた - テスト歌手"))
+        self.assertTrue(tp.names_artist(ident, "そらのうた  some album ED"))
+        self.assertFalse(tp.names_artist(ident, "【知声】そらのうた 唄：知声"))
 
     def test_real_transcript_of_another_song_vetoes_the_post(self):
         self.save([post_candidate()])

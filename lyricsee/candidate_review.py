@@ -103,6 +103,7 @@ def save_candidates(
             info["translation_post"] = True
             info["page_title"] = candidate.title
             info["page_author"] = post_author(candidate.title)
+            info["artist_confirmed"] = candidate.meta.get("artist_confirmed")
             (candidates_dir / f"candidate_{idx}.pairs.json").write_text(
                 json.dumps(rows, ensure_ascii=False, indent=1), encoding="utf-8")
         metadata.append(info)

@@ -23,7 +23,12 @@ ALIGN_SIM = 0.8             # folded similarity for pairing an accepted line wit
 WRONG_SONG_ASR = 0.13       # a real transcript scoring at most this against the post means another song
 MIN_JAPANESE_CHARS = 30     # fewer than this in the transcript: the ASR heard no singing
 
-_POST_MARKER_RE = re.compile(r"歌詞翻譯|歌词翻译|歌詞中譯|歌词中译|中日歌詞|日中歌詞|中日歌词|歌詞對譯|歌詞翻译|歌词翻譯")
+_POST_MARKER_RE = re.compile(
+    r"歌[詞词](?:中文)?[翻中][譯译]"            # 歌詞翻譯 / 歌詞中文翻譯 / 歌詞中譯
+    r"|中文翻[譯译]"
+    r"|歌[詞词]對[譯译]"
+    r"|[中日][、，, ]*[日中羅罗]?[、，, ]*[羅罗]?歌[詞词]"   # 中日歌詞 / 中、日、羅歌詞
+)
 _AUTHOR_RE = re.compile(r"-\s*([^-]+?)的創作\s*-")
 _WRAPPERS = (("【", "】"), ("「", "」"), ("『", "』"), ("（", "）"), ("(", ")"), ("〔", "〕"), ("[", "]"), ("《", "》"))
 _JAPANESE_RE = re.compile(r"[぀-ヿ一-鿿]")
@@ -61,6 +66,76 @@ def split_inline_translation(line: str) -> tuple[str, str] | None:
     return None
 
 
+_KANA = re.compile(r"[぀-ヿ]")
+_HAN = re.compile(r"[㐀-鿿]")
+_POST_CREDIT_RE = re.compile(
+    r"^\s*(?:作詞|作词|作曲|編曲|编曲|歌|唄|唱|PV|MV|翻譯|翻译|中文翻譯|中文翻译|中譯|中译|日文|原曲|原唱|演唱|插畫|影片|"
+    r"出處|來源|歌手|專輯|收錄|OP|ED|lyrics?|music|vocals?)\s*[:：]",
+    re.IGNORECASE,
+)
+
+
+def extract_post_rows(document: str) -> list:
+    """(original, translation) rows of a translation post, whatever its layout.
+
+    Layouts: original/translation alternating, original/romaji/translation, and stanza blocks (n original
+    lines, then n translation lines). Romaji lines and credit lines are dropped; a stanza whose original and
+    translation line counts differ cannot be aligned by line and gets translation None (OOGG fills it).
+    """
+    from lyricsee_core import LyricPair, _VisibleTextParser, _looks_like_non_lyric_web_text
+    import html as html_module
+
+    parser = _VisibleTextParser()
+    parser.feed(document)
+    kinds: list[tuple[str, str]] = []   # (kind, text) with kind J original / C translation / X break
+    for raw in "".join(parser.parts).splitlines():
+        line = re.sub(r"\s+", " ", html_module.unescape(raw)).strip()
+        if not line or len(line) > 300:
+            continue
+        if _looks_like_non_lyric_web_text(line) or _POST_CREDIT_RE.match(line):
+            kinds.append(("X", line))
+        elif _KANA.search(line) and (
+            len(line) <= 40 or len(_KANA.findall(line)) >= 0.2 * (len(_KANA.findall(line)) + len(_HAN.findall(line)))
+        ):
+            kinds.append(("J", line))   # a long line of mostly hanzi with a quoted katakana word is prose
+        elif _HAN.search(line):
+            kinds.append(("C", line))   # also: long Chinese prose with a few kana (author's note)
+        # romaji, dates, digits: dropped without breaking a run
+
+    blocks: list[list] = []
+    current: list = []
+    i = 0
+    while i < len(kinds):
+        if kinds[i][0] != "J":
+            if kinds[i][0] == "X" and current:
+                blocks.append(current)
+                current = []
+            i += 1
+            continue
+        j = i
+        while j < len(kinds) and kinds[j][0] == "J":
+            j += 1
+        k = j
+        while k < len(kinds) and kinds[k][0] == "C":
+            k += 1
+        originals = [text for _, text in kinds[i:j]]
+        translations = [text for _, text in kinds[j:k]]
+        last = k >= len(kinds) or all(kind == "X" for kind, _ in kinds[k:k + 1]) or not any(
+            kind == "J" for kind, _ in kinds[k:])
+        if len(originals) == len(translations) or (last and len(translations) > len(originals)):
+            current += [LyricPair(o, t) for o, t in zip(originals, translations)]
+        elif translations:
+            current += [LyricPair(o, None) for o in originals]
+        if not translations:
+            # a J run with no translation after it: not part of a bilingual post body
+            blocks.append(current) if current else None
+            current = []
+        i = k
+    if current:
+        blocks.append(current)
+    return max(blocks, key=len) if blocks else []
+
+
 def post_author(page_title: str) -> str:
     match = _AUTHOR_RE.search(page_title or "")
     return match.group(1).strip() if match else ""
@@ -73,6 +148,25 @@ def is_translation_post_title(page_title: str, identity) -> bool:
     if not page_title or not _POST_MARKER_RE.search(page_title):
         return False
     return bool(identity.title) and _page_matches_identity(identity, page_title)
+
+
+def names_artist(identity, haystack: str) -> bool:
+    """The page (title + body text) names the artist, or the album / folder the file sits in.
+
+    Tokens: the artist's names (with the voice actor of a CV credit) and the pieces of each hint (album, folder)
+    other than the song title itself. A same-titled post for another artist's song names none of them.
+    """
+    from lyricsee_core import _normalized, artist_parts
+
+    page = _normalized(haystack)
+    title = _normalized(identity.title)
+    tokens = list(artist_parts(identity.artist))
+    for hint in identity.hints:
+        for piece in re.split(r"\s[-–—]\s|[-–—―/／、,，]", hint):
+            token = _normalized(piece)
+            if len(token) >= 3 and token != title and title not in token:
+                tokens.append(token)
+    return any(token and token in page for token in tokens)
 
 
 def clean_pairs(pairs) -> list[dict]:
@@ -88,7 +182,9 @@ def clean_pairs(pairs) -> list[dict]:
 
 def post_is_complete(rows: list[dict]) -> bool:
     translated = sum(bool(row["translation"]) for row in rows)
-    return len(rows) >= MIN_POST_LINES and translated >= MIN_POST_TRANSLATED * len(rows)
+    kana = sum(bool(_KANA.search(row["original"])) for row in rows)
+    # originals must be Japanese: a post that shows romaji instead of the original is not usable
+    return len(rows) >= MIN_POST_LINES and translated >= MIN_POST_TRANSLATED * len(rows)         and kana >= 0.7 * len(rows)
 
 
 def transcript_reliable(text: str) -> bool:

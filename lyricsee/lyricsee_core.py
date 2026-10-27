@@ -1094,6 +1094,19 @@ def fetch_google_candidates(
             if not _page_matches_identity(identity, page_title):
                 continue
             pairs = extract_bilingual_pairs(document)
+            artist_confirmed = None
+            try:
+                from translation_posts import extract_post_rows, is_translation_post_title, names_artist
+            except ModuleNotFoundError:  # pragma: no cover - package import style
+                from lyricsee.translation_posts import extract_post_rows, is_translation_post_title, names_artist
+            is_post = is_translation_post_title(page_title, identity)
+            if is_post:
+                post_rows = extract_post_rows(document)
+                if len(post_rows) >= len(pairs):
+                    pairs = post_rows
+                parser = _VisibleTextParser()
+                parser.feed(document)
+                artist_confirmed = names_artist(identity, page_title + " " + "".join(parser.parts))
         except Exception:
             continue
         if len(pairs) < 2:
@@ -1108,6 +1121,7 @@ def fetch_google_candidates(
                 lines=pairs,
                 search_engine=search_engine,
                 search_url=search_url,
+                meta={} if artist_confirmed is None else {"artist_confirmed": artist_confirmed},
             )
         )
     return SearchResult(urls, candidates, search_engine, search_url, search_errors)

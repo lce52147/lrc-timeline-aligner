@@ -155,7 +155,8 @@ def decide(entries: list[dict], asr_reliable: bool = True) -> dict:
 
     A translation post (dedicated 【歌詞翻譯】 page for this song, see translation_posts) is complete by
     construction: it is accepted on its title and shape without the snippet rule, and the ASR score only
-    vetoes it when the transcript is real singing that clearly belongs to another song.
+    vetoes it when the transcript is real singing that clearly belongs to another song. The page must also
+    name the artist (or the album/folder), unless the ASR itself reaches ASR_FLOOR.
     """
     verdict = _decide_by_asr(entries)
     if verdict["decision"] == "accept":
@@ -164,9 +165,14 @@ def decide(entries: list[dict], asr_reliable: bool = True) -> dict:
     if not posts:
         return verdict
     best = max(posts, key=lambda e: (e["asr"]["score"], e["cleaned_chars"]))
-    info = {"idx": best["idx"], "asr_score": best["asr"]["score"], "asr_reliable": asr_reliable}
-    if asr_reliable and best["asr"]["score"] < WRONG_SONG_ASR:
+    score = best["asr"]["score"]
+    info = {"idx": best["idx"], "asr_score": score, "asr_reliable": asr_reliable}
+    if asr_reliable and score < WRONG_SONG_ASR:
         return {"decision": "review", "reason": "translation_post_contradicted_by_asr", **info}
+    # same-titled posts exist for other artists' songs: the page has to name the artist (or the album the
+    # file sits in), unless a real transcript confirms the words
+    if not best.get("artist_confirmed") and not (asr_reliable and score >= ASR_FLOOR):
+        return {"decision": "review", "reason": "translation_post_artist_unconfirmed", **info}
     return {"decision": "accept", "reason": "translation_post_title_match", **info}
 
 
@@ -222,6 +228,7 @@ def autopick_song(
     entries = score_candidates(raw, urls, transcript_text, duration)
     for entry in entries:
         entry["translation_post"] = bool(metadata[entry["idx"]].get("translation_post"))
+        entry["artist_confirmed"] = bool(metadata[entry["idx"]].get("artist_confirmed"))
         entry["post_complete"] = entry["translation_post"] and entry["cleaned_lines"] >= MIN_POST_LINES             and post_is_complete(load_post_rows(output_root, stem, entry["idx"]))
     verdict = decide(entries, asr_reliable=transcript_reliable(transcript_text))
 
