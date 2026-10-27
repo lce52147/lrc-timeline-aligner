@@ -100,3 +100,81 @@ python .\stage_lrclib_timing_without_llm_20261008.py
 ```
 
 Results are **review-only LRCs** under `rebuild_no_llm_20261008\lrc_timing_review`, with hash/timing evidence in `report\DF_NO_LLM_TIMING_STATE_20261008.jsonl`. Original-only tracks remain original-only, and never gain invented Chinese. Translation quality, timestamps and music-directory deployment still need acceptance. **No automatic legacy mass replacement or fabricated LRC timing.**
+
+## 歌詞審核頁面（未驗證候選）
+
+### 開啟審核頁面
+
+審核伺服器啟動後，在瀏覽器開啟提供的 URL（通常為 `http://127.0.0.1:PORT`），即可進入歌詞候選審核頁面。
+
+### 頁面說明
+
+### 歌曲卡片
+頁面以卡片形式顯示需要審核的歌曲，每張卡片包含：
+- **歌曲名稱**：音檔的檔名幹名（不含副檔名）
+- **候選數量**：該歌曲有多少個歌詞候選項
+
+### 候選項顯示
+每個候選項展示以下資訊：
+- **來源**：歌詞的發布來源（例：uta-net、utaten、jlyric 等）
+- **主機**：來源網站的域名
+- **行數**：歌詞包含的行數
+- **標題匹配**：歌詞頁面標題是否與搜尋的歌曲標題相符
+- **藝人匹配**：歌詞頁面藝人名稱是否與搜尋的藝人名稱相符
+
+### 審核操作
+
+### 採用（確認此候選）
+點擊「採用」按鈕，表示接受該候選歌詞：
+- 系統會將該候選歌詞保存為已驗證原文，路徑為 `txt/<stem>.lyrics.txt`
+- 同時生成來源驗證檔 `report/<stem>.sources.json`，標記為人工確認（human_approved）
+- 狀態會被標記為 `needs_review`，後續執行 lyricsee 時將進行翻譯處理（不需要 --overwrite）
+
+### 都不對（拒絕所有候選）
+點擊「都不對」按鈕，表示拒絕該歌曲的所有候選項：
+- 系統會記錄該歌曲已被用戶拒絕
+- 後續執行 lyricsee 時，除非指定 --overwrite，否則不會再次詢問該歌曲
+
+### 決定記錄
+
+所有審核決定都會記錄在 `report/review_decisions.jsonl` 中，每條決定包含：
+- 時間戳記
+- 歌曲名稱
+- 決定類型（accept 或 reject）
+- 若為採用，則記錄被接受的候選編號
+
+### 翻譯已確認的歌曲
+
+已採用的歌詞可透過標準 lyricsee 流程進行翻譯：
+
+```bash
+python lyricsee.py <音檔路徑> --output <輸出目錄>
+```
+
+系統會檢測到已驗證的原文，自動跳過候選搜尋步驟，直接進行翻譯。如需重新搜尋和審核，使用：
+
+```bash
+python lyricsee.py <音檔路徑> --output <輸出目錄> --overwrite
+```
+
+### 技術細節
+
+- 審核結果儲存在輸出目錄的 `candidates/` 目錄下
+- 接受的歌詞格式與標準 lyricsee 輸出一致
+- 所有文字檔案編碼為 UTF-8
+
+## Auto-pick（候選自動選擇）
+
+`autopick.py` 在人工審核之前先自動決定：把每個候選清洗成原文語言（去掉翻譯行、羅馬字、標頭、空行，全形/片假名/標點正規化），用字元 bigram 做相似度（`candidate_text.py`），再與 Whisper 對音檔的轉錄比對（precision = 候選內容真的有被唱到的比例；coverage = 轉錄內容被候選涵蓋的比例；score = 調和平均）。
+
+```powershell
+# 轉錄快取放在 --cache-dir，不會寫到音檔旁邊；一次一首，只有這一步用 GPU
+python autopick.py run --out <output> --audio-map <stem->音檔.json> [--stem <stem> ...]
+python autopick.py calibrate --txt-dir <已驗證txt> --audio-map <map.json> --cache-dir <dir> --result <out.json>
+```
+
+自動採用條件（驗證標記 `auto_consensus`，分數寫進 `report/<stem>.sources.json` 的 `autopick`）：
+最佳 ASR 分數 ≥ `ASR_FLOOR` 且領先下一個「不同」候選至少 `ASR_MARGIN`（與最佳相似度 ≥ `AGREE_SIM` 的是同一份歌詞，不算對手）；並且有另一個獨立（不同 URL）、ASR 也過底線的候選與它相符，或最佳分數單獨 ≥ `ASR_STRICT_FLOOR`。
+太短的候選（清洗後字數低於 `MIN_CHARS_PER_SEC` × 歌曲秒數或 `MIN_CHARS_ABS`）視為片段，不參與。其餘維持 needs_review。門檻皆為 `autopick.py` 頂部的具名常數。
+
+校準（12 首已驗證歌詞）：正確歌詞對自己音檔的 ASR 分數 0.25–0.62、清洗後 2.6–6.4 字/秒；錯誤歌曲最高 0.13。同曲不同版本的候選相似度 0.46–0.98，不同曲 ≤ 0.19。

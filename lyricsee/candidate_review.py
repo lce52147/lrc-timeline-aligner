@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import NamedTuple
 from urllib.parse import urlparse
 
+from candidate_text import char_similarity, clean_lyric_lines, fold
 from lyricsee_core import LyricCandidate
 
 
@@ -30,18 +31,10 @@ def extract_host(url: str) -> str:
 
 
 def compute_similarity(lines1: list[str], lines2: list[str]) -> float:
-    """Compute character-based similarity between two lyric line sets."""
-    if not lines1 or not lines2:
-        return 0.0
-
-    set1 = set(lines1)
-    set2 = set(lines2)
-    if not set1 or not set2:
-        return 0.0
-
-    intersection = len(set1 & set2)
-    union = len(set1 | set2)
-    return intersection / union if union > 0 else 0.0
+    """Character-level similarity of two candidates, after cleaning to original-language lyric lines."""
+    text1 = fold("".join(clean_lyric_lines(lines1)))
+    text2 = fold("".join(clean_lyric_lines(lines2)))
+    return round(char_similarity(text1, text2), 4)
 
 
 def save_candidates(
@@ -160,13 +153,23 @@ def record_review_decision(
             reject_candidate(output_root, stem)
 
 
-def accept_candidate(output_root: Path, stem: str, candidate_idx: int) -> None:
+def accept_candidate(
+    output_root: Path,
+    stem: str,
+    candidate_idx: int,
+    *,
+    verification_status: str = "human_approved",
+    verified_by: str = "review_page",
+    extra: dict | None = None,
+) -> None:
     """Accept a candidate and save it as an approved original.
 
     Args:
         output_root: Root output directory
         stem: Audio file stem
         candidate_idx: Index of the accepted candidate
+        verification_status / verified_by: provenance labels (auto_consensus for the auto-pick)
+        extra: more provenance fields (scores) merged into the sources.json payload
     """
     candidates_dir = output_root / "candidates" / stem
     txt_dir = output_root / "txt"
@@ -204,15 +207,17 @@ def accept_candidate(output_root: Path, stem: str, candidate_idx: int) -> None:
     import hashlib
     payload = {
         "txt_sha256": hashlib.sha256(lyrics_text.encode("utf-8")).hexdigest(),
-        "verification_status": "human_approved",
-        "verified_by": "review_page",
+        "verification_status": verification_status,
+        "verified_by": verified_by,
         "sources_used": [candidate_meta.get("host", "unknown")],
         "selected_source": candidate_meta.get("source", ""),
         "source_url": candidate_meta.get("url", ""),
-        "human_approved": True,
+        "human_approved": verification_status == "human_approved",
         "status": "needs_review",  # Mark as needs translation
         "line_count": candidate_meta.get("line_count", 0),
     }
+    if extra:
+        payload.update(extra)
     provenance_file = report_dir / f"{stem}.sources.json"
     provenance_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
