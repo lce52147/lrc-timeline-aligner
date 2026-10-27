@@ -497,7 +497,7 @@ def _process_track(
                     # Save candidates for human review
                     unavailable = collected.lrclib_unavailable or getattr(collected, "utanet_unavailable", False)
                     rejection_reason = "source_unavailable" if unavailable else "no_original"
-                    save_candidates(config.output_root, audio_path.stem, all_candidates, rejection_reason)
+                    save_candidates(config.output_root, audio_path.stem, all_candidates, rejection_reason, identity=identity)
                     return _base_row(
                         index,
                         audio_path,

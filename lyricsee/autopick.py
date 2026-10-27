@@ -22,6 +22,9 @@ from pathlib import Path
 
 from candidate_review import accept_candidate, load_candidates_metadata
 from candidate_text import AGREE_SIM, asr_match, char_similarity, clean_lyric_lines, fold
+from translation_posts import (
+    MIN_POST_LINES, WRONG_SONG_ASR, apply_post_translation, load_post_rows, post_is_complete, transcript_reliable,
+)
 
 # --- thresholds, calibrated on 12 verified songs (README "Auto-pick"): correct lyrics scored
 # 0.25-0.62 against their own audio (2.6-6.4 cleaned chars/s), wrong songs at most 0.13 ------
@@ -147,8 +150,27 @@ def score_candidates(
     return entries
 
 
-def decide(entries: list[dict]) -> dict:
-    """Auto-accept rule. Returns {'decision': 'accept'|'review', 'reason', 'idx'?, ...}."""
+def decide(entries: list[dict], asr_reliable: bool = True) -> dict:
+    """Auto-accept rule. Returns {'decision': 'accept'|'review', 'reason', 'idx'?, ...}.
+
+    A translation post (dedicated 【歌詞翻譯】 page for this song, see translation_posts) is complete by
+    construction: it is accepted on its title and shape without the snippet rule, and the ASR score only
+    vetoes it when the transcript is real singing that clearly belongs to another song.
+    """
+    verdict = _decide_by_asr(entries)
+    if verdict["decision"] == "accept":
+        return verdict
+    posts = [e for e in entries if e.get("translation_post") and e.get("post_complete")]
+    if not posts:
+        return verdict
+    best = max(posts, key=lambda e: (e["asr"]["score"], e["cleaned_chars"]))
+    info = {"idx": best["idx"], "asr_score": best["asr"]["score"], "asr_reliable": asr_reliable}
+    if asr_reliable and best["asr"]["score"] < WRONG_SONG_ASR:
+        return {"decision": "review", "reason": "translation_post_contradicted_by_asr", **info}
+    return {"decision": "accept", "reason": "translation_post_title_match", **info}
+
+
+def _decide_by_asr(entries: list[dict]) -> dict:
     eligible = [e for e in entries if not e["snippet"]]
     if not eligible:
         return {"decision": "review", "reason": "no_full_length_candidate"}
@@ -198,7 +220,10 @@ def autopick_song(
         raw[idx] = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
     urls = {idx: str(item.get("url", "")) for idx, item in enumerate(metadata)}
     entries = score_candidates(raw, urls, transcript_text, duration)
-    verdict = decide(entries)
+    for entry in entries:
+        entry["translation_post"] = bool(metadata[entry["idx"]].get("translation_post"))
+        entry["post_complete"] = entry["translation_post"] and entry["cleaned_lines"] >= MIN_POST_LINES             and post_is_complete(load_post_rows(output_root, stem, entry["idx"]))
+    verdict = decide(entries, asr_reliable=transcript_reliable(transcript_text))
 
     for entry in entries:
         item = metadata[entry["idx"]]
@@ -207,6 +232,8 @@ def autopick_song(
         item["snippet"] = entry["snippet"]
         item["similarity_to_others"] = {str(k): v for k, v in entry["sim"].items()}
         item["asr"] = entry["asr"]
+        if entry["translation_post"]:
+            item["post_complete"] = entry["post_complete"]
     if write:
         (cand_dir / "candidates.json").write_text(
             json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -228,6 +255,11 @@ def autopick_song(
                     }
                 },
             )
+            # a post that agrees with the accepted original supplies the human translation, whichever
+            # source the original came from; the lines it lacks are filled by `translation_posts apply --oogg`
+            result = apply_post_translation(output_root, stem)
+            if result["status"] != "no_post":
+                verdict["translation"] = result
     return {
         "stem": stem,
         "duration": duration,
@@ -236,6 +268,7 @@ def autopick_song(
             {k: e[k] for k in ("idx", "url", "cleaned_lines", "cleaned_chars", "snippet", "asr", "sim")}
             for e in entries
         ],
+        "translation_posts": [e["idx"] for e in entries if e["translation_post"]],
     }
 
 
@@ -244,6 +277,7 @@ def thresholds() -> dict:
         "MIN_CHARS_PER_SEC": MIN_CHARS_PER_SEC, "MIN_CHARS_ABS": MIN_CHARS_ABS,
         "ASR_FLOOR": ASR_FLOOR, "ASR_MARGIN": ASR_MARGIN,
         "ASR_STRICT_FLOOR": ASR_STRICT_FLOOR, "AGREE_SIM": AGREE_SIM,
+        "MIN_POST_LINES": MIN_POST_LINES, "WRONG_SONG_ASR": WRONG_SONG_ASR,
     }
 
 

@@ -178,3 +178,9 @@ python autopick.py calibrate --txt-dir <已驗證txt> --audio-map <map.json> --c
 太短的候選（清洗後字數低於 `MIN_CHARS_PER_SEC` × 歌曲秒數或 `MIN_CHARS_ABS`）視為片段，不參與。其餘維持 needs_review。門檻皆為 `autopick.py` 頂部的具名常數。
 
 校準（12 首已驗證歌詞）：正確歌詞對自己音檔的 ASR 分數 0.25–0.62、清洗後 2.6–6.4 字/秒；錯誤歌曲最高 0.13。同曲不同版本的候選相似度 0.46–0.98，不同曲 ≤ 0.19。
+
+### 歌詞翻譯貼文（translation post）
+
+標題寫明「歌詞翻譯」（`歌詞翻譯`／`歌词翻译`／`中日歌詞`…）且包含這首歌名的頁面（例如巴哈姆特 【歌詞翻譯】「歌名」- 歌手），內容是逐行「原文＋中文翻譯」。`save_candidates(identity=…)` 把它標成 `translation_post`，並存 `candidate_<n>.pairs.json`（翻譯行外層的 【】「」（） 已去除；翻譯與原文同行時 `original【中文】` 也會拆開）。
+- 採用：專屬貼文本身就是完整歌詞，**不套用字數/秒數的片段規則**，只要求原文 ≥ `MIN_POST_LINES`（6）行且 ≥ 70% 有翻譯。ASR 只是加分訊號：轉錄是真的在唱日文（≥ 30 個日文字、沒有重複字幕署名/迴圈）卻與貼文分數 < `WRONG_SONG_ASR`（0.13）時才否決（`translation_post_contradicted_by_asr`）；Whisper 轉錄是幻覺時不當閘門。理由記為 `translation_post_title_match`。
+- 翻譯：採用的歌詞若有原文一致（相似度 ≥ `AGREE_SIM`）的翻譯貼文，無論原文來自哪個來源，都寫入人工翻譯（`translation_method = page_human`，`report/<stem>.sources.json` 記 URL、作者、對齊行數）；貼文沒翻到的行才由 OOGG 補（`page_human+oogg_fill`）：`python translation_posts.py apply --out <output> [--stem …] [--oogg]`。

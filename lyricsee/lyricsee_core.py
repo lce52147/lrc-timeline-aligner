@@ -499,7 +499,24 @@ def extract_bilingual_pairs(document: str) -> list[LyricPair]:
         for line in raw.splitlines()
     ]
     lines = [line for line in lines if 0 < len(line) <= 300]
+    pairs = _interleaved_pairs(lines)
+    if len(pairs) < 2:
+        # translation on the same line as the original: 'original【中文】' / 「中文」 / （中文）
+        try:
+            from translation_posts import split_inline_translation
+        except ModuleNotFoundError:  # pragma: no cover - package import style
+            from lyricsee.translation_posts import split_inline_translation
+        split: list[str] = []
+        for line in lines:
+            parts = split_inline_translation(line)
+            split.extend(parts if parts else [line])
+        inline = _interleaved_pairs(split)
+        if len(inline) > len(pairs):
+            return inline
+    return pairs
 
+
+def _interleaved_pairs(lines: list[str]) -> list[LyricPair]:
     runs: list[list[LyricPair]] = []
     current: list[LyricPair] = []
 

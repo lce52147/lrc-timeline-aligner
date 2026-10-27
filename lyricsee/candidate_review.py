@@ -44,6 +44,7 @@ def save_candidates(
     stem: str,
     candidates: list[LyricCandidate],
     rejection_reason: str | None = None,
+    identity=None,
 ) -> None:
     """Save candidates to output directory structure.
 
@@ -52,7 +53,11 @@ def save_candidates(
         stem: Audio file stem
         candidates: List of lyric candidates to save
         rejection_reason: Reason why no candidate was auto-accepted
+        identity: the track; with it a page titled as a lyric translation of this song is flagged
+            translation_post and its original/translation rows are saved as candidate_<n>.pairs.json
     """
+    from translation_posts import clean_pairs, is_translation_post_title, post_author
+
     candidates_dir = output_root / "candidates" / stem
     candidates_dir.mkdir(parents=True, exist_ok=True)
 
@@ -93,6 +98,13 @@ def save_candidates(
             "similarity_to_others": similarities,
             "reason": rejection_reason or "no_matching_verified_source",
         }
+        rows = clean_pairs(candidate.lines)
+        if identity is not None and any(row["translation"] for row in rows)                 and is_translation_post_title(candidate.title, identity):
+            info["translation_post"] = True
+            info["page_title"] = candidate.title
+            info["page_author"] = post_author(candidate.title)
+            (candidates_dir / f"candidate_{idx}.pairs.json").write_text(
+                json.dumps(rows, ensure_ascii=False, indent=1), encoding="utf-8")
         metadata.append(info)
 
         # Save original lyrics to text file
