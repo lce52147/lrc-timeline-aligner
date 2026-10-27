@@ -230,6 +230,37 @@ class SegmentRealignStageTests(unittest.TestCase):
         self.assertEqual(result["runs"][0]["rejected"][0]["reason"], "vocal-absent")
         self.assertEqual(hypotheses(report), {})
 
+    def test_confirming_onset_is_not_a_candidate(self) -> None:
+        # the sibling chorus gap wants this line 1.5 s earlier, but the bounded pass
+        # agrees with where the row already is: a false alarm, no hypothesis
+        times = list(TIMES)
+        times[13] = 92.5
+        report = ctc_report(times, weak={13})
+        helper = FakeHelper({LYRICS[13]: 92.5})
+        with Patched(helper):
+            result = auto_lrc.apply_segment_realign(
+                Path("dummy.flac"), entries(), list(times), report, raw_report(times, weak={13}), DURATION, args()
+            )
+        self.assertEqual(result["flagged_entries"], [14], result)
+        self.assertEqual(result["status"], "no-candidates")
+        self.assertEqual(len(helper.calls), 1)
+        (rejected,) = result["runs"][0]["rejected"]
+        self.assertEqual(rejected["reason"], "agrees-with-current")
+        self.assertEqual(rejected["candidate"], 92.5)
+        self.assertEqual(rejected["current"], 92.5)
+        self.assertEqual(hypotheses(report), {})
+        self.assertNotIn("segment_realign_candidate_generated", report["assignments"][13])
+        # the same flag with a pass that disagrees by 1.5 s is a candidate
+        report = ctc_report(times, weak={13})
+        helper = FakeHelper({LYRICS[13]: 91.0})
+        with Patched(helper):
+            result = auto_lrc.apply_segment_realign(
+                Path("dummy.flac"), entries(), list(times), report, raw_report(times, weak={13}), DURATION, args()
+            )
+        self.assertEqual(result["status"], "candidates", result)
+        self.assertEqual(hypotheses(report)[14][0]["raw_candidate_time"], 91.0)
+        self.assertEqual(result["runs"][0]["rejected"], [])
+
     def test_weak_anchors_leave_the_song_alone(self) -> None:
         weak = set(range(5, len(TIMES)))
         times = list(TIMES)

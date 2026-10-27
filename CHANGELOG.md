@@ -6,11 +6,11 @@ v1.7 以後用中文記錄；v1.6 以前保留原本的英文內容。
 
 ### v2.0.0（未發佈）
 - **匯出到音檔（Ctrl+Shift+S）。** 審核頁新增「匯出到音檔」：確認視窗列出目標音檔與是否已有內嵌歌詞，按「匯出」把目前的 LRC 寫進 FLAC 的 `LYRICS` 或 M4A 的 `©lyr` 標籤（只改標籤、不重新編碼；有未儲存的改動會先儲存）。寫入前把舊標籤記進 `export-log.jsonl`，寫入後檢查標籤內容與解碼後的音訊（ffmpeg md5）、其他標籤、封面都沒變，不符就還原原檔。新增相依套件 mutagen。
-- **段落級重對齊（segment realign）。** 全曲 CTC 與 local window 之後、Central 之前多一個階段：用歌詞結構（副歌各次出現的對應行間隔必須一樣、每行長度要對得上有人聲的秒數、時間必須單調遞增）在 0.1 秒格上重算每一行該在哪裡；有 raw ASR 佐證或 CTC 分數夠高的行是錨點。被結構推開超過 1 秒的連續幾行組成一個 run，在前後沒被動到的行之間的時間窗內再跑一次 bounded CTC，結果以 `segment-realign-ctc` 候選交給 Central 決定。不改任何時間、不碰輸出；錨點不到 35% 的歌整首不碰；沒有 run 的歌零模型呼叫，LRC 完全相同。預設關閉（`--segment-realign off`），2.0 replay 驗收後再決定預設；`--segment-realign auto` 或 `LRC_SEGMENT_REALIGN=auto` 開啟。報告多 `segment_realign` 區塊；`LRC_ALGORITHM_REVISION` 改為 `2026-10-25-lrc-v2.0-segment-realign`。鎖定的錯誤：副歌某行唱成下一次出現、整段被排到間奏、時間倒退——36 首驗證集上抓到 6 行 ≥ 1 秒的大錯（My Dearest 5 行、影色舞 1 行），誤報 2 行；2–5 秒的整段平移和 0.5–1 秒的行級偏移不在範圍。
+- **段落級重對齊（segment realign）。** 全曲 CTC 與 local window 之後、Central 之前多一個階段：用歌詞結構（副歌各次出現的對應行間隔必須一樣、每行長度要對得上有人聲的秒數、時間必須單調遞增）在 0.1 秒格上重算每一行該在哪裡；有 raw ASR 佐證或 CTC 分數夠高的行是錨點。被結構推開超過 1 秒的連續幾行組成一個 run，在前後沒被動到的行之間的時間窗內再跑一次 bounded CTC，結果跟現值差 0.5 秒以上才以 `segment-realign-ctc` 候選交給 Central 決定（差不到 0.5 秒只算確認、不產候選：第三輪 replay 裡終点 e21 的確認候選讓該行在 Central 變成 selected、把 e20 的多模型共識視窗從 32 秒縮成 10 秒，e20 因此偏離校正 1.03 秒）。不改任何時間、不碰輸出；錨點不到 35% 的歌整首不碰；沒有 run 的歌零模型呼叫，LRC 完全相同。預設關閉（`--segment-realign off`），2.0 replay 驗收後再決定預設；`--segment-realign auto` 或 `LRC_SEGMENT_REALIGN=auto` 開啟。報告多 `segment_realign` 區塊；`LRC_ALGORITHM_REVISION` 改為 `2026-10-25-lrc-v2.0-segment-realign`。鎖定的錯誤：副歌某行唱成下一次出現、整段被排到間奏、時間倒退——36 首驗證集上抓到 6 行 ≥ 1 秒的大錯（My Dearest 5 行、影色舞 1 行），誤報 2 行；2–5 秒的整段平移和 0.5–1 秒的行級偏移不在範圍。PC replay（39 首 B2w_input + 20 首 DF，auto vs off）：第二輪 39/39 byte-identical、0 修正 / 0 新壞、pipeline 時間 +1.3%；第三輪 38/39、0 修正 / 1 新壞（上述終点 e20，已由 0.5 秒門檻堵住）。唯一真錯且有候選的夢遊 e14（候選 85.70、校正 85.45、現值 83.16）被 Central 以 previous-tail-ownership-unknown / insufficient-minimum-proof 拒絕，跟該行其他候選一樣。
 - **整首高風險（Choir 類）。** 結構圖幾乎抓不到錨點（可信行 < 20%）或至少一半（≥ 8 行）的句子需審的歌，審核頁標題旁顯示「整首高風險 N/M 句需審」並在工作區說明，建議整首聽過再逐句確認。對齊本身不變。
 - **審核頁預設列出整首歌詞。** 清單照歌詞順序列出每一句，不再只列待審的句子；沒被標記的句子寫「未標記」，偵測漏掉的錯也能直接點那句修正，修正會記進 review-decisions.jsonl（含 `review` 欄位），可以拿來統計漏標。剩餘句數仍只算待審的句子。清單下方的按鈕或 `?` 視窗可切回只看待審（依風險分組），選擇記在瀏覽器裡。
 - **評估集重建。** 37 份校正 LRC 裡 22 份是從工具輸出改來的；改以 15 份獨立校正（562 行）為主，22 份衍生校正（813 行）只當回歸，審聽紀錄 37 行另計。起點：independent bad（> 0.5 秒）16 行、derived 40 行（Choir 17 行）。
-- **測試。** `scripts\test_segment_realign.py`（+6）、`scripts\test_v2_segment_realign_stage.py`（新，fake helper 6 題）、`scripts\test_review_presentation.py`（+3）；`check_public.py` 納入新測試。
+- **測試。** `scripts\test_segment_realign.py`（+6）、`scripts\test_v2_segment_realign_stage.py`（新，fake helper 8 題）、`scripts\test_review_presentation.py`（+3）；`check_public.py` 納入新測試。
 
 ## v1.8
 

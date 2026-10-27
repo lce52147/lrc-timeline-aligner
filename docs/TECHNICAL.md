@@ -44,8 +44,12 @@ available, skeleton not SEGMENT_CURRENT).
   sits alone more than 1.5 s before the dense run of tokens (then that run's first token,
   stray spans dropped; `mode` ends in `-onset-shifted`), `ctc_align.py --start --end` through the
   resident helper, model cache under the `local-window-ctc` kind (identical windows
-  share entries with the local window), right-edge-pileup and vocal-absent rejection,
-  then `record_alignment_hypothesis(source="segment-realign-ctc", stage="segment-realign",
+  share entries with the local window), right-edge-pileup and vocal-absent rejection, an
+  onset within 0.5 s of the row's current timestamp (`SEGMENT_REALIGN_MIN_SHIFT_SECONDS`)
+  recorded as an `agrees-with-current` rejection with no hypothesis (third replay: a 0.006 s
+  confirmation on 終点 e21 flipped that row to selected inside Central, shrank the multi-model
+  consensus window of e20 from 32 s to 10 s, and the consensus then moved e20 1.03 s off its
+  reference), then `record_alignment_hypothesis(source="segment-realign-ctc", stage="segment-realign",
   identity_support="supported" when spans exist, sequence_support="supported",
   parent_source="ctc-global-mms")`. Nothing writes a timestamp; a song without a run
   makes no helper call and its LRC is byte-identical to the pre-2.0 output.
@@ -60,6 +64,14 @@ available, skeleton not SEGMENT_CURRENT).
 - **Output stage**: `review_presentation.song_risk` marks the Choir class
   (`weak-anchors` with under 20 % of the rows anchored, or ≥ 50 % of ≥ 8 rows in review) and the review page shows a
   whole-song badge; alignment is unchanged.
+- **Replay** (PC, `F:\_RuntimePrompt\LRC20\reports\V2_P5_REPLAY.md`; 39 B2w_input songs, 36 with a
+  checked reference, plus a 20-song DF sample; auto vs off): round 2 (`2b3bac5c`) 39/39 LRC
+  byte-identical, 0 fixed / 0 new bad, pipeline time +1.3 %; round 3 (`d7524a7b`) 38/39, 0 fixed /
+  1 new bad (the 終点 e20 chain above, closed by the 0.5 s confirmation guard), pipeline +15 %
+  (the two bounded runs of that song start the CTC helper cold in the baseline pass). The one
+  true error that received a candidate (夢遊 e14: candidate 85.70, reference 85.45, current 83.16)
+  is rejected by Central with `previous-tail-ownership-unknown` / `insufficient-minimum-proof`,
+  like every other candidate of that row: structural corroboration is not proof Central knows.
 - **Evaluation** (36 BK songs, cloud, `F:\_RuntimePrompt\LRC20\reports\`): flagged
   rows independent 2 (1 true / 1 false), derived without Choir 7 (6 / 1), Choir 7
   (4 / 3); run windows contain the BK onset in 15/16 flagged true errors; 6 of the 23

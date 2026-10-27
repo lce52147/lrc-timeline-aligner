@@ -11321,7 +11321,7 @@ CTC_LOCAL_WINDOW_SHADOW_RADII = (2, 3)
 # bounded CTC helper inside the time window of its unflagged neighbours and
 # published as ``segment-realign-ctc`` hypotheses.  Central decides; nothing
 # here writes a timestamp, and a song with no flagged run makes no helper call.
-SEGMENT_REALIGN_REVISION = "2026-10-25-v2.0-row-structure-1"
+SEGMENT_REALIGN_REVISION = "2026-10-27-v2.0-row-structure-2"
 SEGMENT_REALIGN_SOURCE = "segment-realign-ctc"
 SEGMENT_REALIGN_STAGE = "segment-realign"
 SEGMENT_REALIGN_MAX_RUNS = 6
@@ -11334,6 +11334,12 @@ SEGMENT_REALIGN_RAW_AGREE_SECONDS = 0.45
 # 2.0 replay: stray token 3.7 s early, dense run 0.25 s from the checked onset).
 SEGMENT_REALIGN_STRAY_TOKEN_GAP_SECONDS = 1.5
 SEGMENT_REALIGN_DENSE_TOKEN_GAP_SECONDS = 1.0
+# A bounded pass whose onset lands within this of the row's current timestamp confirms
+# the row (the structural flag was a false alarm) and writes no hypothesis.  Third
+# replay: a 0.006 s confirmation on 終点 e21 flipped that row to selected inside Central,
+# shrank the multi-model consensus window of e20 from 32 s to 10 s, and the consensus
+# then moved e20 1.03 s off its reference.
+SEGMENT_REALIGN_MIN_SHIFT_SECONDS = 0.5
 # CTC score at or above which an uncontradicted row anchors the structural map.  The
 # 0.10-0.25 band is 1.9 % wrong (> 0.5 s) on the evaluation set, 1.4 % above 0.30; at 0.25
 # songs with a quiet CTC path keep too few anchors (2 of 35 rows on the first replay song).
@@ -11640,6 +11646,18 @@ def apply_segment_realign(
                     continue
                 if onset_shifted:
                     run_report["onset_shifted"] = int(run_report.get("onset_shifted", 0)) + 1
+                current = float(timestamps[index])
+                if abs(timestamp - current) < SEGMENT_REALIGN_MIN_SHIFT_SECONDS:
+                    # The bounded pass agrees with the row as it stands: the structural
+                    # flag was a false alarm.  A confirming hypothesis would still change
+                    # Central's view of the row (third replay: one on 終点 e21 flipped it
+                    # to selected, shrank the multi-model consensus window of e20 and that
+                    # row moved 1.03 s off its reference), so none is written.
+                    run_report["rejected"].append({
+                        "entry": index + 1, "candidate": round(timestamp, 3),
+                        "current": round(current, 3), "reason": "agrees-with-current",
+                    })
+                    continue
                 edge = ctc_right_edge_pileup_evidence(
                     {"ctc_local_window": dict(window), "ctc_token_spans": spans}
                 )
