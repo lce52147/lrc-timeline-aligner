@@ -138,6 +138,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only evaluate BK/existing/duplicate skips; no ffprobe, HTTP, or file writes",
     )
     parser.add_argument(
+        "--cdp",
+        action="store_true",
+        help="Allow the last-pass Google search through the running Chrome on port 9222 "
+        "(one background tab of its own); also enabled by LYRICSEE_CDP=1",
+    )
+    parser.add_argument(
         "--review",
         action="store_true",
         help="Start review server for candidate lyrics (use with --output-root)",
@@ -864,6 +870,9 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
         sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
     args = build_parser().parse_args(argv)
+    if args.cdp or os.environ.get("LYRICSEE_CDP", "").strip() in ("1", "true", "yes"):
+        import web_search
+        web_search.CDP_DEFAULT = True
 
     if args.review:
         if not args.output_root:

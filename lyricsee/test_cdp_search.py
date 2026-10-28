@@ -175,6 +175,18 @@ class SessionIntegrationTests(unittest.TestCase):
         self.assertIsNone(session.cdp)
         self.assertEqual(result.candidates, [])
 
+    def test_cli_flag_turns_the_backend_on_for_new_sessions(self):
+        class Enabled(Client):
+            pass
+
+        saved = ws.CDP_DEFAULT
+        ws.CDP_DEFAULT = True
+        try:
+            session = ws.session_for(Enabled({}))
+        finally:
+            ws.CDP_DEFAULT = saved
+        self.assertIsInstance(session.cdp, cdp.CdpGoogle)
+
     def test_runs_at_most_eight_queries_and_logs_them(self):
         backend = FakeCdp([])
         result, session, client = self.run_fetch({}, backend)

@@ -43,6 +43,10 @@ For an individual audio file:
 python .\lyricsee.py "D:\Music\Artist - Song.flac"
 ```
 
+## Last-pass Google search through Chrome (`--cdp`)
+
+`python .\lyricsee.py --cdp "D:\Music\Artist - Song.flac"` (or `LYRICSEE_CDP=1`) lets the last search pass use the running Chrome on DevTools port 9222: one background tab of its own, at most 8 queries per song, rendered pages read from that tab. Without the flag lyricsee stays on plain HTTP. If Chrome is not listening on 9222 the pass is skipped.
+
 ## Translation and endpoint selection
 
 The main CLI uses this order: verified web translation → OOGG draft → verified original only. OOGG does not supply source lyrics; it only translates already verified original rows.

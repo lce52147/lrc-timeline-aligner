@@ -23,6 +23,7 @@ from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 BANNED_HOSTS = ("music.163.com",)
 
 HOST_INTERVAL = 2.0
+CDP_DEFAULT = False   # set by `lyricsee --cdp`: every new SearchSession opens its own DevTools tab for the last pass
 # After a block (CAPTCHA, JS wall, 429) an engine rests for the whole run.
 ENGINE_ORDER = ("google", "duckduckgo", "yahoojp", "bing")
 MAX_QUERIES = 16
@@ -541,6 +542,8 @@ def session_for(client, **kwargs) -> SearchSession:
     session = getattr(client, "_lyricsee_web_search", None)
     if session is None:
         session = SearchSession(client, **kwargs)
+        if CDP_DEFAULT:
+            session.enable_cdp()
         try:
             setattr(client, "_lyricsee_web_search", session)
         except (AttributeError, TypeError):
