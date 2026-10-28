@@ -141,13 +141,21 @@ def post_author(page_title: str) -> str:
     return match.group(1).strip() if match else ""
 
 
-def is_translation_post_title(page_title: str, identity) -> bool:
-    """The page title announces a lyric translation and names this song."""
-    from lyricsee_core import _page_matches_identity
+def is_translation_post_title(page_title: str, identity, page_text: str = "") -> bool:
+    """The page title announces a lyric translation and names this song.
 
-    if not page_title or not _POST_MARKER_RE.search(page_title):
+    A post often titles itself with the song's English or romanised name only. With ``page_text`` (the visible
+    body) such a post still counts when its body names the file's own title and the tag artist / CV / album."""
+    from lyricsee_core import _normalized, _page_matches_identity
+    from track_identity import identity_evidence
+
+    if not page_title or not _POST_MARKER_RE.search(page_title) or not identity.title:
         return False
-    return bool(identity.title) and _page_matches_identity(identity, page_title)
+    if _page_matches_identity(identity, page_title):
+        return True
+    title_key = _normalized(identity.title)
+    return bool(page_text) and len(title_key) >= 4 and title_key in _normalized(page_text) and bool(
+        identity_evidence(identity, page_title + " " + page_text))
 
 
 def names_artist(identity, haystack: str) -> bool:

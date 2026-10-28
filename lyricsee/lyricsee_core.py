@@ -1072,13 +1072,14 @@ def _page_candidate(identity: TrackIdentity, client, url: str, engine: str, sear
     if document is not None:
         try:
             page_title = _page_title(document)
-            if not _page_matches_identity(identity, page_title):
-                return None
-            pairs = extract_bilingual_pairs(document)
             parser = _VisibleTextParser()
             parser.feed(document)
             page_text = page_title + " " + "".join(parser.parts)
-            if is_translation_post_title(page_title, identity):
+            is_post = is_translation_post_title(page_title, identity, page_text)
+            if not is_post and not _page_matches_identity(identity, page_title):
+                return None
+            pairs = extract_bilingual_pairs(document)
+            if is_post:
                 post_rows = extract_post_rows(document)
                 if len(post_rows) >= len(pairs):
                     pairs = post_rows

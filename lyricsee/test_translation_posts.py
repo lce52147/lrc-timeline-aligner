@@ -240,5 +240,51 @@ class PreferPostTranslationTests(unittest.TestCase):
             self.assertEqual(result["translation_method"], "page_human+oogg_fill")
 
 
+class EnglishTitledPostTests(unittest.TestCase):
+    """A post titled with the song's English name only: its body still names the tag title and artist."""
+
+    IDENT_ARTIST = TrackIdentity(title="そらのうた", artist="テスト歌手")
+    ENGLISH_TITLE = "【歌詞翻譯】《テスト劇》收錄曲 - Song Of The Sky (中/日/羅馬拼音) - tester的創作 - 巴哈姆特"
+
+    class Client:
+        def __init__(self, html):
+            self.html = html
+
+        def get_text(self, url, params=None, headers=None, retries=None):
+            return self.html
+
+    def page(self, title, head):
+        body = "".join(f"<p>{o}</p><p>【{t}】</p>" for o, t in zip(ORIG, TRANS))
+        return f"<html><head><title>{title}</title></head><body><p>{head}</p>{body}</body></html>"
+
+    def candidate(self, html):
+        import lyricsee_core as core
+        return core._page_candidate(self.IDENT_ARTIST, self.Client(html), "https://home.gamer.com.tw/artwork.php?sn=2", "t", "")
+
+    def test_body_naming_title_and_artist_makes_the_post_match(self):
+        candidate = self.candidate(self.page(self.ENGLISH_TITLE, "そらのうた / テスト歌手"))
+        self.assertIsNotNone(candidate)
+        import lyricsee_core as core
+        rows = core._sanitize_candidate_lines(candidate.lines, self.IDENT_ARTIST)
+        self.assertEqual([row.original for row in rows], ORIG)
+        # the header line that names the song joins the first stanza, which then loses its page translation
+        self.assertGreaterEqual(sum(1 for row in rows if row.translation), len(ORIG) - 1)
+        self.assertTrue(candidate.meta["artist_confirmed"])
+
+    def test_body_without_the_artist_is_still_rejected(self):
+        self.assertIsNone(self.candidate(self.page(self.ENGLISH_TITLE, "そらのうた / べつの歌手")))
+
+    def test_body_without_the_title_is_still_rejected(self):
+        self.assertIsNone(self.candidate(self.page(self.ENGLISH_TITLE, "テスト歌手")))
+
+    def test_title_without_a_translation_marker_is_still_rejected(self):
+        self.assertIsNone(self.candidate(self.page("Song Of The Sky - 巴哈姆特", "そらのうた / テスト歌手")))
+
+    def test_title_check_with_body_text(self):
+        ident = self.IDENT_ARTIST
+        self.assertFalse(tp.is_translation_post_title(self.ENGLISH_TITLE, ident))
+        self.assertTrue(tp.is_translation_post_title(self.ENGLISH_TITLE, ident, "そらのうた テスト歌手"))
+
+
 if __name__ == "__main__":
     unittest.main()
