@@ -1036,40 +1036,90 @@ FULL_LENGTH_LINES = 8
 AGREE_RATIO = 0.7
 
 
+def _rows_rank(how: str) -> int:
+    """Trust order of how a page's rows were found: timestamps / lyric container > two-column pairs > loose run."""
+    kind = how.rsplit("_", 1)[-1]
+    return {"timed": 3, "container": 3, "pairs": 2, "run": 1}.get(kind, 0)
+
+
 def _page_candidate(identity: TrackIdentity, client, url: str, engine: str, search_url: str):
-    """Fetch one result page; a LyricCandidate when it carries lyric rows for this song."""
+    """Fetch one result page; a LyricCandidate when it carries lyric rows for this song.
+
+    Plain HTTP first.  When that gives fewer than FULL_LENGTH_LINES rows (or the site refuses plain HTTP) and
+    the run has a DevTools tab, the page is loaded there and its rendered text is read (cdp_search.fetch_page);
+    rendered rows are kept only when the rendered page names the tag artist / CV / album / work."""
     try:
         from translation_posts import extract_post_rows, is_translation_post_title, names_artist
+        import lyric_pages
     except ModuleNotFoundError:  # pragma: no cover - package import style
         from lyricsee.translation_posts import extract_post_rows, is_translation_post_title, names_artist
+        from lyricsee import lyric_pages
+    try:
+        from track_identity import identity_evidence
+    except ModuleNotFoundError:  # pragma: no cover - package import style
+        from lyricsee.track_identity import identity_evidence
+    session = getattr(client, "_lyricsee_web_search", None)
+    pairs: list = []
+    page_title = ""
+    evidence: list = []
+    artist_confirmed = None
+    how = ""
+    document = None
     try:
         document = client.get_text(url, retries=1)
-        page_title = _page_title(document)
-        if not _page_matches_identity(identity, page_title):
-            return None
-        pairs = extract_bilingual_pairs(document)
-        artist_confirmed = None
-        parser = _VisibleTextParser()
-        parser.feed(document)
-        page_text = page_title + " " + "".join(parser.parts)
-        if is_translation_post_title(page_title, identity):
-            post_rows = extract_post_rows(document)
-            if len(post_rows) >= len(pairs):
-                pairs = post_rows
-            artist_confirmed = names_artist(identity, page_text)
-        try:
-            from track_identity import identity_evidence
-        except ModuleNotFoundError:  # pragma: no cover - package import style
-            from lyricsee.track_identity import identity_evidence
-        evidence = identity_evidence(identity, page_text)
     except Exception:
-        return None
+        document = None   # refused or down: a rendered load below may still work
+    if document is not None:
+        try:
+            page_title = _page_title(document)
+            if not _page_matches_identity(identity, page_title):
+                return None
+            pairs = extract_bilingual_pairs(document)
+            parser = _VisibleTextParser()
+            parser.feed(document)
+            page_text = page_title + " " + "".join(parser.parts)
+            if is_translation_post_title(page_title, identity):
+                post_rows = extract_post_rows(document)
+                if len(post_rows) >= len(pairs):
+                    pairs = post_rows
+                artist_confirmed = names_artist(identity, page_text)
+            evidence = identity_evidence(identity, page_text)
+            how = "pairs" if pairs else ""
+            if len(pairs) < FULL_LENGTH_LINES:
+                static_rows, static_how = lyric_pages.rows_from_document(document)
+                # a loose run of lines is trusted only on a page that names the file's own identity
+                if len(static_rows) > len(pairs) and (static_how != "run" or evidence):
+                    pairs, how = static_rows, "static_" + static_how
+        except Exception:
+            return None
+    # a loose run of lines (rank 1) does not stop the rendered load: the page may build its lyrics with scripts
+    can_render = session is not None and getattr(session, "cdp", None) is not None
+    if can_render and (len(pairs) < FULL_LENGTH_LINES or _rows_rank(how) < 2) and (document is None or evidence):
+        rendered = session.cdp_fetch_page(url, identity.title)
+        if rendered is not None:
+            r_title = rendered["title"] or page_title
+            if _page_matches_identity(identity, r_title):
+                r_text = r_title + " " + rendered["text"]
+                r_evidence = identity_evidence(identity, r_text)
+                rows, r_how = lyric_pages.rows_from_text(rendered["text"], rendered["containers"])
+                if not rows:
+                    r_pairs = extract_bilingual_pairs(
+                        "<div>" + "<br>".join(html_module.escape(line) for line in rendered["text"].splitlines()) + "</div>")
+                    rows, r_how = r_pairs, "pairs"
+                better = (_rows_rank(r_how), len(rows)) > (_rows_rank(how), len(pairs))
+                if rows and r_evidence and better and (r_how != "run" or len(rows) >= FULL_LENGTH_LINES):
+                    pairs, how, evidence, page_title = rows, "rendered_" + r_how, r_evidence, r_title
+                    artist_confirmed = None
+    if how and how != "pairs":
+        pairs = lyric_pages.drop_title_rows(pairs, identity.title)
     if len(pairs) < 2:
         return None
     host = urlparse(url).hostname or "page"
     meta = {} if artist_confirmed is None else {"artist_confirmed": artist_confirmed}
     # which of the tag artist / CV / album / folder work names the page carries (every page, not only posts)
     meta["identity_evidence"] = evidence[:6]
+    if how:
+        meta["rows_from"] = how
     return LyricCandidate(
         source=f"google:{host}",
         url=url,
@@ -1126,6 +1176,7 @@ def fetch_google_candidates(
         from lyricsee.web_search import identity_query_variants, result_priority, session_for
     session = session_for(client)
     session.context = identity.title
+    session.rendered_loads = 0   # per-song budget of rendered page loads
     urls: list[str] = []
     candidates: list[LyricCandidate] = []
     tried: set[str] = set()

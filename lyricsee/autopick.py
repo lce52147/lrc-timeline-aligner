@@ -33,6 +33,8 @@ MIN_CHARS_ABS = 60          # ... or shorter than this in absolute terms
 ASR_FLOOR = 0.20            # best candidate must reach this ASR score
 ASR_MARGIN = 0.10           # ... and beat the next *different* candidate by this
 ASR_STRICT_FLOOR = 0.40     # without a second agreeing source the ASR score must reach this
+SPARSE_COVERAGE = 0.60      # a short-per-second text that explains this much of the sung audio, at this precision, is no snippet
+SPARSE_PRECISION = 0.60     # (long tracks with instrumental passages); only for a page that names the file's own identity
 # AGREE_SIM (candidate_text): candidate-to-candidate similarity that counts as "same lyric"
 
 DEFAULT_WHISPER_LANGUAGE = "auto"
@@ -157,6 +159,18 @@ def audio_duration(audio: Path) -> float | None:
 
 
 # --- scoring + decision -----------------------------------------------------
+
+def sparse_but_complete(entry: dict, identity_evidence: list | None) -> bool:
+    """A candidate under the chars-per-second floor whose words account for the sung audio (ASR coverage and
+    precision both high) and whose page names the tag artist / CV / album / work: a long track with long
+    instrumental passages, not a fragment."""
+    asr = entry["asr"]
+    return (
+        bool(identity_evidence)
+        and asr["coverage"] >= SPARSE_COVERAGE and asr["precision"] >= SPARSE_PRECISION
+        and entry["cleaned_chars"] >= MIN_CHARS_ABS
+    )
+
 
 def score_candidates(
     raw_lines_by_idx: dict[int, list[str]],
@@ -296,6 +310,16 @@ def autopick_song(
         raw[idx] = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
     urls = {idx: str(item.get("url", "")) for idx, item in enumerate(metadata)}
     entries = score_candidates(raw, urls, transcript_text, duration)
+    # a Whisper loop in a long instrumental tail repeats one line dozens of times; judge the singing without it
+    distinct = "\n".join(dict.fromkeys(line.strip() for line in transcript_text.splitlines() if line.strip()))
+    singing = transcript_reliable(distinct)
+    for entry in entries:
+        entry["sparse_override"] = (
+            entry["snippet"] and singing
+            and sparse_but_complete(entry, metadata[entry["idx"]].get("identity_evidence"))
+        )
+        if entry["sparse_override"]:
+            entry["snippet"] = False
     for entry in entries:
         entry["translation_post"] = bool(metadata[entry["idx"]].get("translation_post"))
         entry["artist_confirmed"] = bool(metadata[entry["idx"]].get("artist_confirmed"))
@@ -312,6 +336,8 @@ def autopick_song(
         item["cleaned_lines"] = entry["cleaned_lines"]
         item["cleaned_chars"] = entry["cleaned_chars"]
         item["snippet"] = entry["snippet"]
+        if entry["sparse_override"]:
+            item["snippet_overridden_by_asr"] = True
         item["similarity_to_others"] = {str(k): v for k, v in entry["sim"].items()}
         item["asr"] = entry["asr"]
         if entry["translation_post"]:
@@ -378,6 +404,7 @@ def thresholds() -> dict:
         "ASR_FLOOR": ASR_FLOOR, "ASR_MARGIN": ASR_MARGIN,
         "ASR_STRICT_FLOOR": ASR_STRICT_FLOOR, "AGREE_SIM": AGREE_SIM,
         "MIN_POST_LINES": MIN_POST_LINES, "WRONG_SONG_ASR": WRONG_SONG_ASR,
+        "SPARSE_COVERAGE": SPARSE_COVERAGE, "SPARSE_PRECISION": SPARSE_PRECISION,
     }
 
 

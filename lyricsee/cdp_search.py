@@ -34,6 +34,18 @@ _LINKS_JS = (
     " text: (document.body ? document.body.innerText : '').slice(0, 600),"
     " links: Array.from(document.querySelectorAll('#search a[href], #rso a[href]')).map(a => a.href)})"
 )
+# Rendered result page of a lyric site: the visible text plus the text of the known lyric containers.
+RENDER_MAX_LOADS = 6        # page loads per song
+RENDER_SETTLE = 1.0         # seconds between two reads while the page keeps growing
+_PAGE_JS = (
+    "JSON.stringify({url: location.href, ready: document.readyState, title: document.title,"
+    " text: (document.body ? document.body.innerText : '').slice(0, 200000),"
+    " containers: Array.from(document.querySelectorAll('[data-lyrics-container], .lyrics, #lyrics, .lyric-text,"
+    " .lyricbody, .entry-content, article')).map(e => e.innerText).filter(t => t && t.length > 20)"
+    ".sort((a, b) => b.length - a.length).slice(0, 3)})"
+)
+_PAGE_BLOCK_MARKERS = ("just a moment", "verify you are human", "checking your browser", "access denied",
+                       "attention required", "enable javascript and cookies")
 _BLOCK_MARKERS = ("unusual traffic", "recaptcha", "我们的系统检测到", "通常と異なるトラフィック", "before you continue")
 
 
@@ -150,6 +162,7 @@ class CdpGoogle:
         self.opened_targets: list[str] = []
         self.closed_targets: list[str] = []
         self.queries_sent = 0
+        self.pages_loaded = 0
         self._next_id = 0
         self._last_query = float("-inf")
 
@@ -204,6 +217,39 @@ class CdpGoogle:
             self.ws = None
             self.target_id = ""
             self.session_id = ""
+
+    # -- rendered pages --------------------------------------------------------
+    def fetch_page(self, url: str) -> dict:
+        """Load ``url`` in the run's own tab and return {url, title, text, containers} (rendered text).
+
+        Same tab and spacing as ``search``; a challenge page comes back with empty text and ``blocked`` set,
+        it is not solved.  A Google challenge seen by ``search`` does not stop page loads.  Raises CdpUnavailable."""
+        wait = self._last_query + self.interval - self.clock()
+        if wait > 0:
+            self.sleep(wait)
+        self.open()
+        self._last_query = self.clock()
+        self.pages_loaded += 1
+        self._call("Page.navigate", {"url": url}, session=True)
+        deadline = self.clock() + self.nav_timeout
+        page: dict = {}
+        previous = -1
+        while True:
+            raw = self._call("Runtime.evaluate", {"expression": _PAGE_JS, "returnByValue": True}, session=True)
+            page = json.loads(raw.get("result", {}).get("value") or "{}")
+            size = len(page.get("text") or "")
+            loaded = page.get("ready") == "complete" and (page.get("url") or "").startswith("http")
+            if loaded and size == previous:     # complete and no longer growing (client-rendered pages)
+                break
+            previous = size if loaded else -1
+            if self.clock() > deadline:
+                break
+            self.sleep(RENDER_SETTLE)
+        title, text = page.get("title") or "", page.get("text") or ""
+        lowered = (title + " " + text[:400]).lower()
+        blocked = any(marker in lowered for marker in _PAGE_BLOCK_MARKERS) and len(text) < 2000
+        return {"url": page.get("url") or url, "title": title, "text": "" if blocked else text,
+                "containers": [] if blocked else list(page.get("containers") or []), "blocked": blocked}
 
     # -- search --------------------------------------------------------------
     def search(self, query: str) -> list[str]:

@@ -359,6 +359,7 @@ class SearchSession:
         self.errors: dict[str, str] = {}
         self.last_url = ""
         self.context = ""
+        self.rendered_loads = 0   # rendered page loads for the current song (cdp_search.RENDER_MAX_LOADS)
         self.cdp = None   # opt-in CdpGoogle (see cdp_search); None = plain HTTP only
         self._last_by_host: dict[str, float] = {}
 
@@ -468,6 +469,35 @@ class SearchSession:
         record.update(status="ok", results=len(urls))
         self._log(record)
         return urls
+
+    def cdp_fetch_page(self, url: str, context: str = ""):
+        """Rendered text of ``url`` from the run's DevTools tab, logged with engine ``cdp_page``.  None when the
+        backend is off or unreachable, the per-song load budget is spent, or the page is a challenge page."""
+        if self.cdp is None or "cdp_page" in self.blocked:
+            return None
+        try:
+            from cdp_search import CdpUnavailable, RENDER_MAX_LOADS
+        except ModuleNotFoundError:  # pragma: no cover - package import style
+            from lyricsee.cdp_search import CdpUnavailable, RENDER_MAX_LOADS
+        if self.rendered_loads >= RENDER_MAX_LOADS:
+            return None
+        self.rendered_loads += 1
+        record = {"engine": "cdp_page", "query": context, "url": url}
+        try:
+            page = self.cdp.fetch_page(url)
+        except CdpUnavailable as exc:
+            self._block("cdp_page", "unavailable")
+            self.errors["cdp_page"] = str(exc)
+            record.update(status="unavailable", error=str(exc))
+            self._log(record)
+            return None
+        except Exception as exc:   # a page that cannot be read never stops the song
+            record.update(status="error", error=str(exc)[:200])
+            self._log(record)
+            return None
+        record.update(status="blocked" if page["blocked"] else "ok", chars=len(page["text"]))
+        self._log(record)
+        return None if page["blocked"] else page
 
     def close_cdp(self) -> None:
         if self.cdp is not None:
