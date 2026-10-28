@@ -45,6 +45,7 @@ import runtime_paths
 import file_digest
 import model_cache
 from model_cache import ModelCacheMiss
+from numeral_reading import numerals_for_alignment
 import segment_realign
 import segment_skeleton
 from multimodel_consensus import (
@@ -33348,7 +33349,7 @@ def _known_lyric_hiragana_reading(text: str) -> str | None:
     if converter is None:
         return None
     try:
-        converted = converter.convert(unicodedata.normalize("NFKC", text))  # type: ignore[attr-defined]
+        converted = converter.convert(numerals_for_alignment(unicodedata.normalize("NFKC", text)))  # type: ignore[attr-defined]
     except Exception:
         return None
     pieces: list[str] = []

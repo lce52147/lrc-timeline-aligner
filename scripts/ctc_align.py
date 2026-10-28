@@ -20,6 +20,8 @@ import pykakasi
 import torch
 import torchaudio
 
+from numeral_reading import numerals_for_alignment
+
 
 SAMPLE_RATE = 16_000
 
@@ -95,6 +97,7 @@ def build_unidic_tagger() -> object | None:
 
 
 def transcript_romanize(converter: object, tagger: object | None, text: str) -> tuple[str, str]:
+    text = numerals_for_alignment(text)
     if tagger is not None:
         try:
             reading = "".join(

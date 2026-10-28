@@ -16,6 +16,7 @@ import torch
 import torchaudio
 from transformers import AutoModelForCTC, AutoProcessor
 from multimodel_consensus import hf_model_load_options
+from numeral_reading import numerals_for_alignment
 
 
 MODEL_NAME = "jonatasgrosman/wav2vec2-large-xlsr-53-japanese"
@@ -75,7 +76,7 @@ def main() -> int:
     log_probs = torch.log_softmax(logits, dim=-1).cpu()
 
     separator = processor.tokenizer("|").input_ids
-    line_tokens = [processor.tokenizer(line).input_ids for line in lines]
+    line_tokens = [processor.tokenizer(numerals_for_alignment(line)).input_ids for line in lines]
     flattened: list[int] = []
     for index, tokens in enumerate(line_tokens):
         flattened.extend(tokens)
