@@ -359,6 +359,7 @@ class SearchSession:
         self.errors: dict[str, str] = {}
         self.last_url = ""
         self.context = ""
+        self.cdp = None   # opt-in CdpGoogle (see cdp_search); None = plain HTTP only
         self._last_by_host: dict[str, float] = {}
 
     def _throttle(self, host: str, engine: str = "") -> None:
@@ -425,10 +426,52 @@ class SearchSession:
 
     def available(self) -> list[str]:
         for engine in list(self.blocked):
-            if engine != "google" and self.clock() - self.blocked_at.get(engine, 0.0) >= self._cooldown(engine):
+            if engine not in ("google", "google_cdp") and self.clock() - self.blocked_at.get(engine, 0.0) >= self._cooldown(engine):
                 del self.blocked[engine]
                 self.timeouts[engine] = ENGINE_MAX_TIMEOUTS - 1
         return [engine for engine in self.engines if engine not in self.blocked]
+
+    def enable_cdp(self, cdp=None) -> None:
+        """Allow the last-pass Google search through the running Chrome (one background tab, see cdp_search)."""
+        if cdp is None:
+            try:
+                from cdp_search import CdpGoogle
+            except ModuleNotFoundError:  # pragma: no cover - package import style
+                from lyricsee.cdp_search import CdpGoogle
+            cdp = CdpGoogle()
+        self.cdp = cdp
+
+    def cdp_search(self, query: str) -> list[str]:
+        """One Google query through the DevTools tab, logged with engine ``google_cdp``.  [] when the
+        backend is off, unreachable or stopped by a CAPTCHA/consent page (``blocked['google_cdp']``)."""
+        if self.cdp is None or "google_cdp" in self.blocked:
+            return []
+        try:
+            from cdp_search import CdpBlocked, CdpUnavailable, google_search_page
+        except ModuleNotFoundError:  # pragma: no cover - package import style
+            from lyricsee.cdp_search import CdpBlocked, CdpUnavailable, google_search_page
+        record = {"engine": "google_cdp", "query": query, "url": google_search_page(query)}
+        try:
+            urls = _clean_result_urls(self.cdp.search(query), "google")
+        except CdpBlocked as exc:
+            self._block("google_cdp", "captcha")
+            record.update(status="blocked", error=str(exc))
+            self._log(record)
+            return []
+        except CdpUnavailable as exc:
+            self._block("google_cdp", "unavailable")
+            self.errors["google_cdp"] = str(exc)
+            record.update(status="unavailable", error=str(exc))
+            self._log(record)
+            return []
+        self.last_url = record["url"]
+        record.update(status="ok", results=len(urls))
+        self._log(record)
+        return urls
+
+    def close_cdp(self) -> None:
+        if self.cdp is not None:
+            self.cdp.close()
 
     def find_urls(self, query: str) -> tuple[list[str], str]:
         """Engines in order until one returns results; blocked ones are skipped."""

@@ -1082,6 +1082,11 @@ def _page_candidate(identity: TrackIdentity, client, url: str, engine: str, sear
     )
 
 
+def _identity_confirmed_full_length(candidates: list[LyricCandidate]) -> bool:
+    """A full-length page that names the tag artist / CV / album / folder work."""
+    return any(len(c.lines) >= FULL_LENGTH_LINES and c.meta.get("identity_evidence") for c in candidates)
+
+
 def _agreeing_full_length(candidates: list[LyricCandidate], *, need_post: bool = False) -> bool:
     """True when two full-length pages carry the same original text.  With
     ``need_post`` one of the two must also be a translation post: publisher
@@ -1153,6 +1158,28 @@ def fetch_google_candidates(
             candidate = _page_candidate(identity, client, url, engine, request_url)
             if candidate is not None:
                 candidates.append(candidate)
+    # last pass, only when enabled: Google through the running Chrome, when plain HTTP found no full-length page
+    # that carries the file's own identity (artist / album / work name)
+    if session.cdp is not None and not _identity_confirmed_full_length(candidates):
+        try:
+            from cdp_search import CDP_MAX_QUERIES
+        except ModuleNotFoundError:  # pragma: no cover - package import style
+            from lyricsee.cdp_search import CDP_MAX_QUERIES
+        for query in identity_query_variants(identity)[:CDP_MAX_QUERIES]:
+            if _identity_confirmed_full_length(candidates) or len(tried) >= MAX_PAGES_PER_SONG:
+                break
+            found = session.cdp_search(query)
+            if "google_cdp" in session.blocked:
+                break
+            request_url = session.last_url
+            if found and search_engine == "none":
+                search_engine, search_url = "google_cdp", request_url
+            for url in sorted((u for u in found if u not in tried), key=result_priority)[:MAX_PAGES_PER_QUERY]:
+                urls.append(url)
+                tried.add(url)
+                candidate = _page_candidate(identity, client, url, "google_cdp", request_url)
+                if candidate is not None:
+                    candidates.append(candidate)
     for engine, detail in session.errors.items():
         search_errors.append(f"{engine}: {detail}")
     for engine, reason in session.blocked.items():

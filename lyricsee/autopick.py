@@ -354,6 +354,24 @@ def autopick_song(
     }
 
 
+OFF_VOCAL_REASON = "no_lyrics_found_after_tag_and_google_search"
+
+
+def mark_off_vocal(output_root: Path, stem: str, *, queries: int = 0, detail: str = "") -> Path:
+    """Record that tag-based and Google searching found no lyric page: no lyrics file, no LRC, and
+    ``cmd_run`` leaves the stem alone until ``--include-off-vocal`` (EvanOG: no lyrics means off vocal)."""
+    path = output_root / "off_vocal" / f"{stem}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    record = {"stem": stem, "status": "off_vocal", "reason": OFF_VOCAL_REASON, "google_cdp_queries": queries,
+              "detail": detail, "marked_at": datetime.now().isoformat(timespec="seconds")}
+    path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
+def is_off_vocal(output_root: Path, stem: str) -> bool:
+    return (output_root / "off_vocal" / f"{stem}.json").is_file()
+
+
 def thresholds() -> dict:
     return {
         "MIN_CHARS_PER_SEC": MIN_CHARS_PER_SEC, "MIN_CHARS_ABS": MIN_CHARS_ABS,
@@ -378,6 +396,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     for stem in stems:
         if (out / "txt" / f"{stem}.lyrics.txt").exists():
             _log(f"{stem}: already has lyrics, skipped")
+            continue
+        if is_off_vocal(out, stem) and not args.include_off_vocal:
+            _log(f"{stem}: off_vocal, skipped")
             continue
         metadata = load_candidates_metadata(out, stem) or []
         if metadata and all(item.get("rejected_by_user") for item in metadata) and not args.include_rejected:
@@ -448,6 +469,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--cache-dir")
     run.add_argument("--stem", action="append")
     run.add_argument("--include-rejected", action="store_true")
+    run.add_argument("--include-off-vocal", action="store_true", help="also retry stems marked off_vocal")
     run.set_defaults(func=cmd_run)
     cal = sub.add_parser("calibrate")
     cal.add_argument("--txt-dir", required=True)
