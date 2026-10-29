@@ -223,7 +223,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     const reason = song.read_only_reason || song.detail?.load_error || 'unknown';
     if (reason === 'lrc-exported') return '已匯出：歌詞已內嵌在音檔裡，LRC 已歸檔或移除，不需要再審。';
     if (reason === 'lrc-missing') return '找不到這首的 LRC 檔，無法審核；LRC 可能已搬走、改名或這是舊測試留下的 report。';
-    return '這首的 report 與 LRC 對不上：' + readOnlyText(reason) + '，無法審核。';
+    return '這首的 LRC 無法審核：' + readOnlyText(reason) + '。';
   };
   const deltaText = delta => (delta < 0 ? '提早 ' : '延後 ') + Math.abs(delta / 100).toFixed(1) + ' 秒';
   const sourceText = c => (c.sources || [c.label]).join(',');
@@ -251,15 +251,10 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     'tail-conflict-without-independent-current-opening':'尾端衝突且缺少目前行獨立起音', 'temporal-incoherence':'時間關係不一致',
     'timing-evidence-unverified':'時間證據未驗證', 'unresolved-material-alternative':'仍有重大候選未解決',
     'unresolved-precentral-disagreement':'前置模型仍有不一致', 'unresolved_raw_ctc_disagreement':'Raw ASR 與 CTC 仍有不一致',
-    'unverified':'尚未驗證'
+    'unverified':'尚未驗證', 'no-alignment-data':'無對齊資料'
   };
   const READ_ONLY_TEXT = {
-    'extra-timed-lines': '行數和對齊報告不同（多了帶時間的行），請重新對齊',
-    'ambiguous-timing-region': '行數和對齊報告不同（無法唯一對應），請重新對齊',
-    'timing-entry-count-mismatch': '行數和對齊報告不同，請重新對齊',
-    'ambiguous-duet-structure': '合唱行的時間相同，無法確定對應，請重新對齊',
-    'untimed-region': '歌詞區有沒帶時間的行，請重新對齊',
-    'display-lines-mismatch': '行數和對齊報告不同，請重新對齊',
+    'lrc-unparsable': 'LRC 檔裡找不到任何 [mm:ss.xx] 時間標記',
   };
   const readOnlyText = (reason) => READ_ONLY_TEXT[reason] ? READ_ONLY_TEXT[reason] + '（' + reason + '）' : reason;
   const reasonText = (codes, row) => {
@@ -946,6 +941,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       if (song.detail?.load_error) notes.push('load error: ' + esc(song.detail.load_error));
       if (risk && risk.class === 'choir') notes.push('整首高風險（' + esc((risk.reasons || []).join(', ')) + '）：合唱／疊聲類，建議整首聽過再逐句確認');
       if (song.detail?.manual_edited) notes.push('<b>手動修改過</b>：顯示的是目前硬碟上的 LRC' + (song.detail.marked_rows ? '，其中 ' + song.detail.marked_rows + ' 句有你的 * 標記（已列為高風險）' : '') + '；存檔時沒改的標記會保留');
+      if (song.detail?.entry_model === 'lrc' && !song.read_only) notes.push('以 LRC 檔為準（報告對不上）');
       if (song.read_only || song.detail?.server_read_only) notes.push('唯讀：' + esc(readOnlyText(song.read_only_reason || (song.detail?.server_read_only ? 'server' : 'unknown'))));
       if (state.notice) notes.push(esc(state.notice));
       if (notes.length) { const note = document.createElement('div'); note.className = 'meta'; note.innerHTML = notes.join(' · '); queue.appendChild(note); }

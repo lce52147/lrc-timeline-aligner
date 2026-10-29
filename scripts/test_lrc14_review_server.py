@@ -832,15 +832,93 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         import lrc_manual_edits
         self.assertEqual(lrc_manual_edits.manual_edit_reason(self.output, self.report), "lrc-differs-from-published")
 
-    def test_hand_edited_timestamp_is_read_only_with_reason(self) -> None:
+    def _save_entry(self, entry, cs):
+        detail = self._detail()
+        body = {"base_sha256": detail["base_sha256"], "edits": [{"entry": entry, "cs": cs, "source": "ear", "nudge_cs": 0}]}
+        response = self._json_request("POST", "/api/song/0/save", body)
+        return response[0], json.loads(response[2])
+
+    def test_stale_song_with_changed_timestamp_is_editable_from_the_lrc(self) -> None:
         self._hand_edit({b"[00:03.00]three": b"[00:03.20]three"})
         detail = self._detail()
+        self.assertFalse(detail["read_only"])
+        self.assertIsNone(detail["read_only_reason"])
+        self.assertEqual(detail["entry_model"], "lrc")
+        self.assertEqual(len(detail["rows"]), 5, "one entry per tag group")
+        self.assertEqual([row["lyric"] for row in detail["rows"]], ["one", "two a\ntwo b", "three", "four", "five"])
+        self.assertEqual(detail["rows"][2]["current_cs"], 320)
+        before = self.output.read_bytes()
+        status, saved = self._save_entry(2, 215)
+        self.assertEqual(status, 200)
+        after = self.output.read_bytes()
+        changed = [(x, y) for x, y in zip(before.split(b"\n"), after.split(b"\n")) if x != y]
+        self.assertEqual(len(changed), 2, "only that tag group is rewritten")
+        self.assertTrue(all(y.startswith(b"[00:02.15]two") for _x, y in changed))
+        self.assertEqual(len(before), len(after))
+        self.assertNotEqual(saved["base_sha256"], hashlib.sha256(before).hexdigest())
+        status, _saved = self._save_entry(1, 110)  # second save: the sha moved on and the client used the new one
+        self.assertEqual(status, 200)
+        self.assertEqual(self.output.read_bytes().split(b"\n")[3], b"[00:01.10]one")
+        stale = {"base_sha256": hashlib.sha256(before).hexdigest(), "edits": []}
+        self.assertEqual(self._json_request("POST", "/api/song/0/save", stale)[0], 409, "the two-client sha check stays")
+
+    def test_lrc_model_rows_without_report_data_say_so_and_never_block(self) -> None:
+        self._hand_edit({b"[00:01.00]one": b"[00:01.00]one\n[00:01.50]one and a half"})
+        detail = self._detail()
+        self.assertFalse(detail["read_only"])
+        self.assertEqual(detail["entry_model"], "lrc")
+        self.assertEqual(len(detail["rows"]), 5, "three and four share a tag: one group")
+        rows = detail["rows"]
+        self.assertEqual(rows[1]["reason_text"], "無對齊資料")
+        self.assertEqual(rows[1]["reason_codes"], ["no-alignment-data"])
+        self.assertEqual([option["kind"] for option in rows[1]["options"]], ["keep"])
+        self.assertEqual(self._save_entry(2, 160)[0], 200)
+        self.assertIn(b"[00:01.60]one and a half", self.output.read_bytes())
+
+    def test_extra_and_missing_lines_are_editable_from_the_lrc(self) -> None:
+        self.output.write_bytes(self.output.read_bytes() + b"[01:10.00]six\n")
+        self.store.refresh_if_changed()
+        detail = self._detail()
+        self.assertFalse(detail["read_only"])
+        self.assertEqual((detail["entry_model"], len(detail["rows"])), ("lrc", 5))
+        self.assertEqual(self._save_entry(5, 7100 + 50)[0], 200)
+        self._start(False)
+        self._hand_edit({b"[00:03.00]four\n": b""})
+        detail = self._detail()
+        self.assertFalse(detail["read_only"])
+        self.assertEqual((detail["entry_model"], len(detail["rows"])), ("lrc", 4))
+        self.assertEqual(self._save_entry(3, 310)[0], 200)
+
+    def test_report_mapped_song_keeps_the_report_entry_model(self) -> None:
+        detail = self._detail()
+        self.assertEqual(detail["entry_model"], "report")
+        listing = json.loads(self._request("GET", "/api/songs", **{"X-Review-Token": self.server.token})[2])
+        self.assertEqual(listing[0]["entry_model"], "report")
+
+    def test_unparsable_lrc_is_the_only_read_only_file_state(self) -> None:
+        self.output.write_bytes(b"[ti:x]\nplain words\n")
+        self.store.refresh_if_changed()
+        detail = self._detail()
         self.assertTrue(detail["read_only"])
-        self.assertIsNotNone(detail["read_only_reason"])
-        response = self._json_request("POST", "/api/song/0/save", {"base_sha256": detail["base_sha256"], "edits": []})
-        status, body = response[0], json.loads(response[2])
-        self.assertEqual(status, 403)
-        self.assertEqual(body["error"], detail["read_only_reason"])
+        self.assertEqual(detail["read_only_reason"], "lrc-unparsable")
+        status, body = self._save_entry(1, 100)
+        self.assertEqual((status, body["error"]), (403, "lrc-unparsable"))
+
+    def test_missing_lrc_stays_read_only(self) -> None:
+        self.output.unlink()
+        self.store.refresh_if_changed()
+        detail = self._detail()
+        self.assertTrue(detail["read_only"])
+        self.assertEqual(detail["read_only_reason"], "lrc-missing")
+
+    def test_export_works_for_an_lrc_derived_song(self) -> None:
+        self._real_flac()
+        self._hand_edit({b"[00:03.00]three": b"[00:03.20]three"})
+        self.assertEqual(self._save_entry(2, 215)[0], 200)
+        status, _headers, data = self._json_request("POST", "/api/song/0/export", {"audio": "song.flac"})
+        self.assertEqual(status, 200, data)
+        import mutagen.flac
+        self.assertIn("[00:02.15]two a", mutagen.flac.FLAC(str(self.audio))["LYRICS"][0])
 
     def test_converted_song_same_tags_new_text_multiline_saves_only_its_group(self) -> None:
         self._hand_edit({b"two a": b"zwei a", b"two b": b"zwei b", b"[00:01.00]one": b"[00:01.00]eins"})
@@ -1061,20 +1139,24 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         self.assertEqual(self._request("GET", f"/audio/0/stem?t={self.server.token}")[0], 404)
         self.assertEqual(self._request("GET", f"/audio/0/flac?t={self.server.token}")[0], 200)
 
-    def test_ambiguous_dp_is_read_only(self) -> None:
+    def test_ambiguous_dp_is_editable_from_the_lrc(self) -> None:
         self._start(False, ambiguous=True)
         detail = self._detail()
-        self.assertTrue(detail["read_only"])
-        self.assertEqual(detail["read_only_reason"], "ambiguous-timing-region")
+        self.assertFalse(detail["read_only"])
+        self.assertEqual(detail["entry_model"], "lrc")
+        self.assertEqual(len(detail["rows"]), 4, "the equal-tag lines are one group")
+        self.assertEqual(detail["rows"][2]["lyric"], "three\nthree extra\nfour")
 
-    def test_outside_edit_after_baseline_is_read_only(self) -> None:
+    def test_outside_edit_after_baseline_stays_editable(self) -> None:
         detail = self._detail()
         payload = {"base_sha256": detail["base_sha256"], "edits": [{"entry": 1, "cs": 110, "source": "x", "nudge_cs": 10}]}
         self.assertEqual(self._json_request("POST", "/api/song/0/save", payload)[0], 200)
         self.output.write_bytes(self.output.read_bytes().replace(b"two a", b"two X"))
         current = self.server.store.song(0)
-        self.assertTrue(current["read_only"])
-        self.assertEqual(current["read_only_reason"], "lrc-lyric-content-changed")
+        self.assertFalse(current["read_only"])
+        self.assertEqual(current["entry_model"], "lrc")
+        self.assertEqual(self._save_entry(2, 230)[0], 200)
+        self.assertIn(b"[00:02.30]two X", self.output.read_bytes())
 
     def test_lock_leaves_bytes_log_and_stage_unchanged(self) -> None:
         auto, edits = review_server.review_artifact_paths(self.report)

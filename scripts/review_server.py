@@ -688,6 +688,79 @@ def _trust_state(report, output_path, auto_path, edits_path, mapping, current_da
     return False, None
 
 
+def _lrc_entry_groups(current_data):
+    """Entries read from the LRC file itself: consecutive tag lines sharing one timestamp are one entry.
+
+    That is how this tool writes original + translation pairs; a lone tag line is a one-line entry. Header
+    lines ([ti:] ...), blank lines and a title card at 00:00.00 are not entries. Returns line-index groups.
+    """
+    _bom, _trailing, all_lines = _split_lrc(current_data)
+    lines = _content_lines(all_lines)
+    groups = []
+    previous = None
+    for index, line in enumerate(lines):
+        cs = _line_tag(line)
+        if cs is None:
+            previous = None
+            continue
+        if groups and previous == cs and groups[-1][-1] == index - 1:
+            groups[-1].append(index)
+        else:
+            groups.append([index])
+        previous = cs
+    if groups and _line_tag(lines[groups[0][0]]) == 0:
+        groups = groups[1:]
+    return groups
+
+
+def _link_assignments(groups, current_lines, assignments):
+    """Report assignment index (or None) per LRC-derived entry.
+
+    Position when the counts agree and all but a few tags still match (a few retimed lines); otherwise the
+    next unused assignment with the same tag, in order. Entries without a match simply carry no report data.
+    """
+    tags = [_line_tag(current_lines[group[0]]) for group in groups]
+    wanted = [_tag_cs(assignment.get("lrc_tag")) if isinstance(assignment, dict) else None for assignment in assignments]
+    if len(groups) == len(assignments) and sum(a != b for a, b in zip(tags, wanted)) <= max(1, len(groups) // 10):
+        return list(range(len(groups)))
+    links = []
+    cursor = 0
+    for tag in tags:
+        found = next((number for number in range(cursor, len(wanted)) if wanted[number] == tag), None)
+        if found is not None:
+            cursor = found + 1
+        links.append(found)
+    return links
+
+
+def _resolve_entries(report_path, report, output_path, current_raw):
+    """(mapping, links, model, reason, manual_edited, manual_reason) for the LRC beside the audio.
+
+    The report mapping is used when it matches the file uniquely and the review artifacts agree; otherwise the
+    entries are built from the LRC file (the file is the source of truth). ``reason`` is only ever
+    ``lrc-unparsable`` (no timestamped entry at all).
+    """
+    assignments = report.get("assignments") if isinstance(report.get("assignments"), list) else []
+    auto_path, edits_path = review_artifact_paths(report_path)
+    current_data, marked_lines = _strip_marks(current_raw)
+    reference_raw = auto_path.read_bytes() if auto_path.is_file() else current_raw
+    reference_data = _strip_marks(reference_raw)[0]
+    mapping, _reason = _song_mapping(report, assignments, reference_raw)
+    if mapping is not None:
+        trust_readonly, trust_reason = _trust_state(
+            report, output_path, auto_path, edits_path, mapping, current_data, reference_data, current_raw
+        )
+        if not trust_readonly:
+            manual_reason = trust_reason or ("user-marks" if marked_lines else None)
+            return mapping, list(range(len(mapping))), "report", None, bool(manual_reason), manual_reason
+    groups = _lrc_entry_groups(current_data)
+    if not groups:
+        return None, [], "lrc", "lrc-unparsable", False, None
+    current_lines = _split_lrc(current_data)[2]
+    links = _link_assignments(groups, current_lines, assignments)
+    return groups, links, "lrc", None, bool(marked_lines), "user-marks" if marked_lines else None
+
+
 def _path_is_file(value):
     if not isinstance(value, (str, pathlib.Path)) or not value:
         return False
@@ -725,29 +798,26 @@ def _song_payload(report_path, report, anchor=None):
     reference_raw = auto_path.read_bytes() if auto_path.is_file() else current_raw
     reference_data = _strip_marks(reference_raw)[0]
     mapping = None
+    links = []
+    entry_model = None
     mapping_reason = None
+    manual_edited = False
+    manual_reason = None
     if output_path is None or not output_path.is_file():
         mapping_reason = "lrc-exported" if _lyrics_embedded(report.get("audio_path")) else "lrc-missing"
     else:
-        mapping, mapping_reason = _song_mapping(report, assignments, reference_raw)
+        mapping, links, entry_model, mapping_reason, manual_edited, manual_reason = _resolve_entries(
+            report_path, report, output_path, current_raw
+        )
     _cbom, _ctrailing, current_lines = _split_lrc(current_data)
     readonly = mapping_reason is not None
     reason = mapping_reason
-    manual_edited = False
-    manual_reason = None
     rows = []
     if mapping is not None:
-        trust_readonly, trust_reason = _trust_state(
-            report, output_path, auto_path, edits_path, mapping, current_data, reference_data, current_raw
-        )
-        if trust_readonly:
-            readonly, reason = True, trust_reason
-        elif trust_reason:
-            manual_edited, manual_reason = True, trust_reason
-        if marked_lines:
-            manual_edited = True
-            manual_reason = manual_reason or "user-marks"
         _abom, _atrailing, auto_lines = _split_lrc(reference_data)
+        if len(auto_lines) != len(current_lines):
+            auto_lines = []
+        assigned = [assignments[link] if link is not None else {} for link in links]
         features = lrc_review_tsv.severity_features(report)
         whisperx_rows = report.get("whisperx_row_evidence")
         whisperx_entries = whisperx_rows.get("entries") if isinstance(whisperx_rows, dict) else None
@@ -778,15 +848,16 @@ def _song_payload(report_path, report, anchor=None):
 
         # Neighbour fit uses the LRC as it is now, so a corrected neighbour counts.
         written = [line_time(current_lines, indexes[0]) for indexes in mapping]
-        speech_rate = review_presentation.song_speech_rate(assignments, written)
+        speech_rate = review_presentation.song_speech_rate(assigned, written)
 
         for index, line_indexes in enumerate(mapping):
-            assignment = assignments[index]
-            feature = features.get(index + 1, {})
+            assignment = assigned[index]
+            link = links[index]
+            feature = features.get(link + 1, {}) if link is not None else {}
             current_cs = line_time(current_lines, line_indexes[0])
             fit = review_presentation.line_fit(
                 assignment, current_cs,
-                assignments[index - 1] if index else None,
+                assigned[index - 1] if index else None,
                 written[index - 1] if index else None,
                 written[index + 1] if index + 1 < len(written) else None,
                 speech_rate,
@@ -795,7 +866,7 @@ def _song_payload(report_path, report, anchor=None):
             lyrics = line_lyrics(current_lines, line_indexes)
             candidates, extra_candidates = _candidate_rows(assignment, current_cs, auto_cs)
             user_marked = any(line in marked_lines for line in line_indexes)
-            listed_row = listed.get(index + 1, {})
+            listed_row = listed.get(link + 1, {}) if link is not None else {}
             status = listed_row.get("status", feature.get("status", "UNTRUSTED"))
             reason_codes = lrc_review_tsv.reason_codes_for(
                 assignment,
@@ -810,6 +881,8 @@ def _song_payload(report_path, report, anchor=None):
                 ) if status == "REVIEW" else (None, None)
             )
             reason_text = review_presentation.reason_sentence(reason_codes, options_count=alternatives)
+            if link is None:
+                reason_codes, reason_text = ["no-alignment-data"], "無對齊資料"
             if user_marked:
                 status, risk_tier, risk_basis = "REVIEW", "high", "user-mark"
                 reason_codes = [*reason_codes, "user-mark"]
@@ -848,6 +921,7 @@ def _song_payload(report_path, report, anchor=None):
         "review_rows": sum(row.get("review") == "REVIEW" for row in rows),
         "read_only": bool(readonly),
         "read_only_reason": reason,
+        "entry_model": entry_model,
         "manual_edited": bool(manual_edited),
         "manual_edit_reason": manual_reason,
         "marked_rows": sum(bool(row.get("user_marked")) for row in rows),
@@ -1037,9 +1111,9 @@ def _save_song(song, body):
     current = output.read_bytes()
     if _sha256_bytes(current) != body["base_sha256"]:
         return 409, {"error": "stale base_sha256"}
-    assignments = song["report_data"].get("assignments") if isinstance(song["report_data"].get("assignments"), list) else []
-    reference = song["auto"].read_bytes() if song["auto"].is_file() else current
-    mapping, mapping_reason = _song_mapping(song["report_data"], assignments, reference)
+    mapping, _links, _model, mapping_reason, _manual, _manual_reason = _resolve_entries(
+        pathlib.Path(song["report"]), song["report_data"], output, current
+    )
     _bom, _trailing, lines = _split_lrc(current)
     if mapping_reason:
         return 403, {"error": mapping_reason}
@@ -1084,9 +1158,16 @@ def _save_song(song, body):
     payload["report"] = pathlib.Path(song["report"]).name
     payload["lrc_name"] = output.name
     auto_lines = _split_lrc(_strip_marks(auto_bytes)[0])[2]
+    if len(auto_lines) != len(lines):
+        auto_lines = []
+
+    def auto_time(entry):
+        index = mapping[entry - 1][0]
+        return _line_tag(auto_lines[index]) if index < len(auto_lines) else None
+
     payload["edits"].extend({
         "utc": datetime.now(timezone.utc).isoformat(),
-        "entry": item["entry"], "auto_cs": _line_tag(auto_lines[mapping[item["entry"] - 1][0]]),
+        "entry": item["entry"], "auto_cs": auto_time(item["entry"]),
         "before_cs": item["before_cs"], "after_cs": item["cs"], "source": item["source"],
         "nudge_cs": item["nudge_cs"], "lrc_sha256_after": after_sha
     } for item in edits)
@@ -1748,7 +1829,7 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
                 self._send(403, b"forbidden\n", "text/plain; charset=utf-8")
                 return
             with self.server.store.lock:
-                payload = [{"index": index, "song": song["song"], "report": song["report"], "rows": len(song["rows"]), "review_rows": song["review_rows"], "read_only": song["read_only"], "read_only_reason": song["read_only_reason"], "manual_edited": song.get("manual_edited", False), "load_error": song.get("load_error"), "song_risk": song.get("song_risk"), "server_read_only": self.server.store.read_only} for index, song in enumerate(self.server.store.songs)]
+                payload = [{"index": index, "song": song["song"], "report": song["report"], "rows": len(song["rows"]), "review_rows": song["review_rows"], "read_only": song["read_only"], "read_only_reason": song["read_only_reason"], "entry_model": song.get("entry_model"), "manual_edited": song.get("manual_edited", False), "load_error": song.get("load_error"), "song_risk": song.get("song_risk"), "server_read_only": self.server.store.read_only} for index, song in enumerate(self.server.store.songs)]
             self._json(200, payload)
             return
         if parsed.path == "/api/version":
@@ -2090,7 +2171,7 @@ def run_server(targets, report_dir=None, port=0, no_browser=False, read_only=Fal
     if dump_summary:
         for song in store.songs:
             share = sum(len({item.get("cs") for item in row.get("candidates", [])}) >= 2 for row in song["rows"])
-            print(json.dumps({"song": song["song"], "rows": len(song["rows"]), "review_rows": song["review_rows"], "read_only": song["read_only"], "reason": song["read_only_reason"], "has_flac": _path_is_file(song["audio_path"]), "has_stem": _path_is_file(song["ctc_audio_path"]), "share_rows": share}, ensure_ascii=True))
+            print(json.dumps({"song": song["song"], "rows": len(song["rows"]), "review_rows": song["review_rows"], "read_only": song["read_only"], "reason": song["read_only_reason"], "entry_model": song.get("entry_model"), "has_flac": _path_is_file(song["audio_path"]), "has_stem": _path_is_file(song["ctc_audio_path"]), "share_rows": share}, ensure_ascii=True))
         return None
     server = bind_server(port)
     server.store = store
