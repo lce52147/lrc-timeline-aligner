@@ -424,7 +424,15 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   function paintPeaks(canvas, payload, markerCs, marks, message) {
     const context = canvas.getContext?.('2d');
     if (!context) return;
-    const width = canvas.width || 600, height = canvas.height || 96;
+    // Backing store follows the displayed size so the CSS width:100% never stretches the text.
+    const cssW = canvas.clientWidth, cssH = canvas.clientHeight, dpr = globalThis.devicePixelRatio || 1;
+    const sized = cssW > 0 && cssH > 0;
+    if (sized) {
+      const bw = Math.round(cssW * dpr), bh = Math.round(cssH * dpr);
+      if (canvas.width !== bw || canvas.height !== bh) { canvas.width = bw; canvas.height = bh; }
+      context.setTransform?.(dpr, 0, 0, dpr, 0, 0);
+    }
+    const width = sized ? cssW : (canvas.width || 600), height = sized ? cssH : (canvas.height || 96);
     try {
       context.clearRect(0, 0, width, height);
       const span = Number(payload?.to_cs) - Number(payload?.from_cs);
@@ -455,7 +463,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
           if (label && context.fillText) { context.fillStyle = color; context.font = '600 11px ui-monospace, Consolas, monospace'; context.textAlign = 'left'; context.fillText(label, x(cs) + 4, 13); }
         };
         (marks || []).forEach(m => mark(m.cs, m.color, m.label, m.dash));
-        mark(markerCs, cssVar('--hot', '#ffb454'), '現在');
+        mark(markerCs, cssVar('--hot', '#ffb454'), 'now');
       }
       if (message && context.fillText) { context.fillStyle = cssVar('--fg-2', '#9fb0c6'); context.font = '12px system-ui, sans-serif'; context.textAlign = 'center'; context.fillText(message, width / 2, height / 2); }
     } catch (error) { /* drawing is best-effort; the controls below the canvas still work */ }
@@ -494,8 +502,8 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     canvas.width = 600; canvas.height = 96;
     let payload = state.peaks.get(cacheKey) || null, drag = null, message = '';
     const marks = [];
-    if (item.row.previous?.cs != null) marks.push({cs:item.row.previous.cs, color:cssVar('--fg-3', '#6b7d95'), label:'上一句', dash:[2, 4]});
-    if (item.row.next?.cs != null) marks.push({cs:item.row.next.cs, color:cssVar('--fg-3', '#6b7d95'), label:'下一句', dash:[2, 4]});
+    if (item.row.previous?.cs != null) marks.push({cs:item.row.previous.cs, color:cssVar('--fg-3', '#6b7d95'), label:'prev', dash:[2, 4]});
+    if (item.row.next?.cs != null) marks.push({cs:item.row.next.cs, color:cssVar('--fg-3', '#6b7d95'), label:'next', dash:[2, 4]});
     optionsOf(item.row).filter(option => option.kind !== 'keep').forEach(option => marks.push({cs:option.cs, color:cssVar('--fg-2', '#9fb0c6'), label:option.label, dash:[6, 4]}));
     const paint = markerCs => paintPeaks(canvas, payload || {from_cs:fromCs, to_cs:toCs, peaks:[]}, markerCs, marks, message);
     if (payload) paint(startCs);
