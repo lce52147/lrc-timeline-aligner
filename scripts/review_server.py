@@ -708,9 +708,30 @@ def _lrc_entry_groups(current_data):
         else:
             groups.append([index])
         previous = cs
-    if groups and _line_tag(lines[groups[0][0]]) == 0:
+    if groups and _is_title_group(lines, groups[0]):
         groups = groups[1:]
     return groups
+
+
+_HEADER_RE = re.compile(rb"^\[(?:ti|ar|al|au|by|offset|length|re|ve):", re.I)
+
+
+def _is_title_group(lines, group):
+    """The tool's title card: the single first tagged line at 00:00.00, in a file with a [ti:]/[ar:]/[al:] header or an
+    ``Artist - Title`` text (evaluate_lrc.is_generated_title_card). Any other 00:00.00 line is a real entry."""
+    if len(group) != 1 or _line_tag(lines[group[0]]) != 0:
+        return False
+    if any(_line_tag(line) is not None for line in lines[:group[0]]):
+        return False
+    if any(_HEADER_RE.match(line) for line in lines[:group[0]]):
+        return True
+    return b" - " in _tag_tail(lines[group[0]])
+
+
+def _line_key(lines, indexes):
+    """Stable identity of an entry: first line index plus a hash of its text (the timestamp is not part of it)."""
+    texts = b"\n".join(_tag_tail(_strip_line_marks(lines[index])).rstrip(b"\r") for index in indexes)
+    return f"{indexes[0]}:{hashlib.sha1(texts).hexdigest()}"
 
 
 def _link_assignments(groups, current_lines, assignments):
@@ -889,6 +910,7 @@ def _song_payload(report_path, report, anchor=None):
                 reason_text = "你在 LRC 裡用 * 標記過這句。" + ("" if alternatives else "報告裡沒有這句的候選時間。")
             row = {
                 "entry": index + 1,
+                "line_key": _line_key(current_lines, line_indexes),
                 "options": options,
                 "reason_text": reason_text,
                 "user_marked": user_marked,
@@ -1119,16 +1141,16 @@ def _save_song(song, body):
     current = output.read_bytes()
     if _sha256_bytes(current) != body["base_sha256"]:
         return 409, {"error": "stale base_sha256"}
-    mapping, _links, _model, mapping_reason, _manual, _manual_reason = _resolve_entries(
+    mapping, _links, model, mapping_reason, _manual, _manual_reason = _resolve_entries(
         pathlib.Path(song["report"]), song["report_data"], output, current
     )
     _bom, _trailing, lines = _split_lrc(current)
     if mapping_reason:
         return 403, {"error": mapping_reason}
-    edits = []
+    requested = []
     seen = set()
     for edit in body["edits"]:
-        if not isinstance(edit, dict) or set(edit) != {"entry", "cs", "source", "nudge_cs"}:
+        if not isinstance(edit, dict) or not {"entry", "cs", "source", "nudge_cs"} <= set(edit) <= {"entry", "cs", "source", "nudge_cs", "line_key"}:
             return 400, {"error": "invalid edit"}
         try:
             entry, cs, nudge = int(edit["entry"]), int(edit["cs"]), int(edit["nudge_cs"])
@@ -1136,14 +1158,51 @@ def _save_song(song, body):
             return 400, {"error": "invalid edit"}
         if entry in seen or entry < 1 or entry > len(mapping) or not isinstance(edit["source"], str) or len(edit["source"]) > 64:
             return 400, {"error": "invalid edit"}
+        if "line_key" in edit and not isinstance(edit["line_key"], str):
+            return 400, {"error": "invalid edit"}
         if cs < 0 or cs > int((_number(song["report_data"].get("duration_seconds")) or 0) * 100 + 100):
             return 400, {"error": "timestamp out of range"}
+        if "line_key" in edit and edit["line_key"] != _line_key(lines, mapping[entry - 1]):
+            return 422, {"error": f"第 {entry} 句對應的句子已變動（檔案在別處被改過），未儲存", "entry": entry}
         seen.add(entry)
-        current_cs = _line_tag(_strip_line_marks(lines[mapping[entry - 1][0]]))
-        if cs != current_cs:
-            edits.append({"entry": entry, "cs": cs, "source": edit["source"], "nudge_cs": nudge, "before_cs": current_cs})
+        requested.append({"entry": entry, "cs": cs, "source": edit["source"], "nudge_cs": nudge})
+    final = {}
+    for position in range(len(mapping)):
+        final[position + 1] = _line_tag(_strip_line_marks(lines[mapping[position][0]]))
+    before = dict(final)
+    adjusted = []
+    for edit in sorted(requested, key=lambda item: item["entry"]):
+        entry = edit["entry"]
+        cs = edit["cs"]
+        if model == "lrc":
+            # Entries are tag groups here: a save must never give a line the neighbour's time (the groups would merge).
+            cs = max(cs, 1)
+            limit = int((_number(song["report_data"].get("duration_seconds")) or 0) * 100 + 100)
+            neighbours = {final.get(entry - 1), final.get(entry + 1)}
+            if cs in neighbours:
+                toward_up = cs == final.get(entry - 1)
+                step = 1
+                while True:
+                    options = (cs + step, cs - step) if toward_up else (cs - step, cs + step)
+                    found = next((value for value in options if 1 <= value <= limit and value not in neighbours), None)
+                    if found is not None:
+                        break
+                    step += 1
+                adjusted.append({"entry": entry, "requested_cs": edit["cs"], "cs": found})
+                cs = found
+            elif cs != edit["cs"]:
+                adjusted.append({"entry": entry, "requested_cs": edit["cs"], "cs": cs})
+        final[entry] = cs
+        edit["cs"] = cs
+    edits = [
+        {**edit, "before_cs": before[edit["entry"]]}
+        for edit in sorted(requested, key=lambda item: item["entry"]) if edit["cs"] != before[edit["entry"]]
+    ]
     if not edits:
-        return 200, _song_payload(pathlib.Path(song["report"]), song["report_data"])
+        unchanged = _song_payload(pathlib.Path(song["report"]), song["report_data"])
+        if adjusted:
+            unchanged["adjusted_cs"] = adjusted
+        return 200, unchanged
     auto = song["auto"]
     edits_path = song["edits"]
     auto_bytes = auto.read_bytes() if auto.is_file() else current
@@ -1236,7 +1295,10 @@ def _save_song(song, body):
     except OSError:
         log_stage.unlink(missing_ok=True)
         return 500, {"error": "LRC saved, edit log not written", "lrc_saved": True}
-    return 200, _song_payload(pathlib.Path(song["report"]), song["report_data"])
+    result = _song_payload(pathlib.Path(song["report"]), song["report_data"])
+    if adjusted:
+        result["adjusted_cs"] = adjusted
+    return 200, result
 
 
 # ---------------------------------------------------------------------------
@@ -1717,6 +1779,13 @@ class ReviewStore:
             own.update(self._own_files(index))
             self.song(index)
             own.update(self._own_files(index))
+            # Songs sharing any of these files (e.g. one FLAC) see the export too: refresh every owner.
+            owners = self._owners()
+            co_owners = set().union(*(owners.get(key, set()) for key in own)) - {index}
+            for other in sorted(co_owners):
+                self.song(other)
+            for other in co_owners:
+                own.update(self._own_files(other))
             stats = self._stats()
             for key in own:
                 if key in stats:

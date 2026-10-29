@@ -10,7 +10,7 @@ const page = fs.readFileSync(path.join(__dirname, 'review_page', 'index.html'), 
 let source = page.split('<script>', 2)[1].split('</script>')[0];
 const hook = '  load().then(() => { refreshJobs(); watchFiles(); });\n})();';
 assert.ok(source.includes(hook), 'page bootstrap hook moved');
-source = source.replace(hook, '  globalThis.__t = {state, stage, load, refreshSong};\n  load().then(() => { refreshJobs(); watchFiles(); });\n})();');
+source = source.replace(hook, '  globalThis.__t = {state, stage, load, refreshSong, flushDraft, watchFiles, settleExportGeneration, markDone, get seen() { return seenGeneration; }, get pending() { return refreshPending; }};\n  load().then(() => { refreshJobs(); watchFiles(); });\n})();');
 
 const KEY = 'lrc-review-drafts';
 function makeStorage(opts = {}) {
@@ -50,7 +50,7 @@ async function boot(storage, songs, opts = {}) {
         }
         s.sha = s.sha + '+'; // the file changed, as after a real save
         body.edits.forEach(e => { s.rows.find(r => r.entry === e.entry).current_cs = e.cs; });
-        return response(true, 200, {base_sha256: s.sha, server_read_only: false, has_flac: true, has_stem: true, rows: s.rows.map(r => rowOf(s, r))});
+        return response(true, 200, Object.assign({base_sha256: s.sha, server_read_only: false, has_flac: true, has_stem: true, rows: s.rows.map(r => rowOf(s, r))}, opts.adjusted ? {adjusted_cs: opts.adjusted} : {}));
       }
       m = /^\/api\/song\/(\d+)$/.exec(url);
       if (m && !options.method) {
@@ -59,7 +59,7 @@ async function boot(storage, songs, opts = {}) {
         return response(true, 200, {base_sha256: s.sha, server_read_only: false, has_flac: true, has_stem: true, rows: s.rows.map(r => rowOf(s, r))});
       }
       if (url === '/api/jobs') return response(true, 200, {import_enabled: false, jobs: []});
-      if (url === '/api/version') return response(true, 200, {generation: 0, port_notice: opts.portNotice || ''});
+      if (url === '/api/version') return response(true, 200, {generation: opts.gen ? opts.gen.value : 0, port_notice: opts.portNotice || ''});
       throw Error('unexpected fetch ' + url);
     }};
   context.globalThis = context;
@@ -445,9 +445,154 @@ test('AS4 F4: refreshSong after the server renumbered songs falls back to load()
   assert.equal(p.t.state.songs[1].song, 'A');
 });
 
-test('AS4 F9: a generation bump while our own export runs does not queue a full reload', async () => {
-  const src = page;
-  assert.ok(/generation !== seenGeneration && !state\.exporting\) refreshPending = true/.test(src));
+test('AS4 F9: the export\'s own generation bump does not queue a full reload', async () => {
+  const gen = {value: 0}, st = makeStorage(), songs = [mk('S', SONG), mk('T', '/r/T.json')];
+  const p = await boot(st, songs, {gen});
+  p.t.state.exporting = true; gen.value = 1;
+  await p.t.watchFiles();
+  assert.equal(p.t.seen, 0, 'a bump during the export is judged later');
+  p.t.state.exporting = false; p.t.settleExportGeneration(1);
+  assert.equal(p.t.pending, false);
+  assert.equal(p.t.seen, 1);
+});
+
+test('AS5 M3: an outside change during an export is refreshed after it (gemini F2 = claude-2 F5)', async () => {
+  const gen = {value: 0}, st = makeStorage(), songs = [mk('S', SONG), mk('T', '/r/T.json')];
+  const p = await boot(st, songs, {gen});
+  p.t.state.exporting = true; p.t.state.exportIndex = 0;
+  songs[1].rows[0].current_cs = 999; songs[1].sha = 't-new'; gen.value = 1;   // T changed on disk meanwhile
+  await p.t.watchFiles();
+  assert.equal(p.t.seen, 0, 'seenGeneration did not advance past the deferred bump');
+  p.t.state.exporting = false; p.t.state.exportIndex = null;
+  p.t.settleExportGeneration(2);   // the export's own bump came after the outside one
+  assert.equal(p.t.pending, true);
+  await p.t.watchFiles(); await settle();
+  assert.equal(p.rowOf(1, 1).row.current_cs, 999, 'T was refreshed');
+  assert.equal(p.t.pending, false);
+});
+
+test('AS5 M3: a failed export still applies a bump seen during it', async () => {
+  const gen = {value: 0}, st = makeStorage(), songs = [mk('S', SONG)];
+  const p = await boot(st, songs, {gen});
+  p.t.state.exporting = true; gen.value = 3;
+  await p.t.watchFiles();
+  p.t.state.exporting = false; p.t.settleExportGeneration(null);
+  assert.equal(p.t.pending, true);
+});
+
+const lk = (key, entry, cs) => ({entry, current_cs: cs, line_key: key});
+const lines5 = () => [lk('3:one', 1, 100), lk('4:two', 2, 200), lk('6:three', 3, 320), lk('7:four', 4, 300), lk('8:five', 5, 6200)];
+const lines4Merged = () => [lk('3:one', 1, 100), lk('4:two', 2, 200), lk('6:three+four', 3, 300), lk('8:five', 4, 6200)];
+
+test('AS5 B1: a save drops only its own entries; another tab\'s unsaved edit survives and shows after a reload (claude-2 F1 = gemini F1)', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG, 's', [{entry: 1, current_cs: 100}, {entry: 2, current_cs: 500}, {entry: 3, current_cs: 900}])];
+  const a = await boot(st, songs), b = await boot(st, songs);
+  b.edit(0, 3, 950, 50); b.flush();
+  a.edit(0, 1, 150, 50); a.flush();
+  a.el('save').listeners.click(); await settle(); a.flush();
+  assert.deepEqual(a.saves.map(x => x.body.edits.map(e => e.entry)), [[1]]);
+  assert.deepEqual(drafts(st)[SONG].edits.map(e => [e.entry, e.cs]), [[3, 950]], 'only entry 1 left the draft');
+  b.flush(); b.context.document.visibilityState = 'hidden'; b.docListeners.visibilitychange(); close(b);
+  assert.deepEqual(drafts(st)[SONG].edits.map(e => [e.entry, e.cs]), [[3, 950]], 'B\'s beat and unload keep it');
+  const b2 = await boot(st, songs);
+  assert.equal(b2.el('draft-stale').hidden, false, 'B\'s edit is offered after the reload');
+  b2.el('draft-stale-apply').listeners.click(); await settle();
+  assert.deepEqual([...b2.t.state.edits.values()].map(e => [e.entry, e.cs]), [[3, 950]]);
+});
+
+test('AS5 B1: tab B closing after tab A saved leaves B\'s edit for the next tab (test_draft_drop)', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG, 'sha1')];
+  const a = await boot(st, songs), b = await boot(st, songs);
+  b.edit(0, 2, 550, 50); b.flush();
+  a.edit(0, 1, 150, 50); a.flush();
+  a.el('save').listeners.click(); await settle(); a.flush();
+  close(b);
+  const c = await boot(st, songs);
+  assert.equal(c.el('draft-stale').hidden, false);
+  assert.match(c.el('draft-stale-text').textContent, /有 1 筆/);
+});
+
+test('AS5 B1: a beat re-writes an entry that went missing from the draft, but not one a save settled (test_beat_wont_save)', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG, 'sha1')];
+  const a = await boot(st, songs), b = await boot(st, songs);
+  b.edit(0, 2, 550, 50); b.flush();
+  const gone = drafts(st); delete gone[SONG]; st.map.set(KEY, JSON.stringify(gone));   // some other writer lost the entry
+  b.t.flushDraft();
+  assert.deepEqual(drafts(st)[SONG].edits.map(e => e.entry), [2], 'restored on the next beat');
+  a.edit(0, 2, 560, 60); a.flush();   // A saves the same entry: B holds a ghost of it and must not bring it back
+  a.el('save').listeners.click(); await settle(); a.flush();
+  assert.equal(drafts(st)[SONG], undefined);
+  b.t.flushDraft();
+  assert.equal(drafts(st)[SONG], undefined, 'a saved entry is not resurrected');
+});
+
+test('AS5 B1: an entry stored with a newer edit elsewhere is left out of the save and named', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG)];
+  const a = await boot(st, songs);
+  a.edit(0, 1, 150, 50); a.edit(0, 2, 560, 60);
+  const d = {}; d[SONG] = {saved_at: Date.now(), tabs: {other: Date.now()}, base_sha256: 's', edits: [{entry: 1, cs: 190, source: 'manual', nudge_cs: 90, base_cs: 100, edited_at: Date.now() + 5000}], more: []};
+  st.map.set(KEY, JSON.stringify(d));
+  a.el('save').listeners.click(); await settle();
+  assert.deepEqual(a.saves.map(x => x.body.edits.map(e => e.entry)), [[2]]);
+  assert.match(a.t.state.notice, /第 1 句在另一個分頁有較新的修改，未儲存/);
+  assert.equal(a.t.state.edits.has('0:1'), true, 'still staged here, not written');
+});
+
+test('AS5 B2c: a stale draft whose line changed is refused, never applied to the line now holding its entry number (claude-2 F3)', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG, 's', lines5())];
+  const b = await boot(st, songs);
+  b.edit(0, 4, 350, 50); b.flush(); close(b);
+  assert.equal(drafts(st)[SONG].edits[0].line_key, '7:four');
+  songs[0].sha = 's2'; songs[0].rows = lines4Merged();   // another tab's save merged three+four
+  const c = await boot(st, songs);
+  assert.equal(c.el('draft-stale').hidden, false);
+  c.el('draft-stale-apply').listeners.click(); await settle();
+  assert.equal(c.t.state.edits.size, 0, 'nothing staged on "five"');
+  assert.match(c.t.state.notice, /無法套用：對應的句子已變動/);
+  c.el('save').listeners.click(); await settle();
+  assert.equal(c.saves.length, 0);
+});
+
+test('AS5 B2c: a same-sha draft whose line key no longer matches is listed as unapplied', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG, 's', lines5())];
+  const b = await boot(st, songs);
+  b.edit(0, 4, 350, 50); b.flush(); close(b);
+  songs[0].rows = lines5().map(r => r.entry === 4 ? Object.assign(r, {line_key: '7:other'}) : r);
+  const c = await boot(st, songs);
+  assert.equal(c.t.state.edits.size, 0);
+  assert.match(c.el('draft-restored-text').textContent, /無法套用：對應的句子已變動/);
+});
+
+test('AS5 B2c: carried edits and done marks follow their line when entries renumber on a live refresh', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG, 's', lines5())];
+  const p = await boot(st, songs);
+  p.edit(0, 4, 350, 50);
+  p.t.markDone(p.rowOf(0, 5));
+  songs[0].rows = [lk('3:one', 1, 100), lk('4:two', 2, 200), lk('7:four', 3, 300), lk('8:five', 4, 6200)];   // "three" was removed outside
+  await p.t.load(); await settle();
+  assert.deepEqual([...p.t.state.edits.keys()], ['0:3'], 'the edit followed "four"');
+  assert.equal(p.t.state.edits.get('0:3').entry, 3);
+  assert.deepEqual([...p.t.state.done], ['0:4'], 'the done mark followed "five"');
+  p.el('save').listeners.click(); await settle();
+  assert.deepEqual(p.saves[0].body.edits.map(e => [e.entry, e.line_key]), [[3, '7:four']]);
+});
+
+test('AS5 B2c: an edit whose line vanished is dropped, not moved onto a neighbour (repro_renumber)', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG, 's', lines5())];
+  const p = await boot(st, songs);
+  p.edit(0, 4, 350, 50);
+  songs[0].rows = lines4Merged();
+  await p.t.load(); await settle();
+  assert.equal(p.t.state.edits.size, 0);
+  assert.match(p.t.state.error, /無法套用：對應的句子已變動/);
+});
+
+test('AS5 B2a: the page announces a save that was offset to avoid merging with the neighbour', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG, 's', lines5())];
+  const p = await boot(st, songs, {adjusted: [{entry: 3, requested_cs: 300, cs: 299}]});
+  p.edit(0, 3, 300, -20);
+  p.el('save').listeners.click(); await settle();
+  assert.match(p.t.state.notice, /第 3 句已偏移 0\.01 秒以免與相鄰句合併/);
 });
 
 (async () => {

@@ -1059,6 +1059,87 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         review_server.ReviewStore.refresh_if_changed(fake)
         self.assertEqual(fake.song.mock_calls, [mock.call(0), mock.call(1)])
 
+    def test_as5_refresh_song_refreshes_co_owners(self) -> None:
+        songs = [{"report": "r0", "audio_path": "shared.flac", "output_path": "o0", "ctc_audio_path": ""},
+                 {"report": "r1", "audio_path": "shared.flac", "output_path": "o1", "ctc_audio_path": ""}]
+        fake = mock.Mock()
+        fake.songs = songs
+        fake.lock = threading.RLock()
+        fake.file_stats = {"shared.flac": (1, 1)}
+        fake._stats = mock.Mock(return_value={"shared.flac": (2, 2)})
+        fake._owners = mock.Mock(return_value=review_server.ReviewStore._owners(fake))
+        fake._own_files = lambda index: review_server.ReviewStore._own_files(fake, index)
+        fake.generation = 0
+        review_server.ReviewStore.refresh_song(fake, 0)
+        self.assertEqual(fake.song.mock_calls, [mock.call(0), mock.call(1)])
+        self.assertEqual(fake.file_stats["shared.flac"], (2, 2))
+
+    def test_as5_save_never_merges_with_the_neighbour_group(self) -> None:
+        self._hand_edit({b"[00:03.00]three": b"[00:03.20]three"})
+        status, result = self._save_entry(3, 300)   # four sits at 03.00
+        self.assertEqual(status, 200)
+        self.assertEqual(result["adjusted_cs"], [{"entry": 3, "requested_cs": 300, "cs": 299}])
+        self.assertEqual([row["lyric"] for row in result["rows"]], ["one", "two a\ntwo b", "three", "four", "five"])
+        status, result = self._save_entry(3, 330)
+        self.assertEqual(status, 200)
+        data = self.output.read_bytes()
+        self.assertIn(b"[00:03.30]three", data)
+        self.assertIn(b"[00:03.00]four", data)
+        # two a/two b stay one group; stepping onto the previous group moves away from it too
+        status, result = self._save_entry(3, 200)
+        self.assertEqual(result["adjusted_cs"][0]["cs"], 201)
+        self.assertEqual(len(result["rows"]), 5)
+
+    def test_as5_zero_cs_entry_is_not_taken_for_the_title_card(self) -> None:
+        self._hand_edit({b"[00:03.00]three": b"[00:03.20]three"})
+        status, result = self._save_entry(1, 0)
+        self.assertEqual(status, 200)
+        self.assertEqual(result["adjusted_cs"], [{"entry": 1, "requested_cs": 0, "cs": 1}])
+        self.assertEqual(len(result["rows"]), 5)
+        self.assertEqual(result["rows"][0]["lyric"], "one")
+        self.assertIn(b"[00:00.01]one", self.output.read_bytes())
+        self.assertIn(b"[00:00.00]title", self.output.read_bytes())
+
+    def test_as5_zero_line_without_title_signs_stays_an_entry(self) -> None:
+        self.output.write_bytes(b"[00:00.00]first line\n[00:02.00]second\n[00:04.00]third\n")
+        self.store.refresh_if_changed()
+        detail = self._detail()
+        self.assertEqual(detail["entry_model"], "lrc")
+        self.assertEqual([row["lyric"] for row in detail["rows"]], ["first line", "second", "third"])
+        self.output.write_bytes(b"[00:00.00]Some Artist - Some Title\n[00:02.00]second\n[00:04.00]third\n")
+        self.store.refresh_if_changed()
+        self.assertEqual([row["lyric"] for row in self._detail()["rows"]], ["second", "third"])
+
+    def test_as5_rows_carry_a_line_key_and_a_mismatching_key_is_refused(self) -> None:
+        detail = self._detail()
+        keys = [row["line_key"] for row in detail["rows"]]
+        self.assertEqual(len(set(keys)), 5)
+        self.assertTrue(all(":" in key for key in keys))
+        edit = {"entry": 2, "cs": 210, "source": "ear", "nudge_cs": 10, "line_key": keys[1]}
+        status, _headers, _data = self._json_request("POST", "/api/song/0/save", {"base_sha256": detail["base_sha256"], "edits": [edit]})
+        self.assertEqual(status, 200)
+        # a nudge saved before is not a text change: the key survives it
+        self.assertEqual(self._detail()["rows"][1]["line_key"], keys[1])
+        before = self.output.read_bytes()
+        detail = self._detail()
+        edit = {"entry": 2, "cs": 250, "source": "ear", "nudge_cs": 40, "line_key": "6:" + "0" * 40}
+        status, _headers, data = self._json_request("POST", "/api/song/0/save", {"base_sha256": detail["base_sha256"], "edits": [edit]})
+        self.assertEqual(status, 422)
+        self.assertIn("已變動", json.loads(data)["error"])
+        self.assertEqual(self.output.read_bytes(), before)
+
+    def test_as5_outside_edit_makes_a_stale_key_refuse_not_misapply(self) -> None:
+        detail = self._detail()
+        stale_key = detail["rows"][3]["line_key"]   # "four"
+        base_keys = [row["line_key"] for row in detail["rows"]]
+        self._hand_edit({b"[00:03.00]four": b"[00:03.00]four changed"})
+        current = self._detail()
+        self.assertNotIn(stale_key, [row["line_key"] for row in current["rows"]])
+        edit = {"entry": 4, "cs": 350, "source": "ear", "nudge_cs": 50, "line_key": stale_key}
+        status, _headers, _data = self._json_request("POST", "/api/song/0/save", {"base_sha256": current["base_sha256"], "edits": [edit]})
+        self.assertEqual(status, 422)
+        self.assertEqual(base_keys[0], current["rows"][0]["line_key"])
+
     def test_as4_change_during_export_is_not_absorbed(self) -> None:
         stray = self.root / "other-song.lrc"
         stray.write_text("[00:01.00]x\n", encoding="utf-8")   # another file changes while the export runs
@@ -1521,7 +1602,7 @@ const flushTimers = () => { for (const [id, t] of [...timers]) { if (t.ms === 75
         flags = 0x08000000 | 0x00004000 if os.name == "nt" else 0
         result = subprocess.run(["node", str(SCRIPTS / "test_review_drafts.js")], capture_output=True, text=True, encoding="utf-8", creationflags=flags)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("28/28 passed", result.stdout)
+        self.assertRegex(result.stdout, r"(\d+)/\1 passed")
 
     def test_review_port_default_is_fixed_and_falls_back_when_busy(self) -> None:
         import socket
