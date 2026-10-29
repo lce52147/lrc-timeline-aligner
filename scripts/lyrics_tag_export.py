@@ -24,6 +24,7 @@ SUPPORTED = {".flac": "LYRICS", ".m4a": "©lyr"}
 LOG_NAME = "export-log.jsonl"
 CACHE_NAME = ".export-cache"
 NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0  # CREATE_NO_WINDOW
+PROC_FLAGS = (NO_WINDOW | 0x00004000) if sys.platform == "win32" else 0  # + BELOW_NORMAL_PRIORITY_CLASS
 
 
 class ExportError(Exception):
@@ -101,7 +102,7 @@ def _decoded_md5(path):
     try:
         result = subprocess.run(
             [runtime_paths.ffmpeg(), "-v", "error", "-nostdin", "-i", str(path), "-map", "0:a:0", "-f", "md5", "-"],
-            capture_output=True, text=True, timeout=600, check=False, creationflags=NO_WINDOW)
+            capture_output=True, text=True, timeout=600, check=False, creationflags=PROC_FLAGS)
     except (OSError, subprocess.SubprocessError) as exc:
         raise ExportError(f"無法用 ffmpeg 驗證音訊：{exc}") from exc
     line = result.stdout.strip()
@@ -115,12 +116,16 @@ def _flac_payload_digest(path):
     with open(path, "rb") as handle:
         if handle.read(4) != b"fLaC":
             return None
+        size_total = os.path.getsize(path)
         while True:
             head = handle.read(4)
             if len(head) < 4:
                 return None
             last = head[0] & 0x80
-            handle.seek(int.from_bytes(head[1:4], "big"), os.SEEK_CUR)
+            length = int.from_bytes(head[1:4], "big")
+            if handle.tell() + length > size_total:
+                return None
+            handle.seek(length, os.SEEK_CUR)
             if last:
                 break
         digest = hashlib.sha256()
@@ -132,10 +137,70 @@ def _flac_payload_digest(path):
     return digest.hexdigest()
 
 
+_MP4_CONTAINERS = {b"trak", b"mdia", b"minf", b"stbl"}
+_MP4_TABLES = {b"stco", b"co64", b"stsz", b"stz2", b"stts", b"stsc", b"stss", b"ctts", b"stsd"}
+
+
+def _mp4_boxes(data, start, end):
+    """(kind, payload_start, payload_end) of the boxes laid end to end in ``data[start:end]``; None if malformed."""
+    boxes = []
+    offset = start
+    while offset + 8 <= end:
+        size, kind = struct.unpack_from(">I4s", data, offset)
+        header = 8
+        if size == 1:
+            if offset + 16 > end:
+                return None
+            size = struct.unpack_from(">Q", data, offset + 8)[0]
+            header = 16
+        elif size == 0:
+            size = end - offset
+        if size < header or offset + size > end:
+            return None
+        boxes.append((kind, offset + header, offset + size))
+        offset += size
+    return boxes if offset == end else None
+
+
+def _mp4_sample_tables(moov, mdat_start, digest):
+    """Feed the sample tables of every track into ``digest``; chunk offsets are made relative to ``mdat``.
+
+    Tag writes resize ``moov`` and shift ``mdat``, so the absolute ``stco``/``co64`` values legitimately move
+    with it; the offsets *inside* the media data must not. ``ilst``/``udta`` are never visited.
+    """
+    boxes = _mp4_boxes(moov, 0, len(moov))
+    if boxes is None:
+        return False
+    for kind, start, end in boxes:
+        if kind in _MP4_CONTAINERS:
+            digest.update(kind)
+            if not _mp4_sample_tables(moov[start:end], mdat_start, digest):
+                return False
+        elif kind in (b"stco", b"co64"):
+            width, code = (4, ">I") if kind == b"stco" else (8, ">Q")
+            if end - start < 8:
+                return False
+            count = struct.unpack_from(">I", moov, start + 4)[0]
+            if start + 8 + count * width != end:
+                return False
+            digest.update(kind + moov[start:start + 8])
+            for index in range(count):
+                value = struct.unpack_from(code, moov, start + 8 + index * width)[0]
+                digest.update(struct.pack(">q", value - mdat_start))
+        elif kind in _MP4_TABLES:
+            digest.update(kind + moov[start:end])
+    return True
+
+
 def _m4a_payload_digest(path):
-    """sha256 of the (single) top-level ``mdat`` payload of an MP4, or None if it cannot be found."""
+    """sha256 of the (single) top-level ``mdat`` payload plus the moov sample tables, or None if unwalkable.
+
+    The tables (stsd, stts, stsc, stsz, chunk offsets rebased onto ``mdat``) are what let a player find the
+    audio, so damage there is caught byte-for-byte as well; tag atoms (udta/ilst) are excluded.
+    """
     size_total = os.path.getsize(path)
     found = None
+    moov_at = None
     with open(path, "rb") as handle:
         offset = 0
         while offset + 8 <= size_total:
@@ -153,12 +218,20 @@ def _m4a_payload_digest(path):
                 if found is not None:
                     return None
                 found = (offset + header, offset + size)
+            elif kind == b"moov":
+                if moov_at is not None:
+                    return None
+                moov_at = (offset + header, offset + size)
             offset += size
-        if found is None:
+        if found is None or moov_at is None:
+            return None
+        handle.seek(moov_at[0])
+        moov = handle.read(moov_at[1] - moov_at[0])
+        digest = hashlib.sha256()
+        if not _mp4_sample_tables(moov, found[0], digest):
             return None
         handle.seek(found[0])
         remaining = found[1] - found[0]
-        digest = hashlib.sha256()
         while remaining > 0:
             chunk = handle.read(min(1 << 20, remaining))
             if not chunk:
@@ -178,7 +251,7 @@ def _payload_digest(path, name):
 def _snapshot(path, name):
     """Everything that must survive the write: audio payload, STREAMINFO md5, other tags, picture sizes.
 
-    The audio is checked byte-for-byte (FLAC frames / MP4 ``mdat``); ffmpeg decoding is only the fallback
+    The audio is checked byte-for-byte (FLAC frames / MP4 ``mdat`` + moov sample tables); ffmpeg decoding is only the fallback
     for files whose container cannot be walked.
     """
     flac, mp4 = _mutagen()
@@ -248,8 +321,10 @@ def export(audio, lrc_bytes, work_dir):
             after = _snapshot(audio, name)
             if "audio_payload" in before and "audio_payload" not in after:
                 raise ExportError("寫入後無法讀出音訊資料")
+            if "audio_md5" in before and "audio_md5" not in after:
+                after["audio_md5"] = _decoded_md5(audio)  # compare like with like
             for key in ("audio_payload", "audio_md5"):
-                if key in before and after.get(key) != before[key]:
+                if key in before and key in after and after[key] != before[key]:
                     raise ExportError("寫入後音訊內容改變")
             for key in ("streaminfo_md5", "tags", "pictures"):
                 if after.get(key) != before.get(key):
@@ -288,6 +363,10 @@ def _recycle(path):
     return ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op)) == 0 and not os.path.exists(path)
 
 
+class _InPlace(Exception):
+    pass
+
+
 def archive_lrc(lrc_path, work_dir, audio_name, setting=None):
     """After a verified export: move (or recycle) the song's ``.lrc`` per ``LRC_EXPORT_ARCHIVE_DIR``.
 
@@ -307,6 +386,10 @@ def archive_lrc(lrc_path, work_dir, audio_name, setting=None):
                 raise OSError("could not send the file to the Recycle Bin")
         else:
             folder.mkdir(parents=True, exist_ok=True)
+            if folder.resolve() == lrc_path.resolve().parent:
+                result["mode"] = "off"
+                result["note"] = "already in archive dir"
+                raise _InPlace()
             target = folder / lrc_path.name
             stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             count = 0
@@ -316,13 +399,15 @@ def archive_lrc(lrc_path, work_dir, audio_name, setting=None):
                 count += 1
             shutil.move(str(lrc_path), str(target))
             result["to"] = str(target)
+    except _InPlace:
+        pass
     except OSError as exc:
         result["mode"] = "failed"
         result["error"] = str(exc)
     try:
         _log(pathlib.Path(work_dir) / LOG_NAME, {
             "utc": datetime.now(timezone.utc).isoformat(), "file": audio_name, "lrc": str(lrc_path),
-            "archive": result["mode"], **{k: v for k, v in result.items() if k in ("to", "error")}})
+            "archive": result["mode"], **{k: v for k, v in result.items() if k in ("to", "error", "note")}})
     except OSError:
         pass
     return result

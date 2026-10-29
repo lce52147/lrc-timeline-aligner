@@ -199,9 +199,59 @@ class LyricsTagExportTests(unittest.TestCase):
         path = self._flac()
         with mock.patch.object(lyrics_tag_export.subprocess, "run", wraps=subprocess.run) as run:
             lyrics_tag_export._decoded_md5(path)
-        self.assertEqual(run.call_args.kwargs["creationflags"], lyrics_tag_export.NO_WINDOW)
+        self.assertEqual(run.call_args.kwargs["creationflags"], lyrics_tag_export.PROC_FLAGS)
         if sys.platform == "win32":
             self.assertEqual(lyrics_tag_export.NO_WINDOW, 0x08000000)
+            self.assertEqual(lyrics_tag_export.PROC_FLAGS, 0x08004000)
+
+    def test_corrupt_m4a_chunk_offsets_are_caught_and_rolled_back(self) -> None:
+        path = self._m4a()
+        original = path.read_bytes()
+        real_write = lyrics_tag_export._write_tag
+
+        def write_and_corrupt(target, name, text):
+            real_write(target, name, text)
+            data = bytearray(Path(target).read_bytes())
+            at = data.index(b"stco") + 4 + 4 + 4  # version/flags, entry count, first offset
+            data[at + 3] ^= 0x10
+            Path(target).write_bytes(bytes(data))
+
+        with mock.patch.object(lyrics_tag_export, "_write_tag", side_effect=write_and_corrupt):
+            with self.assertRaisesRegex(lyrics_tag_export.ExportError, "音訊內容改變.*已還原"):
+                lyrics_tag_export.export(path, LRC, self.work)
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_m4a_digest_sees_each_sample_table_but_not_tags(self) -> None:
+        path = self._m4a()
+        base = lyrics_tag_export._m4a_payload_digest(path)
+        for table in (b"stsz", b"stts", b"stsc"):
+            data = bytearray(path.read_bytes())
+            data[data.index(table) + 4 + 4 + 4 + 3] ^= 0x01
+            damaged = self.root / ("damaged-" + table.decode() + ".m4a")
+            damaged.write_bytes(bytes(data))
+            self.assertNotEqual(lyrics_tag_export._m4a_payload_digest(damaged), base, table)
+        lyrics_tag_export._write_tag(path, "©lyr", "y" * 9000)  # moov grows, mdat moves
+        self.assertEqual(lyrics_tag_export._m4a_payload_digest(path), base)
+
+    def test_md5_only_before_gets_md5_after_and_passes(self) -> None:
+        path = self._flac()
+        real = lyrics_tag_export._payload_digest
+        calls = []
+
+        def fake(target, tag):
+            calls.append(target)
+            return None if len(calls) == 1 else real(target, tag)
+
+        with mock.patch.object(lyrics_tag_export, "_payload_digest", side_effect=fake):
+            lyrics_tag_export.export(path, LRC, self.work)
+        self.assertEqual(mutagen.flac.FLAC(str(path))["LYRICS"], [EXPECTED])
+
+    def test_flac_metadata_block_running_past_eof_has_no_digest(self) -> None:
+        path = self._flac()
+        data = bytearray(path.read_bytes())
+        data[5:8] = (len(data) + 1000).to_bytes(3, "big")  # STREAMINFO claims more bytes than the file has
+        path.write_bytes(bytes(data))
+        self.assertIsNone(lyrics_tag_export._flac_payload_digest(path))
 
     def test_write_exception_restores_the_original_bytes(self) -> None:
         path = self._flac()
@@ -244,6 +294,14 @@ class ArchiveLrcTests(unittest.TestCase):
         self.assertFalse(self.lrc.exists())
         self.assertEqual((self.dest / "song.lrc").read_text(encoding="utf-8"), "[00:01.00]x")
         self.assertEqual(self._log()[-1]["archive"], "move")
+
+    def test_archive_dir_equal_to_the_lrc_folder_leaves_it_alone(self) -> None:
+        for folder in (self.root, self.root / "." / ""):
+            result = lyrics_tag_export.archive_lrc(self.lrc, self.work, "song.flac", ("move", folder))
+            self.assertEqual(result["mode"], "off")
+            self.assertEqual(self.lrc.read_text(encoding="utf-8"), "[00:01.00]x")
+            self.assertEqual([item.name for item in self.root.glob("*.lrc")], ["song.lrc"])
+        self.assertIn("already in archive dir", self._log()[-1]["note"])
 
     def test_collision_gets_a_timestamp_suffix_and_never_overwrites(self) -> None:
         self.dest.mkdir()

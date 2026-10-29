@@ -905,6 +905,25 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         self.assertTrue(payload["read_only"])
         self.assertEqual(payload["read_only_reason"], "lrc-exported")
 
+    def test_m4a_exported_song_with_another_audio_path_shows_as_exported(self) -> None:
+        self._real_flac()
+        m4a = self.audio.with_suffix(".m4a")
+        subprocess.run([review_server.runtime_paths.ffmpeg(), "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+                        "-c:a", "aac", str(m4a)], check=True, creationflags=0x08004000)
+        with mock.patch.dict(os.environ, {"LRC_EXPORT_ARCHIVE_DIR": str(self.root / "bk")}):
+            status, _headers, _data = self._json_request("POST", "/api/song/0/export", {"audio": "song.m4a"})
+        self.assertEqual(status, 200)
+        self.assertFalse(self.output.exists())
+        report_path = next(Path(self.store.report_dir).glob("*.align-report.json"))
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        self.assertIsNone(review_server.lyrics_tag_export.read_lyrics(self.audio))  # flac carries nothing
+        payload = review_server._song_payload(report_path, report)
+        self.assertEqual(payload["read_only_reason"], "lrc-exported")
+        wav = self.audio.with_suffix(".wav")
+        wav.write_bytes(b"RIFF")
+        self.assertTrue(review_server._lyrics_embedded(str(wav)))  # unsupported format is skipped, siblings are read
+        self.assertFalse(review_server._lyrics_embedded(str(self.root / "nothing.wav")))
+
     def test_failed_export_does_not_archive(self) -> None:
         archive = self.root / "bk"
         with mock.patch.dict(os.environ, {"LRC_EXPORT_ARCHIVE_DIR": str(archive)}):

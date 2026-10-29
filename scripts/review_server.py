@@ -746,13 +746,20 @@ def _path_is_file(value):
 
 
 def _lyrics_embedded(audio_value):
-    """True when the song's audio already carries embedded lyrics (its .lrc was archived after an export)."""
-    if not isinstance(audio_value, str) or not audio_value or not _path_is_file(audio_value):
+    """True when any of the song's own audio files carries embedded lyrics (its .lrc was archived after an export)."""
+    if not isinstance(audio_value, str) or not audio_value:
         return False
     try:
-        return bool(lyrics_tag_export.read_lyrics(audio_value))
-    except lyrics_tag_export.ExportError:
+        found = lyrics_tag_export.candidates(pathlib.Path(audio_value))
+    except OSError:
         return False
+    for candidate in found:
+        try:
+            if lyrics_tag_export.read_lyrics(candidate):
+                return True
+        except (lyrics_tag_export.ExportError, OSError):
+            continue
+    return False
 
 
 def _song_payload(report_path, report, anchor=None):
