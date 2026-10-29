@@ -200,6 +200,30 @@ class BatchSummaryTests(unittest.TestCase):
         ])
         self.assertEqual(code, 0)
 
+    def test_stale_song_with_hand_edited_lrc_still_goes_to_the_review_page(self) -> None:
+        audio = self._audio("hand.flac")
+        tsv, report = self._real_tsv(audio)
+        report["review_tsv_path"] = str(tsv)
+        report["published_lrc_sha256"] = hashlib.sha256(audio.with_suffix(".lrc").read_bytes()).hexdigest()
+        path = _module().report_path(audio, audio.with_suffix(".lrc"), self.report_dir)
+        path.write_text(json.dumps(report), encoding="utf-8")
+        old = (datetime.now() - timedelta(hours=2)).timestamp()
+        os.utime(path, (old, old))
+        lrc = audio.with_suffix(".lrc")
+        original = lrc.read_bytes()
+        lrc.write_bytes(b"*" + original)  # hand-marked after publishing
+        records = self._collect([audio], since=datetime.now() - timedelta(hours=1))
+        self.assertEqual((records[0]["status"], records[0]["manual_edit"]), ("stale", "lrc-differs-from-published"))
+        summary = _module().summarize(
+            records, report_dir=self.report_dir, review_server_path=_module().REVIEW_SERVER,
+            python_exe=sys.executable, targets=[audio],
+        )
+        self.assertEqual([row["name"] for row in summary["attention"]], ["hand.flac"])
+        # An untouched stale song stays out of the review page.
+        lrc.write_bytes(original)
+        records = self._collect([audio], since=datetime.now() - timedelta(hours=1))
+        self.assertIsNone(records[0]["manual_edit"])
+
     def test_03_real_tsv_metrics_and_nonfatal_missing_or_garbled_tsv(self) -> None:
         audio = self._audio("metrics.flac")
         tsv, _fixture = self._real_tsv(audio)

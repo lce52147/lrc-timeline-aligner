@@ -800,6 +800,65 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         self.assertEqual(len(json.loads(edits.read_text())["edits"]), 4)
         self.assertEqual(self.output.read_bytes().splitlines()[3], b"[00:01.10]one")
 
+    def _hand_edit(self, replacements: dict[bytes, bytes]) -> None:
+        data = self.output.read_bytes()
+        for old, new in replacements.items():
+            self.assertIn(old, data)
+            data = data.replace(old, new)
+        self.output.write_bytes(data)
+        self.store.refresh_if_changed()
+
+    def test_star_marked_lrc_is_shown_flagged_not_hidden(self) -> None:
+        self._hand_edit({b"[00:02.00]two a": b"*[00:02.00]two a", b"[00:02.00]two b": b"*[00:02.00]two b",
+                         b"[00:03.00]four": b"[00:03.00]four*"})
+        detail = self._detail()
+        self.assertFalse(detail["read_only"])
+        self.assertTrue(detail["manual_edited"])
+        self.assertEqual(detail["manual_edit_reason"], "lrc-differs-from-published")
+        self.assertEqual(detail["marked_rows"], 2)
+        self.assertEqual(len(detail["rows"]), 5)
+        rows = {row["entry"]: row for row in detail["rows"]}
+        self.assertEqual([entry for entry, row in rows.items() if row["user_marked"]], [2, 4])
+        self.assertEqual(rows[2]["lyric"], "two a\ntwo b")  # `*` stripped in the view only
+        self.assertEqual(rows[4]["lyric"], "four")
+        self.assertEqual((rows[2]["review"], rows[2]["risk"], rows[2]["risk_basis"]), ("REVIEW", "high", "user-mark"))
+        self.assertIn("user-mark", rows[2]["reason_codes"])
+        self.assertTrue(any(option["kind"] != "keep" for option in rows[2]["options"]))  # published candidates kept
+        self.assertFalse(rows[1]["user_marked"])
+        listing = json.loads(self._request("GET", "/api/songs", **{"X-Review-Token": self.server.token})[2])
+        self.assertTrue(listing[0]["manual_edited"])
+        # Re-alignment must still refuse to overwrite the hand edit.
+        import lrc_manual_edits
+        self.assertEqual(lrc_manual_edits.manual_edit_reason(self.output, self.report), "lrc-differs-from-published")
+
+    def test_hand_edited_timestamp_row_shows_without_candidates(self) -> None:
+        self._hand_edit({b"[00:03.00]three": b"[00:03.20]three"})
+        detail = self._detail()
+        self.assertFalse(detail["read_only"])
+        self.assertEqual(detail["manual_edit_reason"], "timestamps-edited")
+        rows = {row["entry"]: row for row in detail["rows"]}
+        self.assertEqual(rows[3]["current_cs"], 320)
+        self.assertEqual(rows[3]["candidates"], [])
+        self.assertTrue(any(option["kind"] != "keep" for option in rows[1]["options"]))  # still matches the published line
+
+    def test_save_keeps_marks_on_lines_that_were_not_edited(self) -> None:
+        self._hand_edit({b"[00:02.00]two a": b"*[00:02.00]two a", b"[00:02.00]two b": b"*[00:02.00]two b",
+                         b"[00:03.00]four": b"[00:03.00]four*"})
+        detail = self._detail()
+        body = {"base_sha256": detail["base_sha256"],
+                "edits": [{"entry": 4, "cs": 350, "source": "whisper", "nudge_cs": 50}]}
+        self.assertEqual(self._json_request("POST", "/api/song/0/save", body)[0], 200)
+        saved = self.output.read_bytes()
+        self.assertIn(b"*[00:02.00]two a\n*[00:02.00]two b\n", saved)  # untouched marks survive byte for byte
+        self.assertIn(b"[00:03.50]four\n", saved)  # the edited line is resolved, its mark goes
+        self.assertNotIn(b"four*", saved)
+        auto, edits = review_server.review_artifact_paths(self.report)
+        self.assertTrue(auto.is_file() and edits.is_file())
+        again = self._detail()
+        self.assertFalse(again["read_only"])
+        self.assertEqual(again["marked_rows"], 1)
+        self.assertEqual(again["rows"][3]["current_cs"], 350)
+
     def _real_flac(self) -> None:
         import shutil
         try:

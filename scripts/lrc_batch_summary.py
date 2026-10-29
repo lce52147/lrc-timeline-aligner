@@ -18,6 +18,7 @@ REPO = Path(__file__).resolve().parents[1]
 if str(REPO / "scripts") not in sys.path:
     sys.path.insert(0, str(REPO / "scripts"))
 import runtime_paths  # noqa: E402
+import lrc_manual_edits  # noqa: E402
 DEFAULT_REPORT_DIR = runtime_paths.reports_dir()
 DEFAULT_WORK_DIR = REPO / "outputs" / "reviewer-work"
 REVIEW_SERVER = Path(__file__).resolve().with_name("review_server.py")
@@ -26,7 +27,7 @@ _SONG_FIELDS = (
     "review_tsv_path", "seconds", "seconds_source",
     "stage_timings_total_seconds", "r2_total_seconds", "review_rows",
     "untrusted_rows", "model_disagreement_rows", "max_severity_score",
-    "reviewers_ok", "reviewers_total", "reviewers_source", "notes",
+    "reviewers_ok", "reviewers_total", "reviewers_source", "manual_edit", "notes",
 )
 
 
@@ -153,6 +154,7 @@ def _record(audio, index, report_dir, work_dir, since_stamp, since_text):
         "reviewers_ok": None,
         "reviewers_total": None,
         "reviewers_source": None,
+        "manual_edit": None,
         "notes": [],
         "_work_dir": str(Path(work_dir).expanduser().resolve()),
         "_since": since_text,
@@ -175,6 +177,8 @@ def _record(audio, index, report_dir, work_dir, since_stamp, since_text):
         record["status"] = "lrc-missing"
     elif since_stamp is not None and artifact.stat().st_mtime < since_stamp:
         record["status"] = "stale"
+        # A refused re-alignment leaves the old report behind; a hand-edited LRC still needs the review page.
+        record["manual_edit"] = lrc_manual_edits.manual_edit_reason(output, artifact)
     else:
         record["status"] = "ok"
     timings = report.get("stage_timings")
@@ -273,7 +277,8 @@ def summarize(records, *, report_dir, review_server_path, python_exe, targets, n
     attention = sorted(
         (
             row for row in records
-            if row.get("status") == "ok" and isinstance(row.get("review_rows"), int) and row["review_rows"] > 0
+            if (row.get("status") == "ok" or (row.get("status") == "stale" and row.get("manual_edit")))
+            and isinstance(row.get("review_rows"), int) and row["review_rows"] > 0
         ),
         key=lambda row: (
             -row["review_rows"],
