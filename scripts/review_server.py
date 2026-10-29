@@ -1064,15 +1064,17 @@ def _export_song(song, body, report_dir, store=None):
         work_dir = report_dir.parent if report_dir.name.casefold() == "reports" else report_dir
         started = time.monotonic()
         timings = {}
-        status = store.export_status if store is not None else {}
-        status.update({"song": song.get("song"), "step": "snapshot_before", "started": started, "active": True})
+        def publish(**fields):
+            if store is not None:
+                store.update_export_status(**fields)
+        publish(song=song.get("song"), step="snapshot_before", started=started, active=True)
         archive = {}
         try:
             result = lyrics_tag_export.export(chosen, output.read_bytes(), work_dir, timings=timings,
-                                              on_step=lambda name: status.update(step=name or "archive"))
+                                              on_step=lambda name: publish(step=name or "archive"))
             result["seconds"] = round(time.monotonic() - started, 1)
             step = time.perf_counter()
-            status["step"] = "archive"
+            publish(step="archive")
             archive = result["archive"] = lyrics_tag_export.archive_lrc(output, work_dir, chosen.name)
             timings["archive"] = round((time.perf_counter() - step) * 1000)
             result["timings"] = timings
@@ -1080,10 +1082,16 @@ def _export_song(song, body, report_dir, store=None):
             return 200, result
         except lyrics_tag_export.ExportError as exc:
             _export_log(work_dir, song.get("song"), "failed", archive, str(exc), timings, started)
-            status["active"] = False
+            publish(active=False)
             return 422, {"error": str(exc)}
+        except Exception as exc:  # a failed backup copy, an unreadable LRC, a broken archive step: logged and answered, not dropped
+            _export_log(work_dir, song.get("song"), "failed", archive, f"{type(exc).__name__}: {exc}", timings, started)
+            publish(active=False)
+            return 500, {"error": f"匯出失敗：{exc}"}
     except lyrics_tag_export.ExportError as exc:
         return 422, {"error": str(exc)}
+    except Exception as exc:
+        return 500, {"error": f"匯出失敗：{exc}"}
 
 
 def _export_log(work_dir, song_name, result, archive, error, timings, started):
@@ -1604,6 +1612,7 @@ class ReviewStore:
         self.songs = []
         self.excluded = []
         self.export_status = {}
+        self._status_lock = threading.Lock()  # guards export_status only, never the store lock: /api/status must answer during an export
         self.reload_progress = {"active": False, "done": 0, "total": 0}
         self.file_stats = {}
         self.generation = 0
@@ -1653,7 +1662,11 @@ class ReviewStore:
 
     def _remember(self):
         self.file_stats = self._stats()
-        self.version = hashlib.sha256(repr(sorted(self.file_stats.items(), key=lambda item: item[0])).encode("utf-8", "replace")).hexdigest()
+        self.version = self._digest(self.file_stats)
+
+    @staticmethod
+    def _digest(stats):
+        return hashlib.sha256(repr(sorted(stats.items(), key=lambda item: item[0])).encode("utf-8", "replace")).hexdigest()
 
     def is_current(self):
         with self.lock:
@@ -1670,12 +1683,12 @@ class ReviewStore:
             self.generation += 1
 
     def _owners(self):
-        """File path -> index of the song that owns it (its report, LRC, audio or CTC audio)."""
+        """File path -> set of indexes of the songs that own it (its report, LRC, audio or CTC audio); songs may share a file."""
         owners = {}
         for index, song in enumerate(self.songs):
             for key in ("report", "audio_path", "output_path", "ctc_audio_path"):
                 if song.get(key):
-                    owners[str(song[key])] = index
+                    owners.setdefault(str(song[key]), set()).add(index)
         return owners
 
     def refresh_if_changed(self):
@@ -1686,30 +1699,47 @@ class ReviewStore:
                 return self.generation
             changed = {key for key in stats.keys() | self.file_stats.keys() if stats.get(key, "-") != self.file_stats.get(key, "-")}
             owners = self._owners()
-            touched = {owners.get(key) for key in changed}
-            if None in touched:
+            if any(key not in owners for key in changed):
                 self.reload()
             else:
-                for index in sorted(touched):
+                for index in sorted(set().union(*(owners[key] for key in changed))):
                     self.song(index)
             self._remember()
             self.generation += 1
             return self.generation
 
-    def refresh_song(self, index, absorb=True):
-        """Re-read one song after our own change (an export). ``absorb`` adopts the new file stats as the baseline
-        so the /api/version poll does not reload for it; pass False when other files had already changed."""
+    def refresh_song(self, index, own_extra=()):
+        """Re-read one song after our own change (an export) and adopt the new file stats of that song's own files
+        (plus ``own_extra``, e.g. the archived LRC) as the baseline, so the /api/version poll does not reload for them.
+        Every other file keeps its old baseline: a change made meanwhile is picked up by the next refresh_if_changed."""
         with self.lock:
+            own = set(map(str, own_extra))
+            own.update(self._own_files(index))
             self.song(index)
-            if absorb:
-                self._remember()
+            own.update(self._own_files(index))
+            stats = self._stats()
+            for key in own:
+                if key in stats:
+                    self.file_stats[key] = stats[key]
+                else:
+                    self.file_stats.pop(key, None)
+            self.version = self._digest(self.file_stats)
             self.generation += 1
             return self.generation
 
+    def _own_files(self, index):
+        song = self.songs[index] if 0 <= index < len(self.songs) else {}
+        return {str(song[key]) for key in ("report", "audio_path", "output_path", "ctc_audio_path") if song.get(key)}
+
+    def update_export_status(self, **fields):
+        with self._status_lock:
+            self.export_status = {**self.export_status, **fields}  # replaced, never mutated in place
+
     def status(self):
-        """Progress for a page that is waiting on the store lock; reads no lock."""
-        export = dict(self.export_status)
-        if export.get("active"):
+        """Progress for a page that is waiting on the store lock; takes only the small status lock."""
+        with self._status_lock:
+            export = dict(self.export_status)
+        if export.get("active") and export.get("started") is not None:
             export["elapsed_ms"] = round((time.monotonic() - export["started"]) * 1000)
         export.pop("started", None)
         return {"export": export, "reload": dict(self.reload_progress), "generation": self.generation}
@@ -1936,22 +1966,21 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
                 return
             if match.group(2) == "export":
                 store = self.server.store
-                clean = store.is_current()
                 try:
                     status, result = _export_song(song, body, store.report_dir, store)
                 except BaseException:
-                    store.export_status["active"] = False
+                    store.update_export_status(active=False)
                     raise
                 if status == 200 and not body.get("check"):
                     work_dir, song_name, archive = result.pop("_log")
-                    store.export_status["step"] = "store_refresh"
+                    store.update_export_status(step="store_refresh")
                     step = time.perf_counter()
-                    store.refresh_song(int(match.group(1)), clean)  # this song only, never a full reload
+                    store.refresh_song(int(match.group(1)), [archive["to"]] if archive.get("to") else [])  # this song only, never a full reload
                     result["timings"]["store_refresh"] = round((time.perf_counter() - step) * 1000)
-                    result["timings"]["total"] = round((time.monotonic() - store.export_status["started"]) * 1000)
+                    result["timings"]["total"] = round((time.monotonic() - (store.export_status.get("started") or time.monotonic())) * 1000)
                     result["generation"] = store.generation
                     _export_log(work_dir, song_name, "ok", archive, "", result["timings"], 0)
-                    store.export_status["active"] = False
+                    store.update_export_status(active=False)
                 self._json(status, result)
                 return
             status, result = _save_song(song, body)

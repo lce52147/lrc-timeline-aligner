@@ -1043,6 +1043,66 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         self.assertEqual(fields[2], "failed")
         self.assertTrue(fields[4])
 
+
+    def test_as4_shared_audio_refreshes_every_owner(self) -> None:
+        songs = [{"report": "r0", "audio_path": "shared.flac", "output_path": "o0", "ctc_audio_path": ""},
+                 {"report": "r1", "audio_path": "shared.flac", "output_path": "o1", "ctc_audio_path": ""}]
+        fake = mock.Mock()
+        fake.songs = songs
+        owners = review_server.ReviewStore._owners(fake)
+        self.assertEqual(owners["shared.flac"], {0, 1})
+        fake.lock = threading.RLock()
+        fake.file_stats = {"shared.flac": (1, 1)}
+        fake._stats = mock.Mock(return_value={"shared.flac": (2, 2)})
+        fake._owners = mock.Mock(return_value=owners)
+        fake.generation = 0
+        review_server.ReviewStore.refresh_if_changed(fake)
+        self.assertEqual(fake.song.mock_calls, [mock.call(0), mock.call(1)])
+
+    def test_as4_change_during_export_is_not_absorbed(self) -> None:
+        stray = self.root / "other-song.lrc"
+        stray.write_text("[00:01.00]x\n", encoding="utf-8")   # another file changes while the export runs
+        self.audio.write_bytes(self.audio.read_bytes() + b"x")   # the exported song's own file
+        generation = self.store.generation
+        self.store.refresh_song(0)
+        self.assertEqual(self.store.generation, generation + 1)
+        with mock.patch.object(review_server.ReviewStore, "reload") as reload:
+            self.store.refresh_if_changed()
+        reload.assert_called_once()   # the stray file was left for this poll, not swallowed
+        self.assertEqual(self.store.refresh_if_changed(), self.store.generation, "own audio change was absorbed")
+
+    def test_as4_status_survives_concurrent_export_updates(self) -> None:
+        stop = threading.Event()
+
+        def churn() -> None:
+            count = 0
+            while not stop.is_set():
+                self.store.update_export_status(song="s", step=f"step{count}", started=time.monotonic(), active=True)
+                self.store.update_export_status(active=False)
+                count += 1
+
+        thread = threading.Thread(target=churn)
+        thread.start()
+        try:
+            for _ in range(150):
+                status, _headers, data = self._request("GET", "/api/status", **{"X-Review-Token": self.server.token})
+                self.assertEqual(status, 200)
+                self.assertIn("export", json.loads(data))
+        finally:
+            stop.set()
+            thread.join()
+        self.store.export_status = {"active": True}   # no "started" yet must not raise
+        self.assertTrue(self.store.status()["export"]["active"])
+
+    def test_as4_non_export_error_is_logged_and_answered(self) -> None:
+        self._real_flac()
+        with mock.patch.object(review_server.lyrics_tag_export.shutil, "copy2", side_effect=PermissionError("denied")):
+            status, _headers, data = self._json_request("POST", "/api/song/0/export", {"audio": "song.flac"})
+        self.assertEqual(status, 500)
+        self.assertIn("denied", json.loads(data)["error"])
+        fields = (self.root / "export.log").read_text(encoding="utf-8").splitlines()[0].split("	")
+        self.assertEqual(fields[2], "failed")
+        self.assertFalse(self.store.status()["export"]["active"])
     def test_m4a_exported_song_with_another_audio_path_shows_as_exported(self) -> None:
         self._real_flac()
         m4a = self.audio.with_suffix(".m4a")
@@ -1461,7 +1521,7 @@ const flushTimers = () => { for (const [id, t] of [...timers]) { if (t.ms === 75
         flags = 0x08000000 | 0x00004000 if os.name == "nt" else 0
         result = subprocess.run(["node", str(SCRIPTS / "test_review_drafts.js")], capture_output=True, text=True, encoding="utf-8", creationflags=flags)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("21/21 passed", result.stdout)
+        self.assertIn("28/28 passed", result.stdout)
 
     def test_review_port_default_is_fixed_and_falls_back_when_busy(self) -> None:
         import socket

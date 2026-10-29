@@ -10,7 +10,7 @@ const page = fs.readFileSync(path.join(__dirname, 'review_page', 'index.html'), 
 let source = page.split('<script>', 2)[1].split('</script>')[0];
 const hook = '  load().then(() => { refreshJobs(); watchFiles(); });\n})();';
 assert.ok(source.includes(hook), 'page bootstrap hook moved');
-source = source.replace(hook, '  globalThis.__t = {state, stage, load};\n  load().then(() => { refreshJobs(); watchFiles(); });\n})();');
+source = source.replace(hook, '  globalThis.__t = {state, stage, load, refreshSong};\n  load().then(() => { refreshJobs(); watchFiles(); });\n})();');
 
 const KEY = 'lrc-review-drafts';
 function makeStorage(opts = {}) {
@@ -350,7 +350,104 @@ test('saving a restored song hides the restored banner and clears its leftovers 
 test('a page notice carries the port-fallback line (gemini F6)', async () => {
   const st = makeStorage(), songs = [mk('S', SONG)];
   const p = await boot(st, songs, {portNotice: '58400 已被佔用（可能有另一個 Review LRC 還開著），改用 58401；此埠的暫存草稿不會跨埠號'});
-  assert.match(p.t.state.notice, /58400 已被佔用.*改用 58401/);
+  assert.match(p.t.state.portNotice, /58400 已被佔用.*改用 58401/);
+  assert.equal(p.el('port-notice').hidden, false);
+  assert.match(p.el('port-notice-text').textContent, /改用 58401/);
+  p.t.state.activeSong = 0; p.t.state.notice = ''; p.el('save').listeners.click(); await settle();   // song click / save / scan progress only touch state.notice
+  assert.match(p.t.state.portNotice, /改用 58401/);
+  p.el('port-notice-close').listeners.click();
+  assert.equal(p.el('port-notice').hidden, true);
+});
+
+test('AS4 F1: a save drops every drafted entry it contained whatever the group sha; a fresh load shows no stale banner (claude-2 F1)', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG)];
+  const p = await boot(st, songs);
+  p.edit(0, 1, 150, 50); p.flush();
+  songs[0].sha = 's2'; songs[0].rows[1].current_cs = 520;   // another tab saved entry 2: sha changes, entry 1 untouched
+  await p.t.load(); await settle();
+  assert.equal(p.t.state.edits.size, 1);
+  p.el('save').listeners.click(); await settle(); p.flush();
+  assert.equal(p.saves.length, 1);
+  assert.deepEqual(drafts(st), {}, 'the saved edit is gone from every group');
+  p.winListeners.beforeunload({preventDefault() {}});
+  const q = await boot(st, songs);
+  assert.equal(q.el('draft-stale').hidden, true);
+  assert.equal(q.t.state.edits.size, 0);
+});
+
+test('AS4 F1: a drafted entry whose cs already equals the row is never re-applied; other groups\' remnants stay', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG, 's2', [{entry: 1, current_cs: 150}, {entry: 2, current_cs: 500}])];
+  st.map.set(KEY, JSON.stringify({[SONG]: {saved_at: Date.now(), tabs: {}, base_sha256: 's', edits: [{entry: 1, cs: 150, source: 'manual', nudge_cs: 50, base_cs: 100, edited_at: 1}], more: []}}));
+  const q = await boot(st, songs);
+  assert.equal(q.el('draft-stale').hidden, true, 'nothing live to offer');
+  assert.equal(q.t.state.edits.size, 0);
+  assert.deepEqual(drafts(st), {}, 'the obsolete group is dropped');
+  // a stale group with one saved and one pending entry offers only the pending one
+  st.map.set(KEY, JSON.stringify({[SONG]: {saved_at: Date.now(), tabs: {}, base_sha256: 's', edits: [{entry: 1, cs: 150, source: 'manual', nudge_cs: 50, base_cs: 100, edited_at: 1}, {entry: 2, cs: 540, source: 'manual', nudge_cs: 40, base_cs: 500, edited_at: 1}], more: []}}));
+  const r = await boot(st, songs);
+  assert.match(r.el('draft-stale-text').textContent, /有 1 筆/);
+  r.el('draft-stale-apply').listeners.click(); await settle();
+  assert.deepEqual([...r.t.state.edits.values()].map(e => [e.entry, e.cs]), [[2, 540]]);
+});
+
+test('AS4 F2: no staging on the exporting song; edits made before refreshSong are drafted and the notice says so (claude-2 F2)', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG), mk('T', '/r/T.json')];
+  const p = await boot(st, songs);
+  p.t.state.exporting = true; p.t.state.exportIndex = 0;
+  p.edit(0, 1, 150, 50);
+  assert.equal(p.t.state.edits.size, 0);
+  assert.match(p.t.state.notice, /匯出中，請等匯出完成再修改/);
+  p.edit(1, 1, 150, 50);   // another song stays editable
+  assert.equal(p.t.state.edits.size, 1);
+  p.t.state.exporting = false; p.t.state.exportIndex = null;
+  p.edit(0, 1, 150, 50);   // an edit that got in anyway (made just before the export began)
+  assert.equal(p.pendingFlush(), true);
+  songs[0].readOnly = true;   // the export archived the LRC
+  await p.t.refreshSong(0); await settle();
+  assert.equal([...p.t.state.edits.keys()].some(key => key.startsWith('0:')), false);
+  assert.match(p.t.state.notice, /1 筆修改因匯出歸檔無法套用，已存成草稿/);
+  assert.deepEqual(drafts(st)[SONG].edits.map(e => [e.entry, e.cs]), [[1, 150]]);
+});
+
+test('AS4 F3: a second tab\'s beat never overwrites a newer stored value or resurrects an undo (claude-2 F3)', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG)];
+  const a = await boot(st, songs);
+  a.edit(0, 1, 150, 50); a.flush();
+  const b = await boot(st, songs);
+  assert.equal(b.t.state.edits.size, 1);
+  a.edit(0, 1, 180, 80); a.flush();
+  b.context.document.visibilityState = 'hidden'; b.docListeners.visibilitychange();
+  assert.deepEqual(drafts(st)[SONG].edits.map(e => [e.entry, e.cs]), [[1, 180]], 'A\'s newer value stays');
+  a.t.stage(a.rowOf(0, 1), 100, 'manual', 0); a.flush();
+  assert.equal(drafts(st)[SONG], undefined, 'A\'s undo removed the entry');
+  b.docListeners.visibilitychange();
+  assert.equal(drafts(st)[SONG], undefined, 'B\'s beat does not bring it back');
+});
+
+test('AS4 F3: a stored value with a newer edited_at wins over this tab\'s stale write', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG)];
+  const p = await boot(st, songs);
+  p.edit(0, 1, 150, 50);
+  const d = drafts(st); d[SONG] = {saved_at: Date.now(), tabs: {other: Date.now()}, base_sha256: 's', edits: [{entry: 1, cs: 190, source: 'manual', nudge_cs: 90, base_cs: 100, edited_at: Date.now() + 5000}], more: []};
+  st.map.set(KEY, JSON.stringify(d));
+  p.flush();
+  assert.equal(drafts(st)[SONG].edits[0].cs, 190);
+});
+
+test('AS4 F4: refreshSong after the server renumbered songs falls back to load() and overwrites no other song (gemini F3)', async () => {
+  const st = makeStorage(), songs = [mk('A', '/r/A.json'), mk('B', '/r/B.json')];
+  const p = await boot(st, songs);
+  p.edit(1, 1, 150, 50);
+  songs.unshift(mk('Z', '/r/Z.json'));   // a report appeared: B is now index 2
+  await p.t.refreshSong(1); await settle();
+  assert.deepEqual(p.t.state.songs.map(song => song.report), ['/r/Z.json', '/r/A.json', '/r/B.json']);
+  assert.deepEqual([...p.t.state.edits.keys()], ['2:1'], 'the edit followed B');
+  assert.equal(p.t.state.songs[1].song, 'A');
+});
+
+test('AS4 F9: a generation bump while our own export runs does not queue a full reload', async () => {
+  const src = page;
+  assert.ok(/generation !== seenGeneration && !state\.exporting\) refreshPending = true/.test(src));
 });
 
 (async () => {

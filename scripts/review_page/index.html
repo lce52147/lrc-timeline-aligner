@@ -24,7 +24,8 @@ header .song-name{font-weight:600;font-size:15px;max-width:34vw;overflow:hidden;
 .export-badge{position:absolute;top:calc(100% + 8px);right:0;z-index:5;display:flex;align-items:center;gap:8px;width:max-content;max-width:min(520px,80vw);padding:7px 12px;border-radius:10px;border:1px solid var(--tone);color:var(--fg);background:color-mix(in srgb,var(--tone) 22%,var(--bg));box-shadow:0 8px 28px rgba(0,0,0,.4);font-size:13px;font-weight:600;overflow-wrap:anywhere;transition:opacity .5s}
 .export-badge[hidden]{display:none}.export-badge.run{--tone:var(--warn)}.export-badge.ok{--tone:var(--ok)}.export-badge.bad{--tone:var(--bad)}.export-badge.fade{opacity:0}
 .export-badge::before{content:"";width:10px;height:10px;border-radius:50%;background:var(--tone);flex:none}.export-badge.run::before{animation:export-pulse 1s ease-in-out infinite}
-.draft-banner{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 10px;padding:8px 12px;border-radius:10px;border:1px solid var(--warn);background:color-mix(in srgb,var(--warn) 18%,var(--bg));color:var(--fg);font-size:13px}.draft-banner[hidden]{display:none}.draft-banner button{padding:2px 10px}
+.draft-banner{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 10px;padding:8px 12px;border-radius:10px;border:1px solid var(--warn);background:color-mix(in srgb,var(--warn) 18%,var(--bg));color:var(--fg);font-size:13px}.port-notice{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:999px;border:1px solid var(--warn);background:color-mix(in srgb,var(--warn) 18%,var(--bg));color:var(--fg);font-size:12px;max-width:40vw}.port-notice[hidden]{display:none}.port-notice button{padding:0 4px;background:transparent;border:0;color:var(--fg)}
+.draft-banner[hidden]{display:none}.draft-banner button{padding:2px 10px}
 .export-badge button{padding:0 6px;line-height:1.4;background:transparent;border:0;color:var(--fg);flex:none}.export-badge button[hidden]{display:none}
 @keyframes export-pulse{50%{opacity:.35}}
 .pill{font-size:12px;padding:2px 9px;border-radius:999px;background:var(--panel-3);color:var(--fg-2)}
@@ -108,6 +109,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   <span class="song-name" id="song-name">LRC review</span>
   <span class="risk" id="song-risk" hidden title="整首高風險：合唱／疊聲類，請整首聽過">整首高風險</span>
   <span class="spacer"></span>
+  <span id="port-notice" class="port-notice" role="status" hidden><span id="port-notice-text"></span><button type="button" id="port-notice-close" aria-label="關閉">✕</button></span>
   <span id="status" class="status">loading</span>
   <span id="server-mode" class="muted"></span>
   <span class="vol" id="vol-box" title="音量 0 ～ −100 dB（滾輪 ±1 dB，M 靜音）"><button id="vol-mute" title="靜音">🔊</button><input id="vol" type="range" min="0" max="1000" step="1" value="1000" aria-label="音量（dB）"><span class="num" id="vol-text">0.0 dB</span></span>
@@ -188,7 +190,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   const token = new URLSearchParams(location.search).get('t') || new URLSearchParams(location.hash.slice(1)).get('t');
   const queue = document.getElementById('queue');
   const status = document.getElementById('status');
-  const state = {songs:[], rows:[], edits:new Map(), peaks:new Map(), decoded:new Map(), done:new Set(), dirty:false, selected:0, activeSong:null, showUnreachable:false, showDone:true, showLow:false, showAll:true, autoplay:true, batchSkip:true, mode:'flac', details:false, importEnabled:false, imports:[], jobs:[], jobsSeen:new Set(), player:{audio:new Map(), handlers:new Map(), seq:0, timer:null, active:null, ab:null}, error:'', notice:'', exporting:false};
+  const state = {songs:[], rows:[], edits:new Map(), peaks:new Map(), decoded:new Map(), done:new Set(), dirty:false, selected:0, activeSong:null, showUnreachable:false, showDone:true, showLow:false, showAll:true, autoplay:true, batchSkip:true, mode:'flac', details:false, importEnabled:false, imports:[], jobs:[], jobsSeen:new Set(), player:{audio:new Map(), handlers:new Map(), seq:0, timer:null, active:null, ab:null}, error:'', notice:'', portNotice:'', exporting:false, exportIndex:null};
   const api = async (path, options={}) => {
     const headers = Object.assign({'X-Review-Token':token}, options.body ? {'Content-Type':'application/json'} : {}, options.headers || {});
     const response = await fetch(path, Object.assign({}, options, {headers}));
@@ -332,12 +334,15 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   // the file sha its edits' base_cs were taken from (an edit carries it as bsha), so a group whose sha differs from the file is stale.
   const DRAFT_KEY = 'lrc-review-drafts', DRAFT_MAX_SONGS = 50, DRAFT_DEBOUNCE_MS = 750, DRAFT_TAB_ALIVE_MS = 60000, DRAFT_BEAT_MS = 20000;
   const tabId = Math.random().toString(36).slice(2) + Date.now().toString(36);
-  const draftTimes = new Map(), draftHandled = new Set(), staleDrafts = new Map(), draftOwned = new Map(), draftRemnants = new Map(), draftMine = new Map();
+  const draftWritten = new Map(), draftTimes = new Map(), draftHandled = new Set(), staleDrafts = new Map(), draftOwned = new Map(), draftRemnants = new Map(), draftMine = new Map();
   let draftTimer = null, draftArmed = false, draftWarned = false;
   // A draft belongs to a song by its report path (unique per song), never by the display name; edits map back through it.
   const draftId = song => String(song.report || song.detail?.report || song.song);
   const songSha = song => song.detail?.base_sha256 || '';
   const mineKey = (sha, entry) => sha + '|' + entry;
+  // What this tab last wrote to (or took over from) the stored draft, per song+entry: a beat rewrites only what changed since.
+  const recordSig = record => JSON.stringify([record.entry, record.cs, record.source, record.nudge_cs, record.base_cs, record.edited_at]);
+  const writtenKey = (id, item) => id + '#' + item;
   function readDrafts() { try { const saved = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {}; } catch (_) { return {}; } }
   function writeDrafts(drafts) {
     try {
@@ -345,8 +350,10 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       const names = Object.keys(drafts).sort((a, b) => (drafts[b].saved_at || 0) - (drafts[a].saved_at || 0));
       names.slice(DRAFT_MAX_SONGS).forEach(name => { delete drafts[name]; });
       if (Object.keys(drafts).length) localStorage.setItem(DRAFT_KEY, JSON.stringify(drafts)); else localStorage.removeItem(DRAFT_KEY);
+      return true;
     } catch (_) {
       if (!draftWarned) { draftWarned = true; state.notice = '暫存失敗：瀏覽器儲存空間不可用'; try { render(); } catch (_) {} }
+      return false;
     }
   }
   const groupsOf = draft => {
@@ -373,7 +380,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   function flushDraft() {
     if (draftTimer != null) { clearTimeout(draftTimer); draftTimer = null; }
     if (!draftArmed) return;
-    const drafts = readDrafts(), now = Date.now();
+    const drafts = readDrafts(), now = Date.now(), commits = [];
     let changed = false;
     state.songs.forEach(song => {
       const id = draftId(song), sha = songSha(song), staged = new Map();
@@ -385,20 +392,32 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       });
       const mine = draftMine.get(id) || new Set(), canRemove = sha && editable(song);
       const undone = canRemove ? [...mine].filter(item => !staged.has(item)) : [];
-      if (!staged.size && !undone.length) return;
-      const groups = groupsOf(drafts[id]);
-      undone.forEach(item => { const cut = item.lastIndexOf('|'); dropEntry(groups, item.slice(0, cut), Number(item.slice(cut + 1))); mine.delete(item); });
+      const groups = groupsOf(drafts[id]), writes = [];
       staged.forEach((value, item) => {
+        const sig = recordSig(value.record);
+        if (draftWritten.get(writtenKey(id, item)) === sig) return;
+        const group = groups.find(entry => entry.sha === value.bsha), stored = group && group.edits.find(edit => edit.entry === value.record.entry);
+        // Another tab already stored a newer value for this entry: it wins, and this tab stops treating the entry as its own.
+        if (stored && Number(stored.edited_at) > value.record.edited_at) { mine.delete(item); draftWritten.delete(writtenKey(id, item)); return; }
+        writes.push([item, value, sig]);
+      });
+      if (!writes.length && !undone.length) {
+        // Nothing of this tab's changed: the beat only refreshes the heartbeat, keeping the stored values and saved_at as they are.
+        if (drafts[id] && mine.size) { const savedAt = drafts[id].saved_at; putGroups(drafts, id, groups, drafts[id], now); if (drafts[id]) drafts[id].saved_at = savedAt; changed = true; }
+        return;
+      }
+      undone.forEach(item => { const cut = item.lastIndexOf('|'); dropEntry(groups, item.slice(0, cut), Number(item.slice(cut + 1))); mine.delete(item); commits.push([writtenKey(id, item), null]); });
+      writes.forEach(([item, value, sig]) => {
         let group = groups.find(entry => entry.sha === value.bsha);
         if (!group) { group = {sha:value.bsha, edits:[]}; groups.push(group); }
         group.edits = group.edits.filter(edit => edit.entry !== value.record.entry).concat([value.record]).sort((a, b) => a.entry - b.entry);
-        mine.add(item);
+        mine.add(item); commits.push([writtenKey(id, item), sig]);
       });
       draftMine.set(id, mine); draftHandled.add(id);
       putGroups(drafts, id, groups, drafts[id], now);
       changed = true;
     });
-    if (changed) writeDrafts(drafts);
+    if (changed && writeDrafts(drafts)) commits.forEach(([key, sig]) => { if (sig == null) draftWritten.delete(key); else draftWritten.set(key, sig); });
   }
   function scheduleDraft() {
     if (!draftArmed) return;
@@ -407,14 +426,20 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   }
   // After a 200 save the song's group for the saved file (its edits and unapplied leftovers) goes away at once, before anything reloads
   // and could mistake it for a stale one. A stale group from an older file still waits for its own answer.
-  function dropSavedDraft(song, savedSha) {
-    const id = draftId(song);
+  function dropSavedDraft(song, savedSha, savedEntries) {
+    const id = draftId(song), saved = new Set(savedEntries || []);
     draftHandled.add(id); draftMine.delete(id);
+    [...draftWritten.keys()].forEach(key => { if (key.startsWith(id + '#')) draftWritten.delete(key); });
+    const stale = staleDrafts.get(id);
+    if (stale) { stale.edits = (stale.edits || []).filter(edit => !saved.has(edit.entry)); if (!stale.edits.length) staleDrafts.delete(id); showStaleBanner(); }
     const owned = draftOwned.get(id);
     if (owned) { restoredTotal = Math.max(0, restoredTotal - owned.size); draftOwned.delete(id); }
     draftRemnants.delete(id);
     const drafts = readDrafts();
-    putGroups(drafts, id, groupsOf(drafts[id]).filter(group => group.sha !== savedSha), drafts[id], Date.now());
+    // Whatever file sha an edit was drafted against, if it went into this save it is on disk now: no group may offer it again.
+    const groups = groupsOf(drafts[id]).filter(group => group.sha !== savedSha);
+    groups.forEach(group => { group.edits = group.edits.filter(edit => !saved.has(edit.entry)); });
+    putGroups(drafts, id, groups, drafts[id], Date.now());
     writeDrafts(drafts);
     showRestoredBanner(0, 0);
   }
@@ -429,6 +454,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       if (!item || !editable(item.song) || !Number.isFinite(edit.cs) || item.row.current_cs == null) { result.skipped.push(edit); return; }
       const key = keyFor(item), current = item.row.current_cs;
       if (state.edits.has(key)) return;
+      if (edit.cs === current) return;  // already what the file says (saved elsewhere): nothing to re-apply
       let cs = edit.cs;
       const nudge = edit.nudge_cs || 0;
       if (!rebase && edit.base_cs !== current) { result.skipped.push(edit); return; }
@@ -448,14 +474,19 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     return result;
   }
   // The edits a restore put into memory now belong to this tab: it may rewrite or remove them, and 捨棄 knows what they were.
-  function adopt(id, snaps) {
+  function adopt(id, snaps, stored) {
     const mine = draftMine.get(id) || new Set(), owned = draftOwned.get(id) || new Map();
-    snaps.forEach((snap, key) => { mine.add(mineKey(snap.sha, snap.entry)); owned.set(key, snap); });
+    snaps.forEach((snap, key) => {
+      mine.add(mineKey(snap.sha, snap.entry)); owned.set(key, snap);
+      const edit = state.edits.get(key);
+      if (stored && edit) draftWritten.set(writtenKey(id, mineKey(snap.sha, snap.entry)), recordSig({entry:edit.entry, cs:edit.cs, source:edit.source, nudge_cs:edit.nudge_cs, base_cs:edit.base_cs, edited_at:draftTimes.get(key)}));
+    });
     draftMine.set(id, mine); draftOwned.set(id, owned);
   }
   function restoreDrafts() {
     const drafts = readDrafts(), now = Date.now(), fresh = !draftArmed;
     let restored = 0, newest = 0;
+    const obsolete = [];
     state.songs.forEach(song => {
       const id = draftId(song), draft = drafts[id];
       // A song that did not load fully (no sha, read-only) is not touched: its draft stays and is retried on the next load.
@@ -467,12 +498,20 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       groupsOf(draft).forEach(group => {
         if (group.sha === songSha(song)) {
           const result = applyDraft(song, {edits:group.edits, saved_at:draft.saved_at}, false);
-          if (result.applied) { restored += result.applied; newest = Math.max(newest, draft.saved_at || 0); adopt(id, result.snaps); }
+          if (result.applied) { restored += result.applied; newest = Math.max(newest, draft.saved_at || 0); adopt(id, result.snaps, true); }
           if (result.skipped.length) draftRemnants.set(id, {sha:group.sha, list:result.skipped});
-        } else { staleEdits.push(...group.edits); staleShas.push(group.sha); }
+        } else {
+          const live = group.edits.filter(edit => { const item = state.rows.find(entry => entry.song.index === song.index && entry.row.entry === edit.entry); return !(item && item.row.current_cs === edit.cs); });
+          if (live.length) { staleEdits.push(...live); staleShas.push(group.sha); } else obsolete.push([id, group.sha]);
+        }
       });
       if (staleShas.length) staleDrafts.set(id, {edits:staleEdits, shas:staleShas, saved_at:draft.saved_at});
     });
+    if (obsolete.length) {
+      const latest = readDrafts();
+      obsolete.forEach(([id, sha]) => { if (latest[id]) putGroups(latest, id, groupsOf(latest[id]).filter(group => group.sha !== sha), latest[id], now); });
+      writeDrafts(latest);
+    }
     draftArmed = true;
     showRestoredBanner(restored, newest);
     showStaleBanner();
@@ -775,6 +814,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   function stage(item, cs, source, nudgeCs) {
     stopPlayer();
     if (!editable(item.song) || cs == null) return;
+    if (state.exporting && state.exportIndex === item.song.index) { state.notice = '匯出中，請等匯出完成再修改'; render(); return; }
     const key = keyFor(item), current = item.row.current_cs;
     if (current != null && cs === current) {
       state.edits.delete(key);
@@ -879,6 +919,8 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     const current = rows[state.selected];
     // header
     document.getElementById('song-name').textContent = song ? song.song : 'LRC review';
+    document.getElementById('port-notice-text').textContent = state.portNotice;
+    document.getElementById('port-notice').hidden = !state.portNotice;
     const risk = song?.detail?.song_risk || song?.song_risk;
     const riskBadge = document.getElementById('song-risk');
     riskBadge.hidden = !(risk && risk.class === 'choir');
@@ -1099,7 +1141,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   async function load() {
     try {
       flushDraft();
-      if (!portChecked) { portChecked = true; try { const notice = (await api('/api/version')).port_notice; if (notice) state.notice = notice; } catch (_) {} }
+      if (!portChecked) { portChecked = true; try { const notice = (await api('/api/version')).port_notice; if (notice) state.portNotice = notice; } catch (_) {} }
       const oldIds = new Map(state.songs.map(song => [song.index, draftId(song)]));
       const list = await withScanProgress(api('/api/songs'));
       // A live refresh can renumber songs; carry staged edits, done marks and the open song over by report path, not by index.
@@ -1172,7 +1214,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
         edits.forEach(edit => state.edits.delete(String(index) + ':' + edit.entry));
         const savedSha = song.detail.base_sha256;
         song.detail = data;
-        dropSavedDraft(song, savedSha);
+        dropSavedDraft(song, savedSha, edits.map(edit => edit.entry));
       } catch (error) {
         failures.push('song ' + index + ': save failed: ' + error.message);
       }
@@ -1255,16 +1297,26 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   }
   async function refreshSong(index) {
     // Only the exported song is re-read; the other songs' rows, edits and the open song stay as they are.
+    // The song is identified by its report path: if the server renumbered meanwhile, fall back to load(), which carries edits by report path.
+    const before = state.songs.find(item => item.index === index);
+    if (!before) return load();
+    const id = draftId(before);
+    const sameSong = meta => meta && draftId(meta) === id;
     const meta = (await api('/api/songs')).find(item => item.index === index);
+    if (!sameSong(meta)) return load();
     const detail = await api('/api/song/' + index);
+    if (!sameSong((await api('/api/songs')).find(item => item.index === index))) return load();
     const at = state.songs.findIndex(item => item.index === index);
-    if (!meta || at < 0) return load();
+    if (at < 0) return load();
+    flushDraft();  // whatever is staged reaches the drafts before anything can drop it
     state.songs[at] = Object.assign({}, state.songs[at], meta, {has_flac:detail.has_flac, has_stem:detail.has_stem, detail});
     const song = state.songs[at];
     state.rows = state.rows.filter(item => item.song.index !== index);
     (detail.rows || []).forEach(row => state.rows.push({song, row}));
     state.rows.sort((a,b) => a.song.index - b.song.index || a.row.entry - b.row.entry);
-    [...state.edits.keys()].forEach(key => { if (key.split(':')[0] === String(index) && !editable(song)) state.edits.delete(key); });
+    let kept = 0;
+    [...state.edits.keys()].forEach(key => { if (key.split(':')[0] === String(index) && !editable(song)) { state.edits.delete(key); kept++; } });
+    if (kept) state.notice = kept + ' 筆修改因匯出歸檔無法套用，已存成草稿';
     setDirty();
     render();
   }
@@ -1273,7 +1325,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     const target = exportTargets[Number(document.getElementById('export-target').value)];
     if (!song || !target || state.exporting) return;
     exportBox().hidden = true;
-    state.exporting = true; state.error = '';
+    state.exporting = true; state.exportIndex = song.index; state.error = '';
     exportBadgeRunning(target.name);
     const started = Date.now();
     try {
@@ -1292,7 +1344,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
         exportBadgeOk('已寫入並驗證 ' + data.name + '（' + data.lines + ' 行，' + seconds + ' 秒）' + exportArchiveText(data.archive));
       }
     } catch (error) { exportBadgeFail(error && error.message ? error.message : String(error)); }
-    finally { state.exporting = false; try { render(); } catch (error) { console.error(error); } }
+    finally { state.exporting = false; state.exportIndex = null; try { render(); } catch (error) { console.error(error); } }
   }
   function exportArchiveText(archive) {
     if (!archive || archive.mode === 'off') return '；LRC 留在原處';
@@ -1305,6 +1357,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   document.getElementById('export-go').addEventListener('click', () => { doExport(); });
   document.getElementById('export-cancel').addEventListener('click', () => { exportBox().hidden = true; });
   document.getElementById('save').addEventListener('click', event => { event.currentTarget.blur(); save(); });
+  document.getElementById('port-notice-close').addEventListener('click', () => { state.portNotice = ''; render(); });
   document.getElementById('untrusted').checked = state.showAll;
   document.getElementById('untrusted').addEventListener('change', event => { setShowAll(event.target.checked); });
   document.getElementById('autoplay').checked = state.autoplay;
@@ -1536,7 +1589,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     try {
       draftBeat();
       const generation = (await withScanProgress(api('/api/version'))).generation;
-      if (seenGeneration !== null && generation !== seenGeneration) refreshPending = true;
+      if (seenGeneration !== null && generation !== seenGeneration && !state.exporting) refreshPending = true;  // a bump during our own export is ours
       seenGeneration = generation;
       if (refreshPending && !state.player.active) {
         refreshPending = false;
