@@ -1090,6 +1090,43 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         self.assertEqual(result["adjusted_cs"][0]["cs"], 201)
         self.assertEqual(len(result["rows"]), 5)
 
+    def _save_entries(self, pairs):
+        detail = self._detail()
+        body = {"base_sha256": detail["base_sha256"], "edits": [{"entry": e, "cs": c, "source": "ear", "nudge_cs": 0} for e, c in pairs]}
+        response = self._json_request("POST", "/api/song/0/save", body)
+        return response[0], json.loads(response[2])
+
+    def test_as6_neighbours_are_the_values_of_the_same_save(self) -> None:
+        self._hand_edit({b"[00:03.00]three": b"[00:03.20]three"})
+        status, result = self._save_entries([(3, 300), (4, 400)])   # four moves away from 03.00 in the same save
+        self.assertEqual(status, 200)
+        self.assertNotIn("adjusted_cs", result)
+        self.assertEqual([row["current_cs"] for row in result["rows"]], [100, 200, 300, 400, 6200])
+
+    def test_as6_no_free_slot_steps_past_the_farther_neighbour(self) -> None:
+        self._hand_edit({b"[00:03.00]three": b"[00:03.20]three"})
+        self.assertEqual(self._save_entries([(2, 299)])[0], 200)
+        status, result = self._save_entries([(3, 300)])   # neighbours sit at 299 and 300: no slot between them
+        self.assertEqual(status, 200)
+        self.assertEqual(result["adjusted_cs"], [{"entry": 3, "requested_cs": 300, "cs": 298}])
+        self.assertEqual(len(result["rows"]), 5)
+
+    def test_as6_export_answer_flags_changes_to_other_files(self) -> None:
+        fake = mock.Mock()
+        fake.songs = [{"report": "r0", "audio_path": "a0", "output_path": "o0", "ctc_audio_path": ""},
+                      {"report": "r1", "audio_path": "a1", "output_path": "o1", "ctc_audio_path": ""}]
+        fake.lock = threading.RLock()
+        fake.file_stats = {"o0": (1, 1), "o1": (1, 1)}
+        fake._owners = mock.Mock(return_value=review_server.ReviewStore._owners(fake))
+        fake._own_files = lambda index: review_server.ReviewStore._own_files(fake, index)
+        fake.generation = 0
+        fake._stats = mock.Mock(return_value={"o0": (2, 2), "o1": (1, 1)})
+        review_server.ReviewStore.refresh_song(fake, 0)
+        self.assertFalse(fake.other_changes)
+        fake._stats = mock.Mock(return_value={"o0": (3, 3), "o1": (2, 2)})
+        review_server.ReviewStore.refresh_song(fake, 0)
+        self.assertTrue(fake.other_changes)
+
     def test_as5_zero_cs_entry_is_not_taken_for_the_title_card(self) -> None:
         self._hand_edit({b"[00:03.00]three": b"[00:03.20]three"})
         status, result = self._save_entry(1, 0)
@@ -1503,7 +1540,7 @@ async function boot(sha, opts={}) {
   const elements = new Map(), docListeners = {}, winListeners = {};
   const doc = {getElementById(id) { if (!elements.has(id)) elements.set(id, element(id)); return elements.get(id); }, createElement() { return element(); },
     addEventListener(type, fn) { docListeners[type] = fn; }, visibilityState:'visible'};
-  const row = {entry:1, review:'REVIEW', current_cs:100, auto_cs:100, lyrics:['one'], candidates:[{cs:200, sources:['ctc'], diagnostic_only:false}], severity_score:1};
+  const row = {entry:1, line_key:'1:one', review:'REVIEW', current_cs:100, auto_cs:100, lyrics:['one'], candidates:[{cs:200, sources:['ctc'], diagnostic_only:false}], severity_score:1};
   const saves = [];
   const response = (ok, status, data) => ({ok, status, statusText:'x', json:async () => data});
   const context = {console, document:doc, localStorage, location:{search:'?t=test', hash:'', origin:'http://test'}, addEventListener(type, fn) { winListeners[type] = fn; },

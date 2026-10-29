@@ -436,8 +436,16 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
         if (drafts[id] && mine.size) { const savedAt = drafts[id].saved_at; putGroups(drafts, id, groups, drafts[id], now); if (drafts[id]) drafts[id].saved_at = savedAt; changed = true; }
         return;
       }
-      noteSettled(id, undone.map(item => Number(item.slice(item.lastIndexOf('|') + 1))), now);
-      undone.forEach(item => { const cut = item.lastIndexOf('|'); dropEntry(groups, item.slice(0, cut), Number(item.slice(cut + 1))); mine.delete(item); commits.push([writtenKey(id, item), null]); });
+      // An undo removes only the record this tab itself wrote; a newer value another tab stored stays, and nothing is settled for it.
+      const dropped = [];
+      undone.forEach(item => {
+        const cut = item.lastIndexOf('|'), sha = item.slice(0, cut), entry = Number(item.slice(cut + 1));
+        const group = groups.find(candidate => candidate.sha === sha), stored = group && group.edits.find(edit => edit.entry === entry);
+        mine.delete(item); commits.push([writtenKey(id, item), null]);
+        if (stored && draftWritten.get(writtenKey(id, item)) !== recordSig(stored)) return;
+        dropEntry(groups, sha, entry); dropped.push(entry);
+      });
+      noteSettled(id, dropped, now);
       writes.forEach(([item, value, sig]) => {
         let group = groups.find(entry => entry.sha === value.bsha);
         if (!group) { group = {sha:value.bsha, edits:[]}; groups.push(group); }
@@ -457,8 +465,12 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   }
   // After a 200 save the song's group for the saved file (its edits and unapplied leftovers) goes away at once, before anything reloads
   // and could mistake it for a stale one. A stale group from an older file still waits for its own answer.
-  function dropSavedDraft(song, savedSha, savedEntries) {
-    const id = draftId(song), saved = new Set(savedEntries || []), now = Date.now();
+  // Two edits are the same line when both carry a line_key and it matches; entry numbers decide only when either side has none.
+  const sameLine = (a, b) => (a.line_key && b.line_key ? a.line_key === b.line_key : a.entry === b.entry);
+  function dropSavedDraft(song, savedSha, savedEdits) {
+    const items = (savedEdits || []).map(edit => (edit && typeof edit === 'object' ? edit : {entry:edit}));
+    const id = draftId(song), saved = new Set(items.map(edit => edit.entry)), now = Date.now();
+    const isSaved = edit => items.some(item => sameLine(item, edit));
     const entryOf = text => Number(text.slice(Math.max(text.lastIndexOf('|'), text.lastIndexOf(':')) + 1));
     draftHandled.add(id);
     noteSettled(id, [...saved], now);
@@ -466,7 +478,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     const mine = draftMine.get(id);
     if (mine) [...mine].forEach(item => { if (saved.has(entryOf(item))) mine.delete(item); });
     const stale = staleDrafts.get(id);
-    if (stale) { stale.edits = (stale.edits || []).filter(edit => !saved.has(edit.entry)); if (!stale.edits.length) staleDrafts.delete(id); showStaleBanner(); }
+    if (stale) { stale.edits = (stale.edits || []).filter(edit => !isSaved(edit)); if (!stale.edits.length) staleDrafts.delete(id); showStaleBanner(); }
     const owned = draftOwned.get(id);
     if (owned) { [...owned.keys()].forEach(key => { if (saved.has(entryOf(key))) { owned.delete(key); restoredTotal = Math.max(0, restoredTotal - 1); } }); if (!owned.size) draftOwned.delete(id); }
     const remnant = draftRemnants.get(id);
@@ -476,7 +488,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     // Only the entries that went into this save leave the stored draft, from every group; another tab's entries stay, an emptied group goes.
     const drafts = readDrafts();
     const groups = groupsOf(drafts[id]);
-    groups.forEach(group => { group.edits = group.edits.filter(edit => !saved.has(edit.entry) && !(leftovers && group.sha === leftovers.sha && leftovers.entries.has(edit.entry))); });
+    groups.forEach(group => { group.edits = group.edits.filter(edit => !isSaved(edit) && !(leftovers && group.sha === leftovers.sha && leftovers.entries.has(edit.entry))); });
     putGroups(drafts, id, groups, drafts[id], now);
     writeDrafts(drafts);
     showRestoredBanner(0, 0);
@@ -485,9 +497,11 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   // Put a draft's edits back into state.edits. Returns {applied, snaps, skipped}; never overwrites an edit already in memory.
   // `rebase` is the stale-file path: a nudge is re-applied as current + nudge, a pick only if it is still inside the row's span.
   function applyDraft(song, draft, rebase) {
-    const result = {applied:0, snaps:new Map(), skipped:[], changed:0};
+    const result = {applied:0, snaps:new Map(), skipped:[], changed:0, keyless:[]};
     (draft.edits || []).forEach(edit => {
       if (!edit || typeof edit !== 'object') return;
+      // A draft from an older file without a line_key cannot say which line it was for: never re-aim it by entry number.
+      if (rebase && !edit.line_key) { result.skipped.push(edit); result.keyless.push(edit); result.changed++; return; }
       const item = findRowFor(song.index, edit);
       if (!item || !editable(item.song) || !Number.isFinite(edit.cs) || item.row.current_cs == null) { result.skipped.push(edit); if (!item && edit.line_key) result.changed++; return; }
       const key = keyFor(item), current = item.row.current_cs;
@@ -565,9 +579,10 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     box.hidden = false;
   }
   function showStaleBanner() {
-    let count = 0;
-    staleDrafts.forEach(draft => { count += (draft.edits || []).length; });
-    document.getElementById('draft-stale-text').textContent = '有 ' + count + ' 筆舊的未儲存修改，但檔案已變動';
+    let count = 0, legacy = 0;
+    staleDrafts.forEach(draft => { if (draft.legacy) legacy += (draft.edits || []).length; else count += (draft.edits || []).length; });
+    document.getElementById('draft-stale-text').textContent = (count ? '有 ' + count + ' 筆舊的未儲存修改，但檔案已變動' : '') + (legacy ? (count ? '；' : '') + '舊版草稿 ' + legacy + ' 筆無法對應，請重聽該句' : '');
+    document.getElementById('draft-stale-apply').hidden = !count;
     document.getElementById('draft-stale').hidden = !staleDrafts.size;
   }
   document.getElementById('draft-restored-discard').addEventListener('click', () => {
@@ -575,16 +590,17 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     const drafts = readDrafts(), now = Date.now();
     new Set([...draftOwned.keys(), ...draftRemnants.keys()]).forEach(id => {
       const groups = groupsOf(drafts[id]), mine = draftMine.get(id);
+      const dropped = [];
       (draftOwned.get(id) || new Map()).forEach((snap, key) => {
         const edit = state.edits.get(key);
         if (!edit || edit.cs !== snap.cs || edit.source !== snap.source || edit.base_cs !== snap.base_cs) return;
         state.edits.delete(key); draftTimes.delete(key);
-        dropEntry(groups, snap.sha, snap.entry);
+        dropEntry(groups, snap.sha, snap.entry); dropped.push(snap.entry);
         if (mine) mine.delete(mineKey(snap.sha, snap.entry));
       });
       const remnant = draftRemnants.get(id);
-      if (remnant) remnant.list.forEach(edit => dropEntry(groups, remnant.sha, edit.entry));
-      noteSettled(id, [...(draftOwned.get(id) || new Map()).values()].map(snap => snap.entry), now);
+      if (remnant) remnant.list.forEach(edit => { dropEntry(groups, remnant.sha, edit.entry); dropped.push(edit.entry); });
+      noteSettled(id, dropped, now);
       putGroups(drafts, id, groups, drafts[id], now);
     });
     draftOwned.clear(); draftRemnants.clear(); restoredTotal = 0; restoredNewest = 0;
@@ -599,17 +615,22 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   });
   document.getElementById('draft-stale-apply').addEventListener('click', () => {
     let applied = 0, skipped = 0, changedLines = 0;
-    const drafts = readDrafts(), now = Date.now();
+    const drafts = readDrafts(), now = Date.now(), legacy = new Map();
+    let legacyCount = 0;
     staleDrafts.forEach((stale, id) => {
       const song = state.songs.find(item => draftId(item) === id);
       if (!song) return;
       const result = applyDraft(song, stale, true);
       applied += result.applied; skipped += result.skipped.length; changedLines += result.changed;
       adopt(id, result.snaps);
-      putGroups(drafts, id, groupsOf(drafts[id]).filter(group => !stale.shas.includes(group.sha)), drafts[id], now);
+      // Keyless edits are refused, but stay in the stored draft (and the banner) so they can be redone by ear.
+      const stored = groupsOf(drafts[id]);
+      const kept = stored.filter(group => stale.shas.includes(group.sha)).map(group => ({sha:group.sha, edits:group.edits.filter(edit => !edit.line_key)})).filter(group => group.edits.length);
+      putGroups(drafts, id, stored.filter(group => !stale.shas.includes(group.sha)).concat(kept), drafts[id], now);
+      if (kept.length) { const edits = kept.flatMap(group => group.edits); legacy.set(id, {edits, shas:kept.map(group => group.sha), saved_at:stale.saved_at, legacy:true}); legacyCount += edits.length; }
     });
-    staleDrafts.clear(); writeDrafts(drafts); showStaleBanner();
-    if (applied || skipped) state.notice = '已套用 ' + applied + ' 筆舊的未儲存修改' + (skipped ? '，' + skipped + ' 筆已不適用而略過' : '') + (changedLines ? '（' + changedLines + ' 筆無法套用：對應的句子已變動）' : '') + '。';
+    staleDrafts.clear(); legacy.forEach((value, id) => staleDrafts.set(id, value)); writeDrafts(drafts); showStaleBanner();
+    if (applied || skipped) state.notice = '已套用 ' + applied + ' 筆舊的未儲存修改' + (skipped ? '，' + skipped + ' 筆已不適用而略過' : '') + (changedLines ? '（' + changedLines + ' 筆無法套用：對應的句子已變動）' : '') + (legacyCount ? '；舊版草稿 ' + legacyCount + ' 筆無法對應，請重聽該句' : '') + '。';
     setDirty(); flushDraft(); render();
   });
   let lastBeat = 0;
@@ -1294,7 +1315,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
         const savedSha = song.detail.base_sha256;
         song.detail = data;
         (data.adjusted_cs || []).forEach(item => notes.push('第 ' + item.entry + ' 句已偏移 0.01 秒以免與相鄰句合併'));
-        dropSavedDraft(song, savedSha, sending.map(edit => edit.entry));
+        dropSavedDraft(song, savedSha, sending);
       } catch (error) {
         failures.push('song ' + index + ': save failed: ' + error.message);
       }
@@ -1418,7 +1439,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       }
       const data = await api('/api/song/' + song.index + '/export', {method:'POST', body:JSON.stringify({audio:target.name})});
       const seconds = ((Date.now() - started) / 1000).toFixed(1);
-      settleExportGeneration(data.generation);  // our own bump must not trigger a full load(); any other one does
+      settleExportGeneration(data.generation, data.other_changes === true);  // our own bump must not trigger a full load(); any other one does
       try { await refreshSong(song.index); } catch (error) { console.error(error); }
       if (data.archive && !['off', 'move', 'delete'].includes(data.archive.mode)) {
         exportBadgeOk('已寫入並驗證 ' + data.name + '（' + data.lines + ' 行，' + seconds + ' 秒）；LRC 沒有歸檔（' + (data.archive.error || '未知原因') + '），仍留在原處');
@@ -1652,12 +1673,16 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushDraft(); });
   addEventListener('beforeunload', event => { flushDraft(); releaseTab(); if (state.dirty) { event.preventDefault(); event.returnValue = ''; } });
   // Live refresh: a FLAC dropped in, an LRC changed or a new alignment run shows up without restarting.
-  let seenGeneration = null, refreshPending = false, deferredGeneration = null;
+  let seenGeneration = null, refreshPending = false, deferredGeneration = null, outsideBumpSeen = false;
+  const exportPolled = new Set();
   // During our own export only the export's own bump is ours: any other new generation is an outside change, applied once the export is over.
-  function settleExportGeneration(own) {
-    if (own != null) { if (deferredGeneration != null && deferredGeneration !== own) refreshPending = true; seenGeneration = own; }
-    else if (deferredGeneration != null) refreshPending = true;
-    deferredGeneration = null;
+  // Every generation polled meanwhile counts, not only the last one: an outside bump followed by our own must not be swallowed.
+  function settleExportGeneration(own, otherChanges) {
+    if (otherChanges) outsideBumpSeen = true;
+    exportPolled.forEach(value => { if (value !== own) outsideBumpSeen = true; });
+    if (own != null) { if ((outsideBumpSeen || (deferredGeneration != null && deferredGeneration !== own))) refreshPending = true; seenGeneration = own; }
+    else if (deferredGeneration != null || outsideBumpSeen) refreshPending = true;
+    deferredGeneration = null; outsideBumpSeen = false; exportPolled.clear();
   }
   // A reload holds the store lock, so /api/version waits; /api/status answers meanwhile and shows how far the rescan is.
   async function withScanProgress(request) {
@@ -1677,7 +1702,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     try {
       draftBeat();
       const generation = (await withScanProgress(api('/api/version'))).generation;
-      if (state.exporting && seenGeneration !== null) { if (generation !== seenGeneration) deferredGeneration = generation; }  // judged when the export answers
+      if (state.exporting && seenGeneration !== null) { if (generation !== seenGeneration) { deferredGeneration = generation; exportPolled.add(generation); } }  // judged when the export answers
       else {
         if (seenGeneration !== null && generation !== seenGeneration) refreshPending = true;
         seenGeneration = generation;

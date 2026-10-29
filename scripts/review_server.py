@@ -1130,6 +1130,25 @@ def _export_log(work_dir, song_name, result, archive, error, timings, started):
         pass
 
 
+def _free_slot(cs, prev, nxt, neighbours, limit):
+    """Nearest free time for a line whose time equals a neighbour's: between its neighbours when there is room (order kept),
+    otherwise just beyond the farther neighbour, away from the nearer one."""
+    toward_up = cs == prev
+    low, high = (prev if prev is not None else 0), (nxt if nxt is not None else limit + 1)
+    room = [value for value in range(max(low, 0) + 1, min(high, limit + 1)) if value not in neighbours]
+    if room:
+        return min(room, key=lambda value: (abs(value - cs), 0 if (value > cs) == toward_up else 1))
+    far = next((value for value in (prev, nxt) if value is not None and value != cs), cs)
+    down = far < cs or (far == cs and not toward_up)
+    for direction in (down, not down):
+        value = far - 1 if direction else far + 1
+        while 1 <= value <= limit and value in neighbours:
+            value += -1 if direction else 1
+        if 1 <= value <= limit:
+            return value
+    return cs
+
+
 def _save_song(song, body):
     if song["read_only"]:
         return 403, {"error": song["read_only_reason"] or "read-only"}
@@ -1171,29 +1190,29 @@ def _save_song(song, body):
         final[position + 1] = _line_tag(_strip_line_marks(lines[mapping[position][0]]))
     before = dict(final)
     adjusted = []
+    limit = int((_number(song["report_data"].get("duration_seconds")) or 0) * 100 + 100)
+    if model == "lrc":
+        # Entries are tag groups here: a save must never give a line the neighbour's time (the groups would merge).
+        # Every requested value is applied first, so a neighbour in the same save counts at its new time.
+        for edit in requested:
+            edit["asked"] = edit["cs"]
+            edit["cs"] = max(edit["cs"], 1)
+            final[edit["entry"]] = edit["cs"]
     for edit in sorted(requested, key=lambda item: item["entry"]):
         entry = edit["entry"]
         cs = edit["cs"]
         if model == "lrc":
-            # Entries are tag groups here: a save must never give a line the neighbour's time (the groups would merge).
-            cs = max(cs, 1)
-            limit = int((_number(song["report_data"].get("duration_seconds")) or 0) * 100 + 100)
-            neighbours = {final.get(entry - 1), final.get(entry + 1)}
+            prev, nxt = final.get(entry - 1), final.get(entry + 1)
+            neighbours = {value for value in (prev, nxt) if value is not None}
             if cs in neighbours:
-                toward_up = cs == final.get(entry - 1)
-                step = 1
-                while True:
-                    options = (cs + step, cs - step) if toward_up else (cs - step, cs + step)
-                    found = next((value for value in options if 1 <= value <= limit and value not in neighbours), None)
-                    if found is not None:
-                        break
-                    step += 1
-                adjusted.append({"entry": entry, "requested_cs": edit["cs"], "cs": found})
+                found = _free_slot(cs, prev, nxt, neighbours, limit)
+                adjusted.append({"entry": entry, "requested_cs": edit["asked"], "cs": found})
                 cs = found
-            elif cs != edit["cs"]:
-                adjusted.append({"entry": entry, "requested_cs": edit["cs"], "cs": cs})
+            elif cs != edit["asked"]:
+                adjusted.append({"entry": entry, "requested_cs": edit["asked"], "cs": cs})
         final[entry] = cs
         edit["cs"] = cs
+        edit.pop("asked", None)
     edits = [
         {**edit, "before_cs": before[edit["entry"]]}
         for edit in sorted(requested, key=lambda item: item["entry"]) if edit["cs"] != before[edit["entry"]]
@@ -1787,6 +1806,8 @@ class ReviewStore:
             for other in co_owners:
                 own.update(self._own_files(other))
             stats = self._stats()
+            # Anything else that moved on disk since the baseline is not ours: the export answer says so, so the page refreshes.
+            self.other_changes = any(stats.get(key, "-") != self.file_stats.get(key, "-") for key in stats.keys() | self.file_stats.keys() if key not in own)
             for key in own:
                 if key in stats:
                     self.file_stats[key] = stats[key]
@@ -2048,6 +2069,8 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
                     result["timings"]["store_refresh"] = round((time.perf_counter() - step) * 1000)
                     result["timings"]["total"] = round((time.monotonic() - (store.export_status.get("started") or time.monotonic())) * 1000)
                     result["generation"] = store.generation
+                    if getattr(store, "other_changes", False):
+                        result["other_changes"] = True
                     _export_log(work_dir, song_name, "ok", archive, "", result["timings"], 0)
                     store.update_export_status(active=False)
                 self._json(status, result)

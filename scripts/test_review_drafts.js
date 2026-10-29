@@ -194,13 +194,13 @@ test('entries that cannot be applied stay in storage and are counted (claude-2 F
 });
 
 test('仍然套用 rebases nudges to current + nudge and skips picks outside the row (gemini F6)', async () => {
-  const st = makeStorage(), songs = [mk('R', '/r/R.json', 'old', [{entry: 1, current_cs: 1000}, {entry: 2, current_cs: 1500}])];
+  const st = makeStorage(), songs = [mk('R', '/r/R.json', 'old', [{entry: 1, current_cs: 1000, line_key: '1:a'}, {entry: 2, current_cs: 1500, line_key: '2:b'}])];
   let p = await boot(st, songs);
   p.edit(0, 1, 1010, 10);
   p.t.stage(p.rowOf(0, 2), 1600, 'candidate', 0); // a candidate pick, 1600 is the +100 candidate
   p.flush();
   songs[0].sha = 'new';
-  songs[0].rows = [{entry: 1, current_cs: 2000}, {entry: 2, current_cs: 3000, candidates: [{cs: 3050, sources: ['ctc'], diagnostic_only: false}]}];
+  songs[0].rows = [{entry: 1, current_cs: 2000, line_key: '1:a'}, {entry: 2, current_cs: 3000, line_key: '2:b', candidates: [{cs: 3050, sources: ['ctc'], diagnostic_only: false}]}];
   p = await boot(st, songs);
   assert.equal(p.el('draft-stale').hidden, false);
   p.el('draft-stale-apply').listeners.click();
@@ -263,7 +263,7 @@ test('stale draft pending: new edits are still drafted beside it under the curre
 });
 
 test('409 keeps the old base sha: after the file changed, a reload offers 仍然套用 (gemini F2)', async () => {
-  const st = makeStorage(), songs = [mk('S', SONG, 's')];
+  const st = makeStorage(), songs = [mk('S', SONG, 's', [{entry: 1, current_cs: 100, line_key: '1:a'}, {entry: 2, current_cs: 500, line_key: '2:b'}])];
   let p = await boot(st, songs, {save409: true, save409Changes: true});
   p.edit(0, 1, 150); p.flush();
   p.el('save').listeners.click(); await settle();
@@ -376,14 +376,14 @@ test('AS4 F1: a save drops every drafted entry it contained whatever the group s
 });
 
 test('AS4 F1: a drafted entry whose cs already equals the row is never re-applied; other groups\' remnants stay', async () => {
-  const st = makeStorage(), songs = [mk('S', SONG, 's2', [{entry: 1, current_cs: 150}, {entry: 2, current_cs: 500}])];
-  st.map.set(KEY, JSON.stringify({[SONG]: {saved_at: Date.now(), tabs: {}, base_sha256: 's', edits: [{entry: 1, cs: 150, source: 'manual', nudge_cs: 50, base_cs: 100, edited_at: 1}], more: []}}));
+  const st = makeStorage(), songs = [mk('S', SONG, 's2', [{entry: 1, current_cs: 150, line_key: '1:a'}, {entry: 2, current_cs: 500, line_key: '2:b'}])];
+  st.map.set(KEY, JSON.stringify({[SONG]: {saved_at: Date.now(), tabs: {}, base_sha256: 's', edits: [{entry: 1, cs: 150, source: 'manual', nudge_cs: 50, base_cs: 100, line_key: '1:a', edited_at: 1}], more: []}}));
   const q = await boot(st, songs);
   assert.equal(q.el('draft-stale').hidden, true, 'nothing live to offer');
   assert.equal(q.t.state.edits.size, 0);
   assert.deepEqual(drafts(st), {}, 'the obsolete group is dropped');
   // a stale group with one saved and one pending entry offers only the pending one
-  st.map.set(KEY, JSON.stringify({[SONG]: {saved_at: Date.now(), tabs: {}, base_sha256: 's', edits: [{entry: 1, cs: 150, source: 'manual', nudge_cs: 50, base_cs: 100, edited_at: 1}, {entry: 2, cs: 540, source: 'manual', nudge_cs: 40, base_cs: 500, edited_at: 1}], more: []}}));
+  st.map.set(KEY, JSON.stringify({[SONG]: {saved_at: Date.now(), tabs: {}, base_sha256: 's', edits: [{entry: 1, cs: 150, source: 'manual', nudge_cs: 50, base_cs: 100, line_key: '1:a', edited_at: 1}, {entry: 2, cs: 540, source: 'manual', nudge_cs: 40, base_cs: 500, line_key: '2:b', edited_at: 1}], more: []}}));
   const r = await boot(st, songs);
   assert.match(r.el('draft-stale-text').textContent, /有 1 筆/);
   r.el('draft-stale-apply').listeners.click(); await settle();
@@ -485,7 +485,7 @@ const lines5 = () => [lk('3:one', 1, 100), lk('4:two', 2, 200), lk('6:three', 3,
 const lines4Merged = () => [lk('3:one', 1, 100), lk('4:two', 2, 200), lk('6:three+four', 3, 300), lk('8:five', 4, 6200)];
 
 test('AS5 B1: a save drops only its own entries; another tab\'s unsaved edit survives and shows after a reload (claude-2 F1 = gemini F1)', async () => {
-  const st = makeStorage(), songs = [mk('S', SONG, 's', [{entry: 1, current_cs: 100}, {entry: 2, current_cs: 500}, {entry: 3, current_cs: 900}])];
+  const st = makeStorage(), songs = [mk('S', SONG, 's', [{entry: 1, current_cs: 100, line_key: '1:a'}, {entry: 2, current_cs: 500, line_key: '2:b'}, {entry: 3, current_cs: 900, line_key: '3:c'}])];
   const a = await boot(st, songs), b = await boot(st, songs);
   b.edit(0, 3, 950, 50); b.flush();
   a.edit(0, 1, 150, 50); a.flush();
@@ -593,6 +593,92 @@ test('AS5 B2a: the page announces a save that was offset to avoid merging with t
   p.edit(0, 3, 300, -20);
   p.el('save').listeners.click(); await settle();
   assert.match(p.t.state.notice, /第 3 句已偏移 0\.01 秒以免與相鄰句合併/);
+});
+
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+const entriesOf = (st, report = SONG) => ((drafts(st)[report] || {}).edits || []).map(e => [e.entry, e.cs]);
+
+test('AS6 F3: a keyless legacy draft is never re-aimed onto another line by 仍然套用 (repro R2)', async () => {
+  const st = makeStorage();
+  const d = {}; d[SONG] = {saved_at: Date.now(), tabs: {}, base_sha256: 'old', edits: [{entry: 4, cs: 350, source: 'nudge', nudge_cs: 50, base_cs: 300, edited_at: Date.now()}], more: []};
+  st.map.set(KEY, JSON.stringify(d));
+  const p = await boot(st, [mk('S', SONG, 's2', [lk('3:one', 1, 100), lk('4:two', 2, 200), lk('6:three+four', 3, 300), lk('8:five', 4, 6200)])]);
+  assert.equal(p.el('draft-stale').hidden, false);
+  p.el('draft-stale-apply').listeners.click(); await settle();
+  assert.equal(p.t.state.edits.size, 0, 'nothing staged');
+  assert.match(p.t.state.notice, /1 筆無法套用：對應的句子已變動/);
+  assert.match(p.el('draft-stale-text').textContent, /舊版草稿 1 筆無法對應，請重聽該句/);
+  assert.equal(p.el('draft-stale').hidden, false);
+  assert.deepEqual(entriesOf(st), [[4, 350]], 'the draft stays stored');
+  p.el('save').listeners.click(); await settle();
+  assert.equal(p.saves.length, 0, 'no save body');
+});
+
+test('AS6 F1: an undo drops only the record this tab wrote (repro R1)', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG)];
+  const a = await boot(st, songs);
+  a.edit(0, 1, 150, 50); a.flush();
+  const b = await boot(st, songs);
+  assert.deepEqual([...b.t.state.edits.values()].map(e => [e.entry, e.cs]), [[1, 150]]);
+  await wait(5);
+  a.edit(0, 1, 180, 80); a.flush();
+  await wait(5);
+  b.t.state.edits.delete('0:1'); b.t.flushDraft();
+  assert.deepEqual(entriesOf(st), [[1, 180]], 'A\'s newer value survives B\'s undo');
+  a.t.flushDraft();
+  assert.deepEqual(entriesOf(st), [[1, 180]], 'and A\'s beat keeps it');
+  assert.equal(JSON.stringify(JSON.parse(st.map.get('lrc-review-draft-settled') || '{}')), '{}', 'nothing was settled');
+});
+
+test('AS6 F2: 捨棄 settles only what it dropped, not the re-edited row it kept (repro R6)', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG)];
+  const a0 = await boot(st, songs);
+  a0.edit(0, 1, 150, 50); a0.edit(0, 2, 550, 50); a0.flush(); close(a0);
+  const a = await boot(st, songs);
+  await wait(5);
+  a.edit(0, 2, 580, 80); a.flush();
+  await wait(5);
+  a.el('draft-restored-discard').listeners.click(); await settle();
+  assert.deepEqual([...a.t.state.edits.values()].map(e => [e.entry, e.cs]), [[2, 580]]);
+  assert.deepEqual(entriesOf(st), [[2, 580]]);
+  const gone = drafts(st); delete gone[SONG]; st.map.set(KEY, JSON.stringify(gone));   // lost to another writer
+  a.t.flushDraft();
+  assert.deepEqual(entriesOf(st), [[2, 580]], 'rewritten by the beat');
+});
+
+test('AS6 F4: saving a line does not remove a stale draft of a different line (repro R4)', async () => {
+  const st = makeStorage();
+  const d = {}; d[SONG] = {saved_at: Date.now(), tabs: {}, base_sha256: 'old', edits: [{entry: 4, cs: 6300, source: 'manual', nudge_cs: 100, base_cs: 6200, line_key: '8:five', edited_at: Date.now()}], more: []};
+  st.map.set(KEY, JSON.stringify(d));
+  const p = await boot(st, [mk('S', SONG, 's2', [lk('3:one', 1, 100), lk('4:two', 2, 200), lk('6:three', 3, 300), lk('7:four', 4, 320), lk('8:five', 5, 6200)])]);
+  assert.equal(p.el('draft-stale').hidden, false);
+  p.edit(0, 4, 400, 80); p.flush();
+  p.el('save').listeners.click(); await settle(); p.flush();
+  assert.deepEqual(p.saves[0].body.edits.map(e => [e.entry, e.line_key]), [[4, '7:four']]);
+  assert.deepEqual(drafts(st)[SONG].edits.map(e => [e.entry, e.line_key]), [[4, '8:five']], 'the other line\'s draft stays');
+  assert.equal(p.el('draft-stale').hidden, false, 'banner still shown');
+});
+
+test('AS6 F7: an outside bump followed by the export\'s own bump is not swallowed (repro5 / swallow proof)', async () => {
+  const gen = {value: 0}, st = makeStorage(), songs = [mk('S', SONG), mk('T', '/r/T.json')];
+  const p = await boot(st, songs, {gen});
+  p.t.state.exporting = true; p.t.state.exportIndex = 0;
+  gen.value = 1; await p.t.watchFiles();   // outside change
+  gen.value = 2; await p.t.watchFiles();   // then our own bump
+  p.t.state.exporting = false; p.t.state.exportIndex = null;
+  p.t.settleExportGeneration(2);
+  assert.equal(p.t.pending, true);
+});
+
+test('AS6 F7: the export answer\'s other_changes forces a refresh even when no poll saw the outside bump', async () => {
+  const gen = {value: 0}, st = makeStorage(), songs = [mk('S', SONG)];
+  const p = await boot(st, songs, {gen});
+  p.t.state.exporting = true;
+  p.t.state.exporting = false; p.t.settleExportGeneration(1, false);
+  assert.equal(p.t.pending, false);
+  p.t.state.exporting = true;
+  p.t.state.exporting = false; p.t.settleExportGeneration(2, true);
+  assert.equal(p.t.pending, true);
 });
 
 (async () => {
