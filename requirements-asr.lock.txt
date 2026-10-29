@@ -83,6 +83,7 @@ omegaconf==2.3.0
 onnx-weekly==1.24.0.dev20261012
 onnx2torch-py313==1.6.0
 onnxruntime==1.26.0
+opencc-python-reimplemented==0.1.7
 opentelemetry-api==1.42.1
 opentelemetry-exporter-otlp-proto-common==1.42.1
 opentelemetry-exporter-otlp-proto-grpc==1.42.1

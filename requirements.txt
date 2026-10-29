@@ -3,3 +3,4 @@ numpy
 
 # Optional text/phonetic helper used for Japanese diagnostics.
 pykakasi
+opencc-python-reimplemented

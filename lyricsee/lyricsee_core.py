@@ -6,6 +6,7 @@ import unicodedata
 import hashlib
 import gzip
 import json
+import logging
 import os
 import re
 import shutil
@@ -593,10 +594,17 @@ def _single_line(value: str) -> str:
     return re.sub(r"[\r\n]+", " ", value).strip()
 
 
-def _to_traditional_chinese(value: str) -> str:
-    value = value.replace("\x00", "")
-    if not value:
-        return value
+# One knob: "s2tw" = characters + Taiwan variants. "s2twp" also swaps phrases
+# and turns ordinary lyric words into tech terms, so it stays off.
+OPENCC_CONFIG = "s2tw"
+
+_ANY_KANA_RE = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f]")
+_CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
+_opencc_converter = None
+_opencc_failed = False
+
+
+def _lcmap_traditional(value: str) -> str:
     try:
         import ctypes
 
@@ -615,13 +623,44 @@ def _to_traditional_chinese(value: str) -> str:
         return value
 
 
+def _to_traditional_chinese(value: str) -> str:
+    """Traditional (Taiwan) text via OpenCC; LCMap char-level only if OpenCC is missing."""
+    global _opencc_converter, _opencc_failed
+    value = value.replace("\x00", "")
+    if not value or _ANY_KANA_RE.search(value) or not _CJK_RE.search(value):
+        return value
+    if _opencc_converter is None and not _opencc_failed:
+        try:
+            from opencc import OpenCC
+
+            _opencc_converter = OpenCC(OPENCC_CONFIG)
+        except Exception as exc:  # ImportError or a missing config
+            _opencc_failed = True
+            logging.getLogger(__name__).warning(
+                "OpenCC unavailable (%s); falling back to LCMap character conversion", exc
+            )
+    if _opencc_converter is not None:
+        return _opencc_converter.convert(value)
+    return _lcmap_traditional(value)
+
+
+def _is_chinese_song(originals: Iterable[str]) -> bool:
+    """CJK present and no kana anywhere in the original column."""
+    joined = "".join(originals)
+    return bool(_CJK_RE.search(joined)) and not _ANY_KANA_RE.search(joined)
+
+
 def render_lyrics(lines: Iterable[LyricPair]) -> str:
     rendered: list[str] = []
+    lines = list(lines)
+    chinese_song = _is_chinese_song(row.original for row in lines)
     for row in lines:
         # Two ASCII spaces is the file-format delimiter; normalize runs
         # *inside* both fields so the downstream parser cannot split a
         # Japanese lyric in the middle of its original text.
         original = re.sub(r" {2,}", " ", _single_line(row.original))
+        if chinese_song:
+            original = _to_traditional_chinese(original)
         translation = _to_traditional_chinese(
             re.sub(r" {2,}", " ", _single_line(row.translation or ""))
         )

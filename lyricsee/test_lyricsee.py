@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import importlib.util
 import gzip
 import json
@@ -219,6 +220,63 @@ class LyricseeCoreTests(unittest.TestCase):
             [core.LyricPair("君の声", "还能像镜子对面的你那样\x00发问")]
         )
         self.assertEqual(rendered, "君の声  還能像鏡子對面的你那樣發問\n")
+
+    def test_render_lyrics_leaves_kana_lines_and_kanji_only_japanese_original(self):
+        core = load_core()
+        rendered = core.render_lyrics(
+            [
+                core.LyricPair("君の声", "还能像镜子对面的你"),
+                core.LyricPair("风薫る空", "风吹过天空"),
+                core.LyricPair("光", "ありがとう"),
+            ]
+        )
+        self.assertEqual(
+            rendered,
+            "君の声  還能像鏡子對面的你\n风薫る空  風吹過天空\n光  ありがとう\n",
+        )
+
+    def test_render_lyrics_converts_original_of_chinese_language_song(self):
+        core = load_core()
+        rendered = core.render_lyrics(
+            [core.LyricPair("还能像镜子对面的你", "Like the mirror"), core.LyricPair("发问", None)]
+        )
+        self.assertEqual(rendered, "還能像鏡子對面的你  Like the mirror\n發問\n")
+
+    def test_render_lyrics_converts_simplified_oogg_translation(self):
+        core = load_core()
+        rendered = core.render_lyrics([core.LyricPair("本当は僕だけが", "其实只有我发现")])
+        self.assertEqual(rendered, "本当は僕だけが  其實只有我發現\n")
+
+    def test_write_result_text_matches_render_lyrics(self):
+        core = load_core()
+        candidate = core.LyricCandidate(
+            source="s", url="u", title="t", artist="a",
+            lines=[core.LyricPair("君の声", "镜子对面")],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            audio = Path(tmp) / "song.flac"
+            audio.write_bytes(b"")
+            output, _ = core.write_result(
+                audio, candidate, output_root=Path(tmp) / "out", overwrite=False
+            )
+            text = output.read_text(encoding="utf-8")
+        self.assertEqual(text, core.render_lyrics(candidate.lines))
+        self.assertIn("鏡子對面", text)
+
+    def test_traditional_conversion_falls_back_to_lcmap_when_opencc_missing(self):
+        core = load_core()
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "opencc":
+                raise ImportError("no opencc")
+            return real_import(name, *args, **kwargs)
+
+        with mock.patch("builtins.__import__", fake_import):
+            with self.assertLogs("lyricsee_core", level="WARNING"):
+                result = core._to_traditional_chinese("发问")
+        self.assertTrue(core._opencc_failed)
+        self.assertIn(result, ("發問", "发问"))  # LCMap is char-level and Windows-only
 
     def test_collect_candidates_sanitizes_structured_metadata_without_dropping_lyrics(self):
         core = load_core()
