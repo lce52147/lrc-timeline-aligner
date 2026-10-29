@@ -15,6 +15,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -290,11 +291,24 @@ def _log(log_path, record):
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
-def export(audio, lrc_bytes, work_dir):
+def export(audio, lrc_bytes, work_dir, timings=None, on_step=None):
     """Embed ``lrc_bytes`` into ``audio``. ``work_dir`` holds export-log.jsonl and the temp copy.
 
     Returns {"name", "tag", "lines"}; raises ExportError (file restored) when anything fails.
+    ``timings`` (a dict) receives snapshot_before/backup/write/verify in ms; ``on_step(name)`` is told each step as it starts.
     """
+    timings = {} if timings is None else timings
+    step = {"name": None, "at": 0.0}
+
+    def enter(name):
+        now = time.perf_counter()
+        if step["name"]:
+            timings[step["name"]] = round((now - step["at"]) * 1000)
+        step["name"], step["at"] = name, now
+        if on_step:
+            on_step(name)
+
+    enter("snapshot_before")
     audio = pathlib.Path(audio)
     work_dir = pathlib.Path(work_dir)
     name = tag_name(audio)
@@ -311,13 +325,16 @@ def export(audio, lrc_bytes, work_dir):
     _log(work_dir / LOG_NAME, {
         "utc": datetime.now(timezone.utc).isoformat(), "file": str(audio), "tag": name,
         "old": old if old else "none", "new_lines": _line_count(text)})
+    enter("backup")
     cache = work_dir / CACHE_NAME
     cache.mkdir(parents=True, exist_ok=True)
     backup = cache / (uuid.uuid4().hex + audio.suffix)
     shutil.copy2(audio, backup)
     try:
         try:
+            enter("write")
             _write_tag(audio, name, text)
+            enter("verify")
             if read_lyrics(audio) != text:
                 raise ExportError("寫入後讀回的歌詞和 LRC 不一致")
             after = _snapshot(audio, name)
@@ -343,6 +360,7 @@ def export(audio, lrc_bytes, work_dir):
         backup.unlink(missing_ok=True)
         raise ExportError(f"{exc}（已還原原檔）") from exc
     backup.unlink(missing_ok=True)
+    enter(None)
     return {"name": audio.name, "tag": name, "lines": _line_count(text)}
 
 

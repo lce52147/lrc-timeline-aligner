@@ -967,7 +967,7 @@ def _record_decision(song, body):
     return 200, {"recorded": path.name}
 
 
-def _export_song(song, body, report_dir):
+def _export_song(song, body, report_dir, store=None):
     """Embed the saved .lrc into the song's own audio file (check=true only describes the targets)."""
     if song["read_only"]:
         return 403, {"error": song["read_only_reason"] or "read-only"}
@@ -989,12 +989,41 @@ def _export_song(song, body, report_dir):
             return 400, {"error": "audio is not one of this song's audio files"}
         work_dir = report_dir.parent if report_dir.name.casefold() == "reports" else report_dir
         started = time.monotonic()
-        result = lyrics_tag_export.export(chosen, output.read_bytes(), work_dir)
-        result["seconds"] = round(time.monotonic() - started, 1)
-        result["archive"] = lyrics_tag_export.archive_lrc(output, work_dir, chosen.name)
-        return 200, result
+        timings = {}
+        status = store.export_status if store is not None else {}
+        status.update({"song": song.get("song"), "step": "snapshot_before", "started": started, "active": True})
+        archive = {}
+        try:
+            result = lyrics_tag_export.export(chosen, output.read_bytes(), work_dir, timings=timings,
+                                              on_step=lambda name: status.update(step=name or "archive"))
+            result["seconds"] = round(time.monotonic() - started, 1)
+            step = time.perf_counter()
+            status["step"] = "archive"
+            archive = result["archive"] = lyrics_tag_export.archive_lrc(output, work_dir, chosen.name)
+            timings["archive"] = round((time.perf_counter() - step) * 1000)
+            result["timings"] = timings
+            result["_log"] = (work_dir, song.get("song"), archive)
+            return 200, result
+        except lyrics_tag_export.ExportError as exc:
+            _export_log(work_dir, song.get("song"), "failed", archive, str(exc), timings, started)
+            status["active"] = False
+            return 422, {"error": str(exc)}
     except lyrics_tag_export.ExportError as exc:
         return 422, {"error": str(exc)}
+
+
+def _export_log(work_dir, song_name, result, archive, error, timings, started):
+    """One line per export in <outputs>/export.log: timestamp, song, result, archive path, error, step timings."""
+    archive = archive if isinstance(archive, dict) else {}
+    where = archive.get("to") or archive.get("error") or archive.get("mode") or ""
+    steps = " ".join(f"{key}={value}" for key, value in timings.items())
+    fields = [datetime.now().astimezone().isoformat(timespec="seconds"), str(song_name or ""), result, str(where), error, steps]
+    line = "\t".join(" ".join(str(field).split()) for field in fields)
+    try:
+        with open(pathlib.Path(work_dir) / "export.log", "a", encoding="utf-8", newline="\n") as handle:
+            handle.write(line + "\n")
+    except OSError:
+        pass
 
 
 def _save_song(song, body):
@@ -1481,6 +1510,9 @@ class JobRunner:
         return best
 
 
+_OWN_LOGS = {"export.log", "export-log.jsonl"}  # written by the server itself; never a reason to refresh
+
+
 class ReviewStore:
     def __init__(self, report_dir, targets, read_only=False, scan_report_dir=True):
         self.report_dir = pathlib.Path(report_dir).expanduser().resolve()
@@ -1490,28 +1522,31 @@ class ReviewStore:
         self.lock = threading.RLock()
         self.songs = []
         self.excluded = []
-        self.reload()
-        self.version = self._signature()
+        self.export_status = {}
+        self.reload_progress = {"active": False, "done": 0, "total": 0}
+        self.file_stats = {}
         self.generation = 0
+        self.reload()
+        self._remember()
 
-    def _signature(self):
-        """Cheap fingerprint of every file the review depends on (names, sizes, mtimes)."""
-        seen = []
+    def _stats(self):
+        """Every file the review depends on -> (size, mtime_ns); None marks a missing or unreadable one."""
+        seen = {}
 
         def stat(path):
             try:
                 info = path.stat()
-                seen.append((str(path), info.st_size, info.st_mtime_ns))
+                seen[str(path)] = (info.st_size, info.st_mtime_ns)
             except (OSError, ValueError):
-                seen.append((str(path), None, None))
+                seen[str(path)] = None
 
         def listing(folder, suffixes=None):
             try:
                 for child in sorted(folder.iterdir(), key=lambda item: item.name):
-                    if child.is_file() and (suffixes is None or child.name.endswith(suffixes)):
+                    if child.is_file() and (suffixes is None or child.name.endswith(suffixes)) and child.name not in _OWN_LOGS:
                         stat(child)
             except OSError:
-                seen.append((str(folder), "unreadable", None))
+                seen[str(folder)] = "unreadable"
 
         listing(self.report_dir, (".align-report.json", ".review.tsv"))
         folders = set()
@@ -1529,7 +1564,19 @@ class ReviewStore:
                     folders.add(pathlib.Path(value).parent)
         for folder in sorted(folders, key=str):
             listing(folder)
-        return hashlib.sha256(repr(seen).encode("utf-8", "replace")).hexdigest()
+        return seen
+
+    def _signature(self):
+        """Cheap fingerprint of every file the review depends on (names, sizes, mtimes)."""
+        return hashlib.sha256(repr(sorted(self._stats().items(), key=lambda item: item[0])).encode("utf-8", "replace")).hexdigest()
+
+    def _remember(self):
+        self.file_stats = self._stats()
+        self.version = hashlib.sha256(repr(sorted(self.file_stats.items(), key=lambda item: item[0])).encode("utf-8", "replace")).hexdigest()
+
+    def is_current(self):
+        with self.lock:
+            return self._signature() == self.version
 
     def add_target(self, path):
         """A song aligned from the import panel joins the review list without a restart."""
@@ -1538,26 +1585,69 @@ class ReviewStore:
             if not self.scan_report_dir and value.casefold() not in {str(t).casefold() for t in self.targets}:
                 self.targets.append(value)
             self.reload()
-            self.version = self._signature()
+            self._remember()
             self.generation += 1
 
+    def _owners(self):
+        """File path -> index of the song that owns it (its report, LRC, audio or CTC audio)."""
+        owners = {}
+        for index, song in enumerate(self.songs):
+            for key in ("report", "audio_path", "output_path", "ctc_audio_path"):
+                if song.get(key):
+                    owners[str(song[key])] = index
+        return owners
+
     def refresh_if_changed(self):
-        """Reload when a FLAC/LRC/report changed on disk, so the page never needs a restart."""
+        """Refresh what changed on disk: one song when only its own files moved, everything when reports came or went."""
         with self.lock:
-            signature = self._signature()
-            if signature != self.version:
+            stats = self._stats()
+            if stats == self.file_stats:
+                return self.generation
+            changed = {key for key in stats.keys() | self.file_stats.keys() if stats.get(key, "-") != self.file_stats.get(key, "-")}
+            owners = self._owners()
+            touched = {owners.get(key) for key in changed}
+            if None in touched:
                 self.reload()
-                self.version = self._signature()
-                self.generation += 1
+            else:
+                for index in sorted(touched):
+                    self.song(index)
+            self._remember()
+            self.generation += 1
             return self.generation
 
+    def refresh_song(self, index, absorb=True):
+        """Re-read one song after our own change (an export). ``absorb`` adopts the new file stats as the baseline
+        so the /api/version poll does not reload for it; pass False when other files had already changed."""
+        with self.lock:
+            self.song(index)
+            if absorb:
+                self._remember()
+            self.generation += 1
+            return self.generation
+
+    def status(self):
+        """Progress for a page that is waiting on the store lock; reads no lock."""
+        export = dict(self.export_status)
+        if export.get("active"):
+            export["elapsed_ms"] = round((time.monotonic() - export["started"]) * 1000)
+        export.pop("started", None)
+        return {"export": export, "reload": dict(self.reload_progress), "generation": self.generation}
+
     def reload(self):
+        self.reload_progress = {"active": True, "done": 0, "total": 0}
+        try:
+            self._reload()
+        finally:
+            self.reload_progress = {"active": False, "done": self.reload_progress["total"], "total": self.reload_progress["total"]}
+
+    def _reload(self):
         self.songs = []
         anchors = {}
         parsed = {}
         reports, self.excluded = _report_files(
             self.targets, self.report_dir, scan_report_dir=self.scan_report_dir, anchors=anchors, cache=parsed
         )
+        self.reload_progress["total"] = len(reports)
         for path in reports:
             try:
                 # Discovery already parsed this report; only re-read it if that parse failed.
@@ -1570,6 +1660,7 @@ class ReviewStore:
                     raise ValueError("report must be a JSON object")
             except Exception as exc:
                 self.songs.append(_song_stub(path, exc))
+            self.reload_progress["done"] = len(self.songs)
 
     def song(self, index):
         with self.lock:
@@ -1666,6 +1757,12 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
                 return
             self._json(200, {"generation": self.server.store.refresh_if_changed(), "port_notice": getattr(self.server, "port_notice", "")})
             return
+        if parsed.path == "/api/status":
+            if not self._token_header_ok():
+                self._send(403, b"forbidden\n", "text/plain; charset=utf-8")
+                return
+            self._json(200, self.server.store.status())  # lock-free: answers while a reload or export holds the store lock
+            return
         if parsed.path == "/api/jobs":
             if not self._token_header_ok():
                 self._send(403, b"forbidden\n", "text/plain; charset=utf-8")
@@ -1757,9 +1854,23 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
                 self._json(*_record_decision(song, body))
                 return
             if match.group(2) == "export":
-                status, result = _export_song(song, body, self.server.store.report_dir)
+                store = self.server.store
+                clean = store.is_current()
+                try:
+                    status, result = _export_song(song, body, store.report_dir, store)
+                except BaseException:
+                    store.export_status["active"] = False
+                    raise
                 if status == 200 and not body.get("check"):
-                    self.server.store.refresh_if_changed()
+                    work_dir, song_name, archive = result.pop("_log")
+                    store.export_status["step"] = "store_refresh"
+                    step = time.perf_counter()
+                    store.refresh_song(int(match.group(1)), clean)  # this song only, never a full reload
+                    result["timings"]["store_refresh"] = round((time.perf_counter() - step) * 1000)
+                    result["timings"]["total"] = round((time.monotonic() - store.export_status["started"]) * 1000)
+                    result["generation"] = store.generation
+                    _export_log(work_dir, song_name, "ok", archive, "", result["timings"], 0)
+                    store.export_status["active"] = False
                 self._json(status, result)
                 return
             status, result = _save_song(song, body)

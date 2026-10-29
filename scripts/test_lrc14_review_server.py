@@ -925,6 +925,46 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         _status, _headers, listing = self._request("GET", "/api/songs", **{"X-Review-Token": self.server.token})
         self.assertEqual(json.loads(listing)[0]["read_only_reason"], "lrc-exported", "no /api/version poll needed")
 
+    def test_export_refreshes_only_that_song_logs_a_line_and_reports_timings(self) -> None:
+        self._real_flac()
+        with mock.patch.dict(os.environ, {"LRC_EXPORT_ARCHIVE_DIR": str(self.root / "bk")}),                 mock.patch.object(review_server.ReviewStore, "reload", side_effect=AssertionError("full reload")) as reload:
+            generation = self.store.generation
+            status, _headers, data = self._json_request("POST", "/api/song/0/export", {"audio": "song.flac"})
+            self.assertEqual(status, 200)
+            result = json.loads(data)
+            self.assertEqual(self.store.refresh_if_changed(), self.store.generation, "own export is not seen as a new change")
+            self.assertEqual(self.store.generation, generation + 1)
+            reload.assert_not_called()
+        for key in ("snapshot_before", "backup", "write", "verify", "archive", "store_refresh", "total"):
+            self.assertIn(key, result["timings"])
+        lines = (self.root / "export.log").read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(lines), 1)
+        fields = lines[0].split("	")
+        self.assertEqual(fields[2], "ok")
+        self.assertEqual(fields[3], result["archive"]["to"])
+        _status, _headers, listing = self._request("GET", "/api/songs", **{"X-Review-Token": self.server.token})
+        self.assertEqual(json.loads(listing)[0]["read_only_reason"], "lrc-exported")
+
+    def test_single_file_change_refreshes_that_song_only(self) -> None:
+        self.output.write_bytes(self.output.read_bytes() + b"[00:09.00]more\n")
+        with mock.patch.object(review_server.ReviewStore, "reload", side_effect=AssertionError("full reload")):
+            generation = self.store.refresh_if_changed()
+        self.assertEqual(generation, 1)
+        self.assertEqual(self.store.refresh_if_changed(), 1)
+
+    def test_status_reports_reload_progress_without_the_store_lock(self) -> None:
+        status, _headers, data = self._request("GET", "/api/status", **{"X-Review-Token": self.server.token})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(data)["reload"]["total"], 1)
+
+    def test_failed_export_writes_a_failed_log_line(self) -> None:
+        self.audio.write_bytes(b"not a flac")
+        status, _headers, _data = self._json_request("POST", "/api/song/0/export", {"audio": "song.flac"})
+        self.assertEqual(status, 422)
+        fields = (self.root / "export.log").read_text(encoding="utf-8").splitlines()[0].split("	")
+        self.assertEqual(fields[2], "failed")
+        self.assertTrue(fields[4])
+
     def test_m4a_exported_song_with_another_audio_path_shows_as_exported(self) -> None:
         self._real_flac()
         m4a = self.audio.with_suffix(".m4a")

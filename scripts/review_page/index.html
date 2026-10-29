@@ -1105,7 +1105,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       flushDraft();
       if (!portChecked) { portChecked = true; try { const notice = (await api('/api/version')).port_notice; if (notice) state.notice = notice; } catch (_) {} }
       const oldIds = new Map(state.songs.map(song => [song.index, draftId(song)]));
-      const list = await api('/api/songs');
+      const list = await withScanProgress(api('/api/songs'));
       // A live refresh can renumber songs; carry staged edits, done marks and the open song over by report path, not by index.
       const newIndex = new Map(list.map(song => [draftId(song), song.index]));
       const remap = key => { const [index, entry] = key.split(':'), id = oldIds.get(Number(index)); return id != null && newIndex.has(id) ? String(newIndex.get(id)) + ':' + entry : null; };
@@ -1213,11 +1213,20 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     document.getElementById('export-badge-text').textContent = text;
     document.getElementById('export-badge-close').hidden = !closable;
   }
+  const exportStepNames = {snapshot_before:'讀取音檔', backup:'備份', write:'寫入標籤', verify:'驗證', archive:'歸檔 LRC', store_refresh:'更新清單'};
   function exportBadgeRunning(name) {
     const started = Date.now();
-    const text = () => '匯出中：' + name + '（' + Math.floor((Date.now() - started) / 1000) + ' 秒）';
+    let step = '';
+    const text = () => '匯出中：' + name + (step ? '（' + step + '，' : '（') + Math.floor((Date.now() - started) / 1000) + ' 秒）';
     exportBadgeShow('run', text(), false);
-    exportBadge.tick = setInterval(() => { document.getElementById('export-badge-text').textContent = text(); }, 250);
+    let polling = false;
+    exportBadge.tick = setInterval(async () => {
+      document.getElementById('export-badge-text').textContent = text();
+      if (polling) return;
+      polling = true;
+      try { const status = (await api('/api/status')).export || {}; if (status.active) step = exportStepNames[status.step] || status.step || ''; } catch (_) {}
+      polling = false;
+    }, 300);
   }
   function exportBadgeOk(text) {
     exportBadgeShow('ok', text, false);
@@ -1248,6 +1257,21 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       exportBox().hidden = false;
     } catch (error) { exportBadgeFail(error.message || String(error)); }
   }
+  async function refreshSong(index) {
+    // Only the exported song is re-read; the other songs' rows, edits and the open song stay as they are.
+    const meta = (await api('/api/songs')).find(item => item.index === index);
+    const detail = await api('/api/song/' + index);
+    const at = state.songs.findIndex(item => item.index === index);
+    if (!meta || at < 0) return load();
+    state.songs[at] = Object.assign({}, state.songs[at], meta, {has_flac:detail.has_flac, has_stem:detail.has_stem, detail});
+    const song = state.songs[at];
+    state.rows = state.rows.filter(item => item.song.index !== index);
+    (detail.rows || []).forEach(row => state.rows.push({song, row}));
+    state.rows.sort((a,b) => a.song.index - b.song.index || a.row.entry - b.row.entry);
+    [...state.edits.keys()].forEach(key => { if (key.split(':')[0] === String(index) && !editable(song)) state.edits.delete(key); });
+    setDirty();
+    render();
+  }
   async function doExport() {
     const song = exportSong();
     const target = exportTargets[Number(document.getElementById('export-target').value)];
@@ -1264,6 +1288,8 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       }
       const data = await api('/api/song/' + song.index + '/export', {method:'POST', body:JSON.stringify({audio:target.name})});
       const seconds = ((Date.now() - started) / 1000).toFixed(1);
+      if (data.generation != null) seenGeneration = data.generation;  // our own change: the poll must not trigger a full load()
+      try { await refreshSong(song.index); } catch (error) { console.error(error); }
       if (data.archive && !['off', 'move', 'delete'].includes(data.archive.mode)) {
         exportBadgeOk('已寫入並驗證 ' + data.name + '（' + data.lines + ' 行，' + seconds + ' 秒）；LRC 沒有歸檔（' + (data.archive.error || '未知原因') + '），仍留在原處');
       } else {
@@ -1496,10 +1522,24 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   addEventListener('beforeunload', event => { flushDraft(); releaseTab(); if (state.dirty) { event.preventDefault(); event.returnValue = ''; } });
   // Live refresh: a FLAC dropped in, an LRC changed or a new alignment run shows up without restarting.
   let seenGeneration = null, refreshPending = false;
+  // A reload holds the store lock, so /api/version waits; /api/status answers meanwhile and shows how far the rescan is.
+  async function withScanProgress(request) {
+    let finished = false, shown = false;
+    const timer = setInterval(async () => {
+      if (finished) return;
+      try {
+        const reload = (await api('/api/status')).reload || {};
+        if (finished || !reload.active) return;
+        shown = true; state.notice = '重新掃描報告中… ' + reload.done + '/' + (reload.total || '?'); render();
+      } catch (_) {}
+    }, 700);
+    try { return await request; }
+    finally { finished = true; clearInterval(timer); if (shown) { state.notice = ''; } }
+  }
   async function watchFiles() {
     try {
       draftBeat();
-      const generation = (await api('/api/version')).generation;
+      const generation = (await withScanProgress(api('/api/version'))).generation;
       if (seenGeneration !== null && generation !== seenGeneration) refreshPending = true;
       seenGeneration = generation;
       if (refreshPending && !state.player.active) {
