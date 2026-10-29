@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import http.client
+import http.server
 import io
 import json
 import os
@@ -1338,7 +1339,7 @@ const flushTimers = () => { for (const [id, t] of [...timers]) { if (t.ms === 75
         flags = 0x08000000 | 0x00004000 if os.name == "nt" else 0
         result = subprocess.run(["node", str(SCRIPTS / "test_review_drafts.js")], capture_output=True, text=True, encoding="utf-8", creationflags=flags)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("13/13 passed", result.stdout)
+        self.assertIn("21/21 passed", result.stdout)
 
     def test_review_port_default_is_fixed_and_falls_back_when_busy(self) -> None:
         import socket
@@ -1348,20 +1349,52 @@ const flushTimers = () => { for (const [id, t] of [...timers]) { if (t.ms === 75
             self.assertEqual(review_server.default_port(), 58411)
         with mock.patch.dict(os.environ, {"LRC_REVIEW_PORT": "junk"}):
             self.assertEqual(review_server.default_port(), 58400)
-        blocker = socket.socket()
-        blocker.bind(("127.0.0.1", 0))
-        blocker.listen(1)
-        busy = blocker.getsockname()[1]
+        # The blocker is a real review server: on Windows a ThreadingHTTPServer with SO_REUSEADDR could be bound over (claude-2 F1).
+        blocker = http.server.ThreadingHTTPServer(("127.0.0.1", 0), http.server.BaseHTTPRequestHandler)
+        busy = blocker.server_port
         server = None
         try:
             server = review_server.bind_server(busy)
             self.assertGreater(server.server_port, busy)
             self.assertLessEqual(server.server_port, busy + review_server.PORT_FALLBACK_SPAN)
+            self.assertIn(f"改用 {server.server_port}", server.port_notice)
+            self.assertIn("不會跨埠號", server.port_notice)
         finally:
             if server is not None:
                 server.server_close()
-            blocker.close()
+            blocker.server_close()
         self.assertNotIn("--port", (SCRIPTS.parent / "Review LRC.bat").read_text(encoding="utf-8", errors="replace"))
+
+    def test_review_server_over_review_server_does_not_share_a_port(self) -> None:
+        first = review_server.bind_server(0)
+        second = None
+        try:
+            with self.assertRaises(OSError):
+                review_server.ReviewHTTPServer(("127.0.0.1", first.server_port), review_server.ReviewHandler)
+            self.assertEqual(first.port_notice, "")
+        finally:
+            first.server_close()
+
+    def test_review_port_all_busy_falls_back_to_os_port_with_notice(self) -> None:
+        blockers = []
+        server = None
+        try:
+            probe = http.server.ThreadingHTTPServer(("127.0.0.1", 0), http.server.BaseHTTPRequestHandler)
+            base = probe.server_port
+            probe.server_close()
+            for offset in range(review_server.PORT_FALLBACK_SPAN + 1):
+                try:
+                    blockers.append(http.server.ThreadingHTTPServer(("127.0.0.1", base + offset), http.server.BaseHTTPRequestHandler))
+                except OSError:
+                    self.skipTest("could not reserve a contiguous port range")
+            server = review_server.bind_server(base)
+            self.assertNotIn(server.server_port, range(base, base + review_server.PORT_FALLBACK_SPAN + 1))
+            self.assertIn("已被佔用", server.port_notice)
+        finally:
+            if server is not None:
+                server.server_close()
+            for blocker in blockers:
+                blocker.server_close()
 
     def test_client_409_reload_marks_conflict_and_blocks_resubmit(self) -> None:
         page = (SCRIPTS / "review_page" / "index.html").read_text(encoding="utf-8")
@@ -1452,7 +1485,8 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         bad.write_text("null", encoding="utf-8")
         fake_server = mock.Mock()
         fake_server.server_port = 1234
-        with mock.patch.object(review_server.http.server, "ThreadingHTTPServer", return_value=fake_server), \
+        fake_server.port_notice = ""
+        with mock.patch.object(review_server, "ReviewHTTPServer", return_value=fake_server), \
              mock.patch("builtins.print") as output:
             review_server.run_server([bad], self.root, no_browser=True)
         startup = output.call_args_list[-1].args[0]

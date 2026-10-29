@@ -11,6 +11,7 @@ import os
 import pathlib
 import re
 import secrets
+import socket
 import subprocess
 import threading
 import time
@@ -1663,7 +1664,7 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
             if not self._token_header_ok():
                 self._send(403, b"forbidden\n", "text/plain; charset=utf-8")
                 return
-            self._json(200, {"generation": self.server.store.refresh_if_changed()})
+            self._json(200, {"generation": self.server.store.refresh_if_changed(), "port_notice": getattr(self.server, "port_notice", "")})
             return
         if parsed.path == "/api/jobs":
             if not self._token_header_ok():
@@ -1932,19 +1933,39 @@ def default_port():
         return DEFAULT_REVIEW_PORT
 
 
+class ReviewHTTPServer(http.server.ThreadingHTTPServer):
+    """A busy port must really fail: on Windows SO_REUSEADDR lets a second server bind a port the first still answers on."""
+    allow_reuse_address = False
+
+    def server_bind(self):
+        if sys.platform == "win32" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
+def port_busy_notice(wanted, used):
+    return f"{wanted} 已被佔用（可能有另一個 Review LRC 還開著），改用 {used}；此埠的暫存草稿不會跨埠號"
+
+
 def bind_server(port, handler=None):
-    """Bind 127.0.0.1:port; when it is busy, try the next PORT_FALLBACK_SPAN ports. Port 0 (tests) keeps the OS-chosen port."""
+    """Bind 127.0.0.1:port; when it is busy, try the next PORT_FALLBACK_SPAN ports, then an OS-chosen one. Port 0 (tests) keeps the OS-chosen port.
+    The returned server carries port_notice when it is not on the port that was asked for."""
     handler = handler or ReviewHandler
     port = int(port)
     if port == 0:
-        return http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    last = None
+        server = ReviewHTTPServer(("127.0.0.1", 0), handler)
+        server.port_notice = ""
+        return server
     for candidate in range(port, port + PORT_FALLBACK_SPAN + 1):
         try:
-            return http.server.ThreadingHTTPServer(("127.0.0.1", candidate), handler)
-        except OSError as exc:
-            last = exc
-    raise last
+            server = ReviewHTTPServer(("127.0.0.1", candidate), handler)
+        except OSError:
+            continue
+        server.port_notice = port_busy_notice(port, candidate) if candidate != port else ""
+        return server
+    server = ReviewHTTPServer(("127.0.0.1", 0), handler)
+    server.port_notice = port_busy_notice(port, server.server_port)
+    return server
 
 
 def run_server(targets, report_dir=None, port=0, no_browser=False, read_only=False, dump_summary=False, targets_file=None):
@@ -1964,6 +1985,8 @@ def run_server(targets, report_dir=None, port=0, no_browser=False, read_only=Fal
     server.store = store
     server.jobs = None if (read_only or os.environ.get("LRC_NO_REVIEW") == "1") else JobRunner(store, report_dir)
     server.token = secrets.token_urlsafe(32)
+    if server.port_notice:
+        print(server.port_notice, file=sys.stderr, flush=True)
     url = f"http://127.0.0.1:{server.server_port}/#t={urllib.parse.quote(server.token)}"
     print(json.dumps({"url": url, "token": server.token, "songs": len(store.songs), "excluded": len(store.excluded),
                       "excluded_files": [path.name for path in store.excluded]}, ensure_ascii=False), flush=True)

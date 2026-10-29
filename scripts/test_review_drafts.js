@@ -44,7 +44,10 @@ async function boot(storage, songs, opts = {}) {
       if (m) {
         const s = songs[Number(m[1])], body = JSON.parse(options.body);
         saves.push({index: Number(m[1]), body});
-        if (opts.save409) return response(false, 409, {error: 'stale base_sha256'});
+        if (opts.save409) {
+          if (opts.save409Changes) { s.sha = s.sha + '-ext'; s.rows.forEach(r => { r.current_cs += 1000; }); } // someone else changed the file
+          return response(false, 409, {error: 'stale base_sha256'});
+        }
         s.sha = s.sha + '+'; // the file changed, as after a real save
         body.edits.forEach(e => { s.rows.find(r => r.entry === e.entry).current_cs = e.cs; });
         return response(true, 200, {base_sha256: s.sha, server_read_only: false, has_flac: true, has_stem: true, rows: s.rows.map(r => rowOf(s, r))});
@@ -56,7 +59,7 @@ async function boot(storage, songs, opts = {}) {
         return response(true, 200, {base_sha256: s.sha, server_read_only: false, has_flac: true, has_stem: true, rows: s.rows.map(r => rowOf(s, r))});
       }
       if (url === '/api/jobs') return response(true, 200, {import_enabled: false, jobs: []});
-      if (url === '/api/version') return response(true, 200, {generation: 0});
+      if (url === '/api/version') return response(true, 200, {generation: 0, port_notice: opts.portNotice || ''});
       throw Error('unexpected fetch ' + url);
     }};
   context.globalThis = context;
@@ -100,6 +103,7 @@ test('a failed detail fetch or read-only load never deletes the draft; it is res
   const st = makeStorage(), songs = [mk('A', '/r/A.json')];
   let p = await boot(st, songs);
   p.edit(0, 1, 150); p.flush();
+  p.winListeners.beforeunload({preventDefault() {}}); // the first tab is closed
   songs[0].detailFails = true;
   p = await boot(st, songs);
   p.winListeners.beforeunload({preventDefault() {}}); p.flush();
@@ -232,6 +236,121 @@ test('flush happens before a song switch and before a load (item 9)', async () =
   assert.ok(p.pendingFlush() && !st.map.has(KEY));
   await p.t.load();
   assert.ok(drafts(st)['/r/A.json'], 'load() flushes first');
+});
+
+
+const close = tab => tab.winListeners.beforeunload({preventDefault() {}});
+const SONG = '/r/S.json';
+
+test('stale draft pending: new edits are still drafted beside it under the current sha and come back (claude-2 F6 / X2)', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG, 'old')];
+  let p = await boot(st, songs);
+  p.edit(0, 1, 150); p.flush(); close(p);
+  songs[0].sha = 'new'; songs[0].rows = [{entry: 1, current_cs: 1000}, {entry: 2, current_cs: 500}];
+  p = await boot(st, songs);
+  assert.equal(p.el('draft-stale').hidden, false);
+  p.edit(0, 2, 560, 60); p.flush(); close(p);
+  const d = drafts(st)[SONG];
+  assert.equal(d.base_sha256, 'old'); assert.deepEqual(d.edits.map(e => e.entry), [1]);
+  assert.equal(d.more.length, 1); assert.equal(d.more[0].base_sha256, 'new'); assert.deepEqual(d.more[0].edits.map(e => e.entry), [2]);
+  p = await boot(st, songs);
+  assert.equal(p.t.state.edits.get('0:2').cs, 560, 'the new edit is restored');
+  assert.equal(p.t.state.edits.has('0:1'), false, 'the stale one waits for an answer');
+  assert.equal(p.el('draft-stale').hidden, false);
+  p.el('draft-stale-discard').listeners.click();
+  const after = drafts(st)[SONG];
+  assert.equal(after.base_sha256, 'new'); assert.deepEqual(after.edits.map(e => e.entry), [2]);
+});
+
+test('409 keeps the old base sha: after the file changed, a reload offers 仍然套用 (gemini F2)', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG, 's')];
+  let p = await boot(st, songs, {save409: true, save409Changes: true});
+  p.edit(0, 1, 150); p.flush();
+  p.el('save').listeners.click(); await settle();
+  assert.equal(drafts(st)[SONG].base_sha256, 's', 'draft still names the sha its base_cs came from');
+  assert.equal(p.el('draft-stale').hidden, true, 'same session: no stale banner');
+  close(p);
+  p = await boot(st, songs);
+  assert.equal(p.el('draft-stale').hidden, false);
+  assert.equal(p.t.state.edits.size, 0);
+  p.el('draft-stale-apply').listeners.click();
+  assert.equal(p.t.state.edits.get('0:1').cs, 1150); // the file's current 1100 + nudge 50
+});
+
+test('捨棄 leaves a row that was re-edited after the restore (gemini F3, claude-2 F4 / X3)', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG)];
+  let p = await boot(st, songs);
+  p.edit(0, 1, 150); p.edit(0, 2, 560, 60); p.flush(); close(p);
+  p = await boot(st, songs);
+  assert.equal(p.t.state.edits.size, 2);
+  p.edit(0, 1, 175, 75); p.flush();
+  p.el('draft-restored-discard').listeners.click();
+  assert.equal(p.t.state.edits.get('0:1').cs, 175, 're-edited row stays in memory');
+  assert.equal(p.t.state.edits.has('0:2'), false, 'untouched restored row is discarded');
+  assert.deepEqual(drafts(st)[SONG].edits.map(e => [e.entry, e.cs]), [[1, 175]]);
+});
+
+test('two tabs editing different rows of one song keep both; undo-all removes only this tab\'s entries (X4)', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG)];
+  const a = await boot(st, songs), b = await boot(st, songs);
+  a.edit(0, 1, 150); a.flush();
+  b.edit(0, 2, 560, 60); b.flush();
+  assert.deepEqual(drafts(st)[SONG].edits.map(e => e.entry), [1, 2]);
+  b.t.state.edits.delete('0:2'); await b.t.load();
+  assert.deepEqual(drafts(st)[SONG].edits.map(e => e.entry), [1], 'a\'s entry survives b undoing everything');
+  a.t.state.edits.delete('0:1'); await a.t.load();
+  assert.deepEqual(drafts(st), {});
+});
+
+test('a live refresh does not take over a draft another live tab wrote; a fresh load or a closed writer does (claude-2 F2 / X1)', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG)];
+  const a = await boot(st, songs), b = await boot(st, songs);
+  a.edit(0, 1, 150); a.flush();
+  await b.t.load();
+  assert.equal(b.t.state.edits.size, 0, 'b leaves a\'s draft alone');
+  const c = await boot(st, songs);
+  assert.equal(c.t.state.edits.get('0:1').cs, 150, 'a fresh page load restores it');
+  close(a);
+  const e = await boot(st, songs);
+  assert.equal(e.t.state.edits.size, 1);
+  // a's tab entry is gone and c's is there; once c closes too, b's refresh may take the draft over
+  close(c); close(e);
+  await b.t.load();
+  assert.equal(b.t.state.edits.get('0:1').cs, 150);
+});
+
+test('double nudge: another tab saves the edit, the refreshing tab never re-drafts it (claude-2 F3)', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG)];
+  const a = await boot(st, songs), b = await boot(st, songs);
+  a.edit(0, 1, 150, 50); a.flush();
+  await b.t.load();
+  a.el('save').listeners.click(); await settle();
+  assert.deepEqual(drafts(st), {});
+  await b.t.load(); b.flush(); close(b);
+  assert.deepEqual(drafts(st), {}, 'nothing resurrected');
+  const c = await boot(st, songs);
+  assert.equal(c.el('draft-stale').hidden, true);
+  assert.equal(c.t.state.edits.size, 0);
+});
+
+test('saving a restored song hides the restored banner and clears its leftovers (gemini F1)', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG)];
+  let p = await boot(st, songs);
+  p.edit(0, 1, 150); p.edit(0, 2, 560, 60); p.flush(); close(p);
+  songs[0].rows = [{entry: 1, current_cs: 100}, {entry: 2, current_cs: 500}, {entry: 3, current_cs: 900}];
+  const d = drafts(st); d[SONG].edits.push({entry: 3, cs: 950, source: 'manual', nudge_cs: 50, base_cs: 111}); // base differs: cannot be applied
+  st.map.set(KEY, JSON.stringify(d));
+  p = await boot(st, songs);
+  assert.match(p.el('draft-restored-text').textContent, /已還原 2 筆.*另有 1 筆無法套用/);
+  p.el('save').listeners.click(); await settle();
+  assert.equal(p.el('draft-restored').hidden, true);
+  assert.deepEqual(drafts(st), {});
+});
+
+test('a page notice carries the port-fallback line (gemini F6)', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG)];
+  const p = await boot(st, songs, {portNotice: '58400 已被佔用（可能有另一個 Review LRC 還開著），改用 58401；此埠的暫存草稿不會跨埠號'});
+  assert.match(p.t.state.notice, /58400 已被佔用.*改用 58401/);
 });
 
 (async () => {

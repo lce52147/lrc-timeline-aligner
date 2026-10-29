@@ -333,11 +333,16 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   try { const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null'); if (saved && typeof saved === 'object') { state.autoplay = !!saved.autoplay; state.batchSkip = !!saved.batchSkip; if (typeof saved.showAll === 'boolean') state.showAll = saved.showAll; } } catch (_) {}
   function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({autoplay:state.autoplay, batchSkip:state.batchSkip, showAll:state.showAll})); } catch (_) {} }
   // ---- unsaved-edit drafts: survive a server restart or a closed tab ----
-  const DRAFT_KEY = 'lrc-review-drafts', DRAFT_MAX_SONGS = 50, DRAFT_DEBOUNCE_MS = 750;
-  const draftTimes = new Map(), draftHandled = new Set(), staleDrafts = new Map(), draftOwned = new Map(), draftRemnants = new Map(), draftWritten = new Set();
+  // A stored draft is {saved_at, tabs:{tabId:lastBeat}, base_sha256, edits, more:[{base_sha256, edits}]}. Each group's base_sha256 is
+  // the file sha its edits' base_cs were taken from (an edit carries it as bsha), so a group whose sha differs from the file is stale.
+  const DRAFT_KEY = 'lrc-review-drafts', DRAFT_MAX_SONGS = 50, DRAFT_DEBOUNCE_MS = 750, DRAFT_TAB_ALIVE_MS = 60000, DRAFT_BEAT_MS = 20000;
+  const tabId = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  const draftTimes = new Map(), draftHandled = new Set(), staleDrafts = new Map(), draftOwned = new Map(), draftRemnants = new Map(), draftMine = new Map();
   let draftTimer = null, draftArmed = false, draftWarned = false;
   // A draft belongs to a song by its report path (unique per song), never by the display name; edits map back through it.
   const draftId = song => String(song.report || song.detail?.report || song.song);
+  const songSha = song => song.detail?.base_sha256 || '';
+  const mineKey = (sha, entry) => sha + '|' + entry;
   function readDrafts() { try { const saved = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {}; } catch (_) { return {}; } }
   function writeDrafts(drafts) {
     try {
@@ -349,32 +354,54 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       if (!draftWarned) { draftWarned = true; state.notice = '暫存失敗：瀏覽器儲存空間不可用'; try { render(); } catch (_) {} }
     }
   }
-  // Writes only songs that have edits in THIS tab. A song's draft is deleted only by a good save or an explicit 捨棄 (or when
-  // this tab wrote it, the song is fully loaded, and every edit has since been undone).
+  const groupsOf = draft => {
+    if (!draft || typeof draft !== 'object') return [];
+    const groups = [], valid = list => list.filter(edit => edit && typeof edit === 'object');
+    if (Array.isArray(draft.edits)) groups.push({sha:String(draft.base_sha256 || ''), edits:valid(draft.edits)});
+    (Array.isArray(draft.more) ? draft.more : []).forEach(group => { if (group && Array.isArray(group.edits)) groups.push({sha:String(group.base_sha256 || ''), edits:valid(group.edits)}); });
+    return groups;
+  };
+  // Rebuilds the stored draft from groups, keeping the tabs that are still recent plus this one. Empty groups vanish; no groups, no draft.
+  function putGroups(drafts, id, groups, previous, now) {
+    groups = groups.filter(group => group.edits.length);
+    if (!groups.length) { delete drafts[id]; return; }
+    const tabs = {};
+    Object.entries((previous && previous.tabs) || {}).forEach(([tab, beat]) => { if (tab !== tabId && now - beat < 5 * DRAFT_TAB_ALIVE_MS) tabs[tab] = beat; });
+    tabs[tabId] = now;
+    drafts[id] = {saved_at:now, tabs, base_sha256:groups[0].sha, edits:groups[0].edits, more:groups.slice(1).map(group => ({base_sha256:group.sha, edits:group.edits}))};
+  }
+  function dropEntry(groups, sha, entry) { groups.forEach(group => { if (group.sha === sha) group.edits = group.edits.filter(edit => edit.entry !== entry); }); }
+  const otherTabAlive = (draft, now) => Object.entries((draft && draft.tabs) || {}).some(([tab, beat]) => tab !== tabId && now - beat < DRAFT_TAB_ALIVE_MS);
+  // Merges this tab's edits into what is stored: only the entries this tab wrote (or restored) are replaced or removed; everything
+  // else in the stored draft (another tab's entries, a stale group, unapplied leftovers) stays. A song's draft is dropped by a good
+  // save, an explicit 捨棄, or when the entries this tab wrote have all been undone and the song is fully loaded.
   function flushDraft() {
     if (draftTimer != null) { clearTimeout(draftTimer); draftTimer = null; }
     if (!draftArmed) return;
     const drafts = readDrafts(), now = Date.now();
     let changed = false;
     state.songs.forEach(song => {
-      const id = draftId(song);
-      if (staleDrafts.has(id)) return;
-      const edits = [], entries = new Set();
+      const id = draftId(song), sha = songSha(song), staged = new Map();
       state.edits.forEach((edit, key) => {
         if (Number(key.split(':')[0]) !== song.index) return;
         if (!draftTimes.has(key)) draftTimes.set(key, now);
-        entries.add(edit.entry);
-        edits.push({entry:edit.entry, cs:edit.cs, source:edit.source, nudge_cs:edit.nudge_cs, base_cs:edit.base_cs, edited_at:draftTimes.get(key)});
+        const bsha = edit.bsha != null ? edit.bsha : sha;
+        staged.set(mineKey(bsha, edit.entry), {bsha, record:{entry:edit.entry, cs:edit.cs, source:edit.source, nudge_cs:edit.nudge_cs, base_cs:edit.base_cs, edited_at:draftTimes.get(key)}});
       });
-      const kept = (draftRemnants.get(id) || []).filter(entry => !entries.has(entry.entry));
-      if (edits.length) {
-        drafts[id] = {base_sha256:song.detail?.base_sha256 || '', saved_at:now, edits:edits.concat(kept)};
-        draftWritten.add(id); draftHandled.add(id); changed = true;
-      } else if (draftWritten.has(id) && song.detail?.base_sha256 && editable(song)) {
-        if (kept.length) drafts[id] = {base_sha256:song.detail.base_sha256, saved_at:now, edits:kept};
-        else delete drafts[id];
-        draftWritten.delete(id); changed = true;
-      }
+      const mine = draftMine.get(id) || new Set(), canRemove = sha && editable(song);
+      const undone = canRemove ? [...mine].filter(item => !staged.has(item)) : [];
+      if (!staged.size && !undone.length) return;
+      const groups = groupsOf(drafts[id]);
+      undone.forEach(item => { const cut = item.lastIndexOf('|'); dropEntry(groups, item.slice(0, cut), Number(item.slice(cut + 1))); mine.delete(item); });
+      staged.forEach((value, item) => {
+        let group = groups.find(entry => entry.sha === value.bsha);
+        if (!group) { group = {sha:value.bsha, edits:[]}; groups.push(group); }
+        group.edits = group.edits.filter(edit => edit.entry !== value.record.entry).concat([value.record]).sort((a, b) => a.entry - b.entry);
+        mine.add(item);
+      });
+      draftMine.set(id, mine); draftHandled.add(id);
+      putGroups(drafts, id, groups, drafts[id], now);
+      changed = true;
     });
     if (changed) writeDrafts(drafts);
   }
@@ -383,19 +410,24 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     if (draftTimer != null) clearTimeout(draftTimer);
     draftTimer = setTimeout(flushDraft, DRAFT_DEBOUNCE_MS);
   }
-  // After a 200 save the song's draft goes away at once, before anything reloads and could mistake it for a stale one.
-  function dropSavedDraft(song) {
+  // After a 200 save the song's group for the saved file (its edits and unapplied leftovers) goes away at once, before anything reloads
+  // and could mistake it for a stale one. A stale group from an older file still waits for its own answer.
+  function dropSavedDraft(song, savedSha) {
     const id = draftId(song);
-    draftHandled.add(id); draftWritten.delete(id); draftOwned.delete(id); staleDrafts.delete(id);
-    const drafts = readDrafts(), kept = draftRemnants.get(id) || [];
-    if (kept.length && song.detail?.base_sha256) drafts[id] = {base_sha256:song.detail.base_sha256, saved_at:Date.now(), edits:kept}; else delete drafts[id];
+    draftHandled.add(id); draftMine.delete(id);
+    const owned = draftOwned.get(id);
+    if (owned) { restoredTotal = Math.max(0, restoredTotal - owned.size); draftOwned.delete(id); }
+    draftRemnants.delete(id);
+    const drafts = readDrafts();
+    putGroups(drafts, id, groupsOf(drafts[id]).filter(group => group.sha !== savedSha), drafts[id], Date.now());
     writeDrafts(drafts);
+    showRestoredBanner(0, 0);
   }
   const draftClock = ms => { const d = new Date(ms); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
-  // Put a draft's edits back into state.edits. Returns {applied, keys, skipped}; never overwrites an edit already in memory.
+  // Put a draft's edits back into state.edits. Returns {applied, snaps, skipped}; never overwrites an edit already in memory.
   // `rebase` is the stale-file path: a nudge is re-applied as current + nudge, a pick only if it is still inside the row's span.
   function applyDraft(song, draft, rebase) {
-    const result = {applied:0, keys:[], skipped:[]};
+    const result = {applied:0, snaps:new Map(), skipped:[]};
     (draft.edits || []).forEach(edit => {
       if (!edit || typeof edit !== 'object') return;
       const item = state.rows.find(entry => entry.song.index === song.index && entry.row.entry === edit.entry);
@@ -413,26 +445,38 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
         }
       }
       if (cs === current) return;
-      state.edits.set(key, {entry:edit.entry, cs, source:String(edit.source || 'draft').slice(0, 64), nudge_cs:nudge, base_cs:current});
+      const staged = {entry:edit.entry, cs, source:String(edit.source || 'draft').slice(0, 64), nudge_cs:nudge, base_cs:current, bsha:songSha(song)};
+      state.edits.set(key, staged);
       draftTimes.set(key, edit.edited_at || draft.saved_at || Date.now());
-      result.applied++; result.keys.push(key);
+      result.applied++; result.snaps.set(key, {cs:staged.cs, source:staged.source, base_cs:staged.base_cs, entry:staged.entry, sha:staged.bsha});
     });
     return result;
   }
+  // The edits a restore put into memory now belong to this tab: it may rewrite or remove them, and 捨棄 knows what they were.
+  function adopt(id, snaps) {
+    const mine = draftMine.get(id) || new Set(), owned = draftOwned.get(id) || new Map();
+    snaps.forEach((snap, key) => { mine.add(mineKey(snap.sha, snap.entry)); owned.set(key, snap); });
+    draftMine.set(id, mine); draftOwned.set(id, owned);
+  }
   function restoreDrafts() {
-    const drafts = readDrafts();
+    const drafts = readDrafts(), now = Date.now(), fresh = !draftArmed;
     let restored = 0, newest = 0;
     state.songs.forEach(song => {
       const id = draftId(song), draft = drafts[id];
       // A song that did not load fully (no sha, read-only) is not touched: its draft stays and is retried on the next load.
-      if (draftHandled.has(id) || !draft || !Array.isArray(draft.edits) || !song.detail?.base_sha256 || !editable(song)) return;
+      if (draftHandled.has(id) || !draft || !Array.isArray(draft.edits) || !songSha(song) || !editable(song)) return;
+      // On a live refresh a draft another open tab is still writing is that tab's; only a fresh page load takes it over.
+      if (!fresh && otherTabAlive(draft, now)) return;
       draftHandled.add(id);
-      if (draft.base_sha256 === song.detail.base_sha256) {
-        const result = applyDraft(song, draft, false);
-        if (result.applied) { restored += result.applied; newest = Math.max(newest, draft.saved_at || 0); draftOwned.set(id, result.keys); }
-        if (result.skipped.length) draftRemnants.set(id, result.skipped);
-        draftWritten.add(id);
-      } else staleDrafts.set(id, draft);
+      const staleEdits = [], staleShas = [];
+      groupsOf(draft).forEach(group => {
+        if (group.sha === songSha(song)) {
+          const result = applyDraft(song, {edits:group.edits, saved_at:draft.saved_at}, false);
+          if (result.applied) { restored += result.applied; newest = Math.max(newest, draft.saved_at || 0); adopt(id, result.snaps); }
+          if (result.skipped.length) draftRemnants.set(id, {sha:group.sha, list:result.skipped});
+        } else { staleEdits.push(...group.edits); staleShas.push(group.sha); }
+      });
+      if (staleShas.length) staleDrafts.set(id, {edits:staleEdits, shas:staleShas, saved_at:draft.saved_at});
     });
     draftArmed = true;
     showRestoredBanner(restored, newest);
@@ -442,7 +486,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   function showRestoredBanner(added, newest) {
     restoredTotal += added; restoredNewest = Math.max(restoredNewest, newest || 0);
     let unapplied = 0;
-    draftRemnants.forEach(list => { unapplied += list.length; });
+    draftRemnants.forEach(remnant => { unapplied += remnant.list.length; });
     const box = document.getElementById('draft-restored');
     if (!restoredTotal && !unapplied) { box.hidden = true; return; }
     document.getElementById('draft-restored-text').textContent = (restoredTotal ? '已還原 ' + restoredTotal + ' 筆未儲存的修改（來自 ' + draftClock(restoredNewest) + '）' : '') + (unapplied ? (restoredTotal ? '，' : '') + '另有 ' + unapplied + ' 筆無法套用' : '');
@@ -455,27 +499,55 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     document.getElementById('draft-stale').hidden = !staleDrafts.size;
   }
   document.getElementById('draft-restored-discard').addEventListener('click', () => {
-    // Only what the restore applied (and its unapplied leftovers) goes; edits made since stay.
-    const drafts = readDrafts(), ids = new Set([...draftOwned.keys(), ...draftRemnants.keys()]);
-    draftOwned.forEach(keys => keys.forEach(key => { state.edits.delete(key); draftTimes.delete(key); }));
-    ids.forEach(id => { delete drafts[id]; draftWritten.delete(id); });
+    // Only what the restore applied and left unchanged (and its unapplied leftovers) goes; a row re-edited since stays.
+    const drafts = readDrafts(), now = Date.now();
+    new Set([...draftOwned.keys(), ...draftRemnants.keys()]).forEach(id => {
+      const groups = groupsOf(drafts[id]), mine = draftMine.get(id);
+      (draftOwned.get(id) || new Map()).forEach((snap, key) => {
+        const edit = state.edits.get(key);
+        if (!edit || edit.cs !== snap.cs || edit.source !== snap.source || edit.base_cs !== snap.base_cs) return;
+        state.edits.delete(key); draftTimes.delete(key);
+        dropEntry(groups, snap.sha, snap.entry);
+        if (mine) mine.delete(mineKey(snap.sha, snap.entry));
+      });
+      const remnant = draftRemnants.get(id);
+      if (remnant) remnant.list.forEach(edit => dropEntry(groups, remnant.sha, edit.entry));
+      putGroups(drafts, id, groups, drafts[id], now);
+    });
     draftOwned.clear(); draftRemnants.clear(); restoredTotal = 0; restoredNewest = 0;
     writeDrafts(drafts);
     document.getElementById('draft-restored').hidden = true;
     setDirty(); flushDraft(); render();
   });
   document.getElementById('draft-stale-discard').addEventListener('click', () => {
-    const drafts = readDrafts();
-    staleDrafts.forEach((draft, id) => { delete drafts[id]; });
+    const drafts = readDrafts(), now = Date.now();
+    staleDrafts.forEach((stale, id) => { putGroups(drafts, id, groupsOf(drafts[id]).filter(group => !stale.shas.includes(group.sha)), drafts[id], now); });
     staleDrafts.clear(); writeDrafts(drafts); showStaleBanner();
   });
   document.getElementById('draft-stale-apply').addEventListener('click', () => {
     let applied = 0, skipped = 0;
-    staleDrafts.forEach((draft, id) => { const song = state.songs.find(item => draftId(item) === id); if (song) { const result = applyDraft(song, draft, true); applied += result.applied; skipped += result.skipped.length; draftWritten.add(id); } });
-    staleDrafts.clear(); showStaleBanner();
+    const drafts = readDrafts(), now = Date.now();
+    staleDrafts.forEach((stale, id) => {
+      const song = state.songs.find(item => draftId(item) === id);
+      if (!song) return;
+      const result = applyDraft(song, stale, true);
+      applied += result.applied; skipped += result.skipped.length;
+      adopt(id, result.snaps);
+      putGroups(drafts, id, groupsOf(drafts[id]).filter(group => !stale.shas.includes(group.sha)), drafts[id], now);
+    });
+    staleDrafts.clear(); writeDrafts(drafts); showStaleBanner();
     if (applied || skipped) state.notice = '已套用 ' + applied + ' 筆舊的未儲存修改' + (skipped ? '，' + skipped + ' 筆已不適用而略過' : '') + '。';
     setDirty(); flushDraft(); render();
   });
+  let lastBeat = 0;
+  function draftBeat() { if (Date.now() - lastBeat >= DRAFT_BEAT_MS) { lastBeat = Date.now(); flushDraft(); } }
+  // A closing tab stops counting as alive, so another tab's next refresh may take its drafts over.
+  function releaseTab() {
+    const drafts = readDrafts();
+    let changed = false;
+    Object.values(drafts).forEach(draft => { if (draft && draft.tabs && tabId in draft.tabs) { delete draft.tabs[tabId]; changed = true; } });
+    if (changed) writeDrafts(drafts);
+  }
   function autoplaySelected() {
     flushDraft();
     if (!state.autoplay) return;
@@ -714,7 +786,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       state.error = ''; setDirty(); render();
       return;
     }
-    state.edits.set(key, {entry:item.row.entry, cs, source:String(source || 'manual').slice(0,64), nudge_cs:nudgeCs, base_cs:item.row.current_cs});
+    state.edits.set(key, {entry:item.row.entry, cs, source:String(source || 'manual').slice(0,64), nudge_cs:nudgeCs, base_cs:item.row.current_cs, bsha:songSha(item.song)});
     draftTimes.set(key, Date.now());
     state.error = ''; setDirty(); render();
   }
@@ -1027,9 +1099,11 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     if (!skipped.length) return '沒有歌曲：這次沒有找到對齊報告。';
     return '沒有可審的歌曲：' + skipped.length + ' 份報告被略過（放在 LRC bk 資料夾或報告損壞）：' + skipped.join('、');
   }
+  let portChecked = false;
   async function load() {
     try {
       flushDraft();
+      if (!portChecked) { portChecked = true; try { const notice = (await api('/api/version')).port_notice; if (notice) state.notice = notice; } catch (_) {} }
       const oldIds = new Map(state.songs.map(song => [song.index, draftId(song)]));
       const list = await api('/api/songs');
       // A live refresh can renumber songs; carry staged edits, done marks and the open song over by report path, not by index.
@@ -1044,8 +1118,8 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
         draftTimes.forEach((time, key) => { const next = remap(key); if (next != null) tm.set(next, time); });
         draftTimes.clear(); tm.forEach((time, key) => draftTimes.set(key, time));
         const owned = new Map();
-        draftOwned.forEach((keys, id) => owned.set(id, keys.map(remap).filter(key => key != null)));
-        draftOwned.clear(); owned.forEach((keys, id) => draftOwned.set(id, keys));
+        draftOwned.forEach((snaps, id) => { const next = new Map(); snaps.forEach((snap, key) => { const mapped = remap(key); if (mapped != null) next.set(mapped, snap); }); owned.set(id, next); });
+        draftOwned.clear(); owned.forEach((snaps, id) => draftOwned.set(id, snaps));
         state.edits = carried; state.done = new Set(doneKeys);
         if (activeId != null && newIndex.has(activeId)) state.activeSong = newIndex.get(activeId);
       }
@@ -1091,7 +1165,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
         const response = await fetch('/api/song/' + index + '/save', {
           method:'POST',
           headers:{'X-Review-Token':token, 'Origin':location.origin, 'Content-Type':'application/json'},
-          body:JSON.stringify({base_sha256:song.detail.base_sha256, edits:edits.map(({base_cs,...edit}) => edit)})
+          body:JSON.stringify({base_sha256:song.detail.base_sha256, edits:edits.map(({base_cs,bsha,...edit}) => edit)})
         });
         const data = await response.json().catch(() => ({error:response.statusText}));
         if (response.status === 409) {
@@ -1100,8 +1174,9 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
         }
         if (!response.ok) { failures.push(song.song + ': save failed: ' + (data.error || response.statusText)); continue; }
         edits.forEach(edit => state.edits.delete(String(index) + ':' + edit.entry));
+        const savedSha = song.detail.base_sha256;
         song.detail = data;
-        dropSavedDraft(song);
+        dropSavedDraft(song, savedSha);
       } catch (error) {
         failures.push('song ' + index + ': save failed: ' + error.message);
       }
@@ -1418,11 +1493,12 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   document.getElementById('import-close').addEventListener('click', () => { importBox().hidden = true; });
 
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushDraft(); });
-  addEventListener('beforeunload', event => { flushDraft(); if (state.dirty) { event.preventDefault(); event.returnValue = ''; } });
+  addEventListener('beforeunload', event => { flushDraft(); releaseTab(); if (state.dirty) { event.preventDefault(); event.returnValue = ''; } });
   // Live refresh: a FLAC dropped in, an LRC changed or a new alignment run shows up without restarting.
   let seenGeneration = null, refreshPending = false;
   async function watchFiles() {
     try {
+      draftBeat();
       const generation = (await api('/api/version')).generation;
       if (seenGeneration !== null && generation !== seenGeneration) refreshPending = true;
       seenGeneration = generation;
