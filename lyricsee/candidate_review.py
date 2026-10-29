@@ -249,7 +249,7 @@ def accept_candidate(
     if lyrics_lines is None:
         lyrics_lines, cleaning = cleaned_candidate_lines(candidates_dir, candidate_idx, len(metadata))
         extra = {**(extra or {}), "cleaning": cleaning}
-    lyrics_text = traditionalize_lyrics_text("\n".join(lyrics_lines))
+    lyrics_text = traditionalize_lyrics_text("\n".join(lyrics_lines), original_only=True)
     if not lyrics_text.endswith("\n"):
         lyrics_text += "\n"
 

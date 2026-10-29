@@ -601,10 +601,18 @@ OPENCC_CONFIG = "s2tw"
 # Kana only: the middle dot (U+30FB, U+FF65) and the prolonged-sound mark
 # (U+30FC, U+FF70) also appear in Chinese lines, so they do not count.
 _ANY_KANA_RE = re.compile(r"[\u3040-\u30fa\u30fd-\u30ff\u31f0-\u31ff\uff66-\uff6f\uff71-\uff9f]")
-CHINESE_SONG_MIN_NO_KANA = 0.8
+# A song is Japanese when kana shows up in at least this many original lines,
+# or in at least this share of its CJK original lines.
+JAPANESE_MIN_KANA_LINES = 2
+JAPANESE_MIN_KANA_SHARE = 0.10
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
+# Kana inside brackets or a repeated "ラララ" is a Chinese-song interjection, not Japanese.
+_BRACKETED_RE = re.compile(r"[（(][^（）()]*[）)]|[「『【\[][^「」『』【】\[\]]*[」』】\]]")
+_KANA_REPEAT_RE = re.compile(r"(.)\1{2,}")
 _opencc_converter = None
+_opencc_t2s = None
 _opencc_failed = False
+_clear_simplified_cache = None
 
 
 def _lcmap_traditional(value: str) -> str:
@@ -626,27 +634,82 @@ def _lcmap_traditional(value: str) -> str:
         return value
 
 
+def _load_opencc():
+    """(s2tw, t2s) converters, or None once OpenCC is known to be unusable."""
+    global _opencc_converter, _opencc_t2s, _opencc_failed
+    if _opencc_failed:
+        return None
+    try:
+        from opencc import OpenCC
+
+        if _opencc_converter is None:
+            _opencc_converter = OpenCC(OPENCC_CONFIG)
+        if _opencc_t2s is None:
+            _opencc_t2s = OpenCC("t2s")
+    except Exception as exc:  # ImportError or a missing config
+        _opencc_failed = True
+        logging.getLogger(__name__).warning(
+            "OpenCC unavailable (%s); falling back to LCMap character conversion", exc
+        )
+        return None
+    return _opencc_converter, _opencc_t2s
+
+
+def _clear_simplified_chars() -> dict[str, str]:
+    """Simplified-only characters with exactly one Traditional form.
+
+    A character OpenCC lists as its own Traditional form (干 托 背 里 后 ...)
+    or with several candidates (发 -> 發/髮) is ambiguous, so it never counts.
+    """
+    global _clear_simplified_cache
+    if _clear_simplified_cache is None:
+        table: dict[str, str] = {}
+        try:
+            import opencc
+
+            path = Path(opencc.__file__).parent / "dictionary" / "STCharacters.txt"
+            for row in path.read_text(encoding="utf-8").splitlines():
+                key, _, values = row.partition("\t")
+                options = values.split()
+                if len(key) == 1 and len(options) == 1 and options[0] != key:
+                    table[key] = options[0]
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "OpenCC character table unreadable (%s); no Simplified detection", exc
+            )
+        _clear_simplified_cache = table
+    return _clear_simplified_cache
+
+
+def _clear_simplified_in(line: str, t2s) -> set[str]:
+    table = _clear_simplified_chars()
+    return {ch for ch in line if ch in table and t2s.convert(ch) == ch}
+
+
+def _traditionalize_line(value: str, s2tw, t2s) -> str:
+    """Convert only what is really Simplified; Traditional text passes through untouched."""
+    clear = _clear_simplified_in(value, t2s)
+    if not clear:
+        return value
+    if t2s.convert(value) == value:
+        return s2tw.convert(value)
+    # Mixed line: already-Traditional characters stay, clear Simplified ones convert.
+    return "".join(s2tw.convert(ch) if ch in clear else ch for ch in value)
+
+
 def _to_traditional_chinese(value: str) -> str:
     """Traditional (Taiwan) text via OpenCC; LCMap char-level only if OpenCC is missing."""
-    global _opencc_converter, _opencc_failed
+    global _opencc_converter, _opencc_t2s, _opencc_failed
     value = value.replace("\x00", "")
     if not value or not _CJK_RE.search(value):
         return value
-    if _opencc_converter is None and not _opencc_failed:
+    converters = _load_opencc()
+    if converters is not None:
         try:
-            from opencc import OpenCC
-
-            _opencc_converter = OpenCC(OPENCC_CONFIG)
-        except Exception as exc:  # ImportError or a missing config
-            _opencc_failed = True
-            logging.getLogger(__name__).warning(
-                "OpenCC unavailable (%s); falling back to LCMap character conversion", exc
-            )
-    if _opencc_converter is not None:
-        try:
-            return _opencc_converter.convert(value)
+            return _traditionalize_line(value, *converters)
         except Exception as exc:
             _opencc_converter = None
+            _opencc_t2s = None
             _opencc_failed = True
             logging.getLogger(__name__).warning(
                 "OpenCC convert failed (%s); falling back to LCMap character conversion", exc
@@ -654,13 +717,45 @@ def _to_traditional_chinese(value: str) -> str:
     return _lcmap_traditional(value)
 
 
+def _is_japanese_kana_line(line: str) -> bool:
+    plain = _BRACKETED_RE.sub("", line)
+    if _KANA_REPEAT_RE.search(plain):
+        plain = _KANA_REPEAT_RE.sub("", plain)
+    return bool(_ANY_KANA_RE.search(plain))
+
+
+def _not_japanese_kanji(ch: str) -> bool:
+    try:
+        ch.encode("cp932")
+        return False
+    except UnicodeEncodeError:
+        return True
+
+
+def _has_chinese_evidence(line: str) -> bool:
+    """A character Japanese does not use that is clearly Simplified or Traditional."""
+    candidates = [ch for ch in line if _CJK_RE.match(ch) and _not_japanese_kanji(ch)]
+    if not candidates:
+        return False
+    converters = _load_opencc()
+    if converters is None:
+        return True
+    t2s = converters[1]
+    table = _clear_simplified_chars()
+    return any(ch in table or t2s.convert(ch) != ch for ch in candidates)
+
+
 def _is_chinese_song(originals: Iterable[str]) -> bool:
-    """Of the original lines with CJK, at least 80% hold no kana."""
+    """Chinese: little real kana, and some line is clearly Simplified or Traditional."""
     cjk_lines = [line for line in originals if _CJK_RE.search(line)]
     if not cjk_lines:
         return False
-    plain = sum(1 for line in cjk_lines if not _ANY_KANA_RE.search(line))
-    return plain / len(cjk_lines) >= CHINESE_SONG_MIN_NO_KANA
+    kana_lines = sum(1 for line in cjk_lines if _is_japanese_kana_line(line))
+    if kana_lines >= JAPANESE_MIN_KANA_LINES:
+        return False
+    if kana_lines / len(cjk_lines) >= JAPANESE_MIN_KANA_SHARE:
+        return False
+    return any(_has_chinese_evidence(line) for line in cjk_lines)
 
 
 def traditionalize_pairs(pairs: Iterable[tuple[str, str]]) -> list[tuple[str, str]]:
@@ -675,12 +770,15 @@ def traditionalize_pairs(pairs: Iterable[tuple[str, str]]) -> list[tuple[str, st
     return result
 
 
-def traditionalize_lyrics_text(text: str) -> str:
-    """Same rule for an already rendered 'original  translation' lyrics file."""
+def traditionalize_lyrics_text(text: str, *, original_only: bool = False) -> str:
+    """Same rule for lyrics text: an 'original  translation' file, or original-only lines."""
     rows = []
     for line in text.split("\n"):
-        original, _, translation = line.partition("  ")
-        rows.append((original, translation))
+        if original_only:
+            rows.append((line, ""))
+        else:
+            original, _, translation = line.partition("  ")
+            rows.append((original, translation))
     return "\n".join(
         f"{original}  {translation}" if translation else original
         for original, translation in traditionalize_pairs(rows)

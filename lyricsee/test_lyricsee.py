@@ -339,6 +339,54 @@ class LyricseeCoreTests(unittest.TestCase):
             core.traditionalize_lyrics_text("我们的梦想  Our dream\n"), "我們的夢想  Our dream\n"
         )
 
+    def test_already_traditional_text_is_not_overconverted(self):
+        core = load_core()
+        for text in ("反烏托邦", "干擾", "背包", "里長", "在反烏托邦的世界裡，不受任何干擾地背著背包前行", "阿里山的里長伯", "托兒所的笑聲"):
+            self.assertEqual(core._to_traditional_chinese(text), text, text)
+            self.assertEqual(core.render_lyrics([core.LyricPair("x", text)]), "x  %s\n" % text)
+
+    def test_simplified_text_still_converts(self):
+        core = load_core()
+        cases = {
+            "反乌托邦": "反烏托邦",
+            "干扰": "干擾",
+            "我们的梦想": "我們的夢想",
+            "我在这里": "我在這裡",
+            "发现": "發現",
+        }
+        for simplified, expected in cases.items():
+            self.assertEqual(core._to_traditional_chinese(simplified), expected, simplified)
+
+    def test_mixed_line_converts_only_simplified_characters(self):
+        core = load_core()
+        self.assertEqual(core._to_traditional_chinese("干擾我们"), "干擾我們")
+        self.assertEqual(core._to_traditional_chinese("背包们 烏托邦"), "背包們 烏托邦")
+
+    def test_traditional_original_song_is_untouched_and_simplified_one_converts(self):
+        core = load_core()
+        trad = [core.LyricPair("反烏托邦的背包", "x"), core.LyricPair("里長干擾", "y")]
+        self.assertEqual(core.render_lyrics(trad), "反烏托邦的背包  x\n里長干擾  y\n")
+        simp = [core.LyricPair("我们一起唱歌", "x"), core.LyricPair("啦啦啦（ラララ）", "y")]
+        self.assertEqual(core.render_lyrics(simp), "我們一起唱歌  x\n啦啦啦（ラララ）  y\n")
+
+    def test_kanji_only_japanese_song_is_untouched(self):
+        core = load_core()
+        rows = [core.LyricPair("少年", "Boy"), core.LyricPair("大志", "Ambition"), core.LyricPair("声", "Voice")]
+        self.assertEqual(core.render_lyrics(rows), "少年  Boy\n大志  Ambition\n声  Voice\n")
+
+    def test_two_kana_lines_make_a_song_japanese(self):
+        core = load_core()
+        rows = [core.LyricPair("声が聞こえる"), core.LyricPair("国へ帰る")] + [core.LyricPair("声")] * 10
+        text = core.render_lyrics(rows)
+        self.assertNotIn("聲", text)
+        self.assertNotIn("國", text)
+
+    def test_original_only_candidate_text_ignores_double_spaces(self):
+        core = load_core()
+        lines = ["君の歌  声を聞かせて", "あおいそら", "しろいくも", "とおいまち", "ゆれているよ"]
+        text = "\n".join(lines)
+        self.assertEqual(core.traditionalize_lyrics_text(text, original_only=True), text)
+
     def test_collect_candidates_sanitizes_structured_metadata_without_dropping_lyrics(self):
         core = load_core()
 
