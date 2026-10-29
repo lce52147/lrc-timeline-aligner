@@ -68,6 +68,11 @@ class LyricsTagExportTests(unittest.TestCase):
     def test_text_is_crlf_without_bom_or_trailing_break(self) -> None:
         self.assertEqual(lyrics_tag_export.lrc_text(LRC), EXPECTED)
 
+    def test_mixed_line_endings_and_trailing_breaks_are_normalized_by_design(self) -> None:
+        # Decision: the tag always gets CRLF and loses trailing line breaks (and a BOM); not an accident.
+        raw = b"\xef\xbb\xbf[00:01.00]a\n[00:02.00]b\r[00:03.00]c\r\n\r\n\n"
+        self.assertEqual(lyrics_tag_export.lrc_text(raw), "[00:01.00]a\r\n[00:02.00]b\r\n[00:03.00]c")
+
     def test_flac_round_trip_preserves_everything_else(self) -> None:
         path = self._flac()
         before = lyrics_tag_export._snapshot(path, "LYRICS")

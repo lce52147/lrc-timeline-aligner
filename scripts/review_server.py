@@ -1111,7 +1111,7 @@ def _save_song(song, body):
         log_stage.unlink(missing_ok=True)
         if auto_published:
             auto.unlink(missing_ok=True)
-        return 423, {"error": "LRC file is locked (close the player), then Save again"}
+        return 423, {"error": "LRC 檔案被其他程式鎖住（請關閉播放器）再按儲存 (LRC file is locked; close the player, then Save again)"}
     try:
         os.replace(log_stage, edits_path)
     except OSError:
@@ -1756,7 +1756,10 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
                 self._json(*_record_decision(song, body))
                 return
             if match.group(2) == "export":
-                self._json(*_export_song(song, body, self.server.store.report_dir))
+                status, result = _export_song(song, body, self.server.store.report_dir)
+                if status == 200 and not body.get("check"):
+                    self.server.store.refresh_if_changed()
+                self._json(status, result)
                 return
             status, result = _save_song(song, body)
             self._json(status, _public_song(result, self.server.store.read_only) if status == 200 else result)

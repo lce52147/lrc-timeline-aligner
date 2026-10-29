@@ -921,6 +921,8 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         payload = review_server._song_payload(report_path, json.loads(report_path.read_text(encoding="utf-8")))
         self.assertTrue(payload["read_only"])
         self.assertEqual(payload["read_only_reason"], "lrc-exported")
+        _status, _headers, listing = self._request("GET", "/api/songs", **{"X-Review-Token": self.server.token})
+        self.assertEqual(json.loads(listing)[0]["read_only_reason"], "lrc-exported", "no /api/version poll needed")
 
     def test_m4a_exported_song_with_another_audio_path_shows_as_exported(self) -> None:
         self._real_flac()
@@ -1043,6 +1045,7 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         with mock.patch.object(review_server.os, "replace", side_effect=[PermissionError()] * 3) as replace:
             status, result = review_server._save_song(song, body)
         self.assertEqual(status, 423)
+        self.assertIn("LRC 檔案被其他程式鎖住（請關閉播放器）再按儲存", result["error"])
         self.assertEqual(replace.call_count, 3)
         self.assertEqual(self.output.read_bytes(), self.original)
         self.assertEqual(edits.read_bytes(), before_log)
