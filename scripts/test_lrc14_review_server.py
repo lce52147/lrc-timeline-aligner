@@ -885,7 +885,7 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         if shutil.which(review_server.runtime_paths.ffmpeg()) is None:
             self.skipTest("needs ffmpeg")
         subprocess.run([review_server.runtime_paths.ffmpeg(), "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
-                        "-c:a", "flac", str(self.audio)], check=True, creationflags=0x08004000)
+                        "-c:a", "flac", str(self.audio)], check=True, creationflags=review_server.lyrics_tag_export.PROC_FLAGS)
         self.store.refresh_if_changed()
 
     def test_export_writes_the_saved_lrc_into_the_audio_tag(self) -> None:
@@ -926,7 +926,7 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         self._real_flac()
         m4a = self.audio.with_suffix(".m4a")
         subprocess.run([review_server.runtime_paths.ffmpeg(), "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
-                        "-c:a", "aac", str(m4a)], check=True, creationflags=0x08004000)
+                        "-c:a", "aac", str(m4a)], check=True, creationflags=review_server.lyrics_tag_export.PROC_FLAGS)
         with mock.patch.dict(os.environ, {"LRC_EXPORT_ARCHIVE_DIR": str(self.root / "bk")}):
             status, _headers, _data = self._json_request("POST", "/api/song/0/export", {"audio": "song.m4a"})
         self.assertEqual(status, 200)

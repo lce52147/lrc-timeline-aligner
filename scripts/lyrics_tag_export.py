@@ -214,6 +214,8 @@ def _m4a_payload_digest(path):
                 size = size_total - offset
             if size < header or offset + size > size_total:
                 return None
+            if kind == b"moof":
+                return None  # fragmented MP4: sample tables live in moof/traf, caller falls back to decoded md5
             if kind == b"mdat":
                 if found is not None:
                     return None
@@ -386,7 +388,7 @@ def archive_lrc(lrc_path, work_dir, audio_name, setting=None):
                 raise OSError("could not send the file to the Recycle Bin")
         else:
             folder.mkdir(parents=True, exist_ok=True)
-            if folder.resolve() == lrc_path.resolve().parent:
+            if folder.resolve() == lrc_path.parent.resolve():
                 result["mode"] = "off"
                 result["note"] = "already in archive dir"
                 raise _InPlace()

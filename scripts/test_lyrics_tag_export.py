@@ -30,7 +30,7 @@ EXPECTED = "[ti:Song]\r\n[re:LRC tools ctc-forced-align]\r\n[00:01.00]一行\r\n
 
 def _make(path: Path, *args: str) -> None:
     subprocess.run([runtime_paths.ffmpeg(), "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
-                    *args, str(path)], check=True, creationflags=0x08004000)
+                    *args, str(path)], check=True, creationflags=lyrics_tag_export.PROC_FLAGS)
 
 
 @unittest.skipIf(mutagen is None or not HAVE_FFMPEG, "needs mutagen and ffmpeg")
@@ -221,6 +221,17 @@ class LyricsTagExportTests(unittest.TestCase):
                 lyrics_tag_export.export(path, LRC, self.work)
         self.assertEqual(path.read_bytes(), original)
 
+    def test_m4a_digest_gives_up_on_fragmented_mp4_and_decoded_md5_sees_trun_damage(self) -> None:
+        path = self.root / "frag.m4a"
+        _make(path, "-c:a", "aac", "-movflags", "frag_keyframe+empty_moov+default_base_moof")
+        self.assertIn(b"moof", path.read_bytes())
+        self.assertIsNone(lyrics_tag_export._m4a_payload_digest(path))
+        before = lyrics_tag_export._decoded_md5(path)
+        data = bytearray(path.read_bytes())
+        data[data.index(b"trun") + 12] ^= 0x55
+        path.write_bytes(bytes(data))
+        self.assertNotEqual(lyrics_tag_export._decoded_md5(path), before)
+
     def test_m4a_digest_sees_each_sample_table_but_not_tags(self) -> None:
         path = self._m4a()
         base = lyrics_tag_export._m4a_payload_digest(path)
@@ -287,6 +298,22 @@ class ArchiveLrcTests(unittest.TestCase):
 
     def _log(self):
         return [json.loads(line) for line in (self.work / lyrics_tag_export.LOG_NAME).read_text(encoding="utf-8").splitlines()]
+
+    def test_symlinked_lrc_compares_its_own_directory_not_the_target(self) -> None:
+        storage = self.root / "storage"
+        storage.mkdir()
+        real = storage / "song2.lrc"
+        real.write_text("[00:01.00]x", encoding="utf-8")
+        music = self.root / "music"
+        music.mkdir()
+        link = music / "song2.lrc"
+        try:
+            link.symlink_to(real)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks unavailable")
+        result = lyrics_tag_export.archive_lrc(link, self.work, "song2.flac", ("move", music))
+        self.assertEqual(result["mode"], "off")
+        self.assertEqual([p.name for p in music.iterdir()], ["song2.lrc"])
 
     def test_move_to_folder_and_log(self) -> None:
         result = lyrics_tag_export.archive_lrc(self.lrc, self.work, "song.flac", ("move", self.dest))
