@@ -181,18 +181,25 @@ _TRAIL_MARK_RE = re.compile(rb"[ \t]*\*+(?=\r?$)")
 
 
 def _line_marks(line):
-    """(leading, trailing) user marks on a timed line: ``*[00:01.00]text`` or ``[00:01.00]text*``."""
+    """(leading, trailing) user marks on a timed line: ``*[00:01.00]text``, optionally also ``text*``.
+
+    A trailing ``*`` on its own is lyric text (footnote, censor symbol), never a mark.
+    """
     lead = _LEAD_MARK_RE.match(line)
-    rest = line[lead.end():] if lead else line
+    if not lead:
+        return False, False
+    rest = line[lead.end():]
     match = _TAG_RE.match(rest)
     if not match:
         return False, False
-    return bool(lead), bool(_TRAIL_MARK_RE.search(rest[match.end():]))
+    return True, bool(_TRAIL_MARK_RE.search(rest[match.end():]))
 
 
 def _strip_line_marks(line):
     lead = _LEAD_MARK_RE.match(line)
-    rest = line[lead.end():] if lead else line
+    if not lead:
+        return line
+    rest = line[lead.end():]
     match = _TAG_RE.match(rest)
     if not match:
         return line
@@ -209,28 +216,52 @@ def _strip_marks(data):
     return _join_lrc(bom, trailing, cleaned), marked
 
 
+def _content_lines(lines):
+    """The lines up to the last non-blank one; trailing blank lines are never mapped (and never rewritten)."""
+    end = len(lines)
+    while end and not lines[end - 1].strip():
+        end -= 1
+    return lines[:end]
+
+
 def _loose_mapping(data, display_lines, assignments):
-    """Index-based mapping for an LRC whose timestamps were hand-edited: consecutive equal tags form one entry."""
-    _bom, _trailing, lines = _split_lrc(data)
+    """Index-based mapping for an LRC whose timestamps were hand-edited, or the reason it is unsafe.
+
+    Only untimed lines (metadata, blanks) or timed lines earlier than every published tag may sit above the
+    display region: anything else could be an inserted line, and guessing would aim a save at the wrong line.
+    """
+    _bom, _trailing, all_lines = _split_lrc(data)
+    lines = _content_lines(all_lines)
     try:
         display_lines = int(display_lines)
     except (TypeError, ValueError):
         return None, lines, "display-lines-mismatch"
     if display_lines < 0 or display_lines > len(lines):
         return None, lines, "display-lines-mismatch"
-    groups = []
-    previous = None
-    for index in range(len(lines) - display_lines, len(lines)):
+    wanted = [_tag_cs(assignment.get("lrc_tag")) if isinstance(assignment, dict) else None for assignment in assignments]
+    if any(tag is None for tag in wanted):
+        return None, lines, "malformed-assignment"
+    start = len(lines) - display_lines
+    for index in range(start):
         tag = _line_tag(lines[index])
-        if tag is None:
-            return None, lines, "untimed-region"
-        if groups and tag == previous:
-            groups[-1].append(index)
+        if tag is not None and (not wanted or tag >= min(wanted)):
+            return None, lines, "extra-timed-lines"
+    tags = [_line_tag(line) for line in lines[start:]]
+    if any(tag is None for tag in tags):
+        return None, lines, "untimed-region"
+    if len(tags) == len(assignments):
+        return [(start + offset,) for offset in range(len(tags))], lines, None
+    groups = []
+    for offset, tag in enumerate(tags):
+        if groups and tag == tags[groups[-1][-1] - start]:
+            groups[-1].append(start + offset)
         else:
-            groups.append([index])
-        previous = tag
-    if len(groups) != len(assignments):
+            groups.append([start + offset])
+    if len(groups) > len(assignments):
         return None, lines, "timing-entry-count-mismatch"
+    if len(groups) < len(assignments):
+        # Equal-tag lines could be one multi-line entry or several entries sharing a tag (duet parts).
+        return None, lines, "ambiguous-duet-structure" if len(tags) > len(assignments) else "timing-entry-count-mismatch"
     return [tuple(group) for group in groups], lines, None
 
 
@@ -238,23 +269,30 @@ _LOOSE_REASONS = {"timing-entry-count-mismatch", "ambiguous-timing-region"}
 
 
 def _song_mapping(report, assignments, reference_raw):
-    """(mapping, reason, loose) for the reference LRC; hand-edited timestamps fall back to index grouping."""
+    """(mapping, reason, loose) for the reference LRC.
+
+    ``loose`` means the file is not the published one and the mapping rests on index grouping: a multi-line
+    entry cannot be proved to hold only its own lines, so it is shown but never saved.
+    """
     timing_entries = report.get("timing_entries")
     if timing_entries is not None and (not isinstance(timing_entries, int) or timing_entries != len(assignments)):
         return None, "timing-entry-count-mismatch", False
     clean = _strip_marks(reference_raw)[0]
     mapping, _lines, reason = _timing_mapping(clean, report.get("display_lines"), assignments)
-    if reason in _LOOSE_REASONS:
-        published = report.get("published_lrc_sha256")
-        if isinstance(published, str) and _sha256_bytes(reference_raw) != published:
-            loose, _lines, loose_reason = _loose_mapping(clean, report.get("display_lines"), assignments)
-            if loose_reason is None:
-                return loose, None, True
+    published = report.get("published_lrc_sha256")
+    stale = isinstance(published, str) and _sha256_bytes(clean) != published
+    if reason in _LOOSE_REASONS and stale:
+        loose, _lines, loose_reason = _loose_mapping(clean, report.get("display_lines"), assignments)
+        if loose_reason is None:
+            return loose, None, True
+    if reason is None and stale and any(len(group) > 1 for group in mapping):
+        return mapping, None, True
     return mapping, reason, False
 
 
 def _timing_mapping(data, display_lines, assignments):
-    _bom, _trailing, lines = _split_lrc(data)
+    _bom, _trailing, all_lines = _split_lrc(data)
+    lines = _content_lines(all_lines)
     try:
         display_lines = int(display_lines)
     except (TypeError, ValueError):
@@ -799,8 +837,8 @@ def _song_payload(report_path, report, anchor=None):
             lyrics = line_lyrics(current_lines, line_indexes)
             candidates, extra_candidates = _candidate_rows(assignment, current_cs, auto_cs)
             user_marked = any(line in marked_lines for line in line_indexes)
-            if loose and current_cs != _tag_cs(assignment.get("lrc_tag")):
-                # The published line is gone from this slot: nothing in the report speaks for it.
+            if loose and (current_cs != _tag_cs(assignment.get("lrc_tag")) or len(line_indexes) > 1):
+                # The published line is gone from this slot, or its line count is unproven: nothing in the report speaks for it.
                 candidates, extra_candidates = [], []
             listed_row = listed.get(index + 1, {})
             status = listed_row.get("status", feature.get("status", "UNTRUSTED"))
@@ -1017,7 +1055,7 @@ def _save_song(song, body):
         return 409, {"error": "stale base_sha256"}
     assignments = song["report_data"].get("assignments") if isinstance(song["report_data"].get("assignments"), list) else []
     reference = song["auto"].read_bytes() if song["auto"].is_file() else current
-    mapping, mapping_reason, _loose = _song_mapping(song["report_data"], assignments, reference)
+    mapping, mapping_reason, loose = _song_mapping(song["report_data"], assignments, reference)
     _bom, _trailing, lines = _split_lrc(current)
     if mapping_reason:
         return 403, {"error": mapping_reason}
@@ -1034,6 +1072,8 @@ def _save_song(song, body):
             return 400, {"error": "invalid edit"}
         if cs < 0 or cs > int((_number(song["report_data"].get("duration_seconds")) or 0) * 100 + 100):
             return 400, {"error": "timestamp out of range"}
+        if loose and len(mapping[entry - 1]) > 1:
+            return 403, {"error": "unverified-multiline-entry"}
         seen.add(entry)
         current_cs = _line_tag(_strip_line_marks(lines[mapping[entry - 1][0]]))
         if cs != current_cs:

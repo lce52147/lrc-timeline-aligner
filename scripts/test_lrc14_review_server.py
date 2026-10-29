@@ -810,7 +810,7 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
 
     def test_star_marked_lrc_is_shown_flagged_not_hidden(self) -> None:
         self._hand_edit({b"[00:02.00]two a": b"*[00:02.00]two a", b"[00:02.00]two b": b"*[00:02.00]two b",
-                         b"[00:03.00]four": b"[00:03.00]four*"})
+                         b"[00:03.00]four": b"*[00:03.00]four*"})
         detail = self._detail()
         self.assertFalse(detail["read_only"])
         self.assertTrue(detail["manual_edited"])
@@ -843,7 +843,7 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
 
     def test_save_keeps_marks_on_lines_that_were_not_edited(self) -> None:
         self._hand_edit({b"[00:02.00]two a": b"*[00:02.00]two a", b"[00:02.00]two b": b"*[00:02.00]two b",
-                         b"[00:03.00]four": b"[00:03.00]four*"})
+                         b"[00:03.00]four": b"*[00:03.00]four*"})
         detail = self._detail()
         body = {"base_sha256": detail["base_sha256"],
                 "edits": [{"entry": 4, "cs": 350, "source": "whisper", "nudge_cs": 50}]}
@@ -1371,3 +1371,66 @@ class ArchivedReportsStayHiddenTest(unittest.TestCase):
                 _json.dumps({"assignments": [], "audio_path": str(root / "b.flac")}), encoding="utf-8")
             found, _excluded = review_server._report_files([root], root)
             self.assertEqual([path.name for path in found], ["live--1.align-report.json"])
+
+
+class ReviewMappingSafetyTests(unittest.TestCase):
+    """AP2: a mapping that might aim an entry at the wrong line is never editable."""
+
+    @staticmethod
+    def _report(display_lines, *tags):
+        return {"published_lrc_sha256": "dummy", "display_lines": display_lines,
+                "assignments": [{"entry": i + 1, "lrc_tag": tag} for i, tag in enumerate(tags)]}
+
+    def _mapping(self, report, data):
+        return review_server._song_mapping(report, report["assignments"], data)
+
+    def test_f1_inserted_timed_line_is_not_header_metadata(self) -> None:
+        report = self._report(3, "[00:01.00]", "[00:02.00]", "[00:03.00]")
+        mapping, reason, _loose = self._mapping(
+            report, b"[00:01.00]a\n[00:01.50]b\n[00:02.00]c\n[00:03.00]d\n")
+        self.assertIsNone(mapping)
+        self.assertIsNotNone(reason)
+
+    def test_f1_untimed_and_early_header_lines_are_still_skipped(self) -> None:
+        report = self._report(3, "[00:01.00]", "[00:02.00]", "[00:03.00]")
+        mapping, reason, loose = self._mapping(
+            report, b"[ar:x]\n\n[00:00.00]title\n[00:01.00]a\n[00:02.00]b\n[00:03.20]c\n")
+        self.assertIsNone(reason)
+        self.assertEqual(mapping, [(3,), (4,), (5,)])
+        self.assertTrue(loose)
+
+    def test_f2_absorbed_neighbour_line_is_loose_and_not_saveable(self) -> None:
+        report = self._report(4, "[00:01.00]", "[00:02.00]", "[00:03.00]")
+        mapping, reason, loose = self._mapping(
+            report, b"[00:01.00]a\n[00:02.00]b\n[00:03.00]c\n[00:03.00]d\n")
+        self.assertIsNone(reason)
+        self.assertTrue(loose)
+        self.assertEqual(mapping[2], (2, 3))
+
+    def test_f3_identical_duet_tags_keep_the_song_visible(self) -> None:
+        report = self._report(3, "[00:01.00]", "[00:01.00]", "[00:02.00]")
+        mapping, reason, loose = self._mapping(report, b"[00:01.00]a\n[00:01.00]b\n[00:02.10]c\n")
+        self.assertIsNone(reason)
+        self.assertEqual(mapping, [(0,), (1,), (2,)])
+        self.assertTrue(loose)
+
+    def test_f3_duet_with_extra_line_is_read_only(self) -> None:
+        report = self._report(4, "[00:01.00]", "[00:01.00]", "[00:02.00]")
+        mapping, reason, _loose = self._mapping(report, b"[00:01.00]a\n[00:01.00]b\n[00:01.00]c\n[00:02.10]d\n")
+        self.assertIsNone(mapping)
+        self.assertIsNotNone(reason)
+
+    def test_f5_trailing_blank_lines_are_ignored_and_preserved(self) -> None:
+        report = self._report(2, "[00:01.00]", "[00:02.00]")
+        data = b"[00:01.00]a\n[00:02.00]b\n\n  \n"
+        report["published_lrc_sha256"] = hashlib.sha256(data).hexdigest()
+        mapping, reason, loose = self._mapping(report, data)
+        self.assertEqual((mapping, reason, loose), ([(0,), (1,)], None, False))
+        bom, trailing, lines = review_server._split_lrc(data)
+        self.assertEqual(review_server._join_lrc(bom, trailing, lines), data)
+
+    def test_f6_trailing_star_without_leading_mark_is_lyric_text(self) -> None:
+        self.assertEqual(review_server._strip_line_marks(b"[00:01.00]Song Title*"), b"[00:01.00]Song Title*")
+        self.assertEqual(review_server._line_marks(b"[00:01.00]Song Title*"), (False, False))
+        self.assertEqual(review_server._strip_line_marks(b"*[00:01.00]Song Title*"), b"[00:01.00]Song Title")
+        self.assertEqual(review_server._strip_line_marks(b"*[00:01.00]Song Title"), b"[00:01.00]Song Title")
