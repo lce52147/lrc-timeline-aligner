@@ -334,67 +334,119 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({autoplay:state.autoplay, batchSkip:state.batchSkip, showAll:state.showAll})); } catch (_) {} }
   // ---- unsaved-edit drafts: survive a server restart or a closed tab ----
   const DRAFT_KEY = 'lrc-review-drafts', DRAFT_MAX_SONGS = 50, DRAFT_DEBOUNCE_MS = 750;
-  const draftTimes = new Map(), draftHandled = new Set(), staleDrafts = new Map();
-  let draftTimer = null, draftArmed = false;
+  const draftTimes = new Map(), draftHandled = new Set(), staleDrafts = new Map(), draftOwned = new Map(), draftRemnants = new Map(), draftWritten = new Set();
+  let draftTimer = null, draftArmed = false, draftWarned = false;
+  // A draft belongs to a song by its report path (unique per song), never by the display name; edits map back through it.
+  const draftId = song => String(song.report || song.detail?.report || song.song);
   function readDrafts() { try { const saved = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {}; } catch (_) { return {}; } }
   function writeDrafts(drafts) {
-    const names = Object.keys(drafts).sort((a, b) => (drafts[b].saved_at || 0) - (drafts[a].saved_at || 0));
-    names.slice(DRAFT_MAX_SONGS).forEach(name => { delete drafts[name]; });
-    try { if (Object.keys(drafts).length) localStorage.setItem(DRAFT_KEY, JSON.stringify(drafts)); else localStorage.removeItem(DRAFT_KEY); } catch (_) {}
+    try {
+      Object.keys(drafts).forEach(name => { if (!drafts[name] || typeof drafts[name] !== 'object') delete drafts[name]; });
+      const names = Object.keys(drafts).sort((a, b) => (drafts[b].saved_at || 0) - (drafts[a].saved_at || 0));
+      names.slice(DRAFT_MAX_SONGS).forEach(name => { delete drafts[name]; });
+      if (Object.keys(drafts).length) localStorage.setItem(DRAFT_KEY, JSON.stringify(drafts)); else localStorage.removeItem(DRAFT_KEY);
+    } catch (_) {
+      if (!draftWarned) { draftWarned = true; state.notice = '暫存失敗：瀏覽器儲存空間不可用'; try { render(); } catch (_) {} }
+    }
   }
+  // Writes only songs that have edits in THIS tab. A song's draft is deleted only by a good save or an explicit 捨棄 (or when
+  // this tab wrote it, the song is fully loaded, and every edit has since been undone).
   function flushDraft() {
     if (draftTimer != null) { clearTimeout(draftTimer); draftTimer = null; }
     if (!draftArmed) return;
     const drafts = readDrafts(), now = Date.now();
+    let changed = false;
     state.songs.forEach(song => {
-      if (staleDrafts.has(song.song)) return;
-      const edits = [];
+      const id = draftId(song);
+      if (staleDrafts.has(id)) return;
+      const edits = [], entries = new Set();
       state.edits.forEach((edit, key) => {
         if (Number(key.split(':')[0]) !== song.index) return;
         if (!draftTimes.has(key)) draftTimes.set(key, now);
+        entries.add(edit.entry);
         edits.push({entry:edit.entry, cs:edit.cs, source:edit.source, nudge_cs:edit.nudge_cs, base_cs:edit.base_cs, edited_at:draftTimes.get(key)});
       });
-      if (edits.length) drafts[song.song] = {base_sha256:song.detail?.base_sha256 || '', saved_at:now, edits};
-      else delete drafts[song.song];
+      const kept = (draftRemnants.get(id) || []).filter(entry => !entries.has(entry.entry));
+      if (edits.length) {
+        drafts[id] = {base_sha256:song.detail?.base_sha256 || '', saved_at:now, edits:edits.concat(kept)};
+        draftWritten.add(id); draftHandled.add(id); changed = true;
+      } else if (draftWritten.has(id) && song.detail?.base_sha256 && editable(song)) {
+        if (kept.length) drafts[id] = {base_sha256:song.detail.base_sha256, saved_at:now, edits:kept};
+        else delete drafts[id];
+        draftWritten.delete(id); changed = true;
+      }
     });
-    writeDrafts(drafts);
+    if (changed) writeDrafts(drafts);
   }
   function scheduleDraft() {
     if (!draftArmed) return;
     if (draftTimer != null) clearTimeout(draftTimer);
     draftTimer = setTimeout(flushDraft, DRAFT_DEBOUNCE_MS);
   }
+  // After a 200 save the song's draft goes away at once, before anything reloads and could mistake it for a stale one.
+  function dropSavedDraft(song) {
+    const id = draftId(song);
+    draftHandled.add(id); draftWritten.delete(id); draftOwned.delete(id); staleDrafts.delete(id);
+    const drafts = readDrafts(), kept = draftRemnants.get(id) || [];
+    if (kept.length && song.detail?.base_sha256) drafts[id] = {base_sha256:song.detail.base_sha256, saved_at:Date.now(), edits:kept}; else delete drafts[id];
+    writeDrafts(drafts);
+  }
   const draftClock = ms => { const d = new Date(ms); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
-  // Put a draft's edits back into state.edits; returns how many were applied. `rebase` re-reads base_cs from the file as it is now.
+  // Put a draft's edits back into state.edits. Returns {applied, keys, skipped}; never overwrites an edit already in memory.
+  // `rebase` is the stale-file path: a nudge is re-applied as current + nudge, a pick only if it is still inside the row's span.
   function applyDraft(song, draft, rebase) {
-    let applied = 0;
+    const result = {applied:0, keys:[], skipped:[]};
     (draft.edits || []).forEach(edit => {
+      if (!edit || typeof edit !== 'object') return;
       const item = state.rows.find(entry => entry.song.index === song.index && entry.row.entry === edit.entry);
-      if (!item || !editable(item.song) || !Number.isFinite(edit.cs) || item.row.current_cs == null) return;
-      if (!rebase && edit.base_cs !== item.row.current_cs) return;
-      if (edit.cs === item.row.current_cs) return;
-      const key = keyFor(item);
-      state.edits.set(key, {entry:edit.entry, cs:edit.cs, source:String(edit.source || 'draft').slice(0, 64), nudge_cs:edit.nudge_cs || 0, base_cs:item.row.current_cs});
+      if (!item || !editable(item.song) || !Number.isFinite(edit.cs) || item.row.current_cs == null) { result.skipped.push(edit); return; }
+      const key = keyFor(item), current = item.row.current_cs;
+      if (state.edits.has(key)) return;
+      let cs = edit.cs;
+      const nudge = edit.nudge_cs || 0;
+      if (!rebase && edit.base_cs !== current) { result.skipped.push(edit); return; }
+      if (rebase) {
+        if (nudge) cs = Math.max(0, current + nudge);
+        else {
+          const span = [current].concat((item.row.candidates || []).map(candidate => candidate.cs).filter(Number.isFinite));
+          if (cs < Math.min(...span) || cs > Math.max(...span)) { result.skipped.push(edit); return; }
+        }
+      }
+      if (cs === current) return;
+      state.edits.set(key, {entry:edit.entry, cs, source:String(edit.source || 'draft').slice(0, 64), nudge_cs:nudge, base_cs:current});
       draftTimes.set(key, edit.edited_at || draft.saved_at || Date.now());
-      applied++;
+      result.applied++; result.keys.push(key);
     });
-    return applied;
+    return result;
   }
   function restoreDrafts() {
     const drafts = readDrafts();
     let restored = 0, newest = 0;
     state.songs.forEach(song => {
-      if (draftHandled.has(song.song) || !drafts[song.song] || !Array.isArray(drafts[song.song].edits)) return;
-      draftHandled.add(song.song);
-      const draft = drafts[song.song];
-      if (!song.detail?.base_sha256 || draft.base_sha256 === song.detail.base_sha256) {
-        const applied = applyDraft(song, draft, false);
-        if (applied) { restored += applied; newest = Math.max(newest, draft.saved_at || 0); }
-      } else staleDrafts.set(song.song, draft);
+      const id = draftId(song), draft = drafts[id];
+      // A song that did not load fully (no sha, read-only) is not touched: its draft stays and is retried on the next load.
+      if (draftHandled.has(id) || !draft || !Array.isArray(draft.edits) || !song.detail?.base_sha256 || !editable(song)) return;
+      draftHandled.add(id);
+      if (draft.base_sha256 === song.detail.base_sha256) {
+        const result = applyDraft(song, draft, false);
+        if (result.applied) { restored += result.applied; newest = Math.max(newest, draft.saved_at || 0); draftOwned.set(id, result.keys); }
+        if (result.skipped.length) draftRemnants.set(id, result.skipped);
+        draftWritten.add(id);
+      } else staleDrafts.set(id, draft);
     });
     draftArmed = true;
-    if (restored) { document.getElementById('draft-restored-text').textContent = '已還原 ' + restored + ' 筆未儲存的修改（來自 ' + draftClock(newest) + '）'; document.getElementById('draft-restored').hidden = false; }
+    showRestoredBanner(restored, newest);
     showStaleBanner();
+  }
+  let restoredTotal = 0, restoredNewest = 0;
+  function showRestoredBanner(added, newest) {
+    restoredTotal += added; restoredNewest = Math.max(restoredNewest, newest || 0);
+    let unapplied = 0;
+    draftRemnants.forEach(list => { unapplied += list.length; });
+    const box = document.getElementById('draft-restored');
+    if (!restoredTotal && !unapplied) { box.hidden = true; return; }
+    document.getElementById('draft-restored-text').textContent = (restoredTotal ? '已還原 ' + restoredTotal + ' 筆未儲存的修改（來自 ' + draftClock(restoredNewest) + '）' : '') + (unapplied ? (restoredTotal ? '，' : '') + '另有 ' + unapplied + ' 筆無法套用' : '');
+    box.hidden = false;
   }
   function showStaleBanner() {
     let count = 0;
@@ -403,23 +455,29 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     document.getElementById('draft-stale').hidden = !staleDrafts.size;
   }
   document.getElementById('draft-restored-discard').addEventListener('click', () => {
-    state.edits.clear(); draftTimes.clear();
+    // Only what the restore applied (and its unapplied leftovers) goes; edits made since stay.
+    const drafts = readDrafts(), ids = new Set([...draftOwned.keys(), ...draftRemnants.keys()]);
+    draftOwned.forEach(keys => keys.forEach(key => { state.edits.delete(key); draftTimes.delete(key); }));
+    ids.forEach(id => { delete drafts[id]; draftWritten.delete(id); });
+    draftOwned.clear(); draftRemnants.clear(); restoredTotal = 0; restoredNewest = 0;
+    writeDrafts(drafts);
     document.getElementById('draft-restored').hidden = true;
     setDirty(); flushDraft(); render();
   });
   document.getElementById('draft-stale-discard').addEventListener('click', () => {
     const drafts = readDrafts();
-    staleDrafts.forEach((draft, name) => { delete drafts[name]; });
+    staleDrafts.forEach((draft, id) => { delete drafts[id]; });
     staleDrafts.clear(); writeDrafts(drafts); showStaleBanner();
   });
   document.getElementById('draft-stale-apply').addEventListener('click', () => {
-    let applied = 0;
-    staleDrafts.forEach((draft, name) => { const song = state.songs.find(item => item.song === name); if (song) applied += applyDraft(song, draft, true); });
+    let applied = 0, skipped = 0;
+    staleDrafts.forEach((draft, id) => { const song = state.songs.find(item => draftId(item) === id); if (song) { const result = applyDraft(song, draft, true); applied += result.applied; skipped += result.skipped.length; draftWritten.add(id); } });
     staleDrafts.clear(); showStaleBanner();
-    if (applied) state.notice = '已套用 ' + applied + ' 筆舊的未儲存修改。';
+    if (applied || skipped) state.notice = '已套用 ' + applied + ' 筆舊的未儲存修改' + (skipped ? '，' + skipped + ' 筆已不適用而略過' : '') + '。';
     setDirty(); flushDraft(); render();
   });
   function autoplaySelected() {
+    flushDraft();
     if (!state.autoplay) return;
     const item = visible()[state.selected];
     if (item && working(item) != null) playAround(item, working(item));
@@ -780,7 +838,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       button.type = 'button';
       button.className = 'song-tab' + (item.index === state.activeSong ? ' active' : '') + (off ? ' off' : left ? ' todo' : ' done');
       button.innerHTML = '<span class="dot"></span><span class="t">' + esc(item.song) + '</span><span class="n num">' + (off ? '唯讀' : left ? '剩 ' + left : '✓') + '</span>';
-      button.addEventListener('click', () => { state.activeSong = item.index; state.selected = 0; state.notice = ''; render(); });
+      button.addEventListener('click', () => { flushDraft(); state.activeSong = item.index; state.selected = 0; state.notice = ''; render(); });
       return button;
     };
     const reachable = state.songs.filter(song => !unreachable(song)), hidden = state.songs.filter(unreachable);
@@ -971,8 +1029,27 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   }
   async function load() {
     try {
-      const previousEdits = new Map(state.edits);
+      flushDraft();
+      const oldIds = new Map(state.songs.map(song => [song.index, draftId(song)]));
       const list = await api('/api/songs');
+      // A live refresh can renumber songs; carry staged edits, done marks and the open song over by report path, not by index.
+      const newIndex = new Map(list.map(song => [draftId(song), song.index]));
+      const remap = key => { const [index, entry] = key.split(':'), id = oldIds.get(Number(index)); return id != null && newIndex.has(id) ? String(newIndex.get(id)) + ':' + entry : null; };
+      const carried = new Map(), doneKeys = [];
+      state.edits.forEach((edit, key) => { const next = remap(key); if (next != null) carried.set(next, edit); });
+      state.done.forEach(key => { const next = remap(key); if (next != null) doneKeys.push(next); });
+      const activeId = state.activeSong == null ? null : oldIds.get(state.activeSong);
+      if (state.songs.length) {
+        const tm = new Map();
+        draftTimes.forEach((time, key) => { const next = remap(key); if (next != null) tm.set(next, time); });
+        draftTimes.clear(); tm.forEach((time, key) => draftTimes.set(key, time));
+        const owned = new Map();
+        draftOwned.forEach((keys, id) => owned.set(id, keys.map(remap).filter(key => key != null)));
+        draftOwned.clear(); owned.forEach((keys, id) => draftOwned.set(id, keys));
+        state.edits = carried; state.done = new Set(doneKeys);
+        if (activeId != null && newIndex.has(activeId)) state.activeSong = newIndex.get(activeId);
+      }
+      const previousEdits = new Map(state.edits);
       state.excluded = [];
       if (!list.length) { try { state.excluded = (await api('/api/excluded')).excluded_files || []; } catch (error) { state.excluded = []; } }
       const details = await Promise.all(list.map(async song => {
@@ -1024,6 +1101,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
         if (!response.ok) { failures.push(song.song + ': save failed: ' + (data.error || response.statusText)); continue; }
         edits.forEach(edit => state.edits.delete(String(index) + ':' + edit.entry));
         song.detail = data;
+        dropSavedDraft(song);
       } catch (error) {
         failures.push('song ' + index + ': save failed: ' + error.message);
       }

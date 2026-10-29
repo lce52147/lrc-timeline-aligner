@@ -1656,7 +1656,7 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
                 self._send(403, b"forbidden\n", "text/plain; charset=utf-8")
                 return
             with self.server.store.lock:
-                payload = [{"index": index, "song": song["song"], "rows": len(song["rows"]), "review_rows": song["review_rows"], "read_only": song["read_only"], "read_only_reason": song["read_only_reason"], "manual_edited": song.get("manual_edited", False), "load_error": song.get("load_error"), "song_risk": song.get("song_risk"), "server_read_only": self.server.store.read_only} for index, song in enumerate(self.server.store.songs)]
+                payload = [{"index": index, "song": song["song"], "report": song["report"], "rows": len(song["rows"]), "review_rows": song["review_rows"], "read_only": song["read_only"], "read_only_reason": song["read_only_reason"], "manual_edited": song.get("manual_edited", False), "load_error": song.get("load_error"), "song_risk": song.get("song_risk"), "server_read_only": self.server.store.read_only} for index, song in enumerate(self.server.store.songs)]
             self._json(200, payload)
             return
         if parsed.path == "/api/version":
@@ -1917,6 +1917,33 @@ def _warn_missing_targets(targets):
             print(f"WARN: review target not found: {value}", file=sys.stderr)
 
 
+DEFAULT_REVIEW_PORT = 58400
+PORT_FALLBACK_SPAN = 20
+
+
+def default_port():
+    """The review page keeps its drafts in localStorage, which is per origin: a stable port is what lets them survive a restart."""
+    try:
+        return int(os.environ.get("LRC_REVIEW_PORT", "") or DEFAULT_REVIEW_PORT)
+    except ValueError:
+        return DEFAULT_REVIEW_PORT
+
+
+def bind_server(port, handler=None):
+    """Bind 127.0.0.1:port; when it is busy, try the next PORT_FALLBACK_SPAN ports. Port 0 (tests) keeps the OS-chosen port."""
+    handler = handler or ReviewHandler
+    port = int(port)
+    if port == 0:
+        return http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    last = None
+    for candidate in range(port, port + PORT_FALLBACK_SPAN + 1):
+        try:
+            return http.server.ThreadingHTTPServer(("127.0.0.1", candidate), handler)
+        except OSError as exc:
+            last = exc
+    raise last
+
+
 def run_server(targets, report_dir=None, port=0, no_browser=False, read_only=False, dump_summary=False, targets_file=None):
     report_dir = pathlib.Path(report_dir).expanduser().resolve() if report_dir else runtime_paths.reports_dir()
     explicit_targets = bool(targets) or targets_file is not None
@@ -1930,7 +1957,7 @@ def run_server(targets, report_dir=None, port=0, no_browser=False, read_only=Fal
             share = sum(len({item.get("cs") for item in row.get("candidates", [])}) >= 2 for row in song["rows"])
             print(json.dumps({"song": song["song"], "rows": len(song["rows"]), "review_rows": song["review_rows"], "read_only": song["read_only"], "reason": song["read_only_reason"], "has_flac": _path_is_file(song["audio_path"]), "has_stem": _path_is_file(song["ctc_audio_path"]), "share_rows": share}, ensure_ascii=True))
         return None
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", int(port)), ReviewHandler)
+    server = bind_server(port)
     server.store = store
     server.jobs = None if (read_only or os.environ.get("LRC_NO_REVIEW") == "1") else JobRunner(store, report_dir)
     server.token = secrets.token_urlsafe(32)
@@ -1951,7 +1978,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("targets", nargs="*")
     parser.add_argument("--report-dir", type=pathlib.Path)
-    parser.add_argument("--port", type=int, default=0)
+    parser.add_argument("--port", type=int, default=default_port())
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--read-only", action="store_true")
     parser.add_argument("--dump-summary", action="store_true")

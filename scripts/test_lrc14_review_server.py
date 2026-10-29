@@ -1331,6 +1331,35 @@ const flushTimers = () => { for (const [id, t] of [...timers]) { if (t.ms === 75
         self.assertFalse(out["hiddenNoop"])
         self.assertTrue(out["hidden"])
 
+    def test_draft_autosave_scenarios(self) -> None:
+        flags = 0x08000000 | 0x00004000 if os.name == "nt" else 0
+        result = subprocess.run(["node", str(SCRIPTS / "test_review_drafts.js")], capture_output=True, text=True, encoding="utf-8", creationflags=flags)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("13/13 passed", result.stdout)
+
+    def test_review_port_default_is_fixed_and_falls_back_when_busy(self) -> None:
+        import socket
+        parser_default = review_server.default_port()
+        self.assertEqual(parser_default, 58400)
+        with mock.patch.dict(os.environ, {"LRC_REVIEW_PORT": "58411"}):
+            self.assertEqual(review_server.default_port(), 58411)
+        with mock.patch.dict(os.environ, {"LRC_REVIEW_PORT": "junk"}):
+            self.assertEqual(review_server.default_port(), 58400)
+        blocker = socket.socket()
+        blocker.bind(("127.0.0.1", 0))
+        blocker.listen(1)
+        busy = blocker.getsockname()[1]
+        server = None
+        try:
+            server = review_server.bind_server(busy)
+            self.assertGreater(server.server_port, busy)
+            self.assertLessEqual(server.server_port, busy + review_server.PORT_FALLBACK_SPAN)
+        finally:
+            if server is not None:
+                server.server_close()
+            blocker.close()
+        self.assertNotIn("--port", (SCRIPTS.parent / "Review LRC.bat").read_text(encoding="utf-8", errors="replace"))
+
     def test_client_409_reload_marks_conflict_and_blocks_resubmit(self) -> None:
         page = (SCRIPTS / "review_page" / "index.html").read_text(encoding="utf-8")
         source = page.split("<script>", 1)[1].rsplit("</script>", 1)[0]
