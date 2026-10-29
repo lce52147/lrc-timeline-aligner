@@ -6,12 +6,15 @@ verified (tag text equals the LRC, decoded audio and other tags unchanged) or ro
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import pathlib
 import re
 import shutil
+import struct
 import subprocess
+import sys
 import uuid
 from datetime import datetime, timezone
 
@@ -20,6 +23,7 @@ import runtime_paths
 SUPPORTED = {".flac": "LYRICS", ".m4a": "©lyr"}
 LOG_NAME = "export-log.jsonl"
 CACHE_NAME = ".export-cache"
+NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0  # CREATE_NO_WINDOW
 
 
 class ExportError(Exception):
@@ -97,7 +101,7 @@ def _decoded_md5(path):
     try:
         result = subprocess.run(
             [runtime_paths.ffmpeg(), "-v", "error", "-nostdin", "-i", str(path), "-map", "0:a:0", "-f", "md5", "-"],
-            capture_output=True, text=True, timeout=600, check=False)
+            capture_output=True, text=True, timeout=600, check=False, creationflags=NO_WINDOW)
     except (OSError, subprocess.SubprocessError) as exc:
         raise ExportError(f"無法用 ffmpeg 驗證音訊：{exc}") from exc
     line = result.stdout.strip()
@@ -106,10 +110,80 @@ def _decoded_md5(path):
     return line[4:]
 
 
+def _flac_payload_digest(path):
+    """sha256 of a FLAC's bytes from the first audio frame to EOF, or None if the metadata cannot be walked."""
+    with open(path, "rb") as handle:
+        if handle.read(4) != b"fLaC":
+            return None
+        while True:
+            head = handle.read(4)
+            if len(head) < 4:
+                return None
+            last = head[0] & 0x80
+            handle.seek(int.from_bytes(head[1:4], "big"), os.SEEK_CUR)
+            if last:
+                break
+        digest = hashlib.sha256()
+        while True:
+            chunk = handle.read(1 << 20)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _m4a_payload_digest(path):
+    """sha256 of the (single) top-level ``mdat`` payload of an MP4, or None if it cannot be found."""
+    size_total = os.path.getsize(path)
+    found = None
+    with open(path, "rb") as handle:
+        offset = 0
+        while offset + 8 <= size_total:
+            handle.seek(offset)
+            size, kind = struct.unpack(">I4s", handle.read(8))
+            header = 8
+            if size == 1:
+                size = struct.unpack(">Q", handle.read(8))[0]
+                header = 16
+            elif size == 0:
+                size = size_total - offset
+            if size < header or offset + size > size_total:
+                return None
+            if kind == b"mdat":
+                if found is not None:
+                    return None
+                found = (offset + header, offset + size)
+            offset += size
+        if found is None:
+            return None
+        handle.seek(found[0])
+        remaining = found[1] - found[0]
+        digest = hashlib.sha256()
+        while remaining > 0:
+            chunk = handle.read(min(1 << 20, remaining))
+            if not chunk:
+                return None
+            digest.update(chunk)
+            remaining -= len(chunk)
+    return digest.hexdigest()
+
+
+def _payload_digest(path, name):
+    try:
+        return _flac_payload_digest(path) if name == "LYRICS" else _m4a_payload_digest(path)
+    except (OSError, struct.error):
+        return None
+
+
 def _snapshot(path, name):
-    """Everything that must survive the write: decoded audio, STREAMINFO md5, other tags, picture sizes."""
+    """Everything that must survive the write: audio payload, STREAMINFO md5, other tags, picture sizes.
+
+    The audio is checked byte-for-byte (FLAC frames / MP4 ``mdat``); ffmpeg decoding is only the fallback
+    for files whose container cannot be walked.
+    """
     flac, mp4 = _mutagen()
-    snap = {"audio_md5": _decoded_md5(path)}
+    digest = _payload_digest(path, name)
+    snap = {"audio_payload": digest} if digest else {"audio_md5": _decoded_md5(path)}
     if name == "LYRICS":
         handle = flac.FLAC(str(path))
         snap["streaminfo_md5"] = handle.info.md5_signature
@@ -172,8 +246,11 @@ def export(audio, lrc_bytes, work_dir):
             if read_lyrics(audio) != text:
                 raise ExportError("寫入後讀回的歌詞和 LRC 不一致")
             after = _snapshot(audio, name)
-            if after["audio_md5"] != before["audio_md5"]:
-                raise ExportError("寫入後音訊解碼內容改變")
+            if "audio_payload" in before and "audio_payload" not in after:
+                raise ExportError("寫入後無法讀出音訊資料")
+            for key in ("audio_payload", "audio_md5"):
+                if key in before and after.get(key) != before[key]:
+                    raise ExportError("寫入後音訊內容改變")
             for key in ("streaminfo_md5", "tags", "pictures"):
                 if after.get(key) != before.get(key):
                     raise ExportError(f"寫入後 {key} 改變")
@@ -190,3 +267,62 @@ def export(audio, lrc_bytes, work_dir):
         raise ExportError(f"{exc}（已還原原檔）") from exc
     backup.unlink(missing_ok=True)
     return {"name": audio.name, "tag": name, "lines": _line_count(text)}
+
+
+def _recycle(path):
+    """Send ``path`` to the Windows Recycle Bin (no dialogs). False when that is not possible."""
+    if sys.platform != "win32":
+        return False
+    import ctypes
+    from ctypes import wintypes
+
+    class SHFILEOPSTRUCTW(ctypes.Structure):
+        _fields_ = [("hwnd", wintypes.HWND), ("wFunc", wintypes.UINT), ("pFrom", wintypes.LPCWSTR),
+                    ("pTo", wintypes.LPCWSTR), ("fFlags", ctypes.c_ushort), ("fAnyOperationsAborted", wintypes.BOOL),
+                    ("hNameMappings", ctypes.c_void_p), ("lpszProgressTitle", wintypes.LPCWSTR)]
+
+    op = SHFILEOPSTRUCTW()
+    op.wFunc = 3  # FO_DELETE
+    op.pFrom = str(path) + "\0"
+    op.fFlags = 0x0040 | 0x0010 | 0x0004 | 0x0400  # ALLOWUNDO | NOCONFIRMATION | SILENT | NOERRORUI
+    return ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op)) == 0 and not os.path.exists(path)
+
+
+def archive_lrc(lrc_path, work_dir, audio_name, setting=None):
+    """After a verified export: move (or recycle) the song's ``.lrc`` per ``LRC_EXPORT_ARCHIVE_DIR``.
+
+    Never raises and never touches anything but ``lrc_path`` itself. Returns {"mode", "to"?, "error"?};
+    mode ``off`` means the file was left in place. The outcome goes to export-log.jsonl.
+    """
+    mode, folder = setting if setting is not None else runtime_paths.export_archive_setting()
+    result = {"mode": mode}
+    lrc_path = pathlib.Path(lrc_path)
+    if mode == "off":
+        return result
+    try:
+        if lrc_path.suffix.casefold() != ".lrc" or not lrc_path.is_file():
+            raise OSError("not an existing .lrc file")
+        if mode == "delete":
+            if not _recycle(lrc_path):
+                raise OSError("could not send the file to the Recycle Bin")
+        else:
+            folder.mkdir(parents=True, exist_ok=True)
+            target = folder / lrc_path.name
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            count = 0
+            while target.exists():
+                suffix = "_" + stamp + ("" if count == 0 else f"-{count}")
+                target = folder / (lrc_path.stem + suffix + lrc_path.suffix)
+                count += 1
+            shutil.move(str(lrc_path), str(target))
+            result["to"] = str(target)
+    except OSError as exc:
+        result["mode"] = "failed"
+        result["error"] = str(exc)
+    try:
+        _log(pathlib.Path(work_dir) / LOG_NAME, {
+            "utc": datetime.now(timezone.utc).isoformat(), "file": audio_name, "lrc": str(lrc_path),
+            "archive": result["mode"], **{k: v for k, v in result.items() if k in ("to", "error")}})
+    except OSError:
+        pass
+    return result

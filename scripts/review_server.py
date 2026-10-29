@@ -629,6 +629,16 @@ def _path_is_file(value):
         return False
 
 
+def _lyrics_embedded(audio_value):
+    """True when the song's audio already carries embedded lyrics (its .lrc was archived after an export)."""
+    if not isinstance(audio_value, str) or not audio_value or not _path_is_file(audio_value):
+        return False
+    try:
+        return bool(lyrics_tag_export.read_lyrics(audio_value))
+    except lyrics_tag_export.ExportError:
+        return False
+
+
 def _song_payload(report_path, report, anchor=None):
     report = _relocated(report, anchor)
     assignments = report.get("assignments") if isinstance(report.get("assignments"), list) else []
@@ -640,7 +650,7 @@ def _song_payload(report_path, report, anchor=None):
     mapping = None
     mapping_reason = None
     if output_path is None or not output_path.is_file():
-        mapping_reason = "lrc-missing"
+        mapping_reason = "lrc-exported" if _lyrics_embedded(report.get("audio_path")) else "lrc-missing"
     else:
         timing_entries = report.get("timing_entries")
         if timing_entries is not None and (not isinstance(timing_entries, int) or timing_entries != len(assignments)):
@@ -890,7 +900,11 @@ def _export_song(song, body, report_dir):
         if chosen is None:
             return 400, {"error": "audio is not one of this song's audio files"}
         work_dir = report_dir.parent if report_dir.name.casefold() == "reports" else report_dir
-        return 200, lyrics_tag_export.export(chosen, output.read_bytes(), work_dir)
+        started = time.monotonic()
+        result = lyrics_tag_export.export(chosen, output.read_bytes(), work_dir)
+        result["seconds"] = round(time.monotonic() - started, 1)
+        result["archive"] = lyrics_tag_export.archive_lrc(output, work_dir, chosen.name)
+        return 200, result
     except lyrics_tag_export.ExportError as exc:
         return 422, {"error": str(exc)}
 

@@ -29,6 +29,9 @@ import lrc_review_tsv
 
 class ReviewServerTests(unittest.TestCase):
     def setUp(self) -> None:
+        patcher = mock.patch.dict(os.environ, {"LRC_EXPORT_ARCHIVE_DIR": "off"})  # never move LRCs into the repo's checked/
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self._start(False)
 
     def tearDown(self) -> None:
@@ -806,7 +809,7 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         if shutil.which(review_server.runtime_paths.ffmpeg()) is None:
             self.skipTest("needs ffmpeg")
         subprocess.run([review_server.runtime_paths.ffmpeg(), "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
-                        "-c:a", "flac", str(self.audio)], check=True)
+                        "-c:a", "flac", str(self.audio)], check=True, creationflags=0x08004000)
         self.store.refresh_if_changed()
 
     def test_export_writes_the_saved_lrc_into_the_audio_tag(self) -> None:
@@ -816,12 +819,40 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         self.assertEqual(json.loads(data), {"targets": [{"name": "song.flac", "tag": "LYRICS", "has_lyrics": False, "lines": 0}], "lrc_lines": 9})
         lrc_before = self.output.read_bytes()
         status, _headers, data = self._json_request("POST", "/api/song/0/export", {"audio": "song.flac"})
-        self.assertEqual((status, json.loads(data)), (200, {"name": "song.flac", "tag": "LYRICS", "lines": 9}))
+        result = json.loads(data)
+        self.assertEqual(status, 200)
+        self.assertEqual({key: result[key] for key in ("name", "tag", "lines", "archive")},
+                         {"name": "song.flac", "tag": "LYRICS", "lines": 9, "archive": {"mode": "off"}})
+        self.assertIsInstance(result["seconds"], float)
         import mutagen.flac
         text = mutagen.flac.FLAC(str(self.audio))["LYRICS"][0]
         self.assertEqual(text, __import__("lyrics_tag_export").lrc_text(lrc_before))
         self.assertEqual(self.output.read_bytes(), lrc_before, "export leaves the .lrc as saved")
         self.assertTrue((self.root / "export-log.jsonl").is_file())
+
+    def test_export_archives_the_lrc_and_the_song_then_shows_as_exported(self) -> None:
+        self._real_flac()
+        archive = self.root / "bk"
+        with mock.patch.dict(os.environ, {"LRC_EXPORT_ARCHIVE_DIR": str(archive)}):
+            status, _headers, data = self._json_request("POST", "/api/song/0/export", {"audio": "song.flac"})
+        self.assertEqual(status, 200)
+        moved = Path(json.loads(data)["archive"]["to"])
+        self.assertEqual(moved, archive / self.output.name)
+        self.assertTrue(moved.is_file())
+        self.assertFalse(self.output.exists(), "the .lrc left its folder")
+        self.assertTrue(self.audio.is_file())
+        report_path = next(Path(self.store.report_dir).glob("*.align-report.json"))
+        payload = review_server._song_payload(report_path, json.loads(report_path.read_text(encoding="utf-8")))
+        self.assertTrue(payload["read_only"])
+        self.assertEqual(payload["read_only_reason"], "lrc-exported")
+
+    def test_failed_export_does_not_archive(self) -> None:
+        archive = self.root / "bk"
+        with mock.patch.dict(os.environ, {"LRC_EXPORT_ARCHIVE_DIR": str(archive)}):
+            status, _headers, _data = self._json_request("POST", "/api/song/0/export", {"audio": "song.flac"})
+        self.assertEqual(status, 422)
+        self.assertTrue(self.output.is_file())
+        self.assertFalse(archive.exists())
 
     def test_export_rejects_foreign_audio_unknown_fields_and_bad_origin(self) -> None:
         self._real_flac()

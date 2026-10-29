@@ -52,9 +52,11 @@ const row = {
 const song={index:0,song:'demo',has_flac:true,has_stem:true,read_only:false,detail:{has_flac:true,has_stem:true,base_sha256:'base',rows:[row]}};
 let peakCalls = 0;
 const jobsState = {import_enabled:true, jobs:[]};
+let exportGate = null;
 const jobsPosts = [], inspectPosts = [], decisionPosts = [], exportPosts = [];
 let loadCalls = 0;
 async function fetchMock(url, options={}) {
+  if (url === '/api/song/0/export' && exportGate && !JSON.parse(options.body).check) await exportGate;
   // the server answers 415 to any POST that is not declared as JSON
   if (options.method === 'POST' && (options.headers || {})['Content-Type'] !== 'application/json') return {ok:false,status:415,statusText:'Unsupported Media Type',json:async()=>{throw new Error('not json');}};
   if (url === '/api/songs') { loadCalls++; return {ok:true,json:async()=>[song]}; }
@@ -65,7 +67,7 @@ async function fetchMock(url, options={}) {
   if (url === '/api/song/0/decision') { decisionPosts.push(JSON.parse(options.body)); return {ok:true,json:async()=>({recorded:'x'})}; }
   if (url === '/api/song/0') return {ok:true,json:async()=>song.detail};
   if (url.startsWith('/api/song/0/peaks')) { peakCalls++; return {ok:true,json:async()=>({from_cs:0,to_cs:600,bins:120,sample_rate:16000,peaks:Array.from({length:120},()=>[0,0])})}; }
-  if (url === '/api/song/0/export') { const body = JSON.parse(options.body); exportPosts.push(body); return body.check ? {ok:true,json:async()=>({targets:[{name:'demo.flac',tag:'LYRICS',has_lyrics:true,lines:7},{name:'demo.m4a',tag:'©lyr',has_lyrics:false,lines:0}],lrc_lines:9})} : {ok:true,json:async()=>({name:body.audio,tag:'LYRICS',lines:9})}; }
+  if (url === '/api/song/0/export') { const body = JSON.parse(options.body); exportPosts.push(body); return body.check ? {ok:true,json:async()=>({targets:[{name:'demo.flac',tag:'LYRICS',has_lyrics:true,lines:7},{name:'demo.m4a',tag:'©lyr',has_lyrics:false,lines:0}],lrc_lines:9})} : {ok:true,json:async()=>({name:body.audio,tag:'LYRICS',lines:9,seconds:1.2,archive:body.audio==='demo.flac'?{mode:'move',to:'D:/checked/demo.lrc'}:{mode:'off'}})}; }
   if (url === '/api/song/0/save') return {ok:true,json:async()=>song.detail};
   throw new Error('unexpected fetch '+url);
 }
@@ -376,9 +378,20 @@ vm.runInNewContext(script, context, {filename:'review_page/index.html'});
   assert.equal(exportPosts.filter(post => !post.check).length, 0, 'cancel writes nothing');
   exportKey(); await flush();
   documentMock.getElementById('export-target').value = '0'; ids.get('export-target').dispatch('change');
-  ids.get('export-go').dispatch('click'); await flush(); await flush();
+  let openGate; exportGate = new Promise(resolve => { openGate = resolve; });
+  ids.get('export-go').dispatch('click'); await flush();
+  assert.match(test.state.notice, /^匯出中…正在寫入並驗證 demo\.flac/, 'progress notice shows at once while the server works');
+  assert.equal(test.state.exporting, true, 'export is flagged as running');
+  assert.equal(documentMock.getElementById('export').disabled, true, 'the export button is disabled while running');
+  const postsWhileRunning = exportPosts.length;
+  exportKey(); await flush();
+  assert.equal(exportPosts.length, postsWhileRunning, 'Ctrl+Shift+S does nothing while an export runs');
+  assert.equal(documentMock.getElementById('export-box').hidden, true, 'no second dialog opens while an export runs');
+  openGate(); exportGate = null; await flush(); await flush();
   assert.deepEqual(exportPosts.at(-1), {audio:'demo.flac'}, 'confirming exports the chosen file');
-  assert.equal(test.state.notice, '已寫入 demo.flac 的 LYRICS 標籤（9 行）', 'the page reports what was written');
+  assert.match(test.state.notice, /^已寫入 demo\.flac 的 LYRICS 標籤（9 行，\d+\.\d 秒）；LRC 已移到 D:\/checked\/demo\.lrc$/, 'the page reports what was written, how long it took and where the LRC went');
+  assert.equal(test.state.exporting, false, 'the running flag clears');
+  assert.equal(documentMock.getElementById('export').disabled, false, 'the export button is enabled again');
   assert.equal(documentMock.getElementById('export-box').hidden, true, 'the dialog closes after export');
   documentMock.listeners.get('keydown')({key:'s', ctrlKey:true, target:{}, preventDefault(){}}); await flush();
   assert.equal(documentMock.getElementById('export-box').hidden, true, 'plain Ctrl+S does not open the export dialog');

@@ -178,7 +178,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   const token = new URLSearchParams(location.search).get('t') || new URLSearchParams(location.hash.slice(1)).get('t');
   const queue = document.getElementById('queue');
   const status = document.getElementById('status');
-  const state = {songs:[], rows:[], edits:new Map(), peaks:new Map(), decoded:new Map(), done:new Set(), dirty:false, selected:0, activeSong:null, showUnreachable:false, showDone:true, showLow:false, showAll:true, autoplay:true, batchSkip:true, mode:'flac', details:false, importEnabled:false, imports:[], jobs:[], jobsSeen:new Set(), player:{audio:new Map(), handlers:new Map(), seq:0, timer:null, active:null, ab:null}, error:'', notice:''};
+  const state = {songs:[], rows:[], edits:new Map(), peaks:new Map(), decoded:new Map(), done:new Set(), dirty:false, selected:0, activeSong:null, showUnreachable:false, showDone:true, showLow:false, showAll:true, autoplay:true, batchSkip:true, mode:'flac', details:false, importEnabled:false, imports:[], jobs:[], jobsSeen:new Set(), player:{audio:new Map(), handlers:new Map(), seq:0, timer:null, active:null, ab:null}, error:'', notice:'', exporting:false};
   const api = async (path, options={}) => {
     const headers = Object.assign({'X-Review-Token':token}, options.body ? {'Content-Type':'application/json'} : {}, options.headers || {});
     const response = await fetch(path, Object.assign({}, options, {headers}));
@@ -211,6 +211,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   const unreachable = song => !!song.read_only && !(song.detail?.rows || []).length;
   const unreachableText = song => {
     const reason = song.read_only_reason || song.detail?.load_error || 'unknown';
+    if (reason === 'lrc-exported') return '已匯出：歌詞已內嵌在音檔裡，LRC 已歸檔或移除，不需要再審。';
     if (reason === 'lrc-missing') return '找不到這首的 LRC 檔，無法審核；LRC 可能已搬走、改名或這是舊測試留下的 report。';
     return '這首的 report 與 LRC 對不上（' + reason + '），無法審核。';
   };
@@ -762,7 +763,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     status.textContent = state.error || (state.dirty ? state.edits.size + ' 筆已改，未儲存' : '未變更');
     status.className = state.error ? 'warning' : state.dirty ? 'status dirty' : 'status';
     document.getElementById('save').disabled = globalReadOnly || !state.dirty;
-    document.getElementById('export').disabled = globalReadOnly;
+    document.getElementById('export').disabled = globalReadOnly || state.exporting;
     document.getElementById('save').title = state.dirty ? '' : '沒有改動，不需要儲存';
     document.getElementById('server-mode').textContent = globalReadOnly ? 'server read-only' : '';
     const shownSong = state.songs.find(song => song.index === state.activeSong) || null;
@@ -929,6 +930,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     document.getElementById('export-go').disabled = !target;
   }
   async function openExport() {
+    if (state.exporting) return;
     stopPlayer();
     const song = exportSong();
     if (serverReadOnly() || !song || song.read_only) { state.error = '無法匯出：這首歌是唯讀'; render(); return; }
@@ -952,18 +954,31 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   async function doExport() {
     const song = exportSong();
     const target = exportTargets[Number(document.getElementById('export-target').value)];
-    if (!song || !target) return;
+    if (!song || !target || state.exporting) return;
     exportBox().hidden = true;
-    if (state.dirty) {
-      await save();
-      if (state.error) return;
-    }
+    state.exporting = true; state.error = '';
+    state.notice = '匯出中…正在寫入並驗證 ' + target.name + '（大檔可能要幾十秒，請稍候）';
+    render();
+    const started = Date.now();
     try {
+      if (state.dirty) {
+        await save();
+        if (state.error) return;
+        state.notice = '匯出中…正在寫入並驗證 ' + target.name;
+      }
       const data = await api('/api/song/' + song.index + '/export', {method:'POST', body:JSON.stringify({audio:target.name})});
       state.error = '';
-      state.notice = '已寫入 ' + data.name + ' 的 LYRICS 標籤（' + data.lines + ' 行）';
-    } catch (error) { state.error = '匯出失敗：' + error.message; }
+      const seconds = ((Date.now() - started) / 1000).toFixed(1);
+      state.notice = '已寫入 ' + data.name + ' 的 ' + data.tag + ' 標籤（' + data.lines + ' 行，' + seconds + ' 秒）' + exportArchiveText(data.archive);
+    } catch (error) { state.notice = ''; state.error = '匯出失敗：' + error.message; }
+    finally { state.exporting = false; }
     render();
+  }
+  function exportArchiveText(archive) {
+    if (!archive || archive.mode === 'off') return '；LRC 留在原處';
+    if (archive.mode === 'move') return '；LRC 已移到 ' + archive.to;
+    if (archive.mode === 'delete') return '；LRC 已移到資源回收桶';
+    return '；但 LRC 沒有歸檔（' + (archive.error || '未知原因') + '），仍留在原處';
   }
   document.getElementById('export').addEventListener('click', event => { event.currentTarget.blur(); openExport(); });
   document.getElementById('export-target').addEventListener('change', renderExportInfo);

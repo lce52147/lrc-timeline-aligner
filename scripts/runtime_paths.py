@@ -16,6 +16,9 @@ and ``resolve``):
 ``LRC_MODEL_CACHE_DIR`` overrides ``cache_root()`` (``outputs/cache``); the
                         model-output, vocal and GPU-lock directories follow it
 ``LRC_REPORT_DIR``      default alignment report directory
+``LRC_EXPORT_ARCHIVE_DIR``  where the review page moves a song's ``.lrc`` after a verified
+                        "export to audio": a folder (default ``<install>/checked``), empty
+                        or ``off`` to keep the file, ``delete`` to send it to the Recycle Bin
 
 With no environment set, every function returns exactly the path the 1.4
 code computed from ``Path(__file__).resolve().parents[1]``, so cache
@@ -36,6 +39,7 @@ ENV_HF_HUB_CACHE = "HF_HUB_CACHE"
 ENV_HF_HOME = "HF_HOME"
 ENV_MODEL_CACHE_DIR = "LRC_MODEL_CACHE_DIR"
 ENV_REPORT_DIR = "LRC_REPORT_DIR"
+ENV_EXPORT_ARCHIVE_DIR = "LRC_EXPORT_ARCHIVE_DIR"
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -89,6 +93,21 @@ def whisper_model() -> Path:
     if override is not None:
         return override
     return _PROJECT_ROOT / "models" / "whisper.cpp" / "ggml-large-v3.bin"
+
+
+def export_archive_setting(environ: "os._Environ[str] | dict[str, str] | None" = None) -> tuple[str, Path | None]:
+    """What to do with the .lrc after a verified export: ("off", None), ("delete", None) or ("move", folder)."""
+    env = os.environ if environ is None else environ
+    raw = env.get(ENV_EXPORT_ARCHIVE_DIR)
+    if raw is None:
+        return "move", _PROJECT_ROOT / "checked"
+    raw = str(raw).strip()
+    if not raw or raw.casefold() == "off":
+        return "off", None
+    if raw.casefold() == "delete":
+        return "delete", None
+    path = Path(os.path.expandvars(raw)).expanduser()
+    return "move", path if path.is_absolute() else _PROJECT_ROOT / path
 
 
 def ffmpeg() -> str:
