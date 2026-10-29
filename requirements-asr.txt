@@ -10,3 +10,4 @@ transformers==4.57.6
 huggingface-hub==0.36.2
 pyopenjtalk-plus==0.4.1.post3
 mutagen==1.48.1
+opencc-python-reimplemented

@@ -5,6 +5,7 @@ import importlib.util
 import gzip
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -263,6 +264,7 @@ class LyricseeCoreTests(unittest.TestCase):
         self.assertEqual(text, core.render_lyrics(candidate.lines))
         self.assertIn("鏡子對面", text)
 
+    @unittest.skipUnless(sys.platform == "win32", "LCMap fallback is Windows-only")
     def test_traditional_conversion_falls_back_to_lcmap_when_opencc_missing(self):
         core = load_core()
         real_import = builtins.__import__
@@ -272,11 +274,70 @@ class LyricseeCoreTests(unittest.TestCase):
                 raise ImportError("no opencc")
             return real_import(name, *args, **kwargs)
 
-        with mock.patch("builtins.__import__", fake_import):
+        with mock.patch.object(core, "_opencc_failed", False), mock.patch.object(
+            core, "_opencc_converter", None
+        ):
+            with mock.patch("builtins.__import__", fake_import):
+                with self.assertLogs("lyricsee_core", level="WARNING"):
+                    result = core._to_traditional_chinese("发问")
+            self.assertTrue(core._opencc_failed)
+        self.assertEqual(result, "發問")
+
+    def test_opencc_convert_error_falls_back(self):
+        core = load_core()
+        broken = mock.Mock()
+        broken.convert.side_effect = RuntimeError("boom")
+        with mock.patch.object(core, "_opencc_failed", False), mock.patch.object(
+            core, "_opencc_converter", broken
+        ), mock.patch.object(core, "_lcmap_traditional", return_value="X"):
             with self.assertLogs("lyricsee_core", level="WARNING"):
-                result = core._to_traditional_chinese("发问")
-        self.assertTrue(core._opencc_failed)
-        self.assertIn(result, ("發問", "发问"))  # LCMap is char-level and Windows-only
+                self.assertEqual(core._to_traditional_chinese("发问"), "X")
+            self.assertEqual(core._to_traditional_chinese("发问"), "X")
+        broken.convert.assert_called_once()
+
+    def test_translation_with_kana_or_dot_is_converted(self):
+        core = load_core()
+        self.assertEqual(
+            core.render_lyrics([core.LyricPair("初音ミクの歌", "初音ミク的发现")]),
+            "初音ミクの歌  初音ミク的發現\n",
+        )
+        self.assertEqual(
+            core.render_lyrics([core.LyricPair("君の声", "卡尔・马克思的梦想")]),
+            "君の声  卡爾・馬克思的夢想\n",
+        )
+
+    def test_chinese_song_with_kana_interjection_converts_plain_lines(self):
+        core = load_core()
+        rows = [core.LyricPair("我们一起唱歌%d" % i, "We sing") for i in range(4)]
+        rows.append(core.LyricPair("啦啦啦（ラララ）", "Lalala"))
+        text = core.render_lyrics(rows)
+        self.assertIn("我們一起唱歌0  We sing\n", text)
+        self.assertIn("啦啦啦（ラララ）  Lalala", text)
+
+    def test_japanese_song_keeps_kanji_only_lines(self):
+        core = load_core()
+        text = core.render_lyrics([
+            core.LyricPair("少年の声", "Boy"),
+            core.LyricPair("大志", "Ambition"),
+            core.LyricPair("声", "Voice"),
+            core.LyricPair("夢を見ている", "Dream"),
+        ])
+        self.assertEqual(text, "少年の声  Boy\n大志  Ambition\n声  Voice\n夢を見ている  Dream\n")
+
+    def test_dot_and_long_mark_are_not_kana(self):
+        core = load_core()
+        self.assertIsNone(core._ANY_KANA_RE.search("・ー･ｰ"))
+        self.assertTrue(core._ANY_KANA_RE.search("ラ"))
+        self.assertEqual(
+            core.render_lyrics([core.LyricPair("卡尔・马克思的梦想", "Karl")]),
+            "卡爾・馬克思的夢想  Karl\n",
+        )
+
+    def test_traditionalize_lyrics_text_for_accepted_candidates(self):
+        core = load_core()
+        self.assertEqual(
+            core.traditionalize_lyrics_text("我们的梦想  Our dream\n"), "我們的夢想  Our dream\n"
+        )
 
     def test_collect_candidates_sanitizes_structured_metadata_without_dropping_lyrics(self):
         core = load_core()

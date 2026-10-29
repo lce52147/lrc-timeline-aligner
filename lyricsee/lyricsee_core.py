@@ -598,7 +598,10 @@ def _single_line(value: str) -> str:
 # and turns ordinary lyric words into tech terms, so it stays off.
 OPENCC_CONFIG = "s2tw"
 
-_ANY_KANA_RE = re.compile(r"[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f]")
+# Kana only: the middle dot (U+30FB, U+FF65) and the prolonged-sound mark
+# (U+30FC, U+FF70) also appear in Chinese lines, so they do not count.
+_ANY_KANA_RE = re.compile(r"[\u3040-\u30fa\u30fd-\u30ff\u31f0-\u31ff\uff66-\uff6f\uff71-\uff9f]")
+CHINESE_SONG_MIN_NO_KANA = 0.8
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 _opencc_converter = None
 _opencc_failed = False
@@ -627,7 +630,7 @@ def _to_traditional_chinese(value: str) -> str:
     """Traditional (Taiwan) text via OpenCC; LCMap char-level only if OpenCC is missing."""
     global _opencc_converter, _opencc_failed
     value = value.replace("\x00", "")
-    if not value or _ANY_KANA_RE.search(value) or not _CJK_RE.search(value):
+    if not value or not _CJK_RE.search(value):
         return value
     if _opencc_converter is None and not _opencc_failed:
         try:
@@ -640,30 +643,64 @@ def _to_traditional_chinese(value: str) -> str:
                 "OpenCC unavailable (%s); falling back to LCMap character conversion", exc
             )
     if _opencc_converter is not None:
-        return _opencc_converter.convert(value)
+        try:
+            return _opencc_converter.convert(value)
+        except Exception as exc:
+            _opencc_converter = None
+            _opencc_failed = True
+            logging.getLogger(__name__).warning(
+                "OpenCC convert failed (%s); falling back to LCMap character conversion", exc
+            )
     return _lcmap_traditional(value)
 
 
 def _is_chinese_song(originals: Iterable[str]) -> bool:
-    """CJK present and no kana anywhere in the original column."""
-    joined = "".join(originals)
-    return bool(_CJK_RE.search(joined)) and not _ANY_KANA_RE.search(joined)
+    """Of the original lines with CJK, at least 80% hold no kana."""
+    cjk_lines = [line for line in originals if _CJK_RE.search(line)]
+    if not cjk_lines:
+        return False
+    plain = sum(1 for line in cjk_lines if not _ANY_KANA_RE.search(line))
+    return plain / len(cjk_lines) >= CHINESE_SONG_MIN_NO_KANA
+
+
+def traditionalize_pairs(pairs: Iterable[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Translation column always; original column only for a Chinese song, per kana-free line."""
+    pairs = list(pairs)
+    chinese_song = _is_chinese_song(original for original, _ in pairs)
+    result = []
+    for original, translation in pairs:
+        if chinese_song and not _ANY_KANA_RE.search(original):
+            original = _to_traditional_chinese(original)
+        result.append((original, _to_traditional_chinese(translation)))
+    return result
+
+
+def traditionalize_lyrics_text(text: str) -> str:
+    """Same rule for an already rendered 'original  translation' lyrics file."""
+    rows = []
+    for line in text.split("\n"):
+        original, _, translation = line.partition("  ")
+        rows.append((original, translation))
+    return "\n".join(
+        f"{original}  {translation}" if translation else original
+        for original, translation in traditionalize_pairs(rows)
+    )
 
 
 def render_lyrics(lines: Iterable[LyricPair]) -> str:
     rendered: list[str] = []
     lines = list(lines)
-    chinese_song = _is_chinese_song(row.original for row in lines)
-    for row in lines:
+    cleaned = [
+        (
+            re.sub(r" {2,}", " ", _single_line(row.original)),
+            re.sub(r" {2,}", " ", _single_line(row.translation or "")),
+        )
+        for row in lines
+    ]
+    for original, translation in traditionalize_pairs(cleaned):
         # Two ASCII spaces is the file-format delimiter; normalize runs
         # *inside* both fields so the downstream parser cannot split a
         # Japanese lyric in the middle of its original text.
-        original = re.sub(r" {2,}", " ", _single_line(row.original))
-        if chinese_song:
-            original = _to_traditional_chinese(original)
-        translation = _to_traditional_chinese(
-            re.sub(r" {2,}", " ", _single_line(row.translation or ""))
-        )
         if not original:
             continue
         rendered.append(f"{original}  {translation}" if translation else original)

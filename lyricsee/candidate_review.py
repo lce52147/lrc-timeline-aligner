@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 from candidate_text import (
     AGREE_SIM, char_similarity, clean_lyric_lines, clean_original_lines, fold, has_inline_furigana,
 )
-from lyricsee_core import LyricCandidate
+from lyricsee_core import LyricCandidate, traditionalize_lyrics_text
 
 
 class CandidateInfo(NamedTuple):
@@ -249,7 +249,7 @@ def accept_candidate(
     if lyrics_lines is None:
         lyrics_lines, cleaning = cleaned_candidate_lines(candidates_dir, candidate_idx, len(metadata))
         extra = {**(extra or {}), "cleaning": cleaning}
-    lyrics_text = "\n".join(lyrics_lines)
+    lyrics_text = traditionalize_lyrics_text("\n".join(lyrics_lines))
     if not lyrics_text.endswith("\n"):
         lyrics_text += "\n"
 
