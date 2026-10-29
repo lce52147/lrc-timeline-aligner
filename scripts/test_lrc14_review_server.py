@@ -831,15 +831,32 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         import lrc_manual_edits
         self.assertEqual(lrc_manual_edits.manual_edit_reason(self.output, self.report), "lrc-differs-from-published")
 
-    def test_hand_edited_timestamp_row_shows_without_candidates(self) -> None:
+    def test_hand_edited_timestamp_is_read_only_with_reason(self) -> None:
         self._hand_edit({b"[00:03.00]three": b"[00:03.20]three"})
         detail = self._detail()
+        self.assertTrue(detail["read_only"])
+        self.assertIsNotNone(detail["read_only_reason"])
+        response = self._json_request("POST", "/api/song/0/save", {"base_sha256": detail["base_sha256"], "edits": []})
+        status, body = response[0], json.loads(response[2])
+        self.assertEqual(status, 403)
+        self.assertEqual(body["error"], detail["read_only_reason"])
+
+    def test_converted_song_same_tags_new_text_multiline_saves_only_its_group(self) -> None:
+        self._hand_edit({b"two a": b"zwei a", b"two b": b"zwei b", b"[00:01.00]one": b"[00:01.00]eins"})
+        detail = self._detail()
         self.assertFalse(detail["read_only"])
-        self.assertEqual(detail["manual_edit_reason"], "timestamps-edited")
+        before = self.output.read_bytes()
         rows = {row["entry"]: row for row in detail["rows"]}
-        self.assertEqual(rows[3]["current_cs"], 320)
-        self.assertEqual(rows[3]["candidates"], [])
-        self.assertTrue(any(option["kind"] != "keep" for option in rows[1]["options"]))  # still matches the published line
+        self.assertEqual(rows[2]["lyric"], "zwei a\nzwei b")
+        self.assertTrue(rows[2]["candidates"] or rows[2]["options"])
+        body = {"base_sha256": detail["base_sha256"],
+                "edits": [{"entry": 2, "cs": 215, "source": "whisper", "nudge_cs": 15}]}
+        status = self._json_request("POST", "/api/song/0/save", body)[0]
+        self.assertEqual(status, 200)
+        after = self.output.read_bytes()
+        changed = [(x, y) for x, y in zip(before.split(b"\n"), after.split(b"\n")) if x != y]
+        self.assertEqual(len(changed), 2)
+        self.assertTrue(all(y.startswith(b"[00:02.15]zwei") for _x, y in changed))
 
     def test_save_keeps_marks_on_lines_that_were_not_edited(self) -> None:
         self._hand_edit({b"[00:02.00]two a": b"*[00:02.00]two a", b"[00:02.00]two b": b"*[00:02.00]two b",
@@ -1393,7 +1410,7 @@ class ArchivedReportsStayHiddenTest(unittest.TestCase):
 
 
 class ReviewMappingSafetyTests(unittest.TestCase):
-    """AP2: a mapping that might aim an entry at the wrong line is never editable."""
+    """AP4: a unique tag-structure match is trusted; anything else is read-only with its specific reason."""
 
     @staticmethod
     def _report(display_lines, *tags):
@@ -1403,48 +1420,64 @@ class ReviewMappingSafetyTests(unittest.TestCase):
     def _mapping(self, report, data):
         return review_server._song_mapping(report, report["assignments"], data)
 
-    def test_f1_inserted_timed_line_is_not_header_metadata(self) -> None:
+    def test_f1_inserted_timed_line_is_read_only(self) -> None:
         report = self._report(3, "[00:01.00]", "[00:02.00]", "[00:03.00]")
-        mapping, reason, _loose = self._mapping(
-            report, b"[00:01.00]a\n[00:01.50]b\n[00:02.00]c\n[00:03.00]d\n")
+        mapping, reason = self._mapping(report, b"[00:01.00]a\n[00:01.50]b\n[00:02.00]c\n[00:03.00]d\n")
         self.assertIsNone(mapping)
-        self.assertIsNotNone(reason)
+        self.assertEqual(reason, "timing-entry-count-mismatch")
 
-    def test_f1_untimed_and_early_header_lines_are_still_skipped(self) -> None:
+    def test_f1_untimed_and_early_header_lines_are_skipped_by_region(self) -> None:
         report = self._report(3, "[00:01.00]", "[00:02.00]", "[00:03.00]")
-        mapping, reason, loose = self._mapping(
-            report, b"[ar:x]\n\n[00:00.00]title\n[00:01.00]a\n[00:02.00]b\n[00:03.20]c\n")
+        mapping, reason = self._mapping(
+            report, b"[ar:x]\n\n[00:00.00]title\n[00:01.00]a\n[00:02.00]b\n[00:03.00]c\n")
         self.assertIsNone(reason)
         self.assertEqual(mapping, [(3,), (4,), (5,)])
-        self.assertTrue(loose)
 
-    def test_f2_absorbed_neighbour_line_is_loose_and_not_saveable(self) -> None:
-        report = self._report(4, "[00:01.00]", "[00:02.00]", "[00:03.00]")
-        mapping, reason, loose = self._mapping(
-            report, b"[00:01.00]a\n[00:02.00]b\n[00:03.00]c\n[00:03.00]d\n")
-        self.assertIsNone(reason)
-        self.assertTrue(loose)
-        self.assertEqual(mapping[2], (2, 3))
-
-    def test_f3_identical_duet_tags_keep_the_song_visible(self) -> None:
-        report = self._report(3, "[00:01.00]", "[00:01.00]", "[00:02.00]")
-        mapping, reason, loose = self._mapping(report, b"[00:01.00]a\n[00:01.00]b\n[00:02.10]c\n")
-        self.assertIsNone(reason)
-        self.assertEqual(mapping, [(0,), (1,), (2,)])
-        self.assertTrue(loose)
-
-    def test_f3_duet_with_extra_line_is_read_only(self) -> None:
-        report = self._report(4, "[00:01.00]", "[00:01.00]", "[00:02.00]")
-        mapping, reason, _loose = self._mapping(report, b"[00:01.00]a\n[00:01.00]b\n[00:01.00]c\n[00:02.10]d\n")
+    def test_f1_hand_edited_timestamp_is_read_only(self) -> None:
+        report = self._report(3, "[00:01.00]", "[00:02.00]", "[00:03.00]")
+        mapping, reason = self._mapping(report, b"[00:01.00]a\n[00:02.00]b\n[00:03.20]c\n")
         self.assertIsNone(mapping)
         self.assertIsNotNone(reason)
+
+    def test_f2_absorbed_neighbour_line_is_read_only(self) -> None:
+        report = self._report(3, "[00:01.00]", "[00:02.00]", "[00:03.00]")
+        mapping, reason = self._mapping(report, b"[00:01.00]a\n[00:02.00]b\n[00:03.00]c\n[00:03.00]d\n")
+        self.assertIsNone(mapping)
+        self.assertIsNotNone(reason)
+
+    def test_converted_song_multiline_entries_map_by_tag_structure(self) -> None:
+        report = self._report(4, "[00:01.00]", "[00:02.00]", "[00:03.00]")
+        mapping, reason = self._mapping(report, b"[00:01.00]x\n[00:02.00]y\n[00:02.00]z\n[00:03.00]w\n")
+        self.assertIsNone(reason)
+        self.assertEqual(mapping, [(0,), (1, 2), (3,)])
+
+    def test_f3_title_card_at_zero_with_first_entry_at_zero(self) -> None:
+        report = self._report(2, "[00:00.00]", "[00:02.00]")
+        mapping, reason = self._mapping(report, b"[ti:x]\n[00:00.00]a\n[00:02.00]b\n")
+        self.assertIsNone(reason)
+        self.assertEqual(mapping, [(1,), (2,)])
+
+    def test_f4_specific_reason_is_not_masked(self) -> None:
+        report = self._report(3, "[00:01.00]", "[00:01.00]", "[00:02.00]")
+        report["timing_entries"] = 99
+        mapping, reason = self._mapping(report, b"[00:01.00]a\n[00:01.00]b\n[00:01.00]c\n[00:02.10]d\n")
+        self.assertIsNone(mapping)
+        self.assertIsNotNone(reason)
+        report = self._report(4, "[00:01.00]", "[00:01.00]", "[00:01.00]")
+        mapping, reason = self._mapping(report, b"[00:01.00]a\n[00:01.00]b\n[00:01.00]c\n[00:01.00]d\n")
+        self.assertEqual((mapping, reason), (None, "ambiguous-timing-region"))
+
+    def test_duet_equal_tags_unchanged_structure_never_guesses(self) -> None:
+        report = self._report(3, "[00:01.00]", "[00:01.00]", "[00:02.00]")
+        mapping, reason = self._mapping(report, b"[00:01.00]a\n[00:01.00]b\n[00:02.00]c\n")
+        self.assertEqual((mapping, reason), ([(0,), (1,), (2,)], None))
 
     def test_f5_trailing_blank_lines_are_ignored_and_preserved(self) -> None:
         report = self._report(2, "[00:01.00]", "[00:02.00]")
         data = b"[00:01.00]a\n[00:02.00]b\n\n  \n"
         report["published_lrc_sha256"] = hashlib.sha256(data).hexdigest()
-        mapping, reason, loose = self._mapping(report, data)
-        self.assertEqual((mapping, reason, loose), ([(0,), (1,)], None, False))
+        mapping, reason = self._mapping(report, data)
+        self.assertEqual((mapping, reason), ([(0,), (1,)], None))
         bom, trailing, lines = review_server._split_lrc(data)
         self.assertEqual(review_server._join_lrc(bom, trailing, lines), data)
 

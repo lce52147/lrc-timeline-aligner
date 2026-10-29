@@ -224,70 +224,21 @@ def _content_lines(lines):
     return lines[:end]
 
 
-def _loose_mapping(data, display_lines, assignments):
-    """Index-based mapping for an LRC whose timestamps were hand-edited, or the reason it is unsafe.
-
-    Only untimed lines (metadata, blanks) or timed lines earlier than every published tag may sit above the
-    display region: anything else could be an inserted line, and guessing would aim a save at the wrong line.
-    """
-    _bom, _trailing, all_lines = _split_lrc(data)
-    lines = _content_lines(all_lines)
-    try:
-        display_lines = int(display_lines)
-    except (TypeError, ValueError):
-        return None, lines, "display-lines-mismatch"
-    if display_lines < 0 or display_lines > len(lines):
-        return None, lines, "display-lines-mismatch"
-    wanted = [_tag_cs(assignment.get("lrc_tag")) if isinstance(assignment, dict) else None for assignment in assignments]
-    if any(tag is None for tag in wanted):
-        return None, lines, "malformed-assignment"
-    start = len(lines) - display_lines
-    for index in range(start):
-        tag = _line_tag(lines[index])
-        if tag is not None and (not wanted or tag >= min(wanted)):
-            return None, lines, "extra-timed-lines"
-    tags = [_line_tag(line) for line in lines[start:]]
-    if any(tag is None for tag in tags):
-        return None, lines, "untimed-region"
-    if len(tags) == len(assignments):
-        return [(start + offset,) for offset in range(len(tags))], lines, None
-    groups = []
-    for offset, tag in enumerate(tags):
-        if groups and tag == tags[groups[-1][-1] - start]:
-            groups[-1].append(start + offset)
-        else:
-            groups.append([start + offset])
-    if len(groups) > len(assignments):
-        return None, lines, "timing-entry-count-mismatch"
-    if len(groups) < len(assignments):
-        # Equal-tag lines could be one multi-line entry or several entries sharing a tag (duet parts).
-        return None, lines, "ambiguous-duet-structure" if len(tags) > len(assignments) else "timing-entry-count-mismatch"
-    return [tuple(group) for group in groups], lines, None
-
-
-_LOOSE_REASONS = {"timing-entry-count-mismatch", "ambiguous-timing-region"}
-
-
 def _song_mapping(report, assignments, reference_raw):
-    """(mapping, reason, loose) for the reference LRC.
+    """(mapping, reason) for the reference LRC.
 
-    ``loose`` means the file is not the published one and the mapping rests on index grouping: a multi-line
-    entry cannot be proved to hold only its own lines, so it is shown but never saved.
+    The published tag sequence must match the display region exactly once; then the tag structure alone fixes
+    which lines belong to which entry, whatever the lyric text now says (stale or not). Anything else yields
+    the specific reason and no mapping, so nothing is ever guessed and saved.
     """
-    timing_entries = report.get("timing_entries")
-    if timing_entries is not None and (not isinstance(timing_entries, int) or timing_entries != len(assignments)):
-        return None, "timing-entry-count-mismatch", False
     clean = _strip_marks(reference_raw)[0]
     mapping, _lines, reason = _timing_mapping(clean, report.get("display_lines"), assignments)
-    published = report.get("published_lrc_sha256")
-    stale = isinstance(published, str) and _sha256_bytes(clean) != published
-    if reason in _LOOSE_REASONS and stale:
-        loose, _lines, loose_reason = _loose_mapping(clean, report.get("display_lines"), assignments)
-        if loose_reason is None:
-            return loose, None, True
-    if reason is None and stale and any(len(group) > 1 for group in mapping):
-        return mapping, None, True
-    return mapping, reason, False
+    if reason is not None:
+        return None, reason
+    timing_entries = report.get("timing_entries")
+    if timing_entries is not None and (not isinstance(timing_entries, int) or timing_entries != len(assignments)):
+        return None, "timing-entry-count-mismatch"
+    return mapping, None
 
 
 def _timing_mapping(data, display_lines, assignments):
@@ -774,11 +725,10 @@ def _song_payload(report_path, report, anchor=None):
     reference_data = _strip_marks(reference_raw)[0]
     mapping = None
     mapping_reason = None
-    loose = False
     if output_path is None or not output_path.is_file():
         mapping_reason = "lrc-exported" if _lyrics_embedded(report.get("audio_path")) else "lrc-missing"
     else:
-        mapping, mapping_reason, loose = _song_mapping(report, assignments, reference_raw)
+        mapping, mapping_reason = _song_mapping(report, assignments, reference_raw)
     _cbom, _ctrailing, current_lines = _split_lrc(current_data)
     readonly = mapping_reason is not None
     reason = mapping_reason
@@ -793,9 +743,9 @@ def _song_payload(report_path, report, anchor=None):
             readonly, reason = True, trust_reason
         elif trust_reason:
             manual_edited, manual_reason = True, trust_reason
-        if loose or marked_lines:
+        if marked_lines:
             manual_edited = True
-            manual_reason = "timestamps-edited" if loose else (manual_reason or "user-marks")
+            manual_reason = manual_reason or "user-marks"
         _abom, _atrailing, auto_lines = _split_lrc(reference_data)
         features = lrc_review_tsv.severity_features(report)
         whisperx_rows = report.get("whisperx_row_evidence")
@@ -844,9 +794,6 @@ def _song_payload(report_path, report, anchor=None):
             lyrics = line_lyrics(current_lines, line_indexes)
             candidates, extra_candidates = _candidate_rows(assignment, current_cs, auto_cs)
             user_marked = any(line in marked_lines for line in line_indexes)
-            if loose and (current_cs != _tag_cs(assignment.get("lrc_tag")) or len(line_indexes) > 1):
-                # The published line is gone from this slot, or its line count is unproven: nothing in the report speaks for it.
-                candidates, extra_candidates = [], []
             listed_row = listed.get(index + 1, {})
             status = listed_row.get("status", feature.get("status", "UNTRUSTED"))
             reason_codes = lrc_review_tsv.reason_codes_for(
@@ -1062,7 +1009,7 @@ def _save_song(song, body):
         return 409, {"error": "stale base_sha256"}
     assignments = song["report_data"].get("assignments") if isinstance(song["report_data"].get("assignments"), list) else []
     reference = song["auto"].read_bytes() if song["auto"].is_file() else current
-    mapping, mapping_reason, loose = _song_mapping(song["report_data"], assignments, reference)
+    mapping, mapping_reason = _song_mapping(song["report_data"], assignments, reference)
     _bom, _trailing, lines = _split_lrc(current)
     if mapping_reason:
         return 403, {"error": mapping_reason}
@@ -1079,8 +1026,6 @@ def _save_song(song, body):
             return 400, {"error": "invalid edit"}
         if cs < 0 or cs > int((_number(song["report_data"].get("duration_seconds")) or 0) * 100 + 100):
             return 400, {"error": "timestamp out of range"}
-        if loose and len(mapping[entry - 1]) > 1:
-            return 403, {"error": "unverified-multiline-entry"}
         seen.add(entry)
         current_cs = _line_tag(_strip_line_marks(lines[mapping[entry - 1][0]]))
         if cs != current_cs:
