@@ -1212,6 +1212,125 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         status, _headers, body = self._json_request("POST", "/api/song/0/save", stale_edit)
         self.assertEqual((status, json.loads(body)["error"]), (409, "stale base_sha256"))
 
+    def test_unsaved_edits_draft_in_local_storage(self) -> None:
+        page = (SCRIPTS / "review_page" / "index.html").read_text(encoding="utf-8")
+        source = page.split("<script>", 1)[1].rsplit("</script>", 1)[0]
+        hook = "  load().then(() => { refreshJobs(); watchFiles(); });\n})();"
+        self.assertIn(hook, source.replace("\r\n", "\n"))
+        source = source.replace("\r\n", "\n").replace(hook, "  globalThis.__t = {state, stage};\n  load().then(() => { refreshJobs(); watchFiles(); });\n})();")
+        harness = r"""
+const vm = require('vm');
+const source = SOURCE;
+const storage = new Map();
+const timers = new Map();
+let timerId = 0;
+const localStorage = {getItem:k => storage.has(k) ? storage.get(k) : null, setItem:(k, v) => storage.set(k, String(v)), removeItem:k => storage.delete(k)};
+// getElementById-only DOM shim: no querySelector / setAttribute
+function element(id='') {
+  return {id, children:[], dataset:{}, className:'', textContent:'', disabled:false, hidden:id === 'draft-restored' || id === 'draft-stale', listeners:{},
+    addEventListener(type, fn) { this.listeners[type] = () => fn({type, currentTarget:this, target:this, preventDefault(){}, stopPropagation(){}}); }, appendChild(child) { this.children.push(child); },
+    querySelectorAll() { return []; }, blur() {},
+    set innerHTML(value) { this._html = value; this.children = []; }, get innerHTML() { return this._html || ''; }}; }
+const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve => setImmediate(resolve)); };
+async function boot(sha, opts={}) {
+  const elements = new Map(), docListeners = {}, winListeners = {};
+  const doc = {getElementById(id) { if (!elements.has(id)) elements.set(id, element(id)); return elements.get(id); }, createElement() { return element(); },
+    addEventListener(type, fn) { docListeners[type] = fn; }, visibilityState:'visible'};
+  const row = {entry:1, review:'REVIEW', current_cs:100, auto_cs:100, lyrics:['one'], candidates:[{cs:200, sources:['ctc'], diagnostic_only:false}], severity_score:1};
+  const saves = [];
+  const response = (ok, status, data) => ({ok, status, statusText:'x', json:async () => data});
+  const context = {console, document:doc, localStorage, location:{search:'?t=test', hash:'', origin:'http://test'}, addEventListener(type, fn) { winListeners[type] = fn; },
+    URLSearchParams, encodeURIComponent, Map, Set, Number, String, Math, JSON, Object, Error, RegExp, Date, Promise, Array,
+    setTimeout(fn, ms) { const id = ++timerId; timers.set(id, {fn, ms}); return id; }, clearTimeout(id) { timers.delete(id); }, setInterval() { return 0; }, clearInterval() {},
+    fetch: async (path, options={}) => {
+      if (path === '/api/songs') return response(true, 200, [{index:0, song:'demo', read_only:false, has_flac:false, has_stem:false}]);
+      if (path === '/api/song/0' && !options.method) return response(true, 200, {base_sha256:sha, server_read_only:false, has_flac:true, has_stem:true, rows:[row]});
+      if (path === '/api/song/0/save') { saves.push(JSON.parse(options.body)); return opts.saveFails ? response(false, 500, {error:'boom'}) : response(true, 200, {base_sha256:'after', server_read_only:false, has_flac:true, has_stem:true, rows:[Object.assign({}, row, {current_cs:150})]}); }
+      if (path === '/api/jobs') return response(true, 200, {import_enabled:false, jobs:[]});
+      if (path === '/api/version') return response(true, 200, {generation:0});
+      throw Error('unexpected fetch ' + path);
+    }};
+  context.globalThis = context;
+  vm.runInNewContext(SOURCE_VAR, context);
+  await settle();
+  return {t:context.__t, el:id => doc.getElementById(id), docListeners, winListeners, saves, context};
+}
+const drafts = () => JSON.parse(storage.get('lrc-review-drafts') || '{}');
+const flushTimers = () => { for (const [id, t] of [...timers]) { if (t.ms === 750) { timers.delete(id); t.fn(); } } };
+(async () => {
+  const out = {};
+  // 1. an edit is written to the draft, debounced
+  let p = await boot('x');
+  p.t.stage(p.t.state.rows[0], 150, 'manual', 50);
+  out.beforeDebounce = storage.has('lrc-review-drafts');
+  flushTimers();
+  const d = drafts().demo;
+  out.written = {sha:d.base_sha256, n:d.edits.length, entry:d.edits[0].entry, cs:d.edits[0].cs, src:d.edits[0].source, at:typeof d.edits[0].edited_at};
+  // 2. reload with the same sha restores it
+  p = await boot('x');
+  out.restored = {edits:p.t.state.edits.size, dirty:p.t.state.dirty, cs:p.t.state.edits.get('0:1').cs, hidden:p.el('draft-restored').hidden, text:p.el('draft-restored-text').textContent, staleHidden:p.el('draft-stale').hidden};
+  // 3. different sha: not applied, draft kept, banner offers discard / apply
+  p = await boot('y');
+  out.stale = {edits:p.t.state.edits.size, kept:!!drafts().demo, hidden:p.el('draft-stale').hidden, text:p.el('draft-stale-text').textContent, restoredHidden:p.el('draft-restored').hidden};
+  p.t.stage(p.t.state.rows[0], 175, 'manual', 0); flushTimers();
+  out.staleUntouched = drafts().demo.edits[0].cs;
+  p.el('draft-stale-apply').listeners.click();
+  out.applied = {edits:p.t.state.edits.size, staleHidden:p.el('draft-stale').hidden};
+  storage.clear(); p = await boot('x'); p.t.stage(p.t.state.rows[0], 150, 'manual', 50); flushTimers();
+  p = await boot('y');
+  p.el('draft-stale-discard').listeners.click();
+  out.discarded = {kept:storage.has('lrc-review-drafts'), hidden:p.el('draft-stale').hidden};
+  // 4. a failed save keeps the draft, a good save clears it
+  p = await boot('x');
+  p.t.stage(p.t.state.rows[0], 150, 'manual', 50); flushTimers();
+  p = await boot('x', {saveFails:true});
+  p.el('save').listeners.click(); await settle();
+  out.failedSave = {kept:!!drafts().demo};
+  p = await boot('x');
+  p.el('save').listeners.click(); await settle();
+  out.goodSave = {posted:p.saves.length, cleared:!storage.has('lrc-review-drafts')};
+  // 5. beforeunload / visibilitychange write without waiting for the debounce
+  p = await boot('x');
+  p.t.stage(p.t.state.rows[0], 150, 'manual', 50);
+  p.winListeners.beforeunload({preventDefault(){}});
+  out.unload = !!drafts().demo;
+  storage.clear();
+  p = await boot('x');
+  p.t.stage(p.t.state.rows[0], 150, 'manual', 50);
+  p.docListeners.visibilitychange();
+  out.hiddenNoop = storage.has('lrc-review-drafts');
+  p.context.document.visibilityState = 'hidden';
+  p.docListeners.visibilitychange();
+  out.hidden = !!drafts().demo;
+  console.log(JSON.stringify(out));
+})().catch(error => { console.error(error.stack); process.exitCode = 1; });
+""".replace("SOURCE_VAR", "source").replace("SOURCE", json.dumps(source), 1)
+        flags = 0x08000000 | 0x00004000 if os.name == "nt" else 0
+        result = subprocess.run(["node", "-"], input=harness, capture_output=True, text=True, encoding="utf-8", creationflags=flags)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        out = json.loads(result.stdout)
+        self.assertFalse(out["beforeDebounce"], "the write is debounced")
+        self.assertEqual(out["written"], {"sha": "x", "n": 1, "entry": 1, "cs": 150, "src": "manual", "at": "number"})
+        self.assertEqual(out["restored"]["edits"], 1)
+        self.assertTrue(out["restored"]["dirty"])
+        self.assertEqual(out["restored"]["cs"], 150)
+        self.assertFalse(out["restored"]["hidden"])
+        self.assertRegex(out["restored"]["text"], r"^已還原 1 筆未儲存的修改（來自 \d\d:\d\d）$")
+        self.assertTrue(out["restored"]["staleHidden"])
+        self.assertEqual(out["stale"]["edits"], 0, "a draft for a changed file is not applied")
+        self.assertTrue(out["stale"]["kept"])
+        self.assertFalse(out["stale"]["hidden"])
+        self.assertEqual(out["stale"]["text"], "有 1 筆舊的未儲存修改，但檔案已變動")
+        self.assertTrue(out["stale"]["restoredHidden"])
+        self.assertEqual(out["staleUntouched"], 150, "new edits do not overwrite a pending stale draft")
+        self.assertEqual(out["applied"], {"edits": 1, "staleHidden": True})
+        self.assertEqual(out["discarded"], {"kept": False, "hidden": True})
+        self.assertTrue(out["failedSave"]["kept"], "a failed save keeps the draft")
+        self.assertEqual(out["goodSave"], {"posted": 1, "cleared": True})
+        self.assertTrue(out["unload"])
+        self.assertFalse(out["hiddenNoop"])
+        self.assertTrue(out["hidden"])
+
     def test_client_409_reload_marks_conflict_and_blocks_resubmit(self) -> None:
         page = (SCRIPTS / "review_page" / "index.html").read_text(encoding="utf-8")
         source = page.split("<script>", 1)[1].rsplit("</script>", 1)[0]

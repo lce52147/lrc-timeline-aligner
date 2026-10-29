@@ -24,6 +24,7 @@ header .song-name{font-weight:600;font-size:15px;max-width:34vw;overflow:hidden;
 .export-badge{position:absolute;top:calc(100% + 8px);right:0;z-index:5;display:flex;align-items:center;gap:8px;width:max-content;max-width:min(520px,80vw);padding:7px 12px;border-radius:10px;border:1px solid var(--tone);color:var(--fg);background:color-mix(in srgb,var(--tone) 22%,var(--bg));box-shadow:0 8px 28px rgba(0,0,0,.4);font-size:13px;font-weight:600;overflow-wrap:anywhere;transition:opacity .5s}
 .export-badge[hidden]{display:none}.export-badge.run{--tone:var(--warn)}.export-badge.ok{--tone:var(--ok)}.export-badge.bad{--tone:var(--bad)}.export-badge.fade{opacity:0}
 .export-badge::before{content:"";width:10px;height:10px;border-radius:50%;background:var(--tone);flex:none}.export-badge.run::before{animation:export-pulse 1s ease-in-out infinite}
+.draft-banner{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 10px;padding:8px 12px;border-radius:10px;border:1px solid var(--warn);background:color-mix(in srgb,var(--warn) 18%,var(--bg));color:var(--fg);font-size:13px}.draft-banner[hidden]{display:none}.draft-banner button{padding:2px 10px}
 .export-badge button{padding:0 6px;line-height:1.4;background:transparent;border:0;color:var(--fg);flex:none}.export-badge button[hidden]{display:none}
 @keyframes export-pulse{50%{opacity:.35}}
 .pill{font-size:12px;padding:2px 9px;border-radius:999px;background:var(--panel-3);color:var(--fg-2)}
@@ -119,6 +120,8 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
 <div class="layout">
   <nav class="rail" id="rail"></nav>
   <main class="work"><div class="column">
+    <div id="draft-restored" class="draft-banner" role="status" hidden><span id="draft-restored-text"></span><button type="button" id="draft-restored-discard">捨棄</button></div>
+    <div id="draft-stale" class="draft-banner" role="status" hidden><span id="draft-stale-text"></span><button type="button" id="draft-stale-discard">捨棄</button><button type="button" id="draft-stale-apply">仍然套用</button></div>
     <section class="tiles" id="tiles">
       <div class="tile glass"><span class="ico">▶</span><div><div class="lbl">這首已審</div><div class="val num"><span id="pos">0</span><span class="muted"> / </span><span id="pos-total">0</span></div><div class="bar"><i id="pos-bar" style="width:0%"></i></div></div></div>
       <div class="tile glass"><span class="ico">♪</span><div><div class="lbl">本首剩餘</div><div class="val num" id="left-song">0</div></div></div>
@@ -282,7 +285,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       .map((c, i) => ({cs:c.cs, kind:c.cs < row.current_cs ? 'earlier' : 'later', label:'AB'[i], delta_s:(c.cs - row.current_cs) / 100, support:1 + (c.agree_count || 0), sources:c.sources || [c.label]}));
     return row.current_cs == null ? alternatives : [...alternatives, {cs:row.current_cs, kind:'keep', label:'維持', delta_s:0, support:0, sources:['current']}].sort((a, b) => a.cs - b.cs);
   };
-  function setDirty() { state.dirty = state.edits.size > 0; }
+  function setDirty() { state.dirty = state.edits.size > 0; scheduleDraft(); }
   const serverReadOnly = () => state.songs.some(song => song.detail?.server_read_only);
   const editable = song => !song.read_only && !song.detail?.server_read_only;
   function playerKey(item, kind) { return String(item.song.index) + ':' + kind; }
@@ -329,6 +332,93 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   const SETTINGS_KEY = 'lrc-review-settings';
   try { const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null'); if (saved && typeof saved === 'object') { state.autoplay = !!saved.autoplay; state.batchSkip = !!saved.batchSkip; if (typeof saved.showAll === 'boolean') state.showAll = saved.showAll; } } catch (_) {}
   function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({autoplay:state.autoplay, batchSkip:state.batchSkip, showAll:state.showAll})); } catch (_) {} }
+  // ---- unsaved-edit drafts: survive a server restart or a closed tab ----
+  const DRAFT_KEY = 'lrc-review-drafts', DRAFT_MAX_SONGS = 50, DRAFT_DEBOUNCE_MS = 750;
+  const draftTimes = new Map(), draftHandled = new Set(), staleDrafts = new Map();
+  let draftTimer = null, draftArmed = false;
+  function readDrafts() { try { const saved = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {}; } catch (_) { return {}; } }
+  function writeDrafts(drafts) {
+    const names = Object.keys(drafts).sort((a, b) => (drafts[b].saved_at || 0) - (drafts[a].saved_at || 0));
+    names.slice(DRAFT_MAX_SONGS).forEach(name => { delete drafts[name]; });
+    try { if (Object.keys(drafts).length) localStorage.setItem(DRAFT_KEY, JSON.stringify(drafts)); else localStorage.removeItem(DRAFT_KEY); } catch (_) {}
+  }
+  function flushDraft() {
+    if (draftTimer != null) { clearTimeout(draftTimer); draftTimer = null; }
+    if (!draftArmed) return;
+    const drafts = readDrafts(), now = Date.now();
+    state.songs.forEach(song => {
+      if (staleDrafts.has(song.song)) return;
+      const edits = [];
+      state.edits.forEach((edit, key) => {
+        if (Number(key.split(':')[0]) !== song.index) return;
+        if (!draftTimes.has(key)) draftTimes.set(key, now);
+        edits.push({entry:edit.entry, cs:edit.cs, source:edit.source, nudge_cs:edit.nudge_cs, base_cs:edit.base_cs, edited_at:draftTimes.get(key)});
+      });
+      if (edits.length) drafts[song.song] = {base_sha256:song.detail?.base_sha256 || '', saved_at:now, edits};
+      else delete drafts[song.song];
+    });
+    writeDrafts(drafts);
+  }
+  function scheduleDraft() {
+    if (!draftArmed) return;
+    if (draftTimer != null) clearTimeout(draftTimer);
+    draftTimer = setTimeout(flushDraft, DRAFT_DEBOUNCE_MS);
+  }
+  const draftClock = ms => { const d = new Date(ms); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
+  // Put a draft's edits back into state.edits; returns how many were applied. `rebase` re-reads base_cs from the file as it is now.
+  function applyDraft(song, draft, rebase) {
+    let applied = 0;
+    (draft.edits || []).forEach(edit => {
+      const item = state.rows.find(entry => entry.song.index === song.index && entry.row.entry === edit.entry);
+      if (!item || !editable(item.song) || !Number.isFinite(edit.cs) || item.row.current_cs == null) return;
+      if (!rebase && edit.base_cs !== item.row.current_cs) return;
+      if (edit.cs === item.row.current_cs) return;
+      const key = keyFor(item);
+      state.edits.set(key, {entry:edit.entry, cs:edit.cs, source:String(edit.source || 'draft').slice(0, 64), nudge_cs:edit.nudge_cs || 0, base_cs:item.row.current_cs});
+      draftTimes.set(key, edit.edited_at || draft.saved_at || Date.now());
+      applied++;
+    });
+    return applied;
+  }
+  function restoreDrafts() {
+    const drafts = readDrafts();
+    let restored = 0, newest = 0;
+    state.songs.forEach(song => {
+      if (draftHandled.has(song.song) || !drafts[song.song] || !Array.isArray(drafts[song.song].edits)) return;
+      draftHandled.add(song.song);
+      const draft = drafts[song.song];
+      if (!song.detail?.base_sha256 || draft.base_sha256 === song.detail.base_sha256) {
+        const applied = applyDraft(song, draft, false);
+        if (applied) { restored += applied; newest = Math.max(newest, draft.saved_at || 0); }
+      } else staleDrafts.set(song.song, draft);
+    });
+    draftArmed = true;
+    if (restored) { document.getElementById('draft-restored-text').textContent = '已還原 ' + restored + ' 筆未儲存的修改（來自 ' + draftClock(newest) + '）'; document.getElementById('draft-restored').hidden = false; }
+    showStaleBanner();
+  }
+  function showStaleBanner() {
+    let count = 0;
+    staleDrafts.forEach(draft => { count += (draft.edits || []).length; });
+    document.getElementById('draft-stale-text').textContent = '有 ' + count + ' 筆舊的未儲存修改，但檔案已變動';
+    document.getElementById('draft-stale').hidden = !staleDrafts.size;
+  }
+  document.getElementById('draft-restored-discard').addEventListener('click', () => {
+    state.edits.clear(); draftTimes.clear();
+    document.getElementById('draft-restored').hidden = true;
+    setDirty(); flushDraft(); render();
+  });
+  document.getElementById('draft-stale-discard').addEventListener('click', () => {
+    const drafts = readDrafts();
+    staleDrafts.forEach((draft, name) => { delete drafts[name]; });
+    staleDrafts.clear(); writeDrafts(drafts); showStaleBanner();
+  });
+  document.getElementById('draft-stale-apply').addEventListener('click', () => {
+    let applied = 0;
+    staleDrafts.forEach((draft, name) => { const song = state.songs.find(item => item.song === name); if (song) applied += applyDraft(song, draft, true); });
+    staleDrafts.clear(); showStaleBanner();
+    if (applied) state.notice = '已套用 ' + applied + ' 筆舊的未儲存修改。';
+    setDirty(); flushDraft(); render();
+  });
   function autoplaySelected() {
     if (!state.autoplay) return;
     const item = visible()[state.selected];
@@ -567,6 +657,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       return;
     }
     state.edits.set(key, {entry:item.row.entry, cs, source:String(source || 'manual').slice(0,64), nudge_cs:nudgeCs, base_cs:item.row.current_cs});
+    draftTimes.set(key, Date.now());
     state.error = ''; setDirty(); render();
   }
   function stageCandidate(item, candidate) {
@@ -898,6 +989,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
         const item = currentRows.get(key);
         if (!item || !editable(item.song)) { state.edits.delete(key); dropped++; }
       });
+      restoreDrafts();
       setDirty();
       state.error = dropped ? dropped + ' dropped staged edit' + (dropped === 1 ? '' : 's') + ' after reload' : '';
       render();
@@ -939,7 +1031,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     setDirty();
     const loadMessage = await load();
     if (loadMessage) failures.push(loadMessage);
-    state.error = failures.join('; '); setDirty(); render();
+    state.error = failures.join('; '); setDirty(); flushDraft(); render();
   }
 
   const exportBox = () => document.getElementById('export-box');
@@ -1247,7 +1339,8 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   document.getElementById('import-start').addEventListener('click', () => startImport());
   document.getElementById('import-close').addEventListener('click', () => { importBox().hidden = true; });
 
-  addEventListener('beforeunload', event => { if (state.dirty) { event.preventDefault(); event.returnValue = ''; } });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushDraft(); });
+  addEventListener('beforeunload', event => { flushDraft(); if (state.dirty) { event.preventDefault(); event.returnValue = ''; } });
   // Live refresh: a FLAC dropped in, an LRC changed or a new alignment run shows up without restarting.
   let seenGeneration = null, refreshPending = false;
   async function watchFiles() {

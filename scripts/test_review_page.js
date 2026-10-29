@@ -40,7 +40,7 @@ const intervals = new Map();
 function fakeSetInterval(fn, ms) { const id=++timerId; intervals.set(id,{fn,ms}); return id; }
 function fakeClearInterval(id) { intervals.delete(id); }
 function fireTimer(ms) { const hit=[...timers.entries()].find(([,t]) => t.ms===ms); assert.ok(hit, 'expected a timer at '+ms+' ms'); timers.delete(hit[0]); hit[1].fn(); }
-function runNextTimer() { const next=[...timers.entries()].sort((a,b)=>a[1].ms-b[1].ms)[0]; assert.ok(next, 'expected a scheduled playback timer'); timers.delete(next[0]); next[1].fn(); }
+function runNextTimer() { const next=[...timers.entries()].filter(([,t]) => t.ms!==750).sort((a,b)=>a[1].ms-b[1].ms)[0]; assert.ok(next, 'expected a scheduled playback timer'); timers.delete(next[0]); next[1].fn(); }
 async function flush() { for (let i=0;i<8;i++) await Promise.resolve(); await new Promise(resolve => setImmediate(resolve)); }
 
 const ids = new Map(['queue','status','save','server-mode','untrusted','mode'].map(id => [id,new Element(id)]));
