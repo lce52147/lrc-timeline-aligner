@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 
 class Element {
-  constructor(id='') { this.id=id; this.value=''; this.checked=false; this.disabled=false; this.innerHTML=''; this.className=''; this.dataset={}; this.listeners=new Map(); }
+  constructor(id='') { this.id=id; this.value=''; this.checked=false; this.disabled=false; this.innerHTML=''; this.className=''; this.dataset={}; this.listeners=new Map(); this.hidden=false; this.textContent=''; const el=this; this.classList={add(name){ if (!el.className.split(' ').includes(name)) el.className=(el.className+' '+name).trim(); }, contains(name){ return el.className.split(' ').includes(name); }}; }
   addEventListener(type, fn) { if (!this.listeners.has(type)) this.listeners.set(type, []); this.listeners.get(type).push(fn); }
   dispatch(type, event={}) { for (const fn of this.listeners.get(type) || []) fn(Object.assign({type,target:this,currentTarget:this,preventDefault(){},stopPropagation(){}}, event)); }
   appendChild(child) { (this.children ||= []).push(child); }
@@ -36,6 +36,10 @@ const timers = new Map();
 let timerId=0;
 function fakeSetTimeout(fn, ms) { const id=++timerId; timers.set(id,{fn,ms}); return id; }
 function fakeClearTimeout(id) { timers.delete(id); }
+const intervals = new Map();
+function fakeSetInterval(fn, ms) { const id=++timerId; intervals.set(id,{fn,ms}); return id; }
+function fakeClearInterval(id) { intervals.delete(id); }
+function fireTimer(ms) { const hit=[...timers.entries()].find(([,t]) => t.ms===ms); assert.ok(hit, 'expected a timer at '+ms+' ms'); timers.delete(hit[0]); hit[1].fn(); }
 function runNextTimer() { const next=[...timers.entries()].sort((a,b)=>a[1].ms-b[1].ms)[0]; assert.ok(next, 'expected a scheduled playback timer'); timers.delete(next[0]); next[1].fn(); }
 async function flush() { for (let i=0;i<8;i++) await Promise.resolve(); await new Promise(resolve => setImmediate(resolve)); }
 
@@ -52,10 +56,12 @@ const row = {
 const song={index:0,song:'demo',has_flac:true,has_stem:true,read_only:false,detail:{has_flac:true,has_stem:true,base_sha256:'base',rows:[row]}};
 let peakCalls = 0;
 const jobsState = {import_enabled:true, jobs:[]};
-let exportGate = null;
+let exportGate = null, exportMode = 'ok';
 const jobsPosts = [], inspectPosts = [], decisionPosts = [], exportPosts = [];
 let loadCalls = 0;
 async function fetchMock(url, options={}) {
+  if (url === '/api/song/0/export' && exportMode === 'throw' && !JSON.parse(options.body).check) throw new TypeError('Failed to fetch');
+  if (url === '/api/song/0/export' && exportMode === 'http500' && !JSON.parse(options.body).check) return {ok:false,status:500,statusText:'Server Error',json:async()=>({error:'驗證失敗，已還原（rolled back）'})};
   if (url === '/api/song/0/export' && exportGate && !JSON.parse(options.body).check) await exportGate;
   // the server answers 415 to any POST that is not declared as JSON
   if (options.method === 'POST' && (options.headers || {})['Content-Type'] !== 'application/json') return {ok:false,status:415,statusText:'Unsupported Media Type',json:async()=>{throw new Error('not json');}};
@@ -78,7 +84,7 @@ assert.ok(match, 'page script missing');
 const script = match[1].replace(/  load\(\)\.then\(\(\) => \{ refreshJobs\(\); watchFiles\(\); \}\);\r?\n\}\)\(\);/, '  globalThis.__reviewTest = {state, render, playAround, playAB, stopPlayer, select, stage, save, rowElement, attachPeaks, accept, keep, openImport, inspectImports, startImport, refreshJobs, renderImport, volume, volumeGain, sliderToDb, dbToSlider, setVolumeDb, toggleMute, setShowAll};\n  load().then(() => { refreshJobs(); watchFiles(); });\n})();');
 const storage = new Map();
 const localStorageMock = {getItem(key) { return storage.has(key) ? storage.get(key) : null; }, setItem(key, value) { storage.set(key, String(value)); }, removeItem(key) { storage.delete(key); }};
-const context = {console, document:documentMock, localStorage:localStorageMock, addEventListener(){}, URLSearchParams: class { constructor(){ } get(){return 'token';} }, location:{search:'',hash:''}, fetch:fetchMock, Audio:AudioMock, setTimeout:fakeSetTimeout, clearTimeout:fakeClearTimeout, alert(){}, Promise, encodeURIComponent, Map, Set, Number, String, Math, JSON, Object, Error, RegExp};
+const context = {console, document:documentMock, localStorage:localStorageMock, addEventListener(){}, URLSearchParams: class { constructor(){ } get(){return 'token';} }, location:{search:'',hash:''}, fetch:fetchMock, Audio:AudioMock, setTimeout:fakeSetTimeout, clearTimeout:fakeClearTimeout, setInterval:fakeSetInterval, clearInterval:fakeClearInterval, alert(){}, Promise, encodeURIComponent, Map, Set, Number, String, Math, JSON, Object, Error, RegExp};
 context.globalThis=context;
 vm.runInNewContext(script, context, {filename:'review_page/index.html'});
 
@@ -380,7 +386,12 @@ vm.runInNewContext(script, context, {filename:'review_page/index.html'});
   documentMock.getElementById('export-target').value = '0'; ids.get('export-target').dispatch('change');
   let openGate; exportGate = new Promise(resolve => { openGate = resolve; });
   ids.get('export-go').dispatch('click'); await flush();
-  assert.match(test.state.notice, /^匯出中…正在寫入並驗證 demo\.flac/, 'progress notice shows at once while the server works');
+  const badge = documentMock.getElementById('export-badge');
+  assert.equal(badge.hidden, false, 'the badge shows at once');
+  assert.match(badge.className, /\brun\b/, 'yellow while exporting');
+  assert.match(documentMock.getElementById('export-badge-text').textContent, /匯出中：demo\.flac（\d+ 秒）/, 'yellow badge names the target with a seconds counter');
+  assert.equal(intervals.size >= 1, true, 'the seconds counter ticks live');
+  assert.equal(documentMock.getElementById('export-badge-close').hidden, true, 'no close button while running');
   assert.equal(test.state.exporting, true, 'export is flagged as running');
   assert.equal(documentMock.getElementById('export').disabled, true, 'the export button is disabled while running');
   const postsWhileRunning = exportPosts.length;
@@ -389,11 +400,51 @@ vm.runInNewContext(script, context, {filename:'review_page/index.html'});
   assert.equal(documentMock.getElementById('export-box').hidden, true, 'no second dialog opens while an export runs');
   openGate(); exportGate = null; await flush(); await flush();
   assert.deepEqual(exportPosts.at(-1), {audio:'demo.flac'}, 'confirming exports the chosen file');
-  assert.match(test.state.notice, /^已寫入 demo\.flac 的 LYRICS 標籤（9 行，\d+\.\d 秒）；LRC 已移到 D:\/checked\/demo\.lrc$/, 'the page reports what was written, how long it took and where the LRC went');
+  assert.match(badge.className, /\bok\b/, 'green once written and verified');
+  assert.match(documentMock.getElementById('export-badge-text').textContent, /已寫入並驗證 demo\.flac（9 行，\d+\.\d 秒）；LRC 已移到 D:\/checked\/demo\.lrc$/, 'green badge: line count, seconds, where the LRC went');
+  assert.equal(intervals.size, 0, 'the counter stops when the export ends');
+  assert.equal(badge.hidden, false, 'green stays visible for a moment');
+  fireTimer(3500); assert.match(badge.className, /\bfade\b/, 'green starts fading after ~3.5 s');
+  fireTimer(4000); assert.equal(badge.hidden, true, 'green is gone after ~4 s');
   assert.equal(test.state.exporting, false, 'the running flag clears');
   assert.equal(documentMock.getElementById('export').disabled, false, 'the export button is enabled again');
   assert.equal(documentMock.getElementById('export-box').hidden, true, 'the dialog closes after export');
   documentMock.listeners.get('keydown')({key:'s', ctrlKey:true, target:{}, preventDefault(){}}); await flush();
   assert.equal(documentMock.getElementById('export-box').hidden, true, 'plain Ctrl+S does not open the export dialog');
+  // archive off -> "LRC 留在原處"
+  exportKey(); await flush(); documentMock.getElementById('export-target').value = '1'; ids.get('export-target').dispatch('change');
+  ids.get('export-go').dispatch('click'); await flush(); await flush();
+  assert.match(documentMock.getElementById('export-badge-text').textContent, /demo\.m4a.*；LRC 留在原處$/, 'archive off says the LRC stayed');
+  // red: server refuses / rolls back; stays until dismissed; button unlocked
+  exportMode = 'http500';
+  exportKey(); await flush(); documentMock.getElementById('export-target').value = '0'; ids.get('export-target').dispatch('change');
+  ids.get('export-go').dispatch('click'); await flush(); await flush();
+  assert.match(badge.className, /\bbad\b/, 'red on failure');
+  assert.match(documentMock.getElementById('export-badge-text').textContent, /匯出失敗：驗證失敗，已還原/, 'red shows the reason');
+  assert.equal(documentMock.getElementById('export-badge-close').hidden, false, 'red has a close button');
+  assert.equal([...timers.values()].some(t => t.ms === 3500 || t.ms === 4000), false, 'red never auto-fades');
+  assert.equal(test.state.exporting, false, 'failure unlocks');
+  assert.equal(documentMock.getElementById('export').disabled, false, 'the button is unlocked after a failure');
+  ids.get('export-badge-close').dispatch('click');
+  assert.equal(badge.hidden, true, 'the close button dismisses red');
+  // red again; starting another export clears it (yellow replaces red)
+  exportKey(); await flush(); documentMock.getElementById('export-target').value = '0'; ids.get('export-target').dispatch('change');
+  ids.get('export-go').dispatch('click'); await flush(); await flush();
+  assert.match(badge.className, /\bbad\b/, 'red again');
+  exportMode = 'ok'; exportKey(); await flush();
+  ids.get('export-go').dispatch('click'); await flush();
+  assert.doesNotMatch(badge.className, /\bbad\b/, 'starting another export replaces red');
+  await flush(); assert.match(badge.className, /\bok\b/, 'and the retry ends green');
+  fireTimer(4000);
+  // a thrown network error always ends red and unlocks
+  exportMode = 'throw';
+  exportKey(); await flush(); documentMock.getElementById('export-target').value = '0'; ids.get('export-target').dispatch('change');
+  ids.get('export-go').dispatch('click'); await flush(); await flush();
+  assert.match(badge.className, /\bbad\b/, 'a thrown fetch ends red');
+  assert.match(documentMock.getElementById('export-badge-text').textContent, /Failed to fetch/, 'the thrown message is shown');
+  assert.equal(test.state.exporting, false, 'the lock is released after a throw');
+  assert.equal(documentMock.getElementById('export').disabled, false, 'the button is not left locked after a throw');
+  assert.equal(intervals.size, 0, 'no counter left running after a throw');
+  exportMode = 'ok';
   console.log('review page settings tests: PASS');
 })().catch(error => { console.error(error.stack || error); process.exitCode=1; });

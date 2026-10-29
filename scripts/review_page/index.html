@@ -20,6 +20,12 @@ header .song-name{font-weight:600;font-size:15px;max-width:34vw;overflow:hidden;
 .tile .lbl{font-size:11px;color:var(--fg-3);letter-spacing:.04em}.tile .val{font-size:16px;font-weight:600}
 .bar{height:5px;width:120px;background:var(--panel-3);border-radius:3px;overflow:hidden;display:inline-block;vertical-align:middle}.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-2))}
 .status{color:var(--fg-2)}.status.dirty{color:var(--hot)}.warning{color:var(--bad)}
+.export-wrap{position:relative;display:inline-block}
+.export-badge{position:absolute;top:calc(100% + 8px);right:0;z-index:5;display:flex;align-items:center;gap:8px;width:max-content;max-width:min(520px,80vw);padding:7px 12px;border-radius:10px;border:1px solid var(--tone);color:var(--fg);background:color-mix(in srgb,var(--tone) 22%,var(--bg));box-shadow:0 8px 28px rgba(0,0,0,.4);font-size:13px;font-weight:600;overflow-wrap:anywhere;transition:opacity .5s}
+.export-badge[hidden]{display:none}.export-badge.run{--tone:var(--warn)}.export-badge.ok{--tone:var(--ok)}.export-badge.bad{--tone:var(--bad)}.export-badge.fade{opacity:0}
+.export-badge::before{content:"";width:10px;height:10px;border-radius:50%;background:var(--tone);flex:none}.export-badge.run::before{animation:export-pulse 1s ease-in-out infinite}
+.export-badge button{padding:0 6px;line-height:1.4;background:transparent;border:0;color:var(--fg);flex:none}.export-badge button[hidden]{display:none}
+@keyframes export-pulse{50%{opacity:.35}}
 .pill{font-size:12px;padding:2px 9px;border-radius:999px;background:var(--panel-3);color:var(--fg-2)}
 .layout{flex:1;display:grid;grid-template-columns:250px minmax(0,1fr);min-height:0}
 @media (max-width:760px){.layout{grid-template-columns:1fr}.rail{display:none}}
@@ -106,7 +112,8 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   <span class="vol" id="vol-box" title="音量 0 ～ −100 dB（滾輪 ±1 dB，M 靜音）"><button id="vol-mute" title="靜音">🔊</button><input id="vol" type="range" min="0" max="1000" step="1" value="1000" aria-label="音量（dB）"><span class="num" id="vol-text">0.0 dB</span></span>
   <button id="mode">音源: FLAC</button>
   <button id="save">儲存 <span class="num">Ctrl+S</span></button>
-  <button id="export" title="把目前的 LRC 寫進音檔的歌詞標籤">匯出到音檔 <span class="num">Ctrl+Shift+S</span></button>
+  <span class="export-wrap"><button id="export" title="把目前的 LRC 寫進音檔的歌詞標籤">匯出到音檔 <span class="num">Ctrl+Shift+S</span></button>
+    <span id="export-badge" class="export-badge" role="status" aria-live="polite" hidden><span id="export-badge-text"></span><button type="button" id="export-badge-close" aria-label="關閉" hidden>✕</button></span></span>
   <button id="help-button" aria-label="快捷鍵與設定">?</button>
 </header>
 <div class="layout">
@@ -930,11 +937,38 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     document.getElementById('export-info').textContent = lines.join(' ');
     document.getElementById('export-go').disabled = !target;
   }
+  const exportBadge = {timers:[], tick:null};
+  function exportBadgeClear() {
+    exportBadge.timers.forEach(clearTimeout); exportBadge.timers = [];
+    clearInterval(exportBadge.tick); exportBadge.tick = null;
+    const badge = document.getElementById('export-badge');
+    badge.hidden = true; badge.className = 'export-badge';
+  }
+  function exportBadgeShow(kind, text, closable) {
+    exportBadgeClear();
+    const badge = document.getElementById('export-badge');
+    badge.className = 'export-badge ' + kind; badge.hidden = false;
+    document.getElementById('export-badge-text').textContent = text;
+    document.getElementById('export-badge-close').hidden = !closable;
+  }
+  function exportBadgeRunning(name) {
+    const started = Date.now();
+    const text = () => '匯出中：' + name + '（' + Math.floor((Date.now() - started) / 1000) + ' 秒）';
+    exportBadgeShow('run', text(), false);
+    exportBadge.tick = setInterval(() => { document.getElementById('export-badge-text').textContent = text(); }, 250);
+  }
+  function exportBadgeOk(text) {
+    exportBadgeShow('ok', text, false);
+    exportBadge.timers.push(setTimeout(() => document.getElementById('export-badge').classList.add('fade'), 3500));
+    exportBadge.timers.push(setTimeout(exportBadgeClear, 4000));
+  }
+  const exportBadgeFail = reason => exportBadgeShow('bad', '匯出失敗：' + reason, true);
+  document.getElementById('export-badge-close').addEventListener('click', exportBadgeClear);
   async function openExport() {
     if (state.exporting) return;
     stopPlayer();
     const song = exportSong();
-    if (serverReadOnly() || !song || song.read_only) { state.error = '無法匯出：這首歌是唯讀'; render(); return; }
+    if (serverReadOnly() || !song || song.read_only) { exportBadgeFail('這首歌是唯讀'); return; }
     try {
       const data = await api('/api/song/' + song.index + '/export', {method:'POST', body:JSON.stringify({audio:'', check:true})});
       exportTargets.length = 0;
@@ -950,7 +984,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       select.value = '0';
       renderExportInfo();
       exportBox().hidden = false;
-    } catch (error) { state.error = '匯出失敗：' + error.message; render(); }
+    } catch (error) { exportBadgeFail(error.message || String(error)); }
   }
   async function doExport() {
     const song = exportSong();
@@ -958,28 +992,29 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     if (!song || !target || state.exporting) return;
     exportBox().hidden = true;
     state.exporting = true; state.error = '';
-    state.notice = '匯出中…正在寫入並驗證 ' + target.name + '（大檔可能要幾十秒，請稍候）';
+    exportBadgeRunning(target.name);
     render();
     const started = Date.now();
     try {
       if (state.dirty) {
         await save();
-        if (state.error) return;
-        state.notice = '匯出中…正在寫入並驗證 ' + target.name;
+        if (state.error) { exportBadgeFail('儲存失敗：' + state.error); return; }
       }
       const data = await api('/api/song/' + song.index + '/export', {method:'POST', body:JSON.stringify({audio:target.name})});
-      state.error = '';
       const seconds = ((Date.now() - started) / 1000).toFixed(1);
-      state.notice = '已寫入 ' + data.name + ' 的 ' + data.tag + ' 標籤（' + data.lines + ' 行，' + seconds + ' 秒）' + exportArchiveText(data.archive);
-    } catch (error) { state.notice = ''; state.error = '匯出失敗：' + error.message; }
-    finally { state.exporting = false; }
-    render();
+      if (data.archive && !['off', 'move', 'delete'].includes(data.archive.mode)) {
+        exportBadgeOk('已寫入並驗證 ' + data.name + '（' + data.lines + ' 行，' + seconds + ' 秒）；LRC 沒有歸檔（' + (data.archive.error || '未知原因') + '），仍留在原處');
+      } else {
+        exportBadgeOk('已寫入並驗證 ' + data.name + '（' + data.lines + ' 行，' + seconds + ' 秒）' + exportArchiveText(data.archive));
+      }
+    } catch (error) { exportBadgeFail(error && error.message ? error.message : String(error)); }
+    finally { state.exporting = false; try { render(); } catch (error) { console.error(error); } }
   }
   function exportArchiveText(archive) {
     if (!archive || archive.mode === 'off') return '；LRC 留在原處';
     if (archive.mode === 'move') return '；LRC 已移到 ' + archive.to;
     if (archive.mode === 'delete') return '；LRC 已移到資源回收桶';
-    return '；但 LRC 沒有歸檔（' + (archive.error || '未知原因') + '），仍留在原處';
+    return '；LRC 留在原處';
   }
   document.getElementById('export').addEventListener('click', event => { event.currentTarget.blur(); openExport(); });
   document.getElementById('export-target').addEventListener('change', renderExportInfo);
