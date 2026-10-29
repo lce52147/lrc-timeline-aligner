@@ -1108,7 +1108,7 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         self.assertEqual(self._save_entries([(2, 299)])[0], 200)
         status, result = self._save_entries([(3, 300)])   # neighbours sit at 299 and 300: no slot between them
         self.assertEqual(status, 200)
-        self.assertEqual(result["adjusted_cs"], [{"entry": 3, "requested_cs": 300, "cs": 298}])
+        self.assertEqual(result["adjusted_cs"], [{"entry": 3, "requested_cs": 300, "cs": 298, "crossed": True}])
         self.assertEqual(len(result["rows"]), 5)
 
     def test_as6_export_answer_flags_changes_to_other_files(self) -> None:

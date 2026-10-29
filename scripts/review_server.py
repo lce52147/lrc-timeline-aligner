@@ -1206,10 +1206,16 @@ def _save_song(song, body):
             neighbours = {value for value in (prev, nxt) if value is not None}
             if cs in neighbours:
                 found = _free_slot(cs, prev, nxt, neighbours, limit)
-                adjusted.append({"entry": entry, "requested_cs": edit["asked"], "cs": found})
+                item = {"entry": entry, "requested_cs": edit["asked"], "cs": found}
                 cs = found
+                adjusted.append(item)
             elif cs != edit["asked"]:
-                adjusted.append({"entry": entry, "requested_cs": edit["asked"], "cs": cs})
+                item = {"entry": entry, "requested_cs": edit["asked"], "cs": cs}
+                adjusted.append(item)
+            else:
+                item = None
+            if item is not None and ((prev is not None and cs < prev) or (nxt is not None and cs > nxt)):
+                item["crossed"] = True
         final[entry] = cs
         edit["cs"] = cs
         edit.pop("asked", None)

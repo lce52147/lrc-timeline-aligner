@@ -501,7 +501,7 @@ test('AS5 B1: a save drops only its own entries; another tab\'s unsaved edit sur
 });
 
 test('AS5 B1: tab B closing after tab A saved leaves B\'s edit for the next tab (test_draft_drop)', async () => {
-  const st = makeStorage(), songs = [mk('S', SONG, 'sha1')];
+  const st = makeStorage(), songs = [mk('S', SONG, 'sha1', [{entry: 1, current_cs: 100, line_key: '1:a'}, {entry: 2, current_cs: 500, line_key: '2:b'}])];
   const a = await boot(st, songs), b = await boot(st, songs);
   b.edit(0, 2, 550, 50); b.flush();
   a.edit(0, 1, 150, 50); a.flush();
@@ -513,7 +513,7 @@ test('AS5 B1: tab B closing after tab A saved leaves B\'s edit for the next tab 
 });
 
 test('AS5 B1: a beat re-writes an entry that went missing from the draft, but not one a save settled (test_beat_wont_save)', async () => {
-  const st = makeStorage(), songs = [mk('S', SONG, 'sha1')];
+  const st = makeStorage(), songs = [mk('S', SONG, 'sha1', [{entry: 1, current_cs: 100, line_key: '1:a'}, {entry: 2, current_cs: 500, line_key: '2:b'}])];
   const a = await boot(st, songs), b = await boot(st, songs);
   b.edit(0, 2, 550, 50); b.flush();
   const gone = drafts(st); delete gone[SONG]; st.map.set(KEY, JSON.stringify(gone));   // some other writer lost the entry
@@ -679,6 +679,81 @@ test('AS6 F7: the export answer\'s other_changes forces a refresh even when no p
   p.t.state.exporting = true;
   p.t.state.exporting = false; p.t.settleExportGeneration(2, true);
   assert.equal(p.t.pending, true);
+});
+
+const legacyDraft = (key, sha) => { const d = {}; d[key] = {saved_at: Date.now(), tabs: {}, base_sha256: sha, edits: [{entry: 4, cs: 350, source: 'nudge', nudge_cs: 50, base_cs: 300, edited_at: Date.now()}], more: []}; return d; };
+const rows4 = () => [lk('3:one', 1, 100), lk('4:two', 2, 200), lk('6:three+four', 3, 300), lk('8:five', 4, 6200)];
+
+test('AS7 M1: a formal draft stored under the display name is restored on the same sha (claude-2 R1)', async () => {
+  const st = makeStorage();
+  st.map.set(KEY, JSON.stringify({S: {base_sha256: 's', saved_at: Date.now(), edits: [{entry: 1, cs: 150, source: 'manual', nudge_cs: 50, base_cs: 100, edited_at: Date.now()}]}}));
+  const p = await boot(st, [mk('S', SONG, 's')]);
+  assert.deepEqual([...p.t.state.edits.values()].map(e => [e.entry, e.cs]), [[1, 150]]);
+  assert.equal(p.el('draft-restored').hidden, false);
+  assert.equal(drafts(st).S, undefined, 'legacy key removed after the move');
+  assert.deepEqual(entriesOf(st), [[1, 150]]);
+});
+
+test('AS7 M1: a formal draft on another sha shows as legacy stale; nothing is deleted when the write fails', async () => {
+  const st = makeStorage();
+  st.map.set(KEY, JSON.stringify({S: {base_sha256: 'old', saved_at: Date.now(), edits: [{entry: 1, cs: 150, source: 'manual', nudge_cs: 50, base_cs: 100, edited_at: Date.now()}]}}));
+  const p = await boot(st, [mk('S', SONG, 's')]);
+  assert.equal(p.el('draft-stale').hidden, false);
+  assert.match(p.el('draft-stale-text').textContent, /舊版草稿 1 筆無法對應，請重聽該句/);
+  assert.equal(entriesOf(st).length, 1);
+  const bad = makeStorage({failWrites: true});
+  bad.map.set(KEY, JSON.stringify({S: {base_sha256: 's', saved_at: Date.now(), edits: [{entry: 1, cs: 150, source: 'manual', nudge_cs: 50, base_cs: 100, edited_at: Date.now()}]}}));
+  await boot(bad, [mk('S', SONG, 's')]);
+  assert.ok(drafts(bad).S, 'legacy key kept when the write failed');
+});
+
+test('AS7 M1: a legacy draft merges into an existing keyed draft without overwriting it', async () => {
+  const st = makeStorage(), d = {};
+  d[SONG] = {saved_at: Date.now(), tabs: {}, base_sha256: 's', edits: [{entry: 1, cs: 160, source: 'manual', nudge_cs: 60, base_cs: 100, edited_at: Date.now()}], more: []};
+  d.S = {base_sha256: 's', saved_at: Date.now(), edits: [{entry: 1, cs: 150, source: 'manual', nudge_cs: 50, base_cs: 100, edited_at: Date.now()}, {entry: 2, cs: 550, source: 'manual', nudge_cs: 50, base_cs: 500, edited_at: Date.now()}]};
+  st.map.set(KEY, JSON.stringify(d));
+  const p = await boot(st, [mk('S', SONG, 's')]);
+  assert.deepEqual([...p.t.state.edits.values()].map(e => [e.entry, e.cs]).sort(), [[1, 160], [2, 550]]);
+  assert.equal(drafts(st).S, undefined);
+});
+
+test('AS7 M2: a save does not drop a keyless legacy draft of another file by entry number; 捨棄舊版草稿 removes it (claude-2 R3 / gemini test_keyless_drop_on_save)', async () => {
+  const st = makeStorage(); st.map.set(KEY, JSON.stringify(legacyDraft(SONG, 'old')));
+  const p = await boot(st, [mk('S', SONG, 's2', rows4())]);
+  p.edit(0, 4, 6300, 100); p.flush();
+  p.el('save').listeners.click(); await settle(); p.flush();
+  assert.equal(p.saves.length, 1);
+  assert.deepEqual(entriesOf(st), [[4, 350]], 'legacy edit survives the save');
+  assert.equal(p.el('draft-stale').hidden, false);
+  assert.match(p.el('draft-stale-text').textContent, /舊版草稿 1 筆/);
+  assert.equal(p.el('draft-stale-discard-legacy').hidden, false);
+  p.el('draft-stale-discard-legacy').listeners.click(); await settle();
+  assert.equal(drafts(st)[SONG], undefined);
+  assert.equal(p.el('draft-stale').hidden, true);
+});
+
+test('AS7 M2: a keyless edit of the very file being saved is still dropped by that save', async () => {
+  const st = makeStorage(); st.map.set(KEY, JSON.stringify(legacyDraft(SONG, 's2')));
+  const p = await boot(st, [mk('S', SONG, 's2', rows4())]);
+  p.edit(0, 4, 6300, 100); p.flush();
+  p.el('save').listeners.click(); await settle(); p.flush();
+  assert.equal(drafts(st)[SONG], undefined);
+});
+
+test('AS7 m3: a fresh boot shows the legacy text with the apply button hidden (gemini test_fresh_boot_banner)', async () => {
+  const st = makeStorage(); st.map.set(KEY, JSON.stringify(legacyDraft(SONG, 'old')));
+  const p = await boot(st, [mk('S', SONG, 's2', rows4())]);
+  assert.match(p.el('draft-stale-text').textContent, /舊版草稿 1 筆無法對應，請重聽該句/);
+  assert.doesNotMatch(p.el('draft-stale-text').textContent, /舊的未儲存修改/);
+  assert.equal(p.el('draft-stale-apply').hidden, true);
+});
+
+test('AS7 m4: the offset notice uses the real delta and flags a crossed neighbour', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG, 's', lines5())];
+  const p = await boot(st, songs, {adjusted: [{entry: 3, requested_cs: 300, cs: 298, crossed: true}]});
+  p.edit(0, 3, 300, -20);
+  p.el('save').listeners.click(); await settle();
+  assert.match(p.t.state.notice, /第 3 句已偏移 0\.02 秒以免與相鄰句合併（順序與相鄰句對調，請重聽）/);
 });
 
 (async () => {
