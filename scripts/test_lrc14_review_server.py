@@ -1072,6 +1072,119 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         self.assertEqual(generation, 1)
         self.assertEqual(self.store.refresh_if_changed(), 1)
 
+    def test_ay_save_then_export_never_rescans_everything(self) -> None:
+        self._real_flac()
+        with mock.patch.object(review_server.ReviewStore, "_build", side_effect=AssertionError("full rescan")),                 mock.patch.object(review_server.ReviewStore, "reload", side_effect=AssertionError("full reload")):
+            self.assertEqual(self._save_entry(3, 330)[0], 200)
+            self.store.refresh_if_changed()   # the save's own files (LRC, auto snapshot, edits log) refresh this song only
+            self.assertEqual(self.store.refresh_if_changed(), self.store.generation)
+            status, _headers, data = self._json_request("POST", "/api/song/0/export", {"audio": "song.flac"})
+            self.assertEqual(status, 200)
+            generation = json.loads(data)["generation"]
+            self.assertEqual(self.store.refresh_if_changed(), generation, "our own export made the poll rescan")
+        timings = json.loads(data)["timings"]
+        self.assertIn("lock_wait", timings)
+        self.assertEqual(list(timings)[0], "lock_wait")
+        fields = (self.root / "export.log").read_text(encoding="utf-8").splitlines()[0].split("	")
+        self.assertTrue(fields[5].startswith("lock_wait="), fields[5])
+
+    def test_ay_sidecars_and_decisions_belong_to_their_song(self) -> None:
+        self.store.refresh_if_changed()
+        with mock.patch.object(review_server.ReviewStore, "_build", side_effect=AssertionError("full rescan")):
+            self.assertEqual(self._save_entry(3, 330)[0], 200)
+            self.store.refresh_if_changed()
+            self.assertTrue((self.root / "song.auto.lrc").is_file())
+            self.assertTrue((self.root / "song.review-edits.json").is_file())
+            generation = self.store.refresh_if_changed()
+            (self.root / "song.review-decisions.jsonl").write_text("{}" + chr(10), encoding="utf-8")
+            self.assertEqual(self.store.refresh_if_changed(), generation + 1)   # an outside decision still reaches the other tabs
+            self.assertEqual(self.store.refresh_if_changed(), generation + 1)
+
+    def test_ay_save_answer_carries_the_generation_and_the_next_poll_adds_nothing(self) -> None:
+        status, result = self._save_entry(3, 330)
+        self.assertEqual(status, 200)
+        self.assertEqual(result["generation"], self.store.generation)
+        with mock.patch.object(review_server.ReviewStore, "_build", side_effect=AssertionError("full rescan")),                 mock.patch.object(self.store, "song", side_effect=AssertionError("song re-read")):
+            self.assertEqual(self.store.refresh_if_changed(), result["generation"], "the poll saw our own save as an outside change")
+        status, second = self._save_entry(3, 340)
+        self.assertEqual(second["generation"], result["generation"] + 1)
+
+    def test_ay_export_does_not_wait_for_a_running_rescan(self) -> None:
+        self._real_flac()
+        (self.root / "stray.txt").write_text("x", encoding="utf-8")   # an unowned file: the poll wants a full rescan
+        started, release = threading.Event(), threading.Event()
+        built = review_server.ReviewStore._build
+
+        def slow_build(store):
+            started.set()
+            self.assertTrue(release.wait(20))
+            return built(store)
+
+        songs = self.store.songs
+        with mock.patch.object(review_server.ReviewStore, "_build", slow_build):
+            poll = threading.Thread(target=self.store.refresh_if_changed)
+            poll.start()
+            try:
+                self.assertTrue(started.wait(5))
+                begun = time.monotonic()
+                status, _headers, data = self._json_request("POST", "/api/song/0/export", {"audio": "song.flac"})
+                elapsed = time.monotonic() - begun
+                self.assertEqual(status, 200)
+                self.assertTrue(poll.is_alive(), "the rescan finished before the export did: the test proved nothing")
+                self.assertLess(json.loads(data)["timings"]["lock_wait"], 200)
+                self.assertLess(elapsed, 5)
+                # the page can still list songs while the rescan runs
+                self.assertEqual(self._request("GET", "/api/songs", **{"X-Review-Token": self.server.token})[0], 200)
+            finally:
+                release.set()
+                poll.join(10)
+        self.assertIs(self.store.songs, songs, "a rescan that straddled an export must not overwrite its refreshed song")
+        self.assertEqual(self.store.refresh_if_changed(), self.store.generation)   # the next poll redoes the rescan and installs it
+        self.assertIsNot(self.store.songs, songs)
+
+    def test_ay_lock_wait_is_measured_outside_total(self) -> None:
+        self._real_flac()
+        holding, release = threading.Event(), threading.Event()
+
+        def hold() -> None:
+            with self.store.lock:
+                holding.set()
+                release.wait(5)
+
+        thread = threading.Thread(target=hold)
+        thread.start()
+        self.assertTrue(holding.wait(5))
+        threading.Timer(0.4, release.set).start()
+        status, _headers, data = self._json_request("POST", "/api/song/0/export", {"audio": "song.flac"})
+        thread.join()
+        self.assertEqual(status, 200)
+        self.assertGreaterEqual(json.loads(data)["timings"]["lock_wait"], 300)
+
+    def test_ay_overlapping_polls_do_not_stack_rescans(self) -> None:
+        (self.root / "stray.txt").write_text("x", encoding="utf-8")
+        started, release = threading.Event(), threading.Event()
+        calls = []
+        built = review_server.ReviewStore._build
+
+        def slow_build(store):
+            calls.append(1)
+            started.set()
+            release.wait(10)
+            return built(store)
+
+        with mock.patch.object(review_server.ReviewStore, "_build", slow_build):
+            poll = threading.Thread(target=self.store.refresh_if_changed)
+            poll.start()
+            try:
+                self.assertTrue(started.wait(5))
+                begun = time.monotonic()
+                self.store.refresh_if_changed()   # a second poll answers at once instead of waiting or rescanning
+                self.assertLess(time.monotonic() - begun, 1)
+            finally:
+                release.set()
+                poll.join(10)
+        self.assertEqual(len(calls), 1)
+
     def test_status_reports_reload_progress_without_the_store_lock(self) -> None:
         status, _headers, data = self._request("GET", "/api/status", **{"X-Review-Token": self.server.token})
         self.assertEqual(status, 200)
@@ -1098,6 +1211,8 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         fake._stats = mock.Mock(return_value={"shared.flac": (2, 2)})
         fake._owners = mock.Mock(return_value=owners)
         fake.generation = 0
+        fake.epoch = 0
+        fake._refresh_gate = threading.Lock()
         review_server.ReviewStore.refresh_if_changed(fake)
         self.assertEqual(fake.song.mock_calls, [mock.call(0), mock.call(1)])
 
@@ -1112,6 +1227,7 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         fake._owners = mock.Mock(return_value=review_server.ReviewStore._owners(fake))
         fake._own_files = lambda index: review_server.ReviewStore._own_files(fake, index)
         fake.generation = 0
+        fake.epoch = 0
         review_server.ReviewStore.refresh_song(fake, 0)
         self.assertEqual(fake.song.mock_calls, [mock.call(0), mock.call(1)])
         self.assertEqual(fake.file_stats["shared.flac"], (2, 2))
@@ -1162,6 +1278,7 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         fake._owners = mock.Mock(return_value=review_server.ReviewStore._owners(fake))
         fake._own_files = lambda index: review_server.ReviewStore._own_files(fake, index)
         fake.generation = 0
+        fake.epoch = 0
         fake._stats = mock.Mock(return_value={"o0": (2, 2), "o1": (1, 1)})
         review_server.ReviewStore.refresh_song(fake, 0)
         self.assertFalse(fake.other_changes)
@@ -1226,7 +1343,7 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         generation = self.store.generation
         self.store.refresh_song(0)
         self.assertEqual(self.store.generation, generation + 1)
-        with mock.patch.object(review_server.ReviewStore, "reload") as reload:
+        with mock.patch.object(review_server.ReviewStore, "_build", return_value=([], [])) as reload:
             self.store.refresh_if_changed()
         reload.assert_called_once()   # the stray file was left for this poll, not swallowed
         self.assertEqual(self.store.refresh_if_changed(), self.store.generation, "own audio change was absorbed")
@@ -1512,7 +1629,7 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
                        "base_cs:item.row.current_cs", "candidate.cs, sourceText(candidate), 0", "actualDelta = cs - before",
                        "dropped staged edit", "edit.base_cs !== item.row.current_cs", "button.blur()",
                        "event.target?.type !== 'checkbox'", "const conflict = conflicted(item)",
-                       "const loadMessage = await load()", "這筆的時間在暫存後被改過", "/api/excluded", "emptyText()", "/api/version", "refreshJobs(); watchFiles();", "新增歌曲", "/api/import/inspect", "import-start"):
+                       "for (const index of bySong.keys())", "這筆的時間在暫存後被改過", "/api/excluded", "emptyText()", "/api/version", "refreshJobs(); watchFiles();", "新增歌曲", "/api/import/inspect", "import-start"):
             self.assertIn(marker, page)
         self.assertNotIn("alert(", page)
         self.assertIn("/^[1-3]$/.test(event.key)", page)

@@ -1318,6 +1318,8 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     const bySong = new Map();
     state.edits.forEach((edit,key) => { const index = Number(key.split(':')[0]); if (!bySong.has(index)) bySong.set(index, []); bySong.get(index).push(edit); });
     const failures = [], notes = [];
+    const generationBefore = seenGeneration;
+    let ownGeneration = null, saveRequests = 0;
     for (const [index, edits] of bySong) {
       try {
         const song = state.songs.find(item => item.index === index);
@@ -1336,6 +1338,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
         newer.forEach(edit => notes.push('第 ' + edit.entry + ' 句在另一個分頁有較新的修改，未儲存'));
         const sending = edits.filter(edit => !newer.has(edit));
         if (!sending.length) continue;
+        saveRequests++;
         const response = await fetch('/api/song/' + index + '/save', {
           method:'POST',
           headers:{'X-Review-Token':token, 'Origin':location.origin, 'Content-Type':'application/json'},
@@ -1350,6 +1353,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
         sending.forEach(edit => state.edits.delete(String(index) + ':' + edit.entry));
         const savedSha = song.detail.base_sha256;
         song.detail = data;
+        ownGeneration = data.generation != null ? data.generation : null;
         (data.adjusted_cs || []).forEach(item => notes.push('第 ' + item.entry + ' 句已偏移 ' + (Math.abs(item.cs - item.requested_cs) / 100).toFixed(2) + ' 秒以免與相鄰句合併' + (item.crossed ? '（順序與相鄰句對調，請重聽）' : '')));
         dropSavedDraft(song, savedSha, sending);
       } catch (error) {
@@ -1357,8 +1361,16 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       }
     }
     setDirty();
-    const loadMessage = await load();
-    if (loadMessage) failures.push(loadMessage);
+    // Only the songs this save touched are re-read: a full load() fetches every song (about 14 s on 220 reports) and the export click waited for it.
+    for (const index of bySong.keys()) {
+      try { await refreshSong(index); } catch (error) { failures.push('song ' + index + ': ' + error.message); }
+    }
+    // Our own generation bump (and only that one) is not an outside change: adopt it so the next poll does not call load() either.
+    if (saveRequests === 1 && ownGeneration != null && generationBefore !== null && ownGeneration === generationBefore + 1) {
+      seenGeneration = ownGeneration;
+      exportPolled.delete(ownGeneration);   // a poll that raced our save (inside an export) saw the same number
+      if (deferredGeneration === ownGeneration) deferredGeneration = null;
+    }
     state.error = failures.join('; '); if (notes.length) state.notice = notes.join('；'); setDirty(); flushDraft(); render();
   }
 

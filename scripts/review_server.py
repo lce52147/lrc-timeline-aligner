@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import hashlib
 import http.server
 import math
@@ -361,6 +362,18 @@ def _newest(reports):
     if len(reports) <= 1:
         return reports
     return [max(reports, key=lambda item: item.stat().st_mtime_ns)]
+
+
+class _PausingCache(dict):
+    """The report-parse cache of an off-lock rescan: every lookup (one per report) first lets ``pause`` run, so the rescan can step aside."""
+
+    def __init__(self, pause):
+        super().__init__()
+        self._pause = pause
+
+    def __contains__(self, key):
+        self._pause()
+        return super().__contains__(key)
 
 
 class _ReportIndex:
@@ -1754,6 +1767,23 @@ class JobRunner:
 
 
 _OWN_LOGS = {"export.log", "export-log.jsonl"}  # written by the server itself; never a reason to refresh
+# Sidecars the server writes beside a song (first save, every save, every decision): each belongs to its song (see _song_files),
+# so a folder listing must not count them as unknown files - that made the first save after a poll rescan every report.
+_SIDECAR_SUFFIXES = (".auto.lrc", ".review-edits.json", ".review-decisions.jsonl")
+
+
+def _song_sidecars(song):
+    """The review sidecars the server writes for a song: auto-LRC snapshot, edits log, decisions log."""
+    keys = [str(song[key]) for key in ("auto", "edits") if song.get(key)]
+    edits = str(song.get("edits") or "")
+    if edits.endswith(".review-edits.json"):
+        keys.append(edits[:-len(".review-edits.json")] + ".review-decisions.jsonl")
+    return keys
+
+
+def _song_files(song):
+    """Every file a song owns: its report, LRC, audio, CTC audio and its sidecars."""
+    return [str(song[key]) for key in ("report", "audio_path", "output_path", "ctc_audio_path") if song.get(key)] + _song_sidecars(song)
 
 
 class ReviewStore:
@@ -1770,12 +1800,18 @@ class ReviewStore:
         self.reload_progress = {"active": False, "done": 0, "total": 0}
         self.file_stats = {}
         self.generation = 0
+        self.epoch = 0  # bumped by every swap of the song list or of the baseline; an off-lock rescan that straddles one is dropped
+        self._refresh_gate = threading.Lock()  # one disk poll/rescan at a time; a second /api/version just answers with the current generation
         self.reload()
         self._remember()
 
-    def _stats(self):
-        """Every file the review depends on -> (size, mtime_ns); None marks a missing or unreadable one."""
+    def _stats(self, songs=None, folders=True):
+        """Every file the review depends on -> (size, mtime_ns); None marks a missing or unreadable one.
+        ``folders=False`` skips the listing of every audio folder (about 200 directory reads on 220 songs): only the files songs own and the report folder.
+        Takes no lock: ``songs`` (default: the current list, which is only ever replaced, never edited in place) says which files to stat."""
         seen = {}
+        want_folders = folders
+        songs = self.songs if songs is None else songs
 
         def stat(path):
             try:
@@ -1787,7 +1823,7 @@ class ReviewStore:
         def listing(folder, suffixes=None):
             try:
                 for child in sorted(folder.iterdir(), key=lambda item: item.name):
-                    if child.is_file() and (suffixes is None or child.name.endswith(suffixes)) and child.name not in _OWN_LOGS:
+                    if child.is_file() and (suffixes is None or child.name.endswith(suffixes)) and child.name not in _OWN_LOGS and not child.name.endswith(_SIDECAR_SUFFIXES):
                         stat(child)
             except OSError:
                 seen[str(folder)] = "unreadable"
@@ -1800,13 +1836,15 @@ class ReviewStore:
                 folders.add(path)
             else:
                 stat(path)
-        for song in self.songs:
+        for song in songs:
             for key in ("audio_path", "output_path", "ctc_audio_path"):
                 value = song.get(key)
                 if value:
                     stat(pathlib.Path(value))
                     folders.add(pathlib.Path(value).parent)
-        for folder in sorted(folders, key=str):
+            for value in _song_sidecars(song):
+                stat(pathlib.Path(value))
+        for folder in sorted(folders, key=str) if want_folders else ():
             listing(folder)
         return seen
 
@@ -1836,31 +1874,53 @@ class ReviewStore:
             self._remember()
             self.generation += 1
 
-    def _owners(self):
+    def _owners(self, songs=None):
         """File path -> set of indexes of the songs that own it (its report, LRC, audio or CTC audio); songs may share a file."""
         owners = {}
-        for index, song in enumerate(self.songs):
-            for key in ("report", "audio_path", "output_path", "ctc_audio_path"):
-                if song.get(key):
-                    owners.setdefault(str(song[key]), set()).add(index)
+        for index, song in enumerate(self.songs if songs is None else songs):
+            for key in _song_files(song):
+                owners.setdefault(key, set()).add(index)
         return owners
 
     def refresh_if_changed(self):
-        """Refresh what changed on disk: one song when only its own files moved, everything when reports came or went."""
-        with self.lock:
-            stats = self._stats()
-            if stats == self.file_stats:
+        """Refresh what changed on disk: one song when only its own files moved, everything when reports came or went.
+        The disk scan and a full rescan run without the store lock, so an export, a save or a page request never waits for them;
+        only the quick compare and the swap of the result take it. A scan that straddles an export (epoch moved) is dropped and redone by the next poll."""
+        if not self._refresh_gate.acquire(blocking=False):
+            return self.generation
+        try:
+            with self.lock:
+                epoch, songs, baseline = self.epoch, self.songs, dict(self.file_stats)
+            stats = self._stats(songs)
+            if stats == baseline:
                 return self.generation
-            changed = {key for key in stats.keys() | self.file_stats.keys() if stats.get(key, "-") != self.file_stats.get(key, "-")}
-            owners = self._owners()
+            changed = {key for key in stats.keys() | baseline.keys() if stats.get(key, "-") != baseline.get(key, "-")}
+            owners = self._owners(songs)
             if any(key not in owners for key in changed):
-                self.reload()
-            else:
+                built, excluded = self._build()
+                fresh = self._stats(built)
+                # A file that moved while we were reading keeps its older stat, so the next poll still sees it.
+                fresh.update({key: value for key, value in stats.items() if key in fresh})
+                with self.lock:
+                    if self.epoch != epoch:
+                        return self.generation
+                    self.songs, self.excluded = built, excluded
+                    self.file_stats = fresh
+                    self.version = self._digest(fresh)
+                    self.epoch += 1
+                    self.generation += 1
+                    return self.generation
+            with self.lock:
+                if self.epoch != epoch:
+                    return self.generation
                 for index in sorted(set().union(*(owners[key] for key in changed))):
                     self.song(index)
-            self._remember()
-            self.generation += 1
-            return self.generation
+                self._remember()
+                self.epoch += 1
+                self.generation += 1
+                return self.generation
+        finally:
+            self._refresh_gate.release()
 
     def refresh_song(self, index, own_extra=()):
         """Re-read one song after our own change (an export) and adopt the new file stats of that song's own files
@@ -1878,21 +1938,45 @@ class ReviewStore:
                 self.song(other)
             for other in co_owners:
                 own.update(self._own_files(other))
-            stats = self._stats()
+            # The quick stat (no folder listings: that is what made the export wait ~1 s under the lock). A stray file appearing in
+            # an audio folder is not seen here; the next /api/version poll finds it against the same baseline.
+            stats = self._stats(folders=False)
             # Anything else that moved on disk since the baseline is not ours: the export answer says so, so the page refreshes.
-            self.other_changes = any(stats.get(key, "-") != self.file_stats.get(key, "-") for key in stats.keys() | self.file_stats.keys() if key not in own)
+            self.other_changes = any(self.file_stats.get(key, "-") != value for key, value in stats.items() if key not in own)
             for key in own:
                 if key in stats:
                     self.file_stats[key] = stats[key]
                 else:
                     self.file_stats.pop(key, None)
             self.version = self._digest(self.file_stats)
+            self.epoch += 1
+            self.generation += 1
+            return self.generation
+
+    def absorb_change(self, index):
+        """Our own save: re-read this song and adopt the new stats of its own files (LRC, auto snapshot, edits log...) as the baseline,
+        stat-ing only those files; the generation moves so other tabs refresh, and the saving page (which gets the number back) does not."""
+        with self.lock:
+            self.song(index)
+            own = set(self._own_files(index))
+            owners = self._owners()
+            for other in sorted(set().union(*(owners.get(key, set()) for key in own)) - {index}):
+                self.song(other)
+                own.update(self._own_files(other))
+            for key in own:
+                try:
+                    info = pathlib.Path(key).stat()
+                    self.file_stats[key] = (info.st_size, info.st_mtime_ns)
+                except (OSError, ValueError):
+                    self.file_stats[key] = None
+            self.version = self._digest(self.file_stats)
+            self.epoch += 1
             self.generation += 1
             return self.generation
 
     def _own_files(self, index):
         song = self.songs[index] if 0 <= index < len(self.songs) else {}
-        return {str(song[key]) for key in ("report", "audio_path", "output_path", "ctc_audio_path") if song.get(key)}
+        return set(_song_files(song))
 
     def update_export_status(self, **fields):
         with self._status_lock:
@@ -1908,33 +1992,52 @@ class ReviewStore:
         return {"export": export, "reload": dict(self.reload_progress), "generation": self.generation}
 
     def reload(self):
+        songs, excluded = self._build()
+        self.songs, self.excluded = songs, excluded
+        self.epoch += 1
+
+    def _step_aside(self):
+        """Between two reports of a rescan: an export in flight goes first (the rescan resumes when it is done), and a short nap
+        leaves the GIL to request threads, whose many small disk calls would otherwise each wait for a whole slice."""
+        while self.export_status.get("active"):
+            time.sleep(0.05)
+        time.sleep(0.002)
+
+    def _build(self):
+        """Read every report into a new song list; touches no shared state except the progress counter, so it may run off-lock."""
         self.reload_progress = {"active": True, "done": 0, "total": 0}
+        # A CPU-bound rescan beside request threads would make every disk call of an export wait a whole GIL slice (5 ms): slice finer.
+        interval = sys.getswitchinterval()
+        sys.setswitchinterval(0.0005)
         try:
-            self._reload()
+            return self._reload()
         finally:
+            sys.setswitchinterval(interval)
             self.reload_progress = {"active": False, "done": self.reload_progress["total"], "total": self.reload_progress["total"]}
 
     def _reload(self):
-        self.songs = []
+        songs = []
         anchors = {}
-        parsed = {}
-        reports, self.excluded = _report_files(
+        parsed = _PausingCache(self._step_aside)
+        reports, excluded = _report_files(
             self.targets, self.report_dir, scan_report_dir=self.scan_report_dir, anchors=anchors, cache=parsed
         )
         self.reload_progress["total"] = len(reports)
         for path in reports:
+            self._step_aside()
             try:
                 # Discovery already parsed this report; only re-read it if that parse failed.
                 report = parsed.get(path)
                 if not isinstance(report, dict):
                     report = json.loads(path.read_text(encoding="utf-8-sig"))
                 if isinstance(report, dict):
-                    self.songs.append(_song_payload(path, report, anchors.get(path)))
+                    songs.append(_song_payload(path, report, anchors.get(path)))
                 else:
                     raise ValueError("report must be a JSON object")
             except Exception as exc:
-                self.songs.append(_song_stub(path, exc))
-            self.reload_progress["done"] = len(self.songs)
+                songs.append(_song_stub(path, exc))
+            self.reload_progress["done"] = len(songs)
+        return songs, excluded
 
     def song(self, index):
         with self.lock:
@@ -2119,7 +2222,9 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
         if not match:
             self._handle_import(parsed.path, cancel, body)
             return
+        waited = time.perf_counter()
         with self.server.store.lock:
+            lock_wait = round((time.perf_counter() - waited) * 1000)
             song = self.server.store.song(int(match.group(1)))
             if song is None or self.server.store.read_only:
                 self._json(403, {"error": "read-only"})
@@ -2136,6 +2241,7 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
                     raise
                 if status == 200 and not body.get("check"):
                     work_dir, song_name, archive = result.pop("_log")
+                    result["timings"] = {"lock_wait": lock_wait, **result["timings"]}  # first: time spent waiting for the store lock, outside `total`
                     store.update_export_status(step="store_refresh")
                     step = time.perf_counter()
                     store.refresh_song(int(match.group(1)), [archive["to"]] if archive.get("to") else [])  # this song only, never a full reload
@@ -2149,7 +2255,12 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
                 self._json(status, result)
                 return
             status, result = _save_song(song, body)
-            self._json(status, _public_song(result, self.server.store.read_only) if status == 200 else result)
+            if status != 200:
+                self._json(status, result)
+                return
+            payload = _public_song(result, self.server.store.read_only)
+            payload["generation"] = self.server.store.absorb_change(int(match.group(1)))  # the saving page adopts it, so its poll does not reload everything
+            self._json(200, payload)
 
     def _handle_import(self, path, cancel, body):
         runner = getattr(self.server, "jobs", None)
@@ -2362,6 +2473,10 @@ def run_server(targets, report_dir=None, port=0, no_browser=False, read_only=Fal
         target_list.extend(_read_targets_file(targets_file))
     _warn_missing_targets(target_list)
     store = ReviewStore(report_dir, target_list, read_only=read_only, scan_report_dir=not explicit_targets)
+    # The 220 loaded songs are a few million long-lived objects: a full garbage collection that lands inside an export or a page
+    # request freezes the whole server for most of a second. Moving them out of the collector's sight keeps those pauses away.
+    gc.collect()
+    gc.freeze()
     if dump_summary:
         for song in store.songs:
             share = sum(len({item.get("cs") for item in row.get("candidates", [])}) >= 2 for row in song["rows"])

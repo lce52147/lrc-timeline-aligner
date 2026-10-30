@@ -58,20 +58,20 @@ let peakCalls = 0;
 const jobsState = {import_enabled:true, jobs:[]};
 let exportGate = null, exportMode = 'ok';
 const jobsPosts = [], inspectPosts = [], decisionPosts = [], exportPosts = [];
-let loadCalls = 0;
+let loadCalls = 0, songListCalls = 0, detailCalls = 0;
 async function fetchMock(url, options={}) {
   if (url === '/api/song/0/export' && exportMode === 'throw' && !JSON.parse(options.body).check) throw new TypeError('Failed to fetch');
   if (url === '/api/song/0/export' && exportMode === 'http500' && !JSON.parse(options.body).check) return {ok:false,status:500,statusText:'Server Error',json:async()=>({error:'驗證失敗，已還原（rolled back）'})};
   if (url === '/api/song/0/export' && exportGate && !JSON.parse(options.body).check) await exportGate;
   // the server answers 415 to any POST that is not declared as JSON
   if (options.method === 'POST' && (options.headers || {})['Content-Type'] !== 'application/json') return {ok:false,status:415,statusText:'Unsupported Media Type',json:async()=>{throw new Error('not json');}};
-  if (url === '/api/songs') { loadCalls++; return {ok:true,json:async()=>[song]}; }
+  if (url === '/api/songs') { loadCalls++; songListCalls++; return {ok:true,json:async()=>[song]}; }
   if (url === '/api/version') return {ok:true,json:async()=>({generation:0})};
   if (url === '/api/jobs' && !options.method) return {ok:true,json:async()=>jobsState};
   if (url === '/api/jobs') { jobsPosts.push(JSON.parse(options.body)); return {ok:true,json:async()=>({job:'j1',items:1,rejected:[]})}; }
   if (url === '/api/import/inspect') { inspectPosts.push(JSON.parse(options.body)); return {ok:true,json:async()=>({items:[{audio:'D:\\m\\new.flac',name:'new',lyrics:'D:\\m\\new.lyrics.txt',existing_lrc:false},{audio:'D:\\m\\bare.flac',name:'bare',lyrics:null,existing_lrc:true}],skipped:[]})}; }
   if (url === '/api/song/0/decision') { decisionPosts.push(JSON.parse(options.body)); return {ok:true,json:async()=>({recorded:'x'})}; }
-  if (url === '/api/song/0') return {ok:true,json:async()=>song.detail};
+  if (url === '/api/song/0') { detailCalls++; return {ok:true,json:async()=>song.detail}; }
   if (url.startsWith('/api/song/0/peaks')) { peakCalls++; return {ok:true,json:async()=>({from_cs:0,to_cs:600,bins:120,sample_rate:16000,peaks:Array.from({length:120},()=>[0,0])})}; }
   if (url === '/api/song/0/export') { const body = JSON.parse(options.body); exportPosts.push(body); return body.check ? {ok:true,json:async()=>({targets:[{name:'demo.flac',tag:'LYRICS',has_lyrics:true,lines:7},{name:'demo.m4a',tag:'©lyr',has_lyrics:false,lines:0}],lrc_lines:9})} : {ok:true,json:async()=>({name:body.audio,tag:'LYRICS',lines:9,seconds:1.2,archive:body.audio==='demo.flac'?{mode:'move',to:'D:/checked/demo.lrc'}:{mode:'off'}})}; }
   if (url === '/api/song/0/save') return {ok:true,json:async()=>song.detail};
@@ -452,5 +452,13 @@ vm.runInNewContext(script, context, {filename:'review_page/index.html'});
   assert.equal(documentMock.getElementById('export').disabled, false, 'the button is not left locked after a throw');
   assert.equal(intervals.size, 0, 'no counter left running after a throw');
   exportMode = 'ok';
+  // AY: a save re-reads only the saved song; a full load() fetches every song's detail (about 14 s on 220 reports) and the export click waited for it
+  {
+    test.stage(test.state.rows[0], 125, 'manual', 0);
+    const lists = songListCalls, details = detailCalls;
+    await test.save();
+    assert.equal(detailCalls - details, 1, 'a save fetches the detail of the saved song once, not of every song');
+    assert.equal(songListCalls - lists, 2, 'refreshSong looks the song up twice (load() would list once and fetch every detail)');
+  }
   console.log('review page settings tests: PASS');
 })().catch(error => { console.error(error.stack || error); process.exitCode=1; });
