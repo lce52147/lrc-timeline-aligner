@@ -92,8 +92,8 @@ class StartLeadTests(unittest.TestCase):
             self.assertEqual(resolve_start_lead_ms(30), 30)
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("LRC_START_LEAD_MS", None)
-            self.assertEqual(resolve_start_lead_ms(None), 100)
-            self.assertEqual(resolve_start_lead_ms(0), 0)
+            self.assertEqual(resolve_start_lead_ms(None), 0)
+            self.assertEqual(resolve_start_lead_ms(100), 100)
 
 
 class ReviewCandidateLeadTests(unittest.TestCase):

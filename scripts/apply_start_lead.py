@@ -182,7 +182,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--reports-dir", type=Path, default=DEFAULT_REPORTS)
     parser.add_argument("--checklist", type=Path, default=DEFAULT_CHECKLIST)
-    parser.add_argument("--lead-ms", type=int, default=auto_lrc.LINE_START_LEAD_MS)
+    parser.add_argument("--lead-ms", type=int, default=100)
     parser.add_argument("--apply", action="store_true", help="write the changes (needs --backup-dir)")
     parser.add_argument("--backup-dir", type=Path)
     args = parser.parse_args(argv)

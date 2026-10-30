@@ -39733,7 +39733,7 @@ def output_metadata_lines(metadata_lines: Sequence[str] | None, timing_source: s
     return kept
 
 
-LINE_START_LEAD_MS = 100
+LINE_START_LEAD_MS = 0
 
 
 def resolve_start_lead_ms(cli_value: object = None) -> int:
@@ -40574,7 +40574,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--start-lead-ms",
         type=int,
         default=None,
-        help="write every line start this many ms earlier (default 100; env LRC_START_LEAD_MS; 0 disables)",
+        help="write every line start this many ms earlier (default 0 = off; env LRC_START_LEAD_MS)",
     )
     parser.add_argument(
         "--no-review-summary",
