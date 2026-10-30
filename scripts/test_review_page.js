@@ -40,7 +40,7 @@ const intervals = new Map();
 function fakeSetInterval(fn, ms) { const id=++timerId; intervals.set(id,{fn,ms}); return id; }
 function fakeClearInterval(id) { intervals.delete(id); }
 function fireTimer(ms) { const hit=[...timers.entries()].find(([,t]) => t.ms===ms); assert.ok(hit, 'expected a timer at '+ms+' ms'); timers.delete(hit[0]); hit[1].fn(); }
-function runNextTimer() { const next=[...timers.entries()].filter(([,t]) => t.ms!==750).sort((a,b)=>a[1].ms-b[1].ms)[0]; assert.ok(next, 'expected a scheduled playback timer'); timers.delete(next[0]); next[1].fn(); }
+function runNextTimer() { const next=[...timers.entries()].filter(([,t]) => ![750,1500,3000,60000].includes(t.ms)).sort((a,b)=>a[1].ms-b[1].ms)[0]; assert.ok(next, 'expected a scheduled playback timer'); timers.delete(next[0]); next[1].fn(); }
 async function flush() { for (let i=0;i<8;i++) await Promise.resolve(); await new Promise(resolve => setImmediate(resolve)); }
 
 const ids = new Map(['queue','status','save','server-mode','untrusted','mode'].map(id => [id,new Element(id)]));
@@ -59,18 +59,23 @@ const jobsState = {import_enabled:true, jobs:[]};
 let exportGate = null, exportMode = 'ok';
 const jobsPosts = [], inspectPosts = [], decisionPosts = [], exportPosts = [];
 let loadCalls = 0, songListCalls = 0, detailCalls = 0;
+let listMode = 'ok', detailGate = null;
+const skew = {ms: 0};
+class FakeDate extends Date { static now() { return Date.now.call(Date) + skew.ms; } }
 async function fetchMock(url, options={}) {
   if (url === '/api/song/0/export' && exportMode === 'throw' && !JSON.parse(options.body).check) throw new TypeError('Failed to fetch');
   if (url === '/api/song/0/export' && exportMode === 'http500' && !JSON.parse(options.body).check) return {ok:false,status:500,statusText:'Server Error',json:async()=>({error:'驗證失敗，已還原（rolled back）'})};
   if (url === '/api/song/0/export' && exportGate && !JSON.parse(options.body).check) await exportGate;
   // the server answers 415 to any POST that is not declared as JSON
   if (options.method === 'POST' && (options.headers || {})['Content-Type'] !== 'application/json') return {ok:false,status:415,statusText:'Unsupported Media Type',json:async()=>{throw new Error('not json');}};
+  if (url === '/api/songs' && listMode === 'down') throw new TypeError('Failed to fetch');
   if (url === '/api/songs') { loadCalls++; songListCalls++; return {ok:true,json:async()=>[song]}; }
   if (url === '/api/version') return {ok:true,json:async()=>({generation:0})};
   if (url === '/api/jobs' && !options.method) return {ok:true,json:async()=>jobsState};
   if (url === '/api/jobs') { jobsPosts.push(JSON.parse(options.body)); return {ok:true,json:async()=>({job:'j1',items:1,rejected:[]})}; }
   if (url === '/api/import/inspect') { inspectPosts.push(JSON.parse(options.body)); return {ok:true,json:async()=>({items:[{audio:'D:\\m\\new.flac',name:'new',lyrics:'D:\\m\\new.lyrics.txt',existing_lrc:false},{audio:'D:\\m\\bare.flac',name:'bare',lyrics:null,existing_lrc:true}],skipped:[]})}; }
   if (url === '/api/song/0/decision') { decisionPosts.push(JSON.parse(options.body)); return {ok:true,json:async()=>({recorded:'x'})}; }
+  if (url === '/api/song/0' && detailGate) await detailGate;
   if (url === '/api/song/0') { detailCalls++; return {ok:true,json:async()=>song.detail}; }
   if (url.startsWith('/api/song/0/peaks')) { peakCalls++; return {ok:true,json:async()=>({from_cs:0,to_cs:600,bins:120,sample_rate:16000,peaks:Array.from({length:120},()=>[0,0])})}; }
   if (url === '/api/song/0/export') { const body = JSON.parse(options.body); exportPosts.push(body); return body.check ? {ok:true,json:async()=>({targets:[{name:'demo.flac',tag:'LYRICS',has_lyrics:true,lines:7},{name:'demo.m4a',tag:'©lyr',has_lyrics:false,lines:0}],lrc_lines:9})} : {ok:true,json:async()=>({name:body.audio,tag:'LYRICS',lines:9,seconds:1.2,archive:body.audio==='demo.flac'?{mode:'move',to:'D:/checked/demo.lrc'}:{mode:'off'}})}; }
@@ -81,10 +86,10 @@ async function fetchMock(url, options={}) {
 let source = fs.readFileSync('scripts/review_page/index.html','utf8');
 const match = source.match(/<script>\r?\n([\s\S]*?)\r?\n<\/script>/);
 assert.ok(match, 'page script missing');
-const script = match[1].replace(/  load\(\)\.then\(\(\) => \{ refreshJobs\(\); watchFiles\(\); \}\);\r?\n\}\)\(\);/, '  globalThis.__reviewTest = {state, render, playAround, playAB, stopPlayer, select, stage, save, rowElement, attachPeaks, accept, keep, openImport, inspectImports, startImport, refreshJobs, renderImport, volume, volumeGain, sliderToDb, dbToSlider, setVolumeDb, toggleMute, setShowAll};\n  load().then(() => { refreshJobs(); watchFiles(); });\n})();');
+const script = match[1].replace(/  load\(\)\.then\(\(\) => \{ refreshJobs\(\); watchFiles\(\); \}\);\r?\n\}\)\(\);/, '  globalThis.__reviewTest = {state, render, playAround, playAB, stopPlayer, select, stage, save, rowElement, attachPeaks, accept, keep, openImport, inspectImports, startImport, refreshJobs, renderImport, volume, volumeGain, sliderToDb, dbToSlider, setVolumeDb, toggleMute, setShowAll, load, busy};\n  load().then(() => { refreshJobs(); watchFiles(); });\n})();');
 const storage = new Map();
 const localStorageMock = {getItem(key) { return storage.has(key) ? storage.get(key) : null; }, setItem(key, value) { storage.set(key, String(value)); }, removeItem(key) { storage.delete(key); }};
-const context = {console, document:documentMock, localStorage:localStorageMock, addEventListener(){}, URLSearchParams: class { constructor(){ } get(){return 'token';} }, location:{search:'',hash:''}, fetch:fetchMock, Audio:AudioMock, setTimeout:fakeSetTimeout, clearTimeout:fakeClearTimeout, setInterval:fakeSetInterval, clearInterval:fakeClearInterval, alert(){}, Promise, encodeURIComponent, Map, Set, Number, String, Math, JSON, Object, Error, RegExp};
+const context = {Date: FakeDate, AbortController: class { constructor() { this.signal = {}; } abort() {} }, console, document:documentMock, localStorage:localStorageMock, addEventListener(){}, URLSearchParams: class { constructor(){ } get(){return 'token';} }, location:{search:'',hash:''}, fetch:fetchMock, Audio:AudioMock, setTimeout:fakeSetTimeout, clearTimeout:fakeClearTimeout, setInterval:fakeSetInterval, clearInterval:fakeClearInterval, alert(){}, Promise, encodeURIComponent, Map, Set, Number, String, Math, JSON, Object, Error, RegExp};
 context.globalThis=context;
 vm.runInNewContext(script, context, {filename:'review_page/index.html'});
 
@@ -460,5 +465,30 @@ vm.runInNewContext(script, context, {filename:'review_page/index.html'});
     assert.equal(detailCalls - details, 1, 'a save fetches the detail of the saved song once, not of every song');
     assert.equal(songListCalls - lists, 2, 'refreshSong looks the song up twice (load() would list once and fetch every detail)');
   }
+  // BC: a status bar shows loading, progress, elapsed seconds, failure with retry, and goes away on success
+  {
+    const bar = ids.get('busybar'), text = ids.get('busybar-text');
+    await flush(); assert.equal(bar.hidden, true, 'the bar is gone once the page has loaded');
+    let release; detailGate = new Promise(resolve => { release = resolve; });
+    const pending = test.load(); await flush();
+    assert.equal(bar.hidden, false, 'the bar is shown while loading');
+    assert.match(text.textContent, /^載入中… 0\/1 首/, 'it shows the progress count');
+    skew.ms = 5000; [...intervals.values()].forEach(timer => timer.fn());
+    assert.match(text.textContent, /^載入中… 0\/1 首 5 秒$/, 'after 2 s it shows the elapsed seconds');
+    release(); detailGate = null; await pending; await flush();
+    assert.match(bar.className, /\bok\b/, 'a finished load turns green'); assert.equal(text.textContent, '載入完成');
+    fireTimer(1500); assert.equal(bar.hidden, true, 'and disappears');
+    assert.equal(intervals.size, 0, 'no elapsed counter is left running');
+    // the server does not answer: red message and an automatic retry
+    listMode = 'down'; skew.ms = 0;
+    await test.load(); await flush();
+    assert.equal(bar.hidden, false); assert.match(bar.className, /\bbad\b/, 'a failed load is red');
+    assert.match(text.textContent, /載入失敗：伺服器沒有回應/, 'it says why');
+    assert.ok([...timers.values()].some(timer => timer.ms === 3000), 'a retry is scheduled');
+    listMode = 'ok'; [...timers.entries()].filter(([,timer]) => timer.ms === 3000).forEach(([id, timer]) => { timers.delete(id); timer.fn(); }); await flush(); await flush();
+    assert.match(bar.className, /\bok\b/, 'the automatic retry loads the page again'); fireTimer(1500);
+    assert.equal(bar.hidden, true, 'the bar is hidden after the retry succeeded');
+  }
+  assert.match(fs.readFileSync('scripts/review_page/index.html','utf8'), /<body>\s*<div id="busybar"[^>]*>\s*<span id="busybar-text">載入中…<\/span>/, 'the first paint already carries the loading bar');
   console.log('review page settings tests: PASS');
 })().catch(error => { console.error(error.stack || error); process.exitCode=1; });

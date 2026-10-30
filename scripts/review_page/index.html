@@ -103,9 +103,12 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
 .q:hover{background:rgba(0,0,0,.3)}.q.cur{background:rgba(109,124,255,.14);border-color:rgba(154,166,255,.35);box-shadow:none}
 .q.other{opacity:.62}
 .q .st{padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.06)}
+#busybar{flex:none;padding:5px 14px;font-size:13px;text-align:center;color:#fff;background:#1d4f91;position:sticky;top:0;z-index:5}
+#busybar.ok{background:#1f7a3a}#busybar.bad{background:#a82727}#busybar[hidden]{display:none}
 </style>
 </head>
 <body>
+<div id="busybar" role="status" aria-live="polite"><span id="busybar-text">載入中…</span></div>
 <header>
   <span class="song-name" id="song-name">LRC review</span>
   <span class="risk" id="song-risk" hidden title="整首高風險：合唱／疊聲類，請整首聽過">整首高風險</span>
@@ -194,11 +197,52 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   const state = {songs:[], rows:[], edits:new Map(), peaks:new Map(), decoded:new Map(), done:new Set(), dirty:false, selected:0, activeSong:null, showUnreachable:false, showDone:true, showLow:false, showAll:true, autoplay:true, batchSkip:true, mode:'flac', details:false, importEnabled:false, imports:[], jobs:[], jobsSeen:new Set(), player:{audio:new Map(), handlers:new Map(), seq:0, timer:null, active:null, ab:null}, error:'', notice:'', portNotice:'', exporting:false, exportIndex:null};
   const api = async (path, options={}) => {
     const headers = Object.assign({'X-Review-Token':token}, options.body ? {'Content-Type':'application/json'} : {}, options.headers || {});
-    const response = await fetch(path, Object.assign({}, options, {headers}));
-    const data = await response.json().catch(() => ({error:response.statusText}));
-    if (!response.ok) throw Error(data.error || response.statusText);
-    return data;
+    // A read that nobody answers must not hang the page: give up after a minute (a rescan on the server holds /api/version that long at most).
+    const guard = !options.method && typeof AbortController === 'function' ? new AbortController() : null;
+    const timer = guard ? setTimeout(() => guard.abort(), 60000) : null;
+    try {
+      const response = await fetch(path, Object.assign({}, options, guard ? {headers, signal:guard.signal} : {headers}));
+      const data = await response.json().catch(() => ({error:response.statusText}));
+      if (!response.ok) throw Error(response.status === 403 ? '伺服器不接受這個頁面（可能已重新啟動，請重新開啟 Review LRC）' : (data.error || response.statusText));
+      return data;
+    } catch (error) {
+      if (guard && error && (error.name === 'AbortError' || error.name === 'TypeError')) throw Error('伺服器沒有回應');
+      throw error;
+    } finally { if (timer != null) clearTimeout(timer); }
   };
+  // Fixed status bar: what the page is waiting for, how long it has been, and how it ended. Only getElementById, so the page tests can shim it.
+  const busy = (() => {
+    const bar = document.getElementById('busybar'), text = document.getElementById('busybar-text');
+    const tasks = new Map();
+    let tick = null, settle = null, mode = '';
+    const paint = () => {
+      const last = [...tasks.values()].pop();
+      if (!last) return;
+      const secs = Math.floor((Date.now() - last.since) / 1000);
+      text.textContent = last.label + (secs >= 2 ? ' ' + secs + ' 秒' : '');
+    };
+    const show = (label, kind) => { mode = kind; bar.hidden = false; bar.className = kind; text.textContent = label; };
+    const stop = () => { if (!tasks.size && tick != null) { clearInterval(tick); tick = null; } };
+    const api = {
+      begin(key, label) {
+        if (settle != null) { clearTimeout(settle); settle = null; }
+        tasks.set(key, {label, since: tasks.has(key) ? tasks.get(key).since : Date.now()});
+        show(label, '');
+        if (tick == null) tick = setInterval(paint, 500);
+      },
+      update(key, label) { if (tasks.has(key)) { tasks.get(key).label = label; paint(); } else api.begin(key, label); },
+      end(key) {
+        tasks.delete(key); stop();
+        if (tasks.size) { paint(); return; }
+        if (mode !== 'bad') { bar.hidden = true; mode = ''; }
+      },
+      ok(label) { if (tasks.size) return; show(label, 'ok'); if (settle != null) clearTimeout(settle); settle = setTimeout(() => { settle = null; if (mode === 'ok') { bar.hidden = true; mode = ''; } }, 1500); },
+      fail(label) { tasks.clear(); stop(); if (settle != null) { clearTimeout(settle); settle = null; } show(label, 'bad'); },
+      clearFail() { if (mode === 'bad') { bar.hidden = true; mode = ''; } },
+      get failed() { return mode === 'bad'; },
+    };
+    return api;
+  })();
   const time = cs => cs == null ? '—' :
     String(Math.floor(cs/6000)).padStart(2,'0') + ':' + String(Math.floor(cs%6000/100)).padStart(2,'0') + '.' + String(cs%100).padStart(2,'0');
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -1270,11 +1314,15 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     return lost;
   }
   let portChecked = false;
+  let loadRetry = null;
   async function load() {
+    if (loadRetry != null) { clearTimeout(loadRetry); loadRetry = null; }
+    busy.begin('load', '載入中…');
     try {
       flushDraft();
       if (!portChecked) { portChecked = true; try { const notice = (await api('/api/version')).port_notice; if (notice) state.portNotice = notice; } catch (_) {} }
       const oldIds = new Map(state.songs.map(song => [song.index, draftId(song)]));
+      busy.update('load', '載入歌曲清單…');
       const list = await withScanProgress(api('/api/songs'));
       // A live refresh can renumber songs; carry staged edits, done marks and the open song over by report path, not by index.
       const newIndex = new Map(list.map(song => [draftId(song), song.index]));
@@ -1295,10 +1343,14 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       }
       state.excluded = [];
       if (!list.length) { try { state.excluded = (await api('/api/excluded')).excluded_files || []; } catch (error) { state.excluded = []; } }
+      let fetched = 0, failedDetails = 0;
+      busy.update('load', '載入中… 0/' + list.length + ' 首');
       const details = await Promise.all(list.map(async song => {
         try { return await api('/api/song/' + song.index); }
-        catch (error) { return Object.assign({}, song, {rows:[], load_error:error.message, read_only:true}); }
+        catch (error) { failedDetails++; return Object.assign({}, song, {rows:[], load_error:error.message, read_only:true}); }
+        finally { fetched++; busy.update('load', '載入中… ' + fetched + '/' + list.length + ' 首'); }
       }));
+      if (list.length && failedDetails === list.length) throw Error('伺服器沒有回應');
       state.songs = list.map((song,i) => Object.assign({}, song, {has_flac:details[i].has_flac, has_stem:details[i].has_stem, detail:details[i]}));
       state.rows = [];
       state.songs.forEach(song => (song.detail.rows || []).forEach(row => state.rows.push({song,row})));
@@ -1308,7 +1360,12 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       setDirty();
       state.error = dropped ? dropped + ' dropped staged edit' + (dropped === 1 ? '' : 's') + ' after reload（無法套用：對應的句子已變動）' : '';
       render();
-    } catch (error) { state.error = error.message; render(); }
+      busy.end('load'); busy.ok('載入完成');
+    } catch (error) {
+      state.error = error.message; render();
+      busy.end('load'); busy.fail('載入失敗：' + error.message + '，3 秒後重試…');
+      loadRetry = setTimeout(() => { loadRetry = null; load(); }, 3000);
+    }
     return state.error;
   }
   async function save() {
@@ -1445,6 +1502,11 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     } catch (error) { exportBadgeFail(error.message || String(error)); }
   }
   async function refreshSong(index) {
+    busy.begin('song', '重新整理中…');
+    try { return await refreshSongNow(index); }
+    finally { busy.end('song'); }
+  }
+  async function refreshSongNow(index) {
     // Only the exported song is re-read; the other songs' rows, edits and the open song stay as they are.
     // The song is identified by its report path: if the server renumbered meanwhile, fall back to load(), which carries edits by report path.
     const before = state.songs.find(item => item.index === index);
@@ -1740,16 +1802,18 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       try {
         const reload = (await api('/api/status')).reload || {};
         if (finished || !reload.active) return;
-        shown = true; state.notice = '重新掃描報告中… ' + reload.done + '/' + (reload.total || '?'); render();
+        shown = true; busy.update('scan', '重新掃描報告中… ' + reload.done + '/' + (reload.total || '?'));
       } catch (_) {}
     }, 700);
     try { return await request; }
-    finally { finished = true; clearInterval(timer); if (shown) { state.notice = ''; } }
+    finally { finished = true; clearInterval(timer); if (shown) busy.end('scan'); }
   }
+  let serverDown = false;
   async function watchFiles() {
     try {
       draftBeat();
       const generation = (await withScanProgress(api('/api/version'))).generation;
+      if (serverDown) { serverDown = false; busy.clearFail(); busy.ok('伺服器已恢復'); refreshPending = true; }
       if (state.exporting && seenGeneration !== null) { if (generation !== seenGeneration) { deferredGeneration = generation; exportPolled.add(generation); } }  // judged when the export answers
       else {
         if (seenGeneration !== null && generation !== seenGeneration) refreshPending = true;
@@ -1761,7 +1825,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
         state.notice = '偵測到檔案變動，已自動更新。';
         render();
       }
-    } catch (error) { /* server closed or busy: try again next tick */ }
+    } catch (error) { serverDown = true; busy.fail(error.message === '伺服器沒有回應' ? '伺服器沒有回應，重試中…' : '載入失敗：' + error.message + '，重試中…'); }  // try again next tick
     const timer = setTimeout(watchFiles, 3000);
     timer?.unref?.();
   }

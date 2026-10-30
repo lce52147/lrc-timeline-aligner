@@ -1989,7 +1989,7 @@ class ReviewStore:
         if export.get("active") and export.get("started") is not None:
             export["elapsed_ms"] = round((time.monotonic() - export["started"]) * 1000)
         export.pop("started", None)
-        return {"export": export, "reload": dict(self.reload_progress), "generation": self.generation}
+        return {"export": export, "reload": dict(self.reload_progress), "generation": self.generation, "songs": len(self.songs)}
 
     def reload(self):
         songs, excluded = self._build()
@@ -1999,8 +1999,10 @@ class ReviewStore:
     def _step_aside(self):
         """Between two reports of a rescan: an export in flight goes first (the rescan resumes when it is done), and a short nap
         leaves the GIL to request threads, whose many small disk calls would otherwise each wait for a whole slice."""
-        while self.export_status.get("active"):
+        waited = 0.0
+        while self.export_status.get("active") and waited < 300:  # bounded: a status that never clears must not stall the rescan forever
             time.sleep(0.05)
+            waited += 0.05
         time.sleep(0.002)
 
     def _build(self):
@@ -2070,6 +2072,8 @@ def _public_song(song, server_read_only=False):
 
 class ReviewHandler(http.server.BaseHTTPRequestHandler):
     server_version = "LRCReview/1"
+    timeout = 60  # a client that opens a socket and never finishes its request (a half-sent GET, a POST body that stops) frees its thread after a minute
+    AUDIO_WRITE_TIMEOUT = 300  # a paused audio stream may hold its socket this long; the player simply asks again
 
     def log_message(self, *_args):
         return
@@ -2161,7 +2165,9 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
             if not self._token_header_ok():
                 self._send(403, b"forbidden\n", "text/plain; charset=utf-8")
                 return
-            song = self.server.store.song(int(match.group(1)))
+            # The list is already in memory and kept current by the version poll: re-reading the report from disk here, under the store lock,
+            # made a page load of 220 songs a ~20 s serial queue that starved /api/version, saves and exports (and every F5 started it again).
+            song = self.server.store.cached_song(int(match.group(1)))
             if song is None:
                 self._json(404, {"error": "not found"})
             else:
@@ -2337,6 +2343,7 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
                 self.send_header(key, value)
             self.end_headers()
             if not head and length:
+                self.connection.settimeout(self.AUDIO_WRITE_TIMEOUT)
                 with raw.open("rb") as handle:
                     handle.seek(start)
                     remaining = length

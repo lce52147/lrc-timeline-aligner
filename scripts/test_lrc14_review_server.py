@@ -1824,6 +1824,46 @@ const flushTimers = () => { for (const [id, t] of [...timers]) { if (t.ms === 75
             blocker.server_close()
         self.assertNotIn("--port", (SCRIPTS.parent / "Review LRC.bat").read_text(encoding="utf-8", errors="replace"))
 
+    def test_page_reload_loads_every_time_beside_stuck_connections(self) -> None:
+        """BC: a page reload (F5) must load again without restarting the server, even while earlier connections sit idle, half-sent or unread."""
+        import socket
+        token = {"X-Review-Token": "test-token"}
+        stuck = []
+        try:
+            for _ in range(12):  # preconnects that never send, a half-sent request, an audio stream nobody reads
+                stuck.append(socket.create_connection(("127.0.0.1", self.server.server_port)))
+            half = socket.create_connection(("127.0.0.1", self.server.server_port))
+            half.sendall(f"GET /api/songs HTTP/1.1\r\nHost: {self.base}\r\n".encode())
+            stuck.append(half)
+            unread = socket.create_connection(("127.0.0.1", self.server.server_port))
+            unread.sendall(f"GET /audio/0/flac?t=test-token HTTP/1.1\r\nHost: {self.base}\r\n\r\n".encode())
+            stuck.append(unread)
+            for _ in range(10):
+                started = time.monotonic()
+                status, _, data = self._request("GET", "/api/songs", **token)
+                self.assertEqual(status, 200)
+                songs = json.loads(data)
+                self.assertEqual(len(songs), 1)
+                status, _, data = self._request("GET", "/api/song/0", **token)
+                self.assertEqual(status, 200)
+                self.assertTrue(json.loads(data)["rows"])
+                self.assertEqual(self._request("GET", "/api/version", **token)[0], 200)
+                self.assertLess(time.monotonic() - started, 3)
+            status, _, data = self._request("GET", "/api/status", **token)
+            self.assertEqual((status, json.loads(data)["songs"]), (200, 1))
+        finally:
+            for sock in stuck:
+                sock.close()
+
+    def test_song_detail_does_not_wait_for_the_store_lock_of_a_reread(self) -> None:
+        """The detail GET serves the in-memory song: it must not re-read the report from disk under the store lock."""
+        with mock.patch.object(review_server.ReviewStore, "song", side_effect=AssertionError("re-read")):
+            status, _, data = self._request("GET", "/api/song/0", **{"X-Review-Token": "test-token"})
+        self.assertEqual(status, 200)
+
+    def test_request_handler_has_a_socket_timeout(self) -> None:
+        self.assertTrue(0 < review_server.ReviewHandler.timeout <= 120)
+
     def test_review_server_over_review_server_does_not_share_a_port(self) -> None:
         first = review_server.bind_server(0)
         second = None
