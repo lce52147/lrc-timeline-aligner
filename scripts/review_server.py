@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 
 import lrc_review_tsv
 import lyrics_tag_export
+import review_hot_update
 import review_presentation
 import runtime_paths
 from lrc_manual_edits import review_artifact_paths
@@ -2142,6 +2143,37 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
     def _json(self, status, payload):
         self._send(status, _json_bytes(payload), "application/json; charset=utf-8")
 
+    def _hot_fields(self):
+        hot = getattr(self.server, "hot", None)
+        if hot is None:
+            return {}
+        return {"asset_version": review_hot_update.asset_signature(), "code_version": hot.started_code, "updating": hot.updating, "update_failed": hot.failed}
+
+    def _admin_ok(self):
+        """Admin endpoints (hot update) are for the local CLI: loopback peer, our own Host, and no Origin (a browser page always sends one)."""
+        if getattr(self.server, "hot", None) is None or self.client_address[0] != "127.0.0.1" or self.headers.get("Origin") is not None:
+            self._send(403, b"forbidden\n", "text/plain; charset=utf-8")
+            return False
+        return True
+
+    def parse_request(self):
+        ok = super().parse_request()
+        hot = getattr(self.server, "hot", None)
+        path = urllib.parse.urlsplit(self.path).path if ok else ""
+        if ok and hot is not None and path not in review_hot_update.LIGHT_PATHS and not path.startswith("/audio/"):
+            self._counted = True
+            hot.enter()  # a save, export or page load in flight keeps a hot update waiting
+        return ok
+
+    def handle_one_request(self):
+        self._counted = False
+        try:
+            super().handle_one_request()
+        finally:
+            if self._counted:
+                self._counted = False
+                self.server.hot.leave()
+
     def _check_host(self):
         if not self._host_ok():
             self._send(403, b"forbidden\n", "text/plain; charset=utf-8")
@@ -2158,7 +2190,12 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
             except OSError:
                 self._send(404, b"not found\n", "text/plain; charset=utf-8")
                 return
+            data = data.replace(b"__ASSET_VERSION__", review_hot_update.asset_signature().encode("ascii"))  # what this page was served with: the poll compares against it
             self._send(200, data, "text/html; charset=utf-8")
+            return
+        if parsed.path == "/api/admin/version":
+            if self._admin_ok():
+                self._json(200, self.server.hot.info())
             return
         if parsed.path == "/api/songs":
             if not self._token_header_ok():
@@ -2175,6 +2212,7 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
             store = self.server.store
             generation = store.refresh_if_changed()
             payload = {"generation": generation, "port_notice": getattr(self.server, "port_notice", "")}
+            payload.update(self._hot_fields())
             since = urllib.parse.parse_qs(parsed.query).get("since", [""])[0]
             if since.isdigit() and int(since) != generation:
                 kind, songs, count = store.changes_since(int(since))
@@ -2185,7 +2223,7 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
             if not self._token_header_ok():
                 self._send(403, b"forbidden\n", "text/plain; charset=utf-8")
                 return
-            self._json(200, self.server.store.status())  # lock-free: answers while a reload or export holds the store lock
+            self._json(200, {**self.server.store.status(), **self._hot_fields()})  # lock-free: answers while a reload or export holds the store lock
             return
         if parsed.path == "/api/jobs":
             if not self._token_header_ok():
@@ -2242,6 +2280,10 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
         if not self._check_host():
             return
         parsed = urllib.parse.urlsplit(self.path)
+        if parsed.path == "/api/admin/hot-update":
+            if self._admin_ok():
+                self._json(200, {"state": self.server.hot.request(), **self.server.hot.info()})
+            return
         match = re.fullmatch(r"/api/song/(\d+)/(save|decision|export)", parsed.path)
         cancel = re.fullmatch(r"/api/jobs/([A-Za-z0-9_]+)/cancel", parsed.path)
         if not match and not cancel and parsed.path not in self._IMPORT_POSTS:
@@ -2536,19 +2578,50 @@ def run_server(targets, report_dir=None, port=0, no_browser=False, read_only=Fal
             share = sum(len({item.get("cs") for item in row.get("candidates", [])}) >= 2 for row in song["rows"])
             print(json.dumps({"song": song["song"], "rows": len(song["rows"]), "review_rows": song["review_rows"], "read_only": song["read_only"], "reason": song["read_only_reason"], "entry_model": song.get("entry_model"), "has_flac": _path_is_file(song["audio_path"]), "has_stem": _path_is_file(song["ctc_audio_path"]), "share_rows": share}, ensure_ascii=True))
         return None
-    server = bind_server(port)
+    handoff = bool(os.environ.get(review_hot_update.HANDOFF_ENV))
+    if handoff:
+        # A hot-update replacement: the old server still owns the port. Say we are loaded, wait until it frees the port, bind exactly that port.
+        if not review_hot_update.replacement_handshake(port):
+            return None
+        server = None
+        end = time.monotonic() + 15
+        while server is None:
+            try:
+                server = ReviewHTTPServer(("127.0.0.1", int(port)), ReviewHandler)
+                server.port_notice = ""
+            except OSError:
+                if time.monotonic() > end:
+                    return None
+                time.sleep(0.1)
+        no_browser = True
+    else:
+        server = bind_server(port)
     server.store = store
     server.jobs = None if (read_only or os.environ.get("LRC_NO_REVIEW") == "1") else JobRunner(store, report_dir)
-    server.token = secrets.token_urlsafe(32)
+    server.token = (os.environ.get(review_hot_update.TOKEN_ENV) if handoff else "") or secrets.token_urlsafe(32)
+    server.hot = review_hot_update.HotUpdater(server, log_dir=report_dir.parent, interval=float(os.environ.get("LRC_HOT_UPDATE_INTERVAL") or 5)) if os.environ.get("LRC_NO_HOT_UPDATE") != "1" else None
     if server.port_notice:
         print(server.port_notice, file=sys.stderr, flush=True)
     url = f"http://127.0.0.1:{server.server_port}/#t={urllib.parse.quote(server.token)}"
     print(json.dumps({"url": url, "token": server.token, "songs": len(store.songs), "excluded": len(store.excluded),
                       "excluded_files": [path.name for path in store.excluded]}, ensure_ascii=False), flush=True)
+    if handoff:
+        review_hot_update.replacement_bound()
     if not no_browser:
         webbrowser.open(url)
     try:
-        server.serve_forever()
+        while True:
+            server.serve_forever()
+            hot = getattr(server, "hot", None)
+            if hot is None or not hot.handing_over:
+                break
+            # A hot update closed this server's socket: either this process exits when the replacement is up, or it gets its port back here.
+            hot.resume.wait()
+            hot.resume.clear()
+            if hot.resumed_server is None:
+                break
+            server = hot.resumed_server
+            hot.resumed_server = None
     finally:
         server.server_close()
     return server

@@ -31,11 +31,11 @@ const response = (ok, status, data) => ({ok, status, statusText: 'x', json: asyn
 // songs: [{name, report, sha, rows:[{entry,current_cs,candidates}], detailFails, readOnly}]
 async function boot(storage, songs, opts = {}) {
   const elements = new Map(), docListeners = {}, winListeners = {}, timers = new Map(), saves = [];
-  let timerId = 0;
-  const doc = {getElementById(id) { if (!elements.has(id)) elements.set(id, element(id)); return elements.get(id); }, createElement() { return element(); },
+  let timerId = 0, reloads = 0;
+  const doc = {querySelector(selector) { if (selector.includes('asset-version') && opts.asset) return {content: opts.asset.served}; throw Error('no element'); }, getElementById(id) { if (!elements.has(id)) elements.set(id, element(id)); return elements.get(id); }, createElement() { return element(); },
     addEventListener(type, fn) { docListeners[type] = fn; }, visibilityState: 'visible'};
   const rowOf = (song, r) => Object.assign({review: 'REVIEW', auto_cs: r.current_cs, lyrics: ['l' + r.entry], candidates: [{cs: r.current_cs + 100, sources: ['ctc'], diagnostic_only: false}], severity_score: 1}, r);
-  const context = {console, document: doc, localStorage: storage.api, location: {search: '?t=test', hash: '', origin: 'http://test'}, addEventListener(type, fn) { winListeners[type] = fn; },
+  const context = {console, document: doc, localStorage: storage.api, location: {search: '?t=test', hash: '', origin: 'http://test', reload() { reloads++; }}, addEventListener(type, fn) { winListeners[type] = fn; },
     URLSearchParams, encodeURIComponent, Map, Set, Number, String, Math, JSON, Object, Error, RegExp, Date, Promise, Array,
     setTimeout(fn, ms) { const id = ++timerId; timers.set(id, {fn, ms}); return id; }, clearTimeout(id) { timers.delete(id); }, setInterval() { return 0; }, clearInterval() {},
     fetch: async (url, options = {}) => {
@@ -44,6 +44,7 @@ async function boot(storage, songs, opts = {}) {
       if (m) {
         const s = songs[Number(m[1])], body = JSON.parse(options.body);
         saves.push({index: Number(m[1]), body});
+        if (opts.saveGate) await opts.saveGate;
         if (opts.save409) {
           if (opts.save409Changes) { s.sha = s.sha + '-ext'; s.rows.forEach(r => { r.current_cs += 1000; }); } // someone else changed the file
           return response(false, 409, {error: 'stale base_sha256'});
@@ -59,13 +60,13 @@ async function boot(storage, songs, opts = {}) {
         return response(true, 200, {base_sha256: s.sha, server_read_only: false, has_flac: true, has_stem: true, rows: s.rows.map(r => rowOf(s, r))});
       }
       if (url === '/api/jobs') return response(true, 200, {import_enabled: false, jobs: []});
-      if (url.split('?')[0] === '/api/version') return response(true, 200, {generation: opts.gen ? opts.gen.value : 0, port_notice: opts.portNotice || ''});
+      if (url.split('?')[0] === '/api/version') return response(true, 200, {generation: opts.gen ? opts.gen.value : 0, port_notice: opts.portNotice || '', asset_version: opts.asset ? opts.asset.current : undefined});
       throw Error('unexpected fetch ' + url);
     }};
   context.globalThis = context;
   vm.runInNewContext(source, context);
   await settle();
-  const tab = {t: context.__t, el: id => doc.getElementById(id), docListeners, winListeners, saves, context,
+  const tab = {get reloads() { return reloads; }, t: context.__t, el: id => doc.getElementById(id), docListeners, winListeners, saves, context,
     flush() { for (const [id, timer] of [...timers]) { if (timer.ms === 750) { timers.delete(id); timer.fn(); } } },
     pendingFlush: () => [...timers.values()].some(timer => timer.ms === 750),
     rowOf: (index, entry) => tab.t.state.rows.find(item => item.song.index === index && item.row.entry === entry),
@@ -345,6 +346,40 @@ test('saving a restored song hides the restored banner and clears its leftovers 
   p.el('save').listeners.click(); await settle();
   assert.equal(p.el('draft-restored').hidden, true);
   assert.deepEqual(drafts(st), {});
+});
+
+test('hot update: a new asset version reloads the page when idle and the draft survives the reload', async () => {
+  const st = makeStorage(), songs = [mk('S', '/r/S.json')], asset = {served: 'aaaaaaaaaaaa', current: 'aaaaaaaaaaaa'};
+  const p = await boot(st, songs, {asset});
+  p.edit(0, 1, 150);   // an edit still inside the debounce when the new version shows up
+  await p.t.watchFiles(); await settle();
+  assert.equal(p.reloads, 0, 'same version: no reload');
+  asset.current = 'bbbbbbbbbbbb';
+  p.t.state.exporting = true;
+  await p.t.watchFiles(); await settle();
+  assert.equal(p.reloads, 0, 'never reload while an export is running');
+  assert.match(p.t.state.notice, /有新版本，存好草稿後自動重新載入/);
+  p.t.state.exporting = false;
+  await p.t.watchFiles(); await settle();
+  assert.equal(p.reloads, 1, 'idle: reload');
+  assert.equal(drafts(st)['/r/S.json'].edits[0].cs, 150, 'the pending edit was written out before the reload');
+  const again = await boot(st, songs, {asset: {served: 'bbbbbbbbbbbb', current: 'bbbbbbbbbbbb'}});   // the reloaded page
+  assert.equal(again.t.state.edits.get('0:1').cs, 150, 'draft restored after the reload');
+});
+
+test('hot update: a save in flight holds the reload back', async () => {
+  const st = makeStorage(), songs = [mk('S', '/r/S.json')], asset = {served: 'aaaaaaaaaaaa', current: 'aaaaaaaaaaaa'};
+  let release; const saveGate = new Promise(resolve => { release = resolve; });
+  const p = await boot(st, songs, {asset, saveGate});
+  p.t.state.activeSong = 0; p.edit(0, 1, 150);
+  const saving = p.el('save').listeners.click();
+  asset.current = 'bbbbbbbbbbbb';
+  await p.t.watchFiles();
+  assert.equal(p.reloads, 0, 'the save has not finished');
+  release();
+  await saving; await settle();
+  await p.t.watchFiles(); await settle();
+  assert.equal(p.reloads, 1);
 });
 
 test('a page notice carries the port-fallback line (gemini F6)', async () => {
