@@ -791,6 +791,21 @@ test('AS7 m4: the offset notice uses the real delta and flags a crossed neighbou
   assert.match(p.t.state.notice, /第 3 句已偏移 0\.02 秒以免與相鄰句合併（順序與相鄰句對調，請重聽）/);
 });
 
+test('BG: a save writes only the open song; edits staged for another song (a restored draft) stay staged and are never saved', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG), mk('T', SONG + '2')];
+  const p = await boot(st, songs);
+  p.edit(0, 1, 150, 50); p.edit(1, 1, 160, 50);
+  p.t.state.activeSong = 0;
+  p.el('save').listeners.click(); await settle();
+  assert.deepEqual(p.saves.map(save => save.index), [0], 'only the open song was posted');
+  assert.equal(p.t.state.edits.has('1:1'), true, 'the other song stays staged');
+  assert.match(p.t.state.notice, /其他歌曲的暫存修改沒有儲存/);
+  p.saves.length = 0;
+  p.t.state.activeSong = 1;
+  p.el('save').listeners.click(); await settle();
+  assert.deepEqual(p.saves.map(save => save.index), [1], 'saving while that song is open writes it');
+});
+
 (async () => {
   let failed = 0;
   for (const [name, fn] of tests) {

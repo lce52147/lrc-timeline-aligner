@@ -1936,7 +1936,20 @@ class ReviewStore:
                 return self.generation
             changed = {key for key in stats.keys() | baseline.keys() if stats.get(key, "-") != baseline.get(key, "-")}
             owners = self._owners(songs)
-            if any(key not in owners for key in changed):
+            # A file that appears or vanishes in a song's audio folder (not the report folder) concerns the songs of that folder only: never a full rescan.
+            by_folder = {}
+            for index, song in enumerate(songs):
+                for field in ("audio_path", "output_path", "ctc_audio_path"):
+                    if song.get(field):
+                        by_folder.setdefault(str(pathlib.Path(song[field]).parent).casefold(), set()).add(index)
+            report_folder = str(self.report_dir).casefold()
+            neighbours = {}
+            for key in changed:
+                if key not in owners:
+                    folder = str(pathlib.Path(key).parent).casefold()
+                    if folder != report_folder and folder in by_folder:
+                        neighbours[key] = by_folder[folder]
+            if any(key not in owners and key not in neighbours for key in changed):
                 built, excluded = self._build()
                 fresh = self._stats(built)
                 # A file that moved while we were reading keeps its older stat, so the next poll still sees it.
@@ -1952,7 +1965,7 @@ class ReviewStore:
             with self.lock:
                 if self.epoch != epoch:
                     return self.generation
-                touched = sorted(set().union(*(owners[key] for key in changed)))
+                touched = sorted(set().union(*(owners.get(key) or neighbours[key] for key in changed)))
                 for index in touched:
                     self.song(index)
                 self._remember()

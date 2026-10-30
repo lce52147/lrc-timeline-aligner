@@ -1135,8 +1135,10 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
             (self.root / name).write_bytes(b"x")
         self.assertEqual(self.store.refresh_if_changed(), generation, "a file that cannot change a song made the poll refresh")
         (self.root / "other.flac").write_bytes(b"0123")
-        self.assertEqual(self.store.refresh_if_changed(), generation + 1)
-        self.assertEqual(self.store.changes_since(generation)[0], "full")
+        with mock.patch.object(review_server.ReviewStore, "_build", side_effect=AssertionError("full rescan")):
+            self.assertEqual(self.store.refresh_if_changed(), generation + 1)   # a file next to the audio concerns that folder's songs only
+        self.assertEqual(self.store.changes_since(generation)[0], "song")
+        generation = self.store.generation
         report = self.report.with_name("brand-new.align-report.json")
         report.write_bytes(self.report.read_bytes())
         before = self.store.generation
@@ -1152,9 +1154,29 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         status, second = self._save_entry(3, 340)
         self.assertEqual(second["generation"], result["generation"] + 1)
 
+    def test_bg_switching_songs_exports_and_playback_cause_no_full_rescan_but_a_new_report_exactly_one(self) -> None:
+        self.store.refresh_if_changed()
+        with mock.patch.object(review_server.ReviewStore, "_build", side_effect=AssertionError("full rescan")):
+            for _ in range(20):   # opening / switching a song: the page fetches it and polls
+                self._request("GET", "/api/song/0", None, **{"X-Review-Token": self.server.token})
+                self._request("GET", "/api/songs", None, **{"X-Review-Token": self.server.token})
+                self._request("GET", "/api/version", None, **{"X-Review-Token": self.server.token})
+            generation = self.store.generation
+            self._real_flac()
+            self._json_request("POST", "/api/song/0/export", {"audio": "song.flac"})
+            self.store.refresh_if_changed()
+            self.assertEqual({kind for _gen, kind, _s, _c in self.store.changes[1:]}, {"song"})
+        builds = []
+        real = review_server.ReviewStore._build
+        with mock.patch.object(review_server.ReviewStore, "_build", lambda store: builds.append(1) or real(store)):
+            self.report.with_name("brand-new.align-report.json").write_bytes(self.report.read_bytes())
+            self.store.refresh_if_changed()
+            self.store.refresh_if_changed()
+        self.assertEqual(len(builds), 1)
+
     def test_ay_export_does_not_wait_for_a_running_rescan(self) -> None:
         self._real_flac()
-        (self.root / "stray.txt").write_text("x", encoding="utf-8")   # an unowned file: the poll wants a full rescan
+        self.report.with_name("brand-new.align-report.json").write_bytes(self.report.read_bytes())   # a new report: the poll wants a full rescan
         started, release = threading.Event(), threading.Event()
         built = review_server.ReviewStore._build
 
@@ -1204,7 +1226,7 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         self.assertGreaterEqual(json.loads(data)["timings"]["lock_wait"], 300)
 
     def test_ay_overlapping_polls_do_not_stack_rescans(self) -> None:
-        (self.root / "stray.txt").write_text("x", encoding="utf-8")
+        self.report.with_name("brand-new.align-report.json").write_bytes(self.report.read_bytes())
         started, release = threading.Event(), threading.Event()
         calls = []
         built = review_server.ReviewStore._build
@@ -1380,8 +1402,7 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         self.assertEqual(base_keys[0], current["rows"][0]["line_key"])
 
     def test_as4_change_during_export_is_not_absorbed(self) -> None:
-        stray = self.root / "other-song.lrc"
-        stray.write_text("[00:01.00]x\n", encoding="utf-8")   # another file changes while the export runs
+        self.report.with_name("other.align-report.json").write_bytes(self.report.read_bytes())   # another report appears while the export runs
         self.audio.write_bytes(self.audio.read_bytes() + b"x")   # the exported song's own file
         generation = self.store.generation
         self.store.refresh_song(0)

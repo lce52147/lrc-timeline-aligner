@@ -1384,9 +1384,12 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     stopPlayer();
     if (serverReadOnly()) { state.error = 'save disabled: server read-only'; render(); return; }
     if (!state.dirty) { state.notice = '沒有改動，不需要儲存。選了「維持」的行本來就是原時間。'; render(); return; }
-    const bySong = new Map();
-    state.edits.forEach((edit,key) => { const index = Number(key.split(':')[0]); if (!bySong.has(index)) bySong.set(index, []); bySong.get(index).push(edit); });
+    // A save writes only the song open in this tab: edits staged for other songs (restored drafts, another song's leftovers) stay staged and never reach a file.
+    const bySong = new Map(); let otherStaged = 0;
+    state.edits.forEach((edit,key) => { const index = Number(key.split(':')[0]); if (index !== state.activeSong) { otherStaged++; return; } if (!bySong.has(index)) bySong.set(index, []); bySong.get(index).push(edit); });
     const failures = [], notes = [];
+    if (otherStaged) notes.push(otherStaged + ' 筆其他歌曲的暫存修改沒有儲存（只儲存開啟中的歌曲）');
+    if (!bySong.size) { state.notice = notes.join('；') || '沒有改動，不需要儲存。'; render(); return; }
     const generationBefore = seenGeneration;
     let ownGeneration = null, saveRequests = 0;
     for (const [index, edits] of bySong) {
