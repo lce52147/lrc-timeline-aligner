@@ -54,7 +54,7 @@ class PresentOptionsTests(unittest.TestCase):
 
 class ReasonSentenceTests(unittest.TestCase):
     def test_priority_order_first_hit_wins(self):
-        codes = ["insufficient-minimum-proof", "previous-tail-ownership-unknown", "unresolved-material-alternative"]
+        codes = ["insufficient-minimum-proof", "previous-tail-overlap", "unresolved-material-alternative"]
         self.assertEqual(review_presentation.reason_sentence(codes), "這句可能提早開唱（跟上一句尾巴黏在一起），請聽開頭。")
         self.assertEqual(review_presentation.reason_sentence(["F1-vocal-absent", "previous-tail-overlap"]), "這段可能沒有人聲，請確認是否該刪或移到下一句。")
         self.assertEqual(review_presentation.reason_sentence(["silent-risk:selected-confidence-le-0.8-and-next-gap-ge-19"]), "這句之後有一段長空白，請確認結束位置沒有抓錯。")
@@ -70,7 +70,37 @@ class ReasonSentenceTests(unittest.TestCase):
         self.assertEqual(review_presentation.reason_sentence([]), "需要人工確認。")
         self.assertEqual(review_presentation.reason_sentence([], options_count=0), "候選一致，只需確認。")
         self.assertEqual(review_presentation.reason_sentence(["insufficient-minimum-proof"], options_count=0), "候選一致，只需確認。")
-        self.assertEqual(review_presentation.reason_sentence(["insufficient-minimum-proof"], options_count=2), "系統證據不足，請聽一下確認。")
+        self.assertEqual(review_presentation.reason_sentence(["insufficient-minimum-proof"], options_count=2), review_presentation.UNCONFIRMED_SENTENCE)
+        self.assertNotIn("不足", review_presentation.UNCONFIRMED_SENTENCE.replace("證據不夠一致", ""))
+
+    def test_reason_detail_kinds(self):
+        detail = review_presentation.reason_detail
+        keep = {"kind": "keep", "cs": 100}
+        alt = lambda cs: {"kind": "later", "cs": cs}
+        found = detail(["unresolved-material-alternative"], options=[keep, alt(142)])
+        self.assertEqual(found["kind"], "detected")
+        self.assertIn("0.42 秒", found["text"])
+        self.assertEqual(detail(["F1-vocal-absent"], options=[keep])["kind"], "detected")
+        self.assertEqual(detail(["review-required", "F1-vocal-absent"], options=[keep])["kind"], "detected")
+        agree = detail(["insufficient-minimum-proof"], options=[keep], evidence={"sources": 3, "supporting": 3})
+        self.assertEqual(agree["kind"], "agree")
+        self.assertEqual(agree["text"], "候選一致，未發現問題。")
+        one = detail(["unverified"], options=[keep, alt(150)], evidence={"sources": 4, "supporting": 1})
+        self.assertEqual(one["kind"], "unconfirmed")
+        self.assertIn("只有 1 個來源支持", one["text"])
+        self.assertIn("另有 1 個不同的候選時間", one["text"])
+        self.assertNotIn("偵測到", one["text"])
+        opening = detail(["no-strict-opening-proof"], options=[keep], evidence={"sources": 2, "supporting": 0})
+        self.assertEqual(opening["kind"], "unconfirmed")
+        self.assertIn("沒有獨立的開頭證據", opening["text"])
+        self.assertIn("沒有來源支持目前時間（共 2 個來源）", opening["text"])
+        self.assertEqual(detail(["mystery"], options=[keep])["kind"], "unconfirmed")
+        self.assertIn("mystery", detail(["mystery"], options=[keep])["text"])
+
+    def test_evidence_summary_counts_sources_near_the_written_time(self):
+        row = {"candidates": [{"source": "a", "time": 10.05}, {"source": "b", "time": 12.0}],
+               "alignment_hypotheses": [{"source": "c", "raw_candidate_time": 10.0}]}
+        self.assertEqual(review_presentation.evidence_summary(row, 1000), {"sources": 3, "supporting": 2})
 
 
 class PayloadWiringTests(unittest.TestCase):
@@ -92,17 +122,41 @@ class PayloadWiringTests(unittest.TestCase):
             report.write_text(json.dumps(data), encoding="utf-8")
             payload = review_server._song_payload(report, data)
             first, second = payload["rows"]
-            self.assertEqual(first["reason_text"], "這句可能提早開唱（跟上一句尾巴黏在一起），請聽開頭。")
+            self.assertEqual(first["reason_kind"], "unconfirmed")
+            self.assertIn("沒有獨立的開頭證據", first["reason_text"])
+            self.assertEqual(first["risk"], "normal")
             self.assertEqual([o["kind"] for o in first["options"]], ["earlier", "keep"])
             self.assertEqual(first["options"][0]["cs"], 20)
             self.assertEqual(first["options"][0]["support"], 2)
             self.assertEqual([o["kind"] for o in second["options"]], ["keep"])
-            self.assertIn(second["reason_text"], ("候選一致，只需確認。", "需要人工確認。"))
+            self.assertIn(second["reason_text"], ("候選一致，只需確認。", "需要人工確認。", "候選一致，未發現問題。"))
             # legacy fields stay for the details fold
             self.assertIn("candidates", first); self.assertIn("reason_codes", first)
             self.assertEqual(first["risk"], "normal")
             self.assertIsNone(second["risk"])
 
+
+    def test_generic_only_agreeing_row_moves_to_low_tier(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            audio = root / "song.flac"; audio.write_bytes(b"fLaC")
+            lrc = root / "song.lrc"; lrc.write_bytes(b"[00:01.00]one\n[00:05.00]two\n")
+            report = root / "song.align-report.json"
+            data = {
+                "audio_path": str(audio), "output_path": str(lrc), "display_lines": 2, "timing_entries": 2,
+                "assignments": [
+                    {"entry": 1, "lrc_tag": "[00:01.00]", "final_trust_reason_codes": ["insufficient-minimum-proof"], "verification_status": "review-required",
+                     "candidates": [{"time": 1.05, "source": "x", "score": 0.9}]},
+                    {"entry": 2, "lrc_tag": "[00:05.00]", "final_trust_reason_codes": ["insufficient-minimum-proof", "silent-risk"], "verification_status": "review-required",
+                     "candidates": [{"time": 5.05, "source": "x", "score": 0.9}]},
+                ],
+            }
+            report.write_text(json.dumps(data), encoding="utf-8")
+            first, second = review_server._song_payload(report, data)["rows"]
+            self.assertEqual((first["reason_kind"], first["risk"], first["risk_basis"]), ("agree", "low", "candidates-agree"))
+            self.assertEqual(second["reason_kind"], "detected")
+            self.assertNotEqual(second["risk"], "low")
 
     def test_review_risk_tiers(self):
         cands = [{"time": 10.0 + i * 0.05, "source": "s%d" % i, "score": 0.8} for i in range(5)]

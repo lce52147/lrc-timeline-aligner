@@ -953,10 +953,16 @@ def _song_payload(report_path, report, anchor=None):
                     whisperx_entries if isinstance(whisperx_entries, list) else (), fit,
                 ) if status == "REVIEW" else (None, None)
             )
-            reason_text = review_presentation.reason_sentence(reason_codes, options_count=alternatives)
+            detail = review_presentation.reason_detail(
+                reason_codes, options=options, evidence=review_presentation.evidence_summary(assignment, current_cs),
+            )
+            reason_text, reason_kind = detail["text"], detail["kind"]
+            if status == "REVIEW" and reason_kind == review_presentation.KIND_AGREE and risk_tier != "high":
+                risk_tier, risk_basis = "low", "candidates-agree"
             if link is None:
-                reason_codes, reason_text = ["no-alignment-data"], "無對齊資料"
+                reason_codes, reason_text, reason_kind = ["no-alignment-data"], "無對齊資料", review_presentation.KIND_UNCONFIRMED
             if user_marked:
+                reason_kind = review_presentation.KIND_DETECTED
                 status, risk_tier, risk_basis = "REVIEW", "high", "user-mark"
                 reason_codes = [*reason_codes, "user-mark"]
                 reason_text = "你在 LRC 裡用 * 標記過這句。" + ("" if alternatives else "報告裡沒有這句的候選時間。")
@@ -965,6 +971,7 @@ def _song_payload(report_path, report, anchor=None):
                 "line_key": _line_key(current_lines, line_indexes),
                 "options": options,
                 "reason_text": reason_text,
+                "reason_kind": reason_kind,
                 "user_marked": user_marked,
                 "lyrics": lyrics,
                 "lyric": "\n".join(lyrics),

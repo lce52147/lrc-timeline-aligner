@@ -13,21 +13,30 @@ OPTION_CLUSTER_CS = 25
 KEEP_FOLD_CS = 15
 MAX_ALTERNATIVES = 2
 
+# Generic codes only say "not auto-confirmed"; they are not a detected problem.
+GENERIC_CODES = ("insufficient-minimum-proof", "timing-evidence-unverified", "unverified", "review-required")
+UNCONFIRMED_SENTENCE = "沒有發現具體問題，只是證據不夠一致，系統沒有自動確認，請聽一下。"
+# Codes that name a missing proof (nothing wrong was seen) rather than a seen conflict.
+MISSING_OPENING_CODES = ("no-strict-opening-proof", "tail-conflict-without-independent-current-opening",
+                         "previous-tail-ownership-unknown")
+KIND_DETECTED = "detected"
+KIND_UNCONFIRMED = "unconfirmed"
+KIND_AGREE = "agree"
+AGREE_DETAIL = "候選一致，未發現問題。"
+
 # Highest-priority group first; the first group with a matching code decides the sentence.
 REASON_SENTENCES: tuple[tuple[tuple[str, ...], str], ...] = (
     (("F1-vocal-absent",), "這段可能沒有人聲，請確認是否該刪或移到下一句。"),
     (("F3-compressed-or-nonmonotonic", "F3-nonmonotonic", "nonmonotonic-line-start", "temporal-incoherence",
       "ctc_zero_gap_compressed_prefix"), "這句的時間順序怪怪的，請聽前後兩句。"),
-    (("previous-tail-overlap", "previous-tail-ownership-unknown", "tail-conflict-without-independent-current-opening",
-      "no-strict-opening-proof"), "這句可能提早開唱（跟上一句尾巴黏在一起），請聽開頭。"),
+    (("previous-tail-overlap",), "這句可能提早開唱（跟上一句尾巴黏在一起），請聽開頭。"),
     (("unresolved-material-alternative", "candidate_disagreement", "unresolved_raw_ctc_disagreement",
       "phonetic_anchor_disagreement", "model-disagreement", "unresolved-precentral-disagreement",
       "F4-ctc-final-disagreement", "ctc_confidence_collapse", "group_placement_unsupported"),
      "幾個偵測結果不一致，請聽並挑一個。"),
     (("silent-risk",), "這句之後有一段長空白，請確認結束位置沒有抓錯。"),
     (("recurrence-uncorroborated", "duplicate_occurrence_offset_mismatch"), "這句歌詞重複出現，可能對到別段，請確認是這一次。"),
-    (("insufficient-minimum-proof", "timing-evidence-unverified", "unverified", "review-required"),
-     "系統證據不足，請聽一下確認。"),
+    (GENERIC_CODES + MISSING_OPENING_CODES, UNCONFIRMED_SENTENCE),
 )
 DEFAULT_SENTENCE = "需要人工確認。"
 AGREEMENT_SENTENCE = "候選一致，只需確認。"
@@ -56,6 +65,94 @@ def reason_sentence(codes: object, *, options_count: int | None = None) -> str:
     if texts:
         return DEFAULT_SENTENCE
     return AGREEMENT_SENTENCE if options_count == 0 else DEFAULT_SENTENCE
+
+
+def _code_texts(codes: object) -> list[str]:
+    values = codes if isinstance(codes, list) else ([] if codes is None else [codes])
+    return [text for text in (_code_text(value).strip() for value in values) if text]
+
+
+def _has(texts: list[str], keys: tuple[str, ...]) -> bool:
+    return any(text == key or text.startswith(key + ":") for text in texts for key in keys)
+
+
+def is_generic_only(codes: object) -> bool:
+    """True when every reason code is a generic "not auto-confirmed" code (and there is at least one)."""
+    texts = _code_texts(codes)
+    return bool(texts) and all(_has([text], GENERIC_CODES) for text in texts)
+
+
+def evidence_summary(assignment: object, current_cs: object) -> dict[str, int]:
+    """How many distinct sources the report holds for a line and how many sit near the written time."""
+    current = _int(current_cs)
+    sources: set[str] = set()
+    near: set[str] = set()
+    data = assignment if isinstance(assignment, dict) else {}
+    pairs = [(item.get("source"), item.get("time")) for item in data.get("candidates") or [] if isinstance(item, dict)]
+    pairs += [(item.get("source"), item.get("raw_candidate_time")) for item in data.get("alignment_hypotheses") or []
+              if isinstance(item, dict)]
+    for source, seconds in pairs:
+        cs = _seconds_to_cs(seconds)
+        if cs is None or not source:
+            continue
+        sources.add(str(source))
+        if current is not None and abs(cs - current) <= KEEP_FOLD_CS:
+            near.add(str(source))
+    return {"sources": len(sources), "supporting": len(near)}
+
+
+def reason_detail(
+    codes: object,
+    *,
+    options: object = None,
+    evidence: object = None,
+) -> dict[str, str]:
+    """Honest reason for a REVIEW row: ``kind`` is "detected", "unconfirmed" or "agree".
+
+    "detected" means a concrete signal fired and the text names it (with the spread in seconds for
+    candidate disagreement). "unconfirmed" means nothing was found wrong, the line just was not
+    auto-confirmed; the text says what evidence was missing. "agree" is unconfirmed with all
+    candidates within KEEP_FOLD_CS of the written time and no code except the generic ones.
+    """
+    texts = _code_texts(codes)
+    rows = [o for o in options if isinstance(o, dict)] if isinstance(options, list) else []
+    alternatives = [o for o in rows if o.get("kind") != "keep"]
+    for keys, sentence in REASON_SENTENCES[:-1]:
+        if not _has(texts, keys):
+            continue
+        if keys[0] == "unresolved-material-alternative":
+            times = [c for c in (_int(o.get("cs")) for o in rows) if c is not None]
+            if alternatives and len(times) >= 2:
+                spread = (max(times) - min(times)) / 100.0
+                return {"kind": KIND_DETECTED, "text": "幾個偵測來源不一致：目前時間和候選最多差 %.2f 秒，請聽並挑一個。" % spread}
+        return {"kind": KIND_DETECTED, "text": sentence}
+    if is_generic_only(texts) and not alternatives:
+        return {"kind": KIND_AGREE, "text": AGREE_DETAIL}
+    known = GENERIC_CODES + MISSING_OPENING_CODES
+    unknown = [text for text in texts if not _has([text], known)]
+    if unknown:
+        return {"kind": KIND_UNCONFIRMED, "text": "系統標了「%s」，但還沒有對應的說明，請人工確認。" % unknown[0]}
+    parts: list[str] = []
+    summary = evidence if isinstance(evidence, dict) else {}
+    total, near = _int(summary.get("sources")), _int(summary.get("supporting"))
+    if total is not None and near is not None:
+        if total == 0:
+            parts.append("報告裡沒有可比對的來源")
+        elif near == 0:
+            parts.append("沒有來源支持目前時間（共 %d 個來源）" % total)
+        elif near == 1:
+            parts.append("只有 1 個來源支持目前時間（共 %d 個來源）" % total)
+        else:
+            parts.append("%d 個來源支持目前時間（共 %d 個來源，未達自動確認的門檻）" % (near, total))
+    if _has(texts, MISSING_OPENING_CODES):
+        parts.append("沒有獨立的開頭證據")
+    if _has(texts, ("timing-evidence-unverified",)):
+        parts.append("時間沒有被獨立驗證")
+    if alternatives:
+        parts.append("另有 %d 個不同的候選時間" % len(alternatives))
+    if not texts and not parts:
+        return {"kind": KIND_UNCONFIRMED, "text": DEFAULT_SENTENCE}
+    return {"kind": KIND_UNCONFIRMED, "text": "沒有發現具體問題，只是未自動確認：" + "；".join(parts or ["證據不夠一致"]) + "。"}
 
 
 def _int(value: object) -> int | None:

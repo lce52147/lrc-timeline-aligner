@@ -44,7 +44,7 @@ header .song-name{font-weight:600;font-size:15px;max-width:34vw;overflow:hidden;
 .meta{display:flex;gap:10px;align-items:center;color:var(--fg-3);font-size:12px;flex-wrap:wrap}
 .lyric{font-size:23px;line-height:1.35;font-weight:600;white-space:pre-wrap;text-wrap:balance;letter-spacing:.01em}
 .why{display:flex;gap:10px;align-items:flex-start;padding:10px 13px;border-radius:12px;background:var(--panel-2);border:1px solid var(--line)}
-.why .ic{width:18px;height:18px;border-radius:50%;background:var(--warn);color:#1a1304;font-weight:700;font-size:12px;display:grid;place-items:center;flex:none;margin-top:2px}.why.ok .ic{background:var(--ok)}
+.why .ic{width:18px;height:18px;border-radius:50%;background:var(--warn);color:#1a1304;font-weight:700;font-size:12px;display:grid;place-items:center;flex:none;margin-top:2px}.why.ok .ic{background:var(--ok)}.why .kind{flex:none;font-size:11px;font-weight:600;padding:1px 7px;border-radius:999px;margin-right:6px;background:rgba(255,99,71,.22);color:#ffb4a2}.why.unconfirmed .ic{background:var(--panel-2);color:var(--fg-3);border:1px solid var(--line)}.why.unconfirmed .kind,.why.ok .kind{background:rgba(255,255,255,.08);color:var(--fg-3)}
 .wavebox{position:relative}.peaks{display:block;width:100%;height:96px;border-radius:12px;background:rgba(0,0,0,.25);border:1px solid var(--line);touch-action:none;cursor:ew-resize}
 .wavenote{position:absolute;right:10px;top:8px;font-size:11px;color:var(--fg-3);pointer-events:none}
 .options{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
@@ -1140,7 +1140,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     viewToggle.addEventListener('click', () => setShowAll(!state.showAll));
     const wrap = document.createElement('div');
     wrap.className = 'list';
-    const riskTitles = ['高風險：先聽這些', '一般', '可略過：多個偵測結果一致，或前後銜接合理', '其他（未要求審核）'];
+    const riskTitles = ['高風險：先聽這些', '一般', '可略過：多個偵測結果一致、候選一致未發現問題，或前後銜接合理', '其他（未要求審核）'];
     let lastRank = null;
     rows.forEach((item, index) => {
       const row = item.row, edit = editFor(item), done = isDone(item);
@@ -1207,6 +1207,8 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     const canEdit = editable(song);
     div.className = 'row glass ' + String(row.review || 'UNTRUSTED').toLowerCase() + (conflict ? ' conflict' : '') + (visible()[state.selected] === item ? ' selected-row' : '');
     div.dataset.key = key;
+    const whyKind = row.reason_kind || (alternatives.length ? 'detected' : 'agree');
+    const whyLabel = whyKind === 'detected' ? '偵測到問題' : whyKind === 'unconfirmed' ? '未自動確認' : '候選一致';
     const sentence = row.reason_text || (alternatives.length ? '需要人工確認。' : '候選一致，只需確認。');
     const optionMarkup = options.map((option, index) => {
       const keyLabel = option.kind === 'keep' ? '3' : option.label === 'A' ? '1' : '2';
@@ -1233,7 +1235,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       (edit ? '<span class="pill num">原 ' + time(row.current_cs) + '</span>' : '') + (isDone(item) ? '<span class="pill">已確認</span>' : '') + '</div>' +
       '<div class="lyric">' + (lyrics || '<span class="muted">no lyric text</span>') + '</div>' +
       (row.romaji ? '<div class="romaji">' + esc(row.romaji) + ' <span class="romaji-auto" title="機器自動產生">自動</span></div>' : '') +
-      '<div class="why' + (alternatives.length ? '' : ' ok') + '"><span class="ic">' + (alternatives.length ? '!' : '✓') + '</span><span>' + esc(sentence) + '</span></div>' +
+      '<div class="why' + (whyKind === 'detected' ? '' : whyKind === 'unconfirmed' ? ' unconfirmed' : ' ok') + '"><span class="ic">' + (whyKind === 'detected' ? '!' : whyKind === 'unconfirmed' ? '?' : '✓') + '</span><span><span class="kind">' + whyLabel + '</span>' + esc(sentence) + '</span></div>' +
       (ordering ? '<div class="order-warning">注意：目前時間超出前後句的順序。</div>' : '') +
       (conflict ? '<div class="order-warning">conflict: 這筆時間在暫存後被改過，請重新選一個選項或按 U。</div>' : '') +
       (showWave ? '<div class="wavebox"><span class="wavenote">' + (song.has_stem ? '人聲 stem' : 'FLAC') + ' · ±3 秒 · 拖曳可微調</span></div>' : '') +

@@ -323,7 +323,7 @@ vm.runInNewContext(script, context, {filename:'review_page/index.html'});
   foldButton().dispatch('click'); queueEl.children = []; test.render();
   assert.equal(test.state.showLow, true, 'clicking the fold opens it');
   assert.deepEqual(lines(), [3, 1, 2, 4], 'opened low-risk lines follow the others in lyric order');
-  assert.deepEqual(headings(), ['高風險：先聽這些', '一般', '可略過：多個偵測結果一致，或前後銜接合理'], 'the low-risk group gets its heading');
+  assert.deepEqual(headings(), ['高風險：先聽這些', '一般', '可略過：多個偵測結果一致、候選一致未發現問題，或前後銜接合理'], 'the low-risk group gets its heading');
   assert.match(foldButton().textContent, /▾ 收起可略過的 2 句/, 'the fold offers to close again');
   assert.equal(documentMock.getElementById('left-song').textContent, 2, 'opening the fold does not change the count');
   test.keep(test.state.rows[2]); await flush();
