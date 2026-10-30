@@ -39733,6 +39733,123 @@ def output_metadata_lines(metadata_lines: Sequence[str] | None, timing_source: s
     return kept
 
 
+LINE_START_LEAD_MS = 100
+
+
+def resolve_start_lead_ms(cli_value: object = None) -> int:
+    """Lead (ms) every line start is written earlier; CLI beats env beats the default."""
+    for raw in (cli_value, os.environ.get("LRC_START_LEAD_MS")):
+        if raw is None or str(raw).strip() == "":
+            continue
+        try:
+            return max(0, int(float(str(raw).strip())))
+        except ValueError:
+            continue
+    return LINE_START_LEAD_MS
+
+
+def _previous_line_end_cs(
+    previous_assignment: dict | None, previous_cs: int | None
+) -> int:
+    if previous_cs is None:
+        return 0
+    spans = _timing_spans_from_value(
+        previous_assignment.get("ctc_token_spans") if isinstance(previous_assignment, dict) else None
+    )
+    end_cs = None
+    if spans:
+        end = max(float(span.end) for span in spans)
+        if end > 0:
+            end_cs = int(round(end * 100))
+    if end_cs is None or end_cs < previous_cs:
+        end_cs = previous_cs + 1
+    return end_cs
+
+
+def apply_line_start_lead(
+    report: dict[str, object],
+    written_times: tuple[CanonicalWrittenTime, ...],
+    lead_ms: int,
+) -> tuple[CanonicalWrittenTime, ...]:
+    """Write every line start ``lead_ms`` earlier, never before the previous line's end or 0.
+
+    The written LRC tag and the report's written time (assignments, Central rows and
+    suspicious rows) move together; per-line ``start_lead_ms`` records what was applied.
+    """
+    report["start_lead_ms_requested"] = int(lead_ms)
+    assignments = report.get("assignments")
+    if lead_ms <= 0 or not isinstance(assignments, list) or len(assignments) != len(written_times):
+        report["start_lead_applied"] = False
+        return written_times
+    lead_cs = int(round(lead_ms / 10.0))
+    shifted: list[CanonicalWrittenTime] = []
+    applied: list[int] = []
+    previous_new: int | None = None
+    for index, written in enumerate(written_times):
+        floor_cs = 0
+        if index > 0:
+            floor_cs = _previous_line_end_cs(
+                assignments[index - 1] if isinstance(assignments[index - 1], dict) else None,
+                previous_new,
+            )
+        new_cs = max(written.centiseconds - lead_cs, min(floor_cs, written.centiseconds), 0)
+        moved = written.centiseconds - new_cs
+        shifted.append(canonicalize_lrc_time(new_cs / 100.0))
+        applied.append(moved * 10)
+        previous_new = new_cs
+    by_entry = {}
+    for index, (old, new, moved_ms) in enumerate(zip(written_times, shifted, applied), 1):
+        by_entry[index] = (old, new, moved_ms)
+        row = assignments[index - 1]
+        if not isinstance(row, dict):
+            continue
+        row["start_lead_ms"] = moved_ms
+        if moved_ms == 0:
+            continue
+        row["chosen_time"] = new.seconds
+        row["canonical_written_centiseconds"] = new.centiseconds
+        row["lrc_tag"] = new.lrc_tag
+        stamps = row.get("candidate_timestamps")
+        if isinstance(stamps, dict) and "output" in stamps:
+            stamps["output"] = new.seconds
+        if "timestamp" in row:
+            row["timestamp"] = new.seconds
+        provenance = row.get("candidate_provenance")
+        if isinstance(provenance, dict) and "canonical_written_centiseconds" in provenance:
+            provenance["canonical_written_centiseconds"] = new.centiseconds
+    for key in ("central_timing_state", "suspicious_alignments"):
+        rows = report.get(key)
+        for row in rows if isinstance(rows, list) else []:
+            if not isinstance(row, dict):
+                continue
+            entry = row.get("entry")
+            if not isinstance(entry, int) or entry not in by_entry:
+                continue
+            _old, new, moved_ms = by_entry[entry]
+            if moved_ms == 0 or "canonical_written_centiseconds" not in row:
+                continue
+            row["canonical_written_centiseconds"] = new.centiseconds
+            if "lrc_tag" in row:
+                row["lrc_tag"] = new.lrc_tag
+            if "chosen_time" in row:
+                row["chosen_time"] = new.seconds
+            if "timestamp" in row:
+                row["timestamp"] = new.seconds
+    projection = report.get(_BACKEND_PROVENANCE_PROJECTION_KEY)
+    if isinstance(projection, dict) and "central_state_binding" in projection:
+        # The projection binds the Central rows by digest; they just moved by the lead.
+        projection["central_state_binding"] = _timing_content_digest(
+            report.get("central_timing_state", [])
+        )
+        projection.pop("projection_revision", None)
+        projection["projection_revision"] = _timing_content_digest(projection)
+    report["start_lead_applied"] = True
+    report["start_lead_lines_moved"] = sum(1 for value in applied if value)
+    report["start_lead_lines_clamped"] = sum(1 for value in applied if 0 < value < lead_ms)
+    return tuple(shifted)
+
+
+
 def write_lrc(
     output_path: Path,
     audio_path: Path,
@@ -40247,6 +40364,9 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
         raise SegmentSkeletonRollback(
             f"segment-current final Central backtracks at rows {violations}"
         )
+    written_times = apply_line_start_lead(
+        report, written_times, resolve_start_lead_ms(getattr(args, "start_lead_ms", None))
+    )
     if args.probe:
         DEFAULT_PROBE_DIR.mkdir(parents=True, exist_ok=True)
     report_dir = Path(args.report_dir).expanduser().resolve() if args.report_dir else DEFAULT_REPORT_DIR
@@ -40441,6 +40561,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--report-dir",
         help="Directory for JSON reports and strict-review audit artifacts. Default: project outputs/reports.",
+    )
+    parser.add_argument(
+        "--start-lead-ms",
+        type=int,
+        default=None,
+        help="write every line start this many ms earlier (default 100; env LRC_START_LEAD_MS; 0 disables)",
     )
     parser.add_argument(
         "--no-review-summary",

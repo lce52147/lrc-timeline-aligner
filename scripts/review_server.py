@@ -561,12 +561,18 @@ def _seconds_cs(value):
 def _candidate_rows(assignment, current_cs, auto_cs):
     raw = []
     diagnostic_sources = {"raw_asr", "precentral-recommendation"}
+    # Candidates are stored raw; the written tag already carries this line's start lead, so shift
+    # them by the same amount or "keep" and the candidates would differ by the lead.
+    lead_ms = _number(assignment.get("start_lead_ms"))
+    lead_cs = int(round(lead_ms / 10.0)) if lead_ms and lead_ms > 0 else 0
 
     def add(value, source, score, rejected=False, required=False, already_cs=False):
         number = _number(value)
         cs = int(number) if already_cs and number is not None else _seconds_cs(value)
         if cs is None:
             return False
+        if not already_cs and lead_cs:
+            cs = max(0, cs - lead_cs)
         raw.append({
             "cs": cs,
             "source": str(source),
