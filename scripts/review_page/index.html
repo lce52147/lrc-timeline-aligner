@@ -53,7 +53,7 @@ header .song-name{font-weight:600;font-size:15px;max-width:34vw;overflow:hidden;
 .option.selected{border-color:var(--accent-2);background:rgba(109,124,255,.16);box-shadow:0 0 0 1px var(--accent) inset,0 6px 20px rgba(109,124,255,.18)}.option.keep .l::before{content:"● ";color:var(--ok)}
 .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .actions .primary{background:linear-gradient(180deg,#7784ff,#5f6df0);color:var(--accent-ink);border-color:rgba(255,255,255,.18);font-weight:600;box-shadow:0 6px 18px rgba(109,124,255,.3)}
-.nudge{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}.nudge button{border:0;border-radius:0}.nudge span{padding:7px 10px;background:rgba(0,0,0,.2);color:var(--fg-2)}
+.nudge{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}.nudge button{border:0;border-radius:0}.nudge span{padding:7px 10px;background:rgba(0,0,0,.2);color:var(--fg-2)}.nudge input.time-input{width:84px;padding:7px 6px;border:0;border-radius:0;text-align:center;background:rgba(0,0,0,.2);color:var(--fg-2);font:inherit;font-variant-numeric:tabular-nums}.nudge input.time-input:focus{outline:2px solid var(--accent-2);outline-offset:-2px}.nudge.bad{outline:2px solid #e5484d;outline-offset:1px}.time-hint{color:#e5484d;font-size:12px;margin-left:8px}
 .hint{color:var(--fg-3);font-size:12px;margin-left:auto}.neighbors{margin-top:10px;display:grid;gap:4px;font-size:13px;color:var(--fg-2)}.neighbors>div{display:flex;gap:10px;align-items:baseline;min-width:0}.neighbors .lab{color:var(--fg-3);flex:none}.neighbors .num{flex:none;color:var(--fg-3)}.neighbors .ly{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.order-warning{color:var(--bad);font-weight:600}
 details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointer;color:var(--fg-3)}
 .candidate{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:4px 0;border-top:1px solid var(--line)}
@@ -1011,6 +1011,54 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     stage(item, cs, existing?.source || 'nudge', (existing?.nudge_cs || 0) + actualDelta);
     playAround(item, cs);
   }
+  // Typed timestamps: mm:ss.xx, m:ss.x or plain seconds set the time; +0.1 / -0.05 move it (seconds). Null = not a time.
+  function parseTimeInput(text) {
+    const t = String(text ?? '').trim();
+    let m = /^([+-])\s*(\d+(?:\.\d+)?)$/.exec(t);
+    if (m) { const cs = Math.round(Number(m[2]) * 100); return cs > 599999 ? null : {rel:m[1] === '-' ? -cs : cs}; }
+    m = /^(\d{1,2}):([0-5]?\d(?:\.\d+)?)$/.exec(t);
+    if (m) return {abs:Number(m[1]) * 6000 + Math.round(Number(m[2]) * 100)};
+    m = /^(\d+(?:\.\d+)?)$/.exec(t);
+    if (m) { const cs = Math.round(Number(m[1]) * 100); return cs > 599999 ? null : {abs:cs}; }
+    return null;
+  }
+  const TIME_HINT = '時間格式不對，例：1:23.45、83.4、+0.1';
+  // Goes through nudge(), so the staged edit, draft, floor and playback jump are exactly a nudge's.
+  function applyTypedTime(item, text) {
+    const parsed = parseTimeInput(text);
+    if (!parsed) return {ok:false, hint:TIME_HINT};
+    if (!editable(item.song)) return {ok:false, hint:'這首不能修改'};
+    if (conflicted(item)) return {ok:false, hint:'時間在暫存後被改過，請先按 U 復原'};
+    const before = working(item) || 0;
+    const delta = parsed.rel != null ? parsed.rel : parsed.abs - before;
+    if (delta) nudge(item, delta);
+    return {ok:true};
+  }
+  function bindTimeInput(div, item) {
+    const input = div.querySelector?.('.time-input');
+    if (!input) return;
+    const shown = time(working(item));
+    let finished = false;
+    const mark = hint => {
+      const box = input.closest?.('.nudge'); if (box) box.className = 'nudge' + (hint ? ' bad' : '');
+      const note = div.querySelector?.('.time-hint'); if (note) note.textContent = hint || '';
+    };
+    const commit = () => {
+      if (finished) return;
+      if (input.value.trim() === shown) { mark(''); return; }
+      const result = applyTypedTime(item, input.value);
+      if (result.ok) finished = true;
+      mark(result.ok ? '' : result.hint);
+    };
+    input.addEventListener('click', event => event.stopPropagation());
+    input.addEventListener('input', () => mark(''));
+    input.addEventListener('keydown', event => {
+      event.stopPropagation();
+      if (event.key === 'Enter') { event.preventDefault(); commit(); if (finished) input.blur(); }
+      else if (event.key === 'Escape') { event.preventDefault(); finished = true; input.value = shown; mark(''); input.blur(); }
+    });
+    input.addEventListener('blur', commit);
+  }
   function setShowAll(on) {
     const current = visible()[state.selected];
     state.showAll = !!on;
@@ -1256,7 +1304,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       '<div class="options">' + (optionMarkup || '<span class="muted">no candidates</span>') + '</div>' +
       '<div class="actions"><button type="button" class="play" data-kind="' + modeFor(song) + '"' + ((modeFor(song) === 'stem' ? song.has_stem : song.has_flac) ? '' : ' disabled') + '>▶ 播放 <span class="num">空白</span></button>' +
       '<button type="button" class="ab-play"' + (selectedCandidate && (modeFor(song) === 'stem' ? song.has_stem : song.has_flac) ? '' : ' disabled') + ' aria-label="alternate current and selected candidate">A/B</button>' +
-      '<span class="nudge"><button type="button" class="nudge-button" data-delta="-10"' + (canEdit ? '' : ' disabled') + ' aria-label="move timestamp earlier by 0.1 seconds">−0.1</button><span class="num">' + time(chosen) + '</span><button type="button" class="nudge-button" data-delta="10"' + (canEdit ? '' : ' disabled') + ' aria-label="move timestamp later by 0.1 seconds">+0.1</button></span>' +
+      '<span class="nudge"><button type="button" class="nudge-button" data-delta="-10"' + (canEdit ? '' : ' disabled') + ' aria-label="move timestamp earlier by 0.1 seconds">−0.1</button>' + (visible()[state.selected] === item && canEdit ? '<input type="text" class="time-input num" inputmode="decimal" autocomplete="off" spellcheck="false" value="' + time(chosen) + '" aria-label="timestamp; type mm:ss.xx or +0.1 then Enter">' : '<span class="num">' + time(chosen) + '</span>') + '<button type="button" class="nudge-button" data-delta="10"' + (canEdit ? '' : ' disabled') + ' aria-label="move timestamp later by 0.1 seconds">+0.1</button></span><span class="time-hint" role="alert"></span>' +
       '<button type="button" class="primary accept"' + (canEdit ? '' : ' disabled') + '>接受，下一筆 <span class="num">Enter</span></button>' +
       '<button type="button" class="keep-next">維持 <span class="num">K</span></button>' +
       '<button type="button" class="undo"' + (edit ? '' : ' disabled') + '>復原 <span class="num">U</span></button>' +
@@ -1274,6 +1322,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       event.stopPropagation(); button.blur(); const list = button.dataset.candidateList === 'extra' ? extraCandidates : candidates; const candidate = list[Number(button.dataset.candidate)]; if (candidate && editable(song)) applyCandidate(item, candidate);
     }));
     bindRomaji(div, item);
+    bindTimeInput(div, item);
     div.querySelectorAll('.ab-play').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); button.blur(); if (selectedCandidate) playAB(item, selectedCandidate); }));
     div.querySelectorAll('.nudge-button').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); button.blur(); nudge(item, Number(button.dataset.delta)); }));
     div.querySelectorAll('.accept').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); button.blur(); accept(item); }));

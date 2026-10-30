@@ -88,7 +88,7 @@ async function fetchMock(url, options={}) {
 let source = fs.readFileSync('scripts/review_page/index.html','utf8');
 const match = source.match(/<script>\r?\n([\s\S]*?)\r?\n<\/script>/);
 assert.ok(match, 'page script missing');
-const script = match[1].replace(/  load\(\)\.then\(\(\) => \{ refreshJobs\(\); watchFiles\(\); \}\);\r?\n\}\)\(\);/, '  globalThis.__reviewTest = {state, render, playAround, playAB, stopPlayer, select, stage, save, rowElement, attachPeaks, accept, keep, openImport, inspectImports, startImport, refreshJobs, renderImport, volume, volumeGain, sliderToDb, dbToSlider, setVolumeDb, toggleMute, setShowAll, load, busy};\n  load().then(() => { refreshJobs(); watchFiles(); });\n})();');
+const script = match[1].replace(/  load\(\)\.then\(\(\) => \{ refreshJobs\(\); watchFiles\(\); \}\);\r?\n\}\)\(\);/, '  globalThis.__reviewTest = {state, render, playAround, playAB, stopPlayer, select, stage, save, rowElement, attachPeaks, accept, keep, openImport, inspectImports, startImport, refreshJobs, renderImport, volume, volumeGain, sliderToDb, dbToSlider, setVolumeDb, toggleMute, setShowAll, load, busy, parseTimeInput, applyTypedTime, nudge};\n  load().then(() => { refreshJobs(); watchFiles(); });\n})();');
 const storage = new Map();
 const localStorageMock = {getItem(key) { return storage.has(key) ? storage.get(key) : null; }, setItem(key, value) { storage.set(key, String(value)); }, removeItem(key) { storage.delete(key); }};
 const context = {Date: FakeDate, AbortController: class { constructor() { this.signal = {}; } abort() {} }, console, document:documentMock, localStorage:localStorageMock, addEventListener(){}, URLSearchParams: class { constructor(){ } get(){return 'token';} }, location:{search:'',hash:''}, fetch:fetchMock, Audio:AudioMock, setTimeout:fakeSetTimeout, clearTimeout:fakeClearTimeout, setInterval:fakeSetInterval, clearInterval:fakeClearInterval, alert(){}, Promise, encodeURIComponent, Map, Set, Number, String, Math, JSON, Object, Error, RegExp};
@@ -186,6 +186,65 @@ vm.runInNewContext(script, context, {filename:'review_page/index.html'});
   assert.deepEqual(decisionPosts.at(-1), {entry:item.row.entry, decision:'keep', cs:item.row.current_cs, source:'keep'}, 'keep logs a keep');
   test.state.edits.set(String(item.song.index) + ':' + item.row.entry, dragEdit); test.state.selected = 0;
   assert.ok(!/class="ab-play"[^>]*disabled/.test(rendered), 'A/B enables after selecting a candidate');
+
+  // ---- BP: typed timestamps ----
+  {
+    const P = test.parseTimeInput, same = (x, y, m) => assert.equal(JSON.stringify(x), JSON.stringify(y), m);
+    same(P('01:23.45'), {abs:8345}); same(P('1:23.4'), {abs:8340}); same(P('83.45'), {abs:8345}); same(P(' 5 '), {abs:500});
+    same(P('+0.1'), {rel:10}); same(P('-0.05'), {rel:-5}); same(P('+ 2'), {rel:200});
+    for (const bad of ['', 'abc', '1:99', '1:2:3', '+', '--1', '1.2.3', '1:', ':30', '9999999']) assert.equal(P(bad), null, 'BP: rejects ' + JSON.stringify(bad));
+    test.state.edits.clear(); test.state.dirty = false; test.setShowAll(true); test.state.done.clear(); const item = test.state.rows[0]; test.select(item);
+    const other = Object.assign({}, item, {row:Object.assign({}, item.row, {entry:7, current_cs:100})}); test.state.rows.push(other);
+    const keyOf = it => String(it.song.index) + ':' + it.row.entry;
+    // the typed result equals the nudge result
+    test.nudge(other, 10); const nudged = test.state.edits.get(keyOf(other)); test.state.edits.clear();
+    same(test.applyTypedTime(other, '+0.1'), {ok:true});
+    same(test.state.edits.get(keyOf(other)), nudged, 'BP: +0.1 stages exactly what a nudge stages');
+    test.state.edits.clear();
+    same(test.applyTypedTime(other, '00:01.10'), {ok:true});
+    same(test.state.edits.get(keyOf(other)), nudged, 'BP: absolute 1.10 from 1.00 stages exactly what a nudge stages (line_key included)');
+    assert.equal(test.state.dirty, true, 'BP: a typed time marks the draft dirty');
+    assert.ok(test.state.player.active, 'BP: playback jumps to the typed time like after a nudge');
+    test.applyTypedTime(other, '-0.05'); assert.equal(test.state.edits.get(keyOf(other)).cs, 105); assert.equal(test.state.edits.get(keyOf(other)).nudge_cs, 5);
+    // invalid input stages nothing
+    const before = JSON.stringify([...test.state.edits]);
+    const bad = test.applyTypedTime(other, '12:99'); assert.equal(bad.ok, false); assert.match(bad.hint, /時間格式/);
+    assert.equal(JSON.stringify([...test.state.edits]), before, 'BP: invalid input stages nothing');
+    // the floor is the same as a nudge's
+    test.state.edits.clear(); test.applyTypedTime(other, '-5'); assert.equal(test.state.edits.get(keyOf(other)).cs, 0, 'BP: never below the floor');
+    test.state.edits.clear();
+    // the selected row renders an input, the others the plain time; shortcuts stay silent while typing
+    const selectedHtml = test.rowElement(item).innerHTML, otherHtml = test.rowElement(other).innerHTML;
+    assert.match(selectedHtml, /<input type="text" class="time-input[^"]*"[^>]*value="00:01\.00"/, 'BP: the selected row shows the time in an input, mm:ss.xx');
+    assert.ok(!/class="time-input/.test(otherHtml), 'BP: an unselected row keeps the plain time');
+    const keydown = documentMock.listeners.get('keydown');
+    for (const key of ['ArrowRight', ']', 'k', 'u', 'Enter', ' ']) keydown({key, code:key === ' ' ? 'Space' : key, target:{type:'text', closest: sel => /input/.test(sel) ? {} : null}, preventDefault(){}});
+    assert.equal(test.state.edits.size, 0, 'BP: global shortcuts do not fire while the time field is focused');
+    keydown({key:'ArrowRight', target:{closest: () => null}, preventDefault(){}});
+    assert.equal(test.state.edits.size, 1, 'BP: the same key nudges when not typing');
+    // the field's own handlers: Enter applies, Esc cancels, blur applies, invalid is marked and stages nothing
+    test.state.edits.clear();
+    {
+      const fake = {value:'', closest: () => box, listeners:{}, addEventListener(t, fn) { this.listeners[t] = fn; }, blurred:0, blur() { this.blurred++; }};
+      const box = {className:'nudge'}, note = {textContent:''};
+      const realCreate = documentMock.createElement;
+      documentMock.createElement = () => { const el = new Element(); el.querySelector = sel => sel === '.time-input' ? fake : sel === '.time-hint' ? note : null; return el; };
+      const fire = (type, ev = {}) => fake.listeners[type](Object.assign({type, preventDefault(){}, stopPropagation(){}}, ev));
+      const run = (text, type, ev) => { fake.listeners = {}; fake.blurred = 0; test.rowElement(item); fake.value = text; fire(type, ev); };
+      run('zzz', 'keydown', {key:'Enter'});
+      assert.equal(box.className, 'nudge bad', 'BP: invalid input is outlined'); assert.match(note.textContent, /時間格式/); assert.equal(test.state.edits.size, 0);
+      fire('input'); assert.equal(box.className, 'nudge', 'BP: typing clears the red outline');
+      run('+0.2', 'keydown', {key:'Enter'}); assert.equal(test.state.edits.get(keyOf(item)).cs, 120, 'BP: Enter applies'); assert.equal(fake.blurred, 1);
+      test.state.edits.clear();
+      run('+0.2', 'keydown', {key:'Escape'}); assert.equal(test.state.edits.size, 0, 'BP: Esc cancels'); assert.equal(fake.value, '00:01.00'); fire('blur'); assert.equal(test.state.edits.size, 0, 'BP: blur after Esc stays cancelled');
+      run('00:01.50', 'blur'); assert.equal(test.state.edits.get(keyOf(item)).cs, 150, 'BP: blur applies a valid time');
+      test.state.edits.clear();
+      run('00:01.00', 'blur'); assert.equal(test.state.edits.size, 0, 'BP: an unchanged value stages nothing');
+      let stopped = false; run('1', 'keydown', {key:'x', stopPropagation() { stopped = true; }}); assert.ok(stopped, 'BP: keys typed in the field do not reach the page');
+      documentMock.createElement = realCreate; test.state.edits.clear();
+    }
+    test.state.edits.clear(); test.state.dirty = false; test.state.rows.pop(); test.render();
+  }
 
   // ---- import panel ----
   const rail = documentMock.getElementById('rail');
