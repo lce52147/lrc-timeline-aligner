@@ -124,6 +124,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   <button id="save">儲存 <span class="num">Ctrl+S</span></button>
   <span class="export-wrap"><button id="export" title="把目前的 LRC 寫進音檔的歌詞標籤">匯出到音檔 <span class="num">Ctrl+Shift+S</span></button>
     <span id="export-badge" class="export-badge" role="status" aria-live="polite" hidden><span id="export-badge-text"></span><button type="button" id="export-badge-close" aria-label="關閉" hidden>✕</button></span></span>
+  <button id="shutdown" title="關閉這個 Review LRC 伺服器（已儲存的內容不受影響）">關閉伺服器</button>
   <button id="help-button" aria-label="快捷鍵與設定">?</button>
 </header>
 <div class="layout">
@@ -165,6 +166,16 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   <div><label><input id="batch-skip" type="checkbox"> 在「可略過」摺疊處顯示「全部維持」按鈕</label></div>
   <div style="margin-top:12px;text-align:right"><button id="help-close">關閉</button></div>
 </div></div>
+<div class="help" id="shutdown-box" hidden><div class="box glass">
+  <b>關閉伺服器？</b>
+  <div class="muted" style="margin:6px 0 8px" id="shutdown-text">關閉後這個頁面就不能再用，要再審請重新開啟 Review LRC。已儲存的 LRC 不受影響。</div>
+  <div id="shutdown-error" class="warning" role="alert" hidden></div>
+  <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+    <button type="button" id="shutdown-go">關閉伺服器</button>
+    <button type="button" id="shutdown-cancel">取消</button>
+  </div>
+</div></div>
+<div class="help" id="shutdown-done" hidden><div class="box glass"><b>伺服器已關閉</b><div class="muted" style="margin-top:6px">可以關掉這個分頁。要再審請重新開啟 Review LRC。</div></div></div>
 <div class="help" id="export-box" hidden><div class="box glass">
   <b>匯出到音檔</b>
   <div class="muted" style="margin:6px 0 8px">把這首歌的 LRC 寫進音檔的歌詞標籤（不重新編碼，音訊不變）。.lrc 檔案照常保留。</div>
@@ -1639,6 +1650,25 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   document.getElementById('export-go').addEventListener('click', () => { doExport(); });
   document.getElementById('export-cancel').addEventListener('click', () => { exportBox().hidden = true; });
   document.getElementById('save').addEventListener('click', event => { event.currentTarget.blur(); save(); });
+  const shutdownBox = () => document.getElementById('shutdown-box');
+  document.getElementById('shutdown').addEventListener('click', event => {
+    event.currentTarget.blur();
+    document.getElementById('shutdown-error').hidden = true;
+    document.getElementById('shutdown-text').textContent = (state.dirty ? '還有 ' + state.edits.size + ' 筆修改沒儲存（草稿會留在瀏覽器，下次開同一個埠號可還原）。' : '') + '關閉後這個頁面就不能再用，要再審請重新開啟 Review LRC。已儲存的 LRC 不受影響。';
+    shutdownBox().hidden = false;
+  });
+  document.getElementById('shutdown-cancel').addEventListener('click', () => { shutdownBox().hidden = true; });
+  document.getElementById('shutdown-go').addEventListener('click', async () => {
+    const error = document.getElementById('shutdown-error');
+    error.hidden = true;
+    try {
+      try { flushDraft(); } catch (_) {}
+      await api('/api/admin/shutdown', {method:'POST', body:'{}'});
+      state.closed = true;
+      shutdownBox().hidden = true;
+      document.getElementById('shutdown-done').hidden = false;
+    } catch (failure) { error.textContent = failure.message; error.hidden = false; }
+  });
   document.getElementById('port-notice-close').addEventListener('click', () => { state.portNotice = ''; render(); });
   document.getElementById('untrusted').checked = state.showAll;
   document.getElementById('untrusted').addEventListener('change', event => { setShowAll(event.target.checked); });
@@ -1658,7 +1688,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     if (event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey && event.key.toLowerCase() === 's') { event.preventDefault(); openExport(); return; }
     if (event.ctrlKey && !event.altKey && !event.metaKey && event.key.toLowerCase() === 's') { event.preventDefault(); save(); return; }
     if (event.altKey || event.metaKey || event.ctrlKey) return;
-    if (event.key === 'Escape') { document.getElementById('help').hidden = true; importBox().hidden = true; exportBox().hidden = true; return; }
+    if (event.key === 'Escape') { document.getElementById('help').hidden = true; importBox().hidden = true; exportBox().hidden = true; shutdownBox().hidden = true; return; }
     if (event.key === '?') { event.preventDefault(); document.getElementById('help').hidden = false; return; }
     if (event.target?.closest?.('input,textarea,select,[contenteditable]') && event.target?.type !== 'checkbox') return;
     if (event.key.toLowerCase() === 'm') { event.preventDefault(); toggleMute(); return; }
@@ -1907,6 +1937,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     } catch (_) { return false; }
   }
   async function watchFiles() {
+    if (state.closed) return;  // the server was closed from this page: nothing to poll
     try {
       draftBeat();
       const version = await withScanProgress(api('/api/version' + (seenGeneration !== null ? '?since=' + seenGeneration : '')));

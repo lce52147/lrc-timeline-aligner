@@ -2305,6 +2305,19 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
             return False
         return True
 
+    def _shutdown(self):
+        """POST /api/admin/shutdown: loopback peer, our own Host, the token, and an Origin that is either absent (the CLI) or this page's own."""
+        origin = self.headers.get("Origin")
+        if self.client_address[0] != "127.0.0.1" or not self._token_header_ok() or (origin is not None and origin != f"http://127.0.0.1:{self.server.server_port}"):
+            self._send(403, b"forbidden\n", "text/plain; charset=utf-8")
+            return
+        reason = review_hot_update.shutdown_reason(self.server)
+        if reason:
+            self._json(409, {"error": "目前不能關閉：" + SHUTDOWN_BUSY.get(reason, reason), "reason": reason})
+            return
+        self._json(200, {"state": "stopping"})
+        review_hot_update.stop_server(self.server)
+
     def parse_request(self):
         ok = super().parse_request()
         hot = getattr(self.server, "hot", None)
@@ -2432,6 +2445,9 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
         if parsed.path == "/api/admin/hot-update":
             if self._admin_ok():
                 self._json(200, {"state": self.server.hot.request(), **self.server.hot.info()})
+            return
+        if parsed.path == "/api/admin/shutdown":
+            self._shutdown()
             return
         match = re.fullmatch(r"/api/song/(\d+)/(save|decision|export|romaji)", parsed.path)
         cancel = re.fullmatch(r"/api/jobs/([A-Za-z0-9_]+)/cancel", parsed.path)
@@ -2667,6 +2683,8 @@ def _warn_missing_targets(targets):
             print(f"WARN: review target not found: {value}", file=sys.stderr)
 
 
+SHUTDOWN_BUSY = {"save or request in flight": "還有儲存或請求進行中，請稍候再試", "export active": "正在匯出，請等匯出完成", "reload active": "正在重新掃描，請稍候再試",
+                 "alignment job active": "還有對齊工作在跑，請等它完成或先取消", "update in progress": "伺服器正在更新，請稍候再試"}
 DEFAULT_REVIEW_PORT = 58400
 PORT_FALLBACK_SPAN = 20
 
@@ -2721,6 +2739,15 @@ def run_server(targets, report_dir=None, port=0, no_browser=False, read_only=Fal
     if targets_file is not None:
         target_list.extend(_read_targets_file(targets_file))
     _warn_missing_targets(target_list)
+    if port and not explicit_targets and not read_only and not dump_summary and not os.environ.get(review_hot_update.HANDOFF_ENV):
+        existing = review_hot_update.existing_server(int(port))
+        if existing:
+            # this install's server already holds the port: use it (drafts are per port) instead of starting a second one on the next port
+            print(f"Review LRC 已在執行（埠 {existing['port']}），直接開啟它：{existing['url']}", flush=True)
+            if not no_browser:
+                webbrowser.open(existing["url"])
+                time.sleep(3)  # long enough to read the line before a launcher window closes
+            return None
     store = ReviewStore(report_dir, target_list, read_only=read_only, scan_report_dir=not explicit_targets)
     # The 220 loaded songs are a few million long-lived objects: a full garbage collection that lands inside an export or a page
     # request freezes the whole server for most of a second. Moving them out of the collector's sight keeps those pauses away.
@@ -2732,6 +2759,8 @@ def run_server(targets, report_dir=None, port=0, no_browser=False, read_only=Fal
             print(json.dumps({"song": song["song"], "rows": len(song["rows"]), "review_rows": song["review_rows"], "read_only": song["read_only"], "reason": song["read_only_reason"], "entry_model": song.get("entry_model"), "has_flac": _path_is_file(song["audio_path"]), "has_stem": _path_is_file(song["ctc_audio_path"]), "share_rows": share}, ensure_ascii=True))
         return None
     handoff = bool(os.environ.get(review_hot_update.HANDOFF_ENV))
+    if os.environ.get(review_hot_update.BANNER_ENV):
+        print(review_hot_update.BANNER_TEXT, flush=True)
     if handoff:
         # A hot-update replacement: the old server still owns the port. Say we are loaded, wait until it frees the port, bind exactly that port.
         if not review_hot_update.replacement_handshake(port):

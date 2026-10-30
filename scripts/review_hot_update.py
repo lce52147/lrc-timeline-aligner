@@ -22,15 +22,19 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
 HANDOFF_ENV = "LRC_HOT_HANDOFF"
 TOKEN_ENV = "LRC_REVIEW_TOKEN"
 HIDDEN_FLAGS = 0x08000000 | 0x00004000  # CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
+NEW_CONSOLE_FLAGS = 0x00000010 | 0x00004000  # CREATE_NEW_CONSOLE | BELOW_NORMAL_PRIORITY_CLASS
+BANNER_ENV = "LRC_REVIEW_BANNER"
+BANNER_TEXT = "Keep this window open. Closing it stops the review server."
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 PAGE_FILE = SCRIPTS_DIR / "review_page" / "index.html"
-LIGHT_PATHS = ("/api/version", "/api/status", "/api/jobs", "/api/admin/version", "/api/admin/hot-update")
+LIGHT_PATHS = ("/api/version", "/api/status", "/api/jobs", "/api/admin/version", "/api/admin/hot-update", "/api/admin/shutdown")
 LOG_NAME = "review-server.log"
 
 
@@ -86,6 +90,58 @@ def git_head(root):
         return ""
 
 
+def has_console():
+    """True when this process is attached to a console window (a server started by Review LRC.bat), False for a hidden or windowless one."""
+    if os.name != "nt":
+        return False
+    try:
+        return bool(ctypes.windll.kernel32.GetConsoleWindow())
+    except (AttributeError, OSError):
+        return False
+
+
+def activity_reason(server):
+    """None when no export, rescan or alignment job is running on this server, else what is."""
+    store = server.store
+    if store.export_status.get("active"):
+        return "export active"
+    if (store.reload_progress or {}).get("active"):
+        return "reload active"
+    jobs = getattr(server, "jobs", None)
+    if jobs is not None:
+        with jobs.lock:
+            if jobs.current is not None or any(item.get("status") in ("queued", "running") for job in jobs.jobs for item in job.get("items", [])):
+                return "alignment job active"
+    return None
+
+
+def shutdown_reason(server):
+    """None when the server may be stopped now, else why not: a save or export in flight (the shutdown request itself is not counted)."""
+    hot = getattr(server, "hot", None)
+    if hot is not None and (hot.updating or hot.handing_over):
+        return "update in progress"
+    if hot is not None and hot.inflight > 0:
+        return "save or request in flight"
+    return activity_reason(server)
+
+
+def stop_server(server, grace=5.0):
+    """Stop serving and let the process exit: take the store lock (an in-flight save finishes first, no new one starts), end the serve loop,
+    and force the exit if something keeps the interpreter alive. Nothing is written beyond what is already saved."""
+    def work():
+        timer = threading.Timer(grace + 30.0, lambda: os._exit(0))
+        timer.daemon = True
+        timer.start()
+        hot = getattr(server, "hot", None)
+        if hot is not None:
+            hot.stop()
+        server.store.lock.acquire(timeout=30)
+        time.sleep(0.2)  # let the answer reach the page
+        server.shutdown()
+        threading.Timer(grace, lambda: os._exit(0)).start()
+    threading.Thread(target=work, name="admin-shutdown", daemon=True).start()
+
+
 def _now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -135,7 +191,7 @@ class HotUpdater:
 
     # -- state -----------------------------------------------------------------------------------------
     def info(self):
-        return {"pid": os.getpid(), "port": self.server.server_port, "code_version": self.started_code, "head": self.started_head,
+        return {"pid": os.getpid(), "port": self.server.server_port, "visible": has_console(), "root": str(self.root), "token": self.server.token, "code_version": self.started_code, "head": self.started_head,
                 "asset_version": asset_signature(), "updating": self.updating, "update_failed": self.failed,
                 "code_current": code_signature() == self.started_code, "idle": self.idle_reason() is None}
 
@@ -144,21 +200,11 @@ class HotUpdater:
 
     def idle_reason(self):
         """None when the server may be replaced now, else why not."""
-        store = self.server.store
         if self._inflight > 0:
             return "request in flight"
         if time.monotonic() - self._idle_since < self.quiet_s:
             return "recent request"
-        if store.export_status.get("active"):
-            return "export active"
-        if (store.reload_progress or {}).get("active"):
-            return "reload active"
-        jobs = getattr(self.server, "jobs", None)
-        if jobs is not None:
-            with jobs.lock:
-                if jobs.current is not None or any(item.get("status") in ("queued", "running") for job in jobs.jobs for item in job.get("items", [])):
-                    return "alignment job active"
-        return None
+        return activity_reason(self.server)
 
     def log(self, line):
         target = self.log_dir or self.server.store.report_dir.parent
@@ -275,6 +321,9 @@ class HotUpdater:
         env[HANDOFF_ENV] = str(handoff)
         env[TOKEN_ENV] = self.server.token
         env["PYTHONUTF8"] = "1"
+        if has_console():
+            # EvanOG's server: the replacement joins the same console window (no new window, nothing hidden) so the window he can close stays the server's.
+            return subprocess.Popen(cmd, cwd=str(self.root), env=env, stdin=subprocess.DEVNULL, creationflags=0x00004000, close_fds=True)
         return subprocess.Popen(cmd, cwd=str(self.root), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                 creationflags=HIDDEN_FLAGS if os.name == "nt" else 0, close_fds=True)
 
@@ -438,6 +487,21 @@ def _get(port, path, method="GET", data=None, timeout=10):
         return 0, {}
 
 
+def existing_server(port):
+    """The review server of THIS install that already answers on 127.0.0.1:port, as {port, pid, url}; None when the port is free or held by anything else
+    (another install, an older server without the admin endpoint, another program). The token comes from the loopback admin endpoint."""
+    status, info = _get(port, "/api/admin/version", timeout=3)
+    if status != 200 or not info.get("token"):
+        return None
+    try:
+        same = pathlib.Path(info.get("root", "")).resolve() == SCRIPTS_DIR.parent.resolve()
+    except OSError:
+        same = False
+    if not same:
+        return None
+    return {"port": port, "pid": info.get("pid"), "url": "http://127.0.0.1:%d/#t=%s" % (port, urllib.parse.quote(info["token"]))}
+
+
 def _newest_mtime(directory):
     newest = 0.0
     for dirpath, _dirs, names in os.walk(directory):
@@ -461,7 +525,7 @@ def legacy_idle(server, report_dir, quiet_s=20.0):
     """A server without the admin endpoint cannot be asked: no report file written for quiet_s, no child process, no CPU burn."""
     if time.time() - _newest_mtime(report_dir) < quiet_s:
         return False
-    children = _powershell("(Get-CimInstance Win32_Process -Filter 'ParentProcessId=%d' | Measure-Object).Count" % server["pid"]).strip()
+    children = _powershell("(Get-CimInstance Win32_Process -Filter \"ParentProcessId=%d AND Name<>'conhost.exe'\" | Measure-Object).Count" % server["pid"]).strip()
     if children not in ("0", ""):
         return False
     first = _cpu_seconds(server["pid"])
@@ -492,9 +556,10 @@ def legacy_restart(server, wait_s, report_dir, say):
         time.sleep(0.1)
     env = dict(os.environ)
     env["PYTHONUTF8"] = "1"
+    env[BANNER_ENV] = "1"
     try:
-        process = subprocess.Popen([exe, *rest], cwd=str(SCRIPTS_DIR.parent), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                   stderr=subprocess.DEVNULL, creationflags=HIDDEN_FLAGS, close_fds=True)
+        # a restarted server is the one EvanOG works with: it gets its own visible console (never CREATE_NO_WINDOW) with the launcher's text
+        process = subprocess.Popen([exe, *rest], cwd=str(SCRIPTS_DIR.parent), env=env, creationflags=NEW_CONSOLE_FLAGS, close_fds=True)
     except OSError as exc:
         say("port %d: relaunch failed: %s" % (port, exc))
         return False
@@ -543,11 +608,62 @@ def update_server(server, wait_s, report_dir, say):
     return False
 
 
+def visibility_label(status, info):
+    if status != 200 or "visible" not in info:
+        return "unknown"
+    return "visible" if info["visible"] else "hidden"
+
+
+def stop_hidden(server, info, status, force, say):
+    """--stop: end a hidden server (loopback shutdown request: token, no Origin; the server refuses while a save or export is in flight)."""
+    port, label = server["port"], visibility_label(status, info)
+    if label == "visible":
+        say("port %d pid %d: has a console window; close that window (or use the page's close-server button) instead; not stopped" % (port, server["pid"]))
+        return True
+    if label == "unknown" and not force:
+        say("port %d pid %d: predates the shutdown request, visibility unknown; use --stop --force to end it" % (port, server["pid"]))
+        return False
+    if label == "hidden":
+        code, answer = _post_shutdown(port, info.get("token", ""))
+        if code == 200:
+            for _ in range(100):
+                if _get(port, "/api/version")[0] == 0:
+                    say("port %d pid %d: stopped" % (port, server["pid"]))
+                    return True
+                time.sleep(0.1)
+            say("port %d pid %d: asked to stop but still answering" % (port, server["pid"]))
+            return False
+        say("port %d pid %d: not stopped (%s %s)" % (port, server["pid"], code, answer.get("error", "")))
+        return False
+    for pid in {server["pid"], server["ppid"]}:
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, creationflags=0x08000000)
+    say("port %d pid %d: killed (--force)" % (port, server["pid"]))
+    return True
+
+
+def _post_shutdown(port, token):
+    request = urllib.request.Request("http://127.0.0.1:%d/api/admin/shutdown" % port, method="POST", data=b"{}",
+                                     headers={"Host": "127.0.0.1:%d" % port, "Content-Type": "application/json", "X-Review-Token": token})
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return response.status, json.loads(response.read().decode("utf-8") or "{}")
+    except urllib.error.HTTPError as exc:
+        try:
+            return exc.code, json.loads(exc.read().decode("utf-8") or "{}")
+        except ValueError:
+            return exc.code, {}
+    except (urllib.error.URLError, OSError, ValueError):
+        return 0, {}
+
+
 def main(argv=None):
     import argparse
     parser = argparse.ArgumentParser(description="Push the current code of this install into its running Review LRC server(s).")
     parser.add_argument("--wait", type=int, default=900, help="seconds to wait for a busy server to go idle (default 900)")
-    parser.add_argument("--list", action="store_true", help="only list the running servers")
+    parser.add_argument("--list", action="store_true", help="only list the running servers (pid, port, console visible/hidden, version)")
+    parser.add_argument("--stop", action="store_true", help="stop the hidden server(s) (one with a console window is left to its window); --port N limits it to one")
+    parser.add_argument("--force", action="store_true", help="with --stop: also end a server whose visibility is unknown (it predates this tool)")
+    parser.add_argument("--port", type=int, default=None, help="with --stop: only the server on this port")
     parser.add_argument("--report-dir", type=pathlib.Path, default=None)
     args = parser.parse_args(argv)
     say = lambda text: print(text, flush=True)
@@ -558,8 +674,12 @@ def main(argv=None):
     ok = True
     for server in servers:
         status, info = _get(server["port"], "/api/admin/version")
-        say("running: pid %d port %d %s" % (server["pid"], server["port"], ("version %s@%s" % (info.get("head") or "nogit", info.get("code_version"))) if status == 200 else "version unknown (predates hot update)"))
+        say("running: pid %d port %d %s %s" % (server["pid"], server["port"], visibility_label(status, info), ("version %s@%s" % (info.get("head") or "nogit", info.get("code_version"))) if status == 200 else "version unknown (predates hot update)"))
         if args.list:
+            continue
+        if args.stop:
+            if args.port is None or args.port == server["port"]:
+                ok = stop_hidden(server, info, status, args.force, say) and ok
             continue
         report_dir = args.report_dir
         if report_dir is None:

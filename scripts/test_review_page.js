@@ -60,6 +60,7 @@ let exportGate = null, exportMode = 'ok';
 const jobsPosts = [], inspectPosts = [], decisionPosts = [], exportPosts = [];
 let loadCalls = 0, songListCalls = 0, detailCalls = 0;
 let listMode = 'ok', detailGate = null;
+let shutdownPosts = 0, shutdownBusy = false;
 const skew = {ms: 0};
 class FakeDate extends Date { static now() { return Date.now.call(Date) + skew.ms; } }
 async function fetchMock(url, options={}) {
@@ -80,6 +81,7 @@ async function fetchMock(url, options={}) {
   if (url.startsWith('/api/song/0/peaks')) { peakCalls++; return {ok:true,json:async()=>({from_cs:0,to_cs:600,bins:120,sample_rate:16000,peaks:Array.from({length:120},()=>[0,0])})}; }
   if (url === '/api/song/0/export') { const body = JSON.parse(options.body); exportPosts.push(body); return body.check ? {ok:true,json:async()=>({targets:[{name:'demo.flac',tag:'LYRICS',has_lyrics:true,lines:7},{name:'demo.m4a',tag:'©lyr',has_lyrics:false,lines:0}],lrc_lines:9})} : {ok:true,json:async()=>({name:body.audio,tag:'LYRICS',lines:9,seconds:1.2,archive:body.audio==='demo.flac'?{mode:'move',to:'D:/checked/demo.lrc'}:{mode:'off'}})}; }
   if (url === '/api/song/0/save') return {ok:true,json:async()=>song.detail};
+  if (url === '/api/admin/shutdown') { shutdownPosts++; return shutdownBusy ? {ok:false,status:409,statusText:'Conflict',json:async()=>({error:'目前不能關閉：正在匯出，請等匯出完成'})} : {ok:true,json:async()=>({state:'stopping'})}; }
   throw new Error('unexpected fetch '+url);
 }
 
@@ -496,6 +498,28 @@ vm.runInNewContext(script, context, {filename:'review_page/index.html'});
     listMode = 'ok'; [...timers.entries()].filter(([,timer]) => timer.ms === 3000).forEach(([id, timer]) => { timers.delete(id); timer.fn(); }); await flush(); await flush();
     assert.match(bar.className, /\bok\b/, 'the automatic retry loads the page again'); fireTimer(1500);
     assert.equal(bar.hidden, true, 'the bar is hidden after the retry succeeded');
+  }
+  // BL: 關閉伺服器 asks first (an in-page dialog, never a browser alert), shows a refusal, and ends with 伺服器已關閉 and no more polling
+  {
+    const box = documentMock.getElementById('shutdown-box'), done = documentMock.getElementById('shutdown-done');
+    box.hidden = true; done.hidden = true;
+    ids.get('shutdown').dispatch('click');
+    assert.equal(box.hidden, false, 'the button opens the confirm dialog');
+    assert.equal(shutdownPosts, 0, 'nothing is sent before the user confirms');
+    ids.get('shutdown-cancel').dispatch('click');
+    assert.equal(box.hidden, true, 'cancel closes it without a request');
+    assert.equal(shutdownPosts, 0);
+    ids.get('shutdown').dispatch('click');
+    shutdownBusy = true; ids.get('shutdown-go').dispatch('click'); await flush();
+    assert.equal(shutdownPosts, 1);
+    assert.equal(documentMock.getElementById('shutdown-error').hidden, false, 'a refused shutdown shows why');
+    assert.match(documentMock.getElementById('shutdown-error').textContent, /正在匯出/);
+    assert.equal(done.hidden, true, 'a refused shutdown does not claim the server is closed');
+    shutdownBusy = false; ids.get('shutdown-go').dispatch('click'); await flush();
+    assert.equal(shutdownPosts, 2);
+    assert.equal(done.hidden, false, 'the page says 伺服器已關閉');
+    assert.equal(box.hidden, true);
+    assert.equal(test.state.closed, true);
   }
   assert.match(fs.readFileSync('scripts/review_page/index.html','utf8'), /<body>\s*<div id="busybar"[^>]*>\s*<span id="busybar-text">載入中…<\/span>/, 'the first paint already carries the loading bar');
   console.log('review page settings tests: PASS');

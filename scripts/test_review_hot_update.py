@@ -35,11 +35,19 @@ class Fixture:
         self.proc = None
         self.token = ""
 
-    def start(self, extra_env=None):
+    def start(self, extra_env=None, visible=False):
         env = dict(os.environ, PYTHONUTF8="1", LRC_HOT_UPDATE_INTERVAL="0.3", LRC_NO_REVIEW="1", **(extra_env or {}))
+        extra = {}
+        flags = HIDDEN
+        if visible and os.name == "nt":  # a console of its own, as Review LRC.bat gives it, started minimized so the test does not take the screen
+            flags = 0x10
+            startup = subprocess.STARTUPINFO()
+            startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startup.wShowWindow = 7  # SW_SHOWMINNOACTIVE
+            extra["startupinfo"] = startup
         self.proc = subprocess.Popen([sys.executable, str(self.scripts / "review_server.py"), "--report-dir", str(self.root / "outputs" / "reports"),
                                       "--port", str(self.port), "--no-browser"], cwd=str(self.root), env=env, stdout=subprocess.PIPE,
-                                     stderr=subprocess.DEVNULL, creationflags=HIDDEN)
+                                     stderr=subprocess.DEVNULL, creationflags=flags, **extra)
         info = json.loads(self.proc.stdout.readline().decode("utf-8"))
         self.token = info["token"]
         return info
@@ -60,6 +68,25 @@ class Fixture:
             return body if status == 200 else None
         except OSError:
             return None
+
+    def post(self, path, headers=None, body=b"{}", timeout=10):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=timeout)
+        try:
+            conn.request("POST", path, body=body, headers={"Host": "127.0.0.1:%d" % self.port, "Content-Type": "application/json", **(headers or {})})
+            response = conn.getresponse()
+            data = response.read()
+            return response.status, (json.loads(data) if data[:1] == b"{" else data)
+        finally:
+            conn.close()
+
+    def gone(self, seconds=15):
+        def check():
+            try:
+                self.get("/api/admin/version", timeout=2)
+            except OSError:
+                return True
+            return False
+        return self.wait_for(check, seconds)
 
     def version(self):
         return self.get("/api/version", {"X-Review-Token": self.token})
@@ -187,6 +214,101 @@ class HotUpdateTests(unittest.TestCase):
         self.assertEqual(self.fx.version()[0], 200)
 
 
+SAVE_STUB = ("POST /api/song/0/save HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nX-Review-Token: %s\r\nOrigin: http://127.0.0.1:%d\r\n"
+             "Content-Type: application/json\r\nContent-Length: 20\r\n\r\n{")
+
+
+class VisibleServerTests(unittest.TestCase):
+    def setUp(self):
+        self.fx = Fixture()
+        self.addCleanup(self.fx.close)
+
+    def launch_same_port(self, fixture, port):
+        return subprocess.Popen([sys.executable, str(fixture.scripts / "review_server.py"), "--report-dir", str(fixture.root / "outputs" / "reports"),
+                                 "--port", str(port), "--no-browser"], cwd=str(fixture.root), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                env=dict(os.environ, PYTHONUTF8="1", LRC_NO_REVIEW="1"), creationflags=HIDDEN)
+
+    def test_hidden_server_reports_hidden_and_a_console_server_reports_visible(self):
+        self.fx.start()
+        self.assertIs(self.fx.admin()["visible"], False)
+        other = Fixture()
+        self.addCleanup(other.close)
+        other.start(visible=True)
+        self.assertIs(other.admin()["visible"], True)
+
+    def test_hot_update_keeps_a_console_server_visible_and_a_hidden_one_hidden(self):
+        for visible in (True, False):
+            fx = Fixture()
+            self.addCleanup(fx.close)
+            fx.start(visible=visible)
+            old = fx.admin()
+            fx.edit("review_server.py", "\n# marker\n")
+            info = fx.wait_for(lambda: (fx.admin() or {}).get("pid") not in (None, old["pid"]) and fx.admin(), 60)
+            self.assertTrue(info, fx.log())
+            self.assertIs(info["visible"], visible, "the replacement must keep the console state of the server it replaces")
+
+    def test_shutdown_needs_token_and_own_origin_and_stops_the_server(self):
+        self.fx.start()
+        port, token = self.fx.port, self.fx.token
+        self.assertEqual(self.fx.post("/api/admin/shutdown")[0], 403)
+        self.assertEqual(self.fx.post("/api/admin/shutdown", {"X-Review-Token": "wrong"})[0], 403)
+        self.assertEqual(self.fx.post("/api/admin/shutdown", {"X-Review-Token": token, "Origin": "http://evil.example"})[0], 403)
+        self.assertEqual(self.fx.post("/api/admin/shutdown", {"X-Review-Token": token, "Origin": "http://127.0.0.1:%d" % (port + 1)})[0], 403)
+        self.assertIsNotNone(self.fx.admin(), "refused requests must not stop it")
+        status, body = self.fx.post("/api/admin/shutdown", {"X-Review-Token": token, "Origin": "http://127.0.0.1:%d" % port})
+        self.assertEqual((status, body["state"]), (200, "stopping"))
+        self.assertTrue(self.fx.gone(), "server still answering after shutdown")
+        self.assertIsNotNone(self.fx.wait_for(lambda: self.fx.proc.poll() is not None, 15), "process did not exit")
+
+    def test_shutdown_is_refused_while_a_request_is_in_flight(self):
+        self.fx.start()
+        sock = socket.create_connection(("127.0.0.1", self.fx.port), timeout=5)
+        sock.sendall((SAVE_STUB % (self.fx.port, self.fx.token, self.fx.port)).encode())
+        time.sleep(0.5)
+        status, body = self.fx.post("/api/admin/shutdown", {"X-Review-Token": self.fx.token})
+        self.assertEqual(status, 409, body)
+        self.assertIn("儲存", body["error"])
+        self.assertIsNotNone(self.fx.admin())
+        sock.close()
+
+    def test_second_launch_on_a_busy_port_reuses_this_installs_server(self):
+        self.fx.start()
+        before = self.fx.admin()
+        proc = self.launch_same_port(self.fx, self.fx.port)
+        out, err = proc.communicate(timeout=60)
+        self.assertEqual(proc.returncode, 0, err)
+        self.assertIn(("http://127.0.0.1:%d/#t=%s" % (self.fx.port, self.fx.token)).encode(), out)
+        self.assertEqual(self.fx.admin()["pid"], before["pid"])
+        for port in range(self.fx.port + 1, self.fx.port + 3):
+            with socket.socket() as probe:
+                self.assertNotEqual(probe.connect_ex(("127.0.0.1", port)), 0, "a second server must not start on the next port")
+
+    def test_busy_port_held_by_another_install_still_falls_back(self):
+        self.fx.start()
+        other = Fixture()
+        self.addCleanup(other.close)
+        proc = self.launch_same_port(other, self.fx.port)
+        self.addCleanup(lambda: subprocess.run(["taskkill", "/PID", str(proc.pid), "/F"], capture_output=True, creationflags=HIDDEN))
+        info = json.loads(proc.stdout.readline().decode("utf-8"))
+        self.assertNotIn(":%d/" % self.fx.port, info["url"])
+
+    def test_cli_list_shows_visibility_and_stop_ends_only_a_hidden_server(self):
+        self.fx.start()
+        shown = Fixture()  # a second server of the same install (the CLI only sees the servers of its own scripts folder)
+        shutil.rmtree(shown.root, ignore_errors=True)
+        shown.root, shown.scripts = self.fx.root, self.fx.scripts
+        self.addCleanup(shown.close)
+        shown.start(visible=True)
+        listing = self.fx.cli("--list").stdout
+        self.assertRegex(listing, r"pid \d+ port %d hidden" % self.fx.port)
+        self.assertRegex(listing, r"pid \d+ port %d visible" % shown.port)
+        result = self.fx.cli("--stop")
+        self.assertRegex(result.stdout, r"port %d pid \d+: stopped" % self.fx.port)
+        self.assertRegex(result.stdout, r"port %d pid \d+: has a console window" % shown.port)
+        self.assertTrue(self.fx.gone())
+        self.assertIsNotNone(shown.admin(), "a server with a console window is left to its window")
+
+
 class LegacyServerTests(unittest.TestCase):
     def test_cli_restarts_a_server_that_has_no_hot_update_on_the_same_port(self):
         fx = Fixture()
@@ -201,6 +323,7 @@ class LegacyServerTests(unittest.TestCase):
         self.assertTrue(info)
         self.assertNotEqual(info["pid"], old_pid)
         self.assertEqual(info["port"], fx.port)
+        self.assertIs(info["visible"], True, "a legacy restart must give the server a visible console, never a hidden one")
 
     def test_cli_reports_not_running(self):
         fx = Fixture()
