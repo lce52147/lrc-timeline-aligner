@@ -39922,10 +39922,11 @@ def report_artifact_paths(audio_path: Path, output_path: Path, report_dir: Path)
     )
 
 
-def annotate_display_romaji(report: dict[str, object]) -> None:
+def annotate_display_romaji(report: dict[str, object], report_path: Path | None = None) -> None:
     """Additive per-entry spaced Hepburn romaji (`romaji_display`) from the shared reading module.
 
-    The existing compact `romaji` field is the aligner's target and is left untouched.
+    The existing compact `romaji` field is the aligner's target and is left untouched.  A line the lyric source gave
+    furigana for is read from it (what is sung), otherwise through the shared dictionary and the analyzer.
     """
     entries = report.get(_RUNTIME_LYRIC_ENTRIES_KEY)
     assignments = report.get("assignments")
@@ -39936,16 +39937,23 @@ def annotate_display_romaji(report: dict[str, object]) -> None:
 
         system = lrc_reading.reading_system()
         done = False
+        furigana = {}
+        if report_path is not None:
+            try:
+                furigana = lrc_reading.load_furigana(Path(report_path).name.replace(".align-report.json", ""))
+            except Exception:
+                furigana = {}
         for row in assignments:
             number = row.get("entry") if isinstance(row, dict) else None
             if not isinstance(number, int) or not 1 <= number <= len(entries) or "romaji_display" in row:
                 continue
             line = entry_sung_text(entries[number - 1])
             if lrc_reading.has_japanese(line):
-                value = lrc_reading.romanize_line(line)
+                value = lrc_reading.romanize_line(line, furigana=furigana.get(lrc_reading.line_key(line)))
                 if value:
                     row["romaji_display"] = value
                     row["romaji_display_text"] = line
+                    row["romaji_display_source"] = lrc_reading.reading_source(line, furigana)
                     done = True
         if done:
             report["romaji_display_system"] = system
@@ -39954,7 +39962,7 @@ def annotate_display_romaji(report: dict[str, object]) -> None:
 
 
 def write_alignment_report(report_path: Path, report: dict[str, object]) -> None:
-    annotate_display_romaji(report)
+    annotate_display_romaji(report, report_path)
     apply_weak_review_policy(report)
     report["algorithm_revision"] = LRC_ALGORITHM_REVISION
     _validate_backend_provenance_projection(report)

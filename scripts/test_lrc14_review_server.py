@@ -183,6 +183,30 @@ class ReviewServerTests(unittest.TestCase):
                 os.environ[lrc_reading.OVERRIDES_ENV] = previous
             review_server._ROMAJI_CACHE.clear()
 
+    def test_bo_furigana_sets_the_reading_and_asr_flag_shows_a_badge(self) -> None:
+        import lrc_reading
+        furigana_dir = self.root / "furigana"
+        furigana_dir.mkdir()
+        previous = os.environ.get(lrc_reading.FURIGANA_ENV)
+        os.environ[lrc_reading.FURIGANA_ENV] = str(furigana_dir)
+        try:
+            detail = self._payload_with_text({"]one": "]時間の流れ"})
+            self.assertEqual((detail["rows"][0]["romaji"], detail["rows"][0]["romaji_source"]), ("jikan no nagare", "auto"))
+            stem = self.report.name.replace(".align-report.json", "")
+            (furigana_dir / (stem + ".furigana.json")).write_text(json.dumps({"lines": {"時間の流れ": [["時間", "とき"], ["の", ""], ["流", "なが"], ["れ", ""]]}}, ensure_ascii=False), encoding="utf-8")
+            (furigana_dir / (stem + ".romaji-asr.json")).write_text(json.dumps({"flags": {"時間の流れ": {"heard": "ジカンノナガレ", "suggest": "jikan no nagare"}}}, ensure_ascii=False), encoding="utf-8")
+            review_server._ROMAJI_CACHE.clear()
+            row = review_server._song_payload(self.report, json.loads(self.report.read_text(encoding="utf-8")))["rows"][0]
+            self.assertEqual((row["romaji"], row["romaji_source"]), ("toki no nagare", "furigana"))
+            self.assertEqual(row["romaji_asr"], {"heard": "ジカンノナガレ", "suggest": "jikan no nagare"})
+            self.assertEqual(self._json_request("POST", "/api/song/0/romaji", {"entry": 1, "romaji": "x y"})[0], 200)
+        finally:
+            if previous is None:
+                os.environ.pop(lrc_reading.FURIGANA_ENV, None)
+            else:
+                os.environ[lrc_reading.FURIGANA_ENV] = previous
+            review_server._ROMAJI_CACHE.clear()
+
     def test_romaji_failure_leaves_rows_without_romaji(self) -> None:
         with mock.patch.object(review_server, "_romanize_line", side_effect=RuntimeError("boom")):
             detail = self._payload_with_text({"]one": "]こんにちは"})

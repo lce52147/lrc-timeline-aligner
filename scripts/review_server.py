@@ -834,11 +834,34 @@ _ROMAJI_CACHE = OrderedDict()
 _ROMAJI_CACHE_LIMIT = 64
 
 
-def _romanize_line(text):
+def _romanize_line(text, furigana=None):
     # Shared reading module (unidic morphological reading; pykakasi + post-fixes fallback).
     import lrc_reading
 
-    return lrc_reading.romanize_line(text)
+    return lrc_reading.romanize_line(text, furigana=(furigana or {}).get(lrc_reading.line_key(text)))
+
+
+def _report_stem(report_path):
+    return pathlib.Path(report_path).name.replace(".align-report.json", "")
+
+
+def _song_furigana(report_path):
+    """Per-song source furigana {line: [(surface, reading)]} (empty when the song has none)."""
+    import lrc_reading
+
+    try:
+        return lrc_reading.load_furigana(_report_stem(report_path))
+    except Exception:
+        return {}
+
+
+def _song_asr_flags(report_path):
+    """Lines whose chosen reading likely differs from what the ASR heard (audit sidecar), keyed by normalized line."""
+    import lrc_reading
+
+    data = lrc_reading._load_sidecar(lrc_reading.furigana_path(_report_stem(report_path), ".romaji-asr.json"))
+    flags = data.get("flags") if isinstance(data, dict) else None
+    return flags if isinstance(flags, dict) else {}
 
 
 def _dictionary_stamp():
@@ -859,7 +882,10 @@ def _song_romaji(report_path, sha, first_lines, stored=None):
     """
     if not any(_KANA_RE.search(line) for line in first_lines):
         return [None] * len(first_lines)
-    key = (str(report_path), sha, _dictionary_stamp())
+    import lrc_reading
+
+    furigana = _song_furigana(report_path)
+    key = (str(report_path), sha, _dictionary_stamp(), lrc_reading.furigana_stamp(_report_stem(report_path)))
     cached = _ROMAJI_CACHE.get(key)
     if cached is not None:
         _ROMAJI_CACHE.move_to_end(key)
@@ -870,10 +896,12 @@ def _song_romaji(report_path, sha, first_lines, stored=None):
     stored = stored or {}
     for line in first_lines:
         value = stored.get(line)
+        if lrc_reading.line_key(line) in furigana:
+            value = None
         if value is None or lrc_reading.dictionary_hits(line):
             if _KANA_RE.search(line) or _CJK_RE.search(line):
                 try:
-                    value = _romanize_line(line) or value
+                    value = _romanize_line(line, furigana) or value
                 except Exception:
                     pass
         result.append(value)
@@ -898,12 +926,10 @@ def _load_romaji_overrides(report_path):
     return {k: v for k, v in lines.items() if isinstance(k, str) and isinstance(v, str) and v} if isinstance(lines, dict) else {}
 
 
-def _romaji_source(line, manual):
+def _romaji_source(line, manual, furigana=None):
     import lrc_reading
 
-    if line in manual:
-        return "manual"
-    return "dict" if lrc_reading.dictionary_hits(line) else "auto"
+    return lrc_reading.reading_source(line, furigana, manual)
 
 
 _SURFACE_MAX = 24
@@ -947,7 +973,7 @@ def _save_romaji(song, body):
         except OSError as error:
             return 500, {"error": "could not write dictionary: " + str(error)}
         _ROMAJI_CACHE.clear()
-        return 200, {"entry": entry, "surface": surface, "reading": reading, "source": "dict", "romaji": _romanize_line(line)}
+        return 200, {"entry": entry, "surface": surface, "reading": reading, "source": "dict", "romaji": _romanize_line(line, _song_furigana(song["report"]))}
     path = _romaji_overrides_path(song["report"])
     manual = _load_romaji_overrides(song["report"])
     if body.get("clear"):
@@ -963,12 +989,13 @@ def _save_romaji(song, body):
     except OSError as error:
         return 500, {"error": "could not write override: " + str(error)}
     if body.get("clear"):
-        return 200, {"entry": entry, "romaji": _romanize_line(line) or None, "source": _romaji_source(line, manual)}
+        furigana = _song_furigana(song["report"])
+        return 200, {"entry": entry, "romaji": _romanize_line(line, furigana) or None, "source": _romaji_source(line, manual, furigana)}
     return 200, {"entry": entry, "romaji": manual[line], "source": "manual"}
 
 
 def _apply_romaji(song):
-    """Set each row's romaji and its source (手動 / 字典 / 自動) from the current per-song overrides and shared dictionary.
+    """Set each row's romaji and its source (手動 / 歌詞標音 / 字典 / 自動) from the per-song overrides, the source furigana and the shared dictionary.
 
     Called whenever a song is built and whenever it is served, so a dictionary entry added for one song reaches every other song at once.
     """
@@ -976,6 +1003,7 @@ def _apply_romaji(song):
     for row in rows:
         row.pop("romaji", None)
         row.pop("romaji_source", None)
+        row.pop("romaji_asr", None)
     if not rows:
         return
     report = song.get("report_data") if isinstance(song.get("report_data"), dict) else {}
@@ -994,12 +1022,19 @@ def _apply_romaji(song):
     except Exception:
         romaji = [None] * len(rows)
     manual = _load_romaji_overrides(song["report"])
+    import lrc_reading
+
+    furigana = _song_furigana(song["report"])
+    asr_flags = _song_asr_flags(song["report"])
     for row, value in zip(rows, romaji):
         line = row["lyrics"][0] if row.get("lyrics") else ""
         if line in manual:
             row["romaji"], row["romaji_source"] = manual[line], "manual"
         elif value:
-            row["romaji"], row["romaji_source"] = value, _romaji_source(line, {})
+            row["romaji"], row["romaji_source"] = value, _romaji_source(line, {}, furigana)
+            flag = asr_flags.get(lrc_reading.line_key(line))
+            if isinstance(flag, dict):
+                row["romaji_asr"] = {"heard": str(flag.get("heard") or ""), "suggest": str(flag.get("suggest") or "")}
 
 
 def _song_payload(report_path, report, anchor=None):

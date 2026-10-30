@@ -1,3 +1,4 @@
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -69,6 +70,88 @@ class ReadingDictionaryTests(unittest.TestCase):
 
     def test_typed_reading_to_romaji(self):
         self.assertEqual(lrc_reading.kana_text_to_romaji("しぶく なみ ToInanaki"), "shibuku nami toinanaki")
+
+
+class FuriganaTests(unittest.TestCase):
+    TOKI = lrc_reading.clean_segments([["時間", "とき"], ["の", ""], ["流", "なが"], ["れ", ""]])
+
+    def test_furigana_beats_the_analyzer_reading(self):
+        self.assertEqual(lrc_reading.romanize_line("時間の流れ"), "jikan no nagare")
+        self.assertEqual(lrc_reading.romanize_line("時間の流れ", furigana=self.TOKI), "toki no nagare")
+        self.assertEqual(lrc_reading.romanize_line("運命を信じて", furigana=lrc_reading.clean_segments(
+            [["運命", "さだめ"], ["を", ""], ["信", "しん"], ["じて", ""]])), "sadame wo shinjite")
+
+    def test_furigana_is_mapped_onto_tokens_so_particles_and_spacing_stay(self):
+        seg = lrc_reading.clean_segments([["私", "わたし"], ["は", ""], ["行", "い"], ["く", ""]])
+        self.assertEqual(lrc_reading.romanize_line("私は行く", furigana=seg), "watashi wa iku")
+
+    def test_reading_priority_manual_furigana_dictionary_auto(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            dictionary = Path(tmp) / "d.tsv"
+            dictionary.write_text("時間\tじかん\n", encoding="utf-8")
+            old = os.environ.get(lrc_reading.OVERRIDES_ENV)
+            os.environ[lrc_reading.OVERRIDES_ENV] = str(dictionary)
+            try:
+                furigana = {lrc_reading.line_key("時間の流れ"): self.TOKI}
+                self.assertEqual(lrc_reading.reading_source("時間の流れ", furigana, {"時間の流れ": "x"}), "manual")
+                self.assertEqual(lrc_reading.reading_source("時間の流れ", furigana), "furigana")
+                self.assertEqual(lrc_reading.reading_source("時間の流れ", {}), "dict")
+                self.assertEqual(lrc_reading.reading_source("流れ", {}), "auto")
+                # ruby that leaves a kanji uncovered does not claim the line
+                partial = {lrc_reading.line_key("時間の流れ"): lrc_reading.clean_segments([["時間", "とき"], ["の流れ", ""]])}
+                self.assertEqual(lrc_reading.reading_source("時間の流れ", partial), "dict")
+                self.assertEqual(lrc_reading.romanize_line("時間の流れ", furigana=self.TOKI), "toki no nagare", "furigana wins over the dictionary")
+            finally:
+                if old is None:
+                    os.environ.pop(lrc_reading.OVERRIDES_ENV, None)
+                else:
+                    os.environ[lrc_reading.OVERRIDES_ENV] = old
+
+    def test_non_kana_ruby_is_dropped_and_alignment_target_is_unchanged_without_flag(self):
+        self.assertEqual(lrc_reading.clean_segments([["時間", "jikan"]]), [("時間", "")])
+        self.assertEqual(lrc_reading.romanize_compact("時間の流れ"), "jikannonagare")
+        self.assertEqual(lrc_reading.romanize_compact("時間の流れ", furigana=self.TOKI), "tokinonagare")
+
+    def test_sidecar_round_trip(self):
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            old = os.environ.get(lrc_reading.FURIGANA_ENV)
+            os.environ[lrc_reading.FURIGANA_ENV] = tmp
+            try:
+                (Path(tmp) / "song.furigana.json").write_text(json.dumps({"lines": {"時間の流れ": [["時間", "とき"], ["の", ""]]}}, ensure_ascii=False), encoding="utf-8")
+                self.assertEqual(lrc_reading.load_furigana("song")[lrc_reading.line_key("時間の流れ")][0], ("時間", "とき"))
+                self.assertEqual(lrc_reading.load_furigana("missing"), {})
+            finally:
+                if old is None:
+                    os.environ.pop(lrc_reading.FURIGANA_ENV, None)
+                else:
+                    os.environ[lrc_reading.FURIGANA_ENV] = old
+
+    def test_asr_mismatch_flag(self):
+        import furigana_audit as audit
+        reading = lrc_reading.reading_kana("時間の流れ", self.TOKI)
+        heard_same = [(0.0, 5.0, "トキノナガレ")]
+        distance, _heard, _coverage = audit.asr_check("", heard_same, 0.0, 5.0, reading)
+        self.assertLess(distance, audit.ASR_FLAG_DISTANCE)
+        self.assertFalse(audit.is_flagged(distance, _coverage))
+        heard_near = [(0.0, 5.0, "ジカンノナガレ")]  # the ASR heard the same line with another reading of 時間
+        distance, heard, coverage = audit.asr_check("", heard_near, 0.0, 5.0, reading)
+        self.assertIn("ノナガレ", heard)
+        self.assertTrue(audit.is_flagged(distance, coverage))
+        heard_other = [(0.0, 5.0, "ミライヲシンジテ")]  # a different line: the ASR missed it, nothing to compare
+        distance, _heard, coverage = audit.asr_check("", heard_other, 0.0, 5.0, reading)
+        self.assertFalse(audit.is_flagged(distance, coverage))
+        heard_other = heard_near
+        self.assertIsNone(audit.asr_check("", heard_other, 50.0, 60.0, reading), "no ASR text in the window means no check")
+
+    def test_ruby_parser_reads_utaten_markup(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lyricsee"))
+        from utaten_source import parse_utaten_ruby
+        page = ('<div class="hiragana">\n <span class="ruby"><span class="rb">時間</span><span class="rt">とき</span></span>の'
+                '<span class="ruby"><span class="rb">流</span><span class="rt">なが</span></span>れ<br />\n</div>')
+        self.assertEqual(parse_utaten_ruby(page), [[("時間", "とき"), ("の", ""), ("流", "なが"), ("れ", "")]])
 
 
 if __name__ == "__main__":

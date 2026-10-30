@@ -9,6 +9,7 @@ post-fixes (small っ geminates the next consonant, particles は/へ/を).
 
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 import re
@@ -172,6 +173,102 @@ def dictionary_hits(text: str) -> int:
     return apply_overrides(unicodedata.normalize("NFKC", text or ""))[1]
 
 
+# ---- source furigana (what the page's ruby says is SUNG) -------------------------------------------
+# A lyric page that writes 時間 with ruby とき tells us the singer says "toki": no dictionary or analyzer can know
+# that.  Per song a sidecar `<report stem>.furigana.json` holds {"lines": {lyric line: [[surface, reading], ...]}}
+# (reading '' for plain text).  Priority: manual > furigana > shared dictionary > analyzer.
+FURIGANA_ENV = "LRC_FURIGANA_DIR"
+DEFAULT_FURIGANA_DIR = pathlib.Path(__file__).resolve().parent.parent / "outputs" / "furigana"
+_READING_KANA_RE = re.compile(r"^[ぁ-ゟァ-ヿー]+$")
+
+
+def furigana_dir() -> pathlib.Path:
+    return pathlib.Path(os.environ.get(FURIGANA_ENV) or DEFAULT_FURIGANA_DIR)
+
+
+def line_key(text: str) -> str:
+    return unicodedata.normalize("NFKC", text or "").strip()
+
+
+def furigana_path(stem: str, suffix: str = ".furigana.json") -> pathlib.Path:
+    return furigana_dir() / (stem + suffix)
+
+
+def clean_segments(segments):
+    """[(surface, reading)] with a reading kept only when it is kana (anything else is dropped to plain text)."""
+    out = []
+    for item in segments or []:
+        if not isinstance(item, (list, tuple)) or len(item) != 2 or not isinstance(item[0], str) or not isinstance(item[1], str):
+            continue
+        surface, reading = item
+        out.append((surface, reading if _READING_KANA_RE.match(reading) else ""))
+    return out
+
+
+_SIDECAR_CACHE: dict = {}
+
+
+def _load_sidecar(path: pathlib.Path):
+    try:
+        info = path.stat()
+    except OSError:
+        return None
+    stamp = (info.st_mtime_ns, info.st_size)
+    cached = _SIDECAR_CACHE.get(str(path))
+    if cached and cached[0] == stamp:
+        return cached[1]
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = None
+    _SIDECAR_CACHE[str(path)] = (stamp, data)
+    return data
+
+
+def load_furigana(stem: str) -> dict:
+    """{normalized lyric line: [(surface, reading)]} of one song ({} when it has no furigana sidecar)."""
+    data = _load_sidecar(furigana_path(stem))
+    lines = data.get("lines") if isinstance(data, dict) else None
+    if not isinstance(lines, dict):
+        return {}
+    return {line_key(k): clean_segments(v) for k, v in lines.items() if isinstance(k, str)}
+
+
+def furigana_stamp(stem: str):
+    try:
+        info = furigana_path(stem).stat()
+        return (info.st_mtime_ns, info.st_size)
+    except OSError:
+        return None
+
+
+def furigana_text(segments) -> str:
+    """The line with every ruby word replaced by its kana reading."""
+    return "".join(reading or surface for surface, reading in segments)
+
+
+def furigana_covers(segments) -> bool:
+    """True when the line has ruby and every kanji of it sits inside a ruby word."""
+    return any(reading for _, reading in segments) and not any(
+        _CJK_RE.search(surface) for surface, reading in segments if not reading
+    )
+
+
+def line_has_kanji(text: str) -> bool:
+    return bool(_CJK_RE.search(unicodedata.normalize("NFKC", text or "")))
+
+
+def reading_source(line: str, furigana=None, manual=None) -> str:
+    """'manual' / 'furigana' / 'dict' / 'auto' for one lyric line (furigana only when it covers every kanji)."""
+    key = line_key(line)
+    if manual and line in manual:
+        return "manual"
+    segments = (furigana or {}).get(key)
+    if segments and furigana_covers(segments):
+        return "furigana"
+    return "dict" if dictionary_hits(line) else "auto"
+
+
 def kana_text_to_romaji(text: str) -> str:
     """Spaced romaji of a user-typed reading: kana is converted word by word, latin letters are kept (lowercased)."""
     words = []
@@ -279,20 +376,62 @@ def _feat(token, name):
     return value if isinstance(value, str) and value != "*" else ""
 
 
-def _morph_words(text: str):
-    """Yield (kana, is_latin) words with conjugation chains joined."""
+def ruby_spans(segments):
+    """(line text, [(start, end, katakana reading)]) of the ruby words of one line, in the analyzed (NFKC) text."""
+    text, spans = "", []
+    for surface, reading in segments:
+        surface = unicodedata.normalize("NFKC", surface)
+        if reading:
+            spans.append((len(text), len(text) + len(surface), _to_katakana(unicodedata.normalize("NFKC", reading))))
+        text += surface
+    return text, spans
+
+
+def _ruby_token_kana(text, spans, start, end):
+    """Reading of the token text[start:end] from the ruby words inside it (kana outside ruby is its own reading).
+
+    None when a ruby word is cut by the token edge or a kanji is left without ruby: the analyzer's reading stays."""
+    out = []
+    position = start
+    covered = False
+    for a, b, reading in spans:
+        if b <= start or a >= end:
+            continue
+        if a < start or b > end:
+            return None
+        out.append(_to_katakana(text[position:a]))
+        out.append(reading)
+        position = b
+        covered = True
+    out.append(_to_katakana(text[position:end]))
+    result = "".join(out)
+    return result if covered and not _CJK_RE.search(result) else None
+
+
+def _morph_words(text: str, spans=None):
+    """Yield (kana, is_latin) words with conjugation chains joined.  ``spans`` are source-furigana ruby words
+    (see ruby_spans): a token they cover is read from them instead of the analyzer."""
     words: list[list] = []  # [kana, pos1, kind]
     prev_pos = ""
     prev_pos2 = ""
     tokens = list(_tagger()(text))
+    offset = 0
     for index, token in enumerate(tokens):
         surface = token.surface
+        offset += len(getattr(token, "white_space", "") or "")
+        token_start, offset = offset, offset + len(surface)
         following = tokens[index + 1].surface if index + 1 < len(tokens) else ""
         kana = _feat(token, "kana")
+        if spans:
+            ruby_kana = _ruby_token_kana(text, spans, token_start, offset)
+            if ruby_kana:
+                kana = ruby_kana
         pos1 = _feat(token, "pos1")
         pos2 = _feat(token, "pos2")
         lemma = _feat(token, "lemma")
-        if surface in _PARTICLE_ROMA and pos1 == "助詞":
+        if spans and ruby_kana:
+            pass
+        elif surface in _PARTICLE_ROMA and pos1 == "助詞":
             kana = {"は": "ワ", "へ": "エ", "を": "ヲ"}[surface]
         elif kana in ("コンニチハ", "コンバンハ"):
             kana = kana[:-1] + "ワ"
@@ -368,9 +507,18 @@ def _fallback_words(text: str):
     return words
 
 
-def romanize_words(text: str, phonetic: bool = False, use_dictionary: bool = True) -> list[str]:
-    """Spaced Hepburn words for a lyric line ('' list when nothing readable)."""
-    text = unicodedata.normalize("NFKC", text or "")
+def romanize_words(text: str, phonetic: bool = False, use_dictionary: bool = True, furigana=None) -> list[str]:
+    """Spaced Hepburn words for a lyric line ('' list when nothing readable).
+
+    ``furigana`` is the line's [(surface, reading)] from the lyric source; its readings replace the words they
+    cover before the dictionary and the analyzer see the rest (kana is left to the analyzer so spacing and
+    particles stay right).
+    """
+    spans = None
+    if furigana and _tagger() is not None:
+        text, spans = ruby_spans(furigana)
+        use_dictionary = False  # the source's ruby is what is sung; the tagger keeps the spacing and particles
+    text = unicodedata.normalize("NFKC", furigana_text(furigana) if furigana and spans is None else text or "")
     if use_dictionary:
         text = apply_overrides(text)[0]
         if _HOLD_OPEN in text:
@@ -388,7 +536,7 @@ def romanize_words(text: str, phonetic: bool = False, use_dictionary: bool = Tru
         return []
     if _tagger() is not None:
         try:
-            words = _morph_words(text)
+            words = _morph_words(text, spans)
         except Exception:
             words = _fallback_words(text)
     else:
@@ -403,12 +551,32 @@ def romanize_words(text: str, phonetic: bool = False, use_dictionary: bool = Tru
     return out
 
 
-def romanize_line(text: str) -> str:
+def reading_kana(text: str, furigana=None, use_dictionary: bool = True) -> str:
+    """Katakana reading of a lyric line (kana only: spaces, punctuation and latin are dropped), same pipeline as the romaji."""
+    spans = None
+    if furigana and _tagger() is not None:
+        text, spans = ruby_spans(furigana)
+        use_dictionary = False
+    text = unicodedata.normalize("NFKC", furigana_text(furigana) if furigana and spans is None else text or "")
+    if use_dictionary:
+        text = apply_overrides(text)[0]
+        if _HOLD_OPEN in text:
+            held = re.split(_HOLD_OPEN + "([^" + _HOLD_CLOSE + "]*)" + _HOLD_CLOSE, text)
+            return "".join(
+                _to_katakana(part) if index % 2 else reading_kana(part, use_dictionary=False) for index, part in enumerate(held)
+            ).replace("ヲ", "オ")
+    if not text.strip():
+        return ""
+    words = _morph_words(text, spans) if _tagger() is not None else _fallback_words(text)
+    return re.sub("[^ァ-ヴー]", "", _to_katakana("".join(words)).replace("ヲ", "オ"))
+
+
+def romanize_line(text: str, furigana=None) -> str:
     """Display romaji: lowercase Hepburn, words separated by single spaces."""
-    return " ".join(romanize_words(text))
+    return " ".join(romanize_words(text, furigana=furigana))
 
 
-def romanize_compact(text: str, use_dictionary: bool | None = None) -> str:
+def romanize_compact(text: str, use_dictionary: bool | None = None, furigana=None) -> str:
     """Alignment romaji: the same reading with the spaces removed.
 
     The reading dictionary is OFF here unless LRC_ALIGN_READING_DICT=1 (or ``use_dictionary=True``): the
@@ -416,7 +584,7 @@ def romanize_compact(text: str, use_dictionary: bool | None = None) -> str:
     """
     if use_dictionary is None:
         use_dictionary = os.environ.get(ALIGN_DICT_ENV) == "1"
-    return "".join(romanize_words(text, phonetic=True, use_dictionary=use_dictionary))
+    return "".join(romanize_words(text, phonetic=True, use_dictionary=use_dictionary, furigana=furigana))
 
 
 def has_japanese(text: str) -> bool:

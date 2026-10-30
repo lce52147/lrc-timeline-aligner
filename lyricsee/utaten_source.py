@@ -100,6 +100,46 @@ def parse_utaten_page(document: str) -> SitePage:
     return SitePage(title, artist, lines)
 
 
+_RUBY_RE = re.compile(r'<span class="ruby"><span class="rb">(.*?)</span><span class="rt">(.*?)</span></span>', re.S)
+
+
+def _plain(fragment: str) -> str:
+    return re.sub(r"[ \t\r\n\u3000]+", " ", html_module.unescape(re.sub(r"<[^>]+>", "", fragment)))
+
+
+def parse_utaten_ruby(document: str) -> list[list[tuple[str, str]]]:
+    """Per lyric line, ``[(surface, reading)]`` segments; reading is '' for plain text and the furigana for ruby.
+
+    The page shows what the singer sings (時間 written with ruby とき), which no dictionary can know.
+    """
+    block = _HIRAGANA_RE.search(document)
+    if not block:
+        raise LookupError("utaten page has no hiragana lyric block")
+    body = re.sub(r"<br\s*/?>", "\n", block.group(1), flags=re.I)
+    lines: list[list[tuple[str, str]]] = []
+    for part in body.split("\n"):
+        segments: list[tuple[str, str]] = []
+        position = 0
+        for match in _RUBY_RE.finditer(part):
+            if match.start() > position:
+                segments.append((_plain(part[position:match.start()]), ""))
+            segments.append((_plain(match.group(1)), _plain(match.group(2))))
+            position = match.end()
+        if position < len(part):
+            segments.append((_plain(part[position:]), ""))
+        segments = [(surface, reading) for surface, reading in segments if surface]
+        if segments and not segments[0][1]:
+            segments[0] = (segments[0][0].lstrip(), "")
+        if segments and not segments[-1][1]:
+            segments[-1] = (segments[-1][0].rstrip(), "")
+        segments = [(surface, reading) for surface, reading in segments if surface]
+        text = "".join(surface for surface, _ in segments).strip()
+        if not text or _NOISE_RE.search(text) or _is_credit_line(text):
+            continue
+        lines.append(segments)
+    return lines
+
+
 def utaten_artist_search_url(artist_name: str, title: str = "") -> str:
     return f"https://{HOST}/search?" + urlencode(
         {"sort": "popular_sort_asc", "artist_name": artist_name, "title": title, "show_artists": 1}
@@ -137,5 +177,5 @@ def resolve_ambiguous_hits(identity, client, hits, reference_lines):
 
 __all__ = [
     "AmbiguousHits", "UTATEN", "fetch_utaten_candidate", "parse_utaten_page",
-    "parse_utaten_search", "resolve_ambiguous_hits", "utaten_search_url",
+    "parse_utaten_ruby", "parse_utaten_search", "resolve_ambiguous_hits", "utaten_search_url",
 ]

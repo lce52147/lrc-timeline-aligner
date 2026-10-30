@@ -94,6 +94,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
 .romaji-text{cursor:text;border-bottom:1px dotted var(--fg-3,#8a8f98)}
 .romaji-edit{margin-top:4px}.romaji-edit input{font:inherit;font-size:14px}.romaji-input{width:min(100%,32em)}.romaji-edit button{margin-left:6px}.romaji-dict{margin-top:4px}
 .romaji-auto{font-size:11px;color:var(--fg-3,#8a8f98);margin-left:4px;user-select:none}
+.romaji-asr{font-size:11px;color:#b45309;border:1px solid #f59e0b;border-radius:8px;padding:0 5px;margin-left:4px;user-select:none}
 .romaji{font-size:15px;line-height:1.4;color:var(--fg-2);margin-top:4px;user-select:text;overflow-wrap:anywhere}
 .options{gap:12px}.option{padding:14px 16px}
 .actions{padding-top:4px}
@@ -1534,7 +1535,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   }
   // Romaji line: click to correct it. 儲存此句 keeps it for this song only (a sidecar beside the report, not in the LRC);
   // 套用到所有歌 adds a word -> kana reading to the shared dictionary so every line and song with that word is fixed.
-  const ROMAJI_SOURCES = {auto:['自動', '機器自動產生'], dict:['字典', '來自共用讀音字典'], manual:['手動', '你手動輸入的羅馬字']};
+  const ROMAJI_SOURCES = {auto:['自動', '機器自動產生'], dict:['字典', '來自共用讀音字典'], furigana:['歌詞', '依歌詞網站的振假名（歌手實際唱的讀音）'], manual:['手動', '你手動輸入的羅馬字']};
   function romajiMarkup(item) {
     const row = item.row;
     const edit = state.romajiEdit;
@@ -1546,7 +1547,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     }
     if (!row.romaji) return '';
     const label = ROMAJI_SOURCES[row.romaji_source] || ROMAJI_SOURCES.auto;
-    return '<div class="romaji" title="點一下修改羅馬字"><span class="romaji-text">' + esc(row.romaji) + '</span> <span class="romaji-auto" title="' + label[1] + '" data-source="' + esc(row.romaji_source || 'auto') + '">' + label[0] + '</span></div>';
+    return '<div class="romaji" title="點一下修改羅馬字"><span class="romaji-text">' + esc(row.romaji) + '</span> <span class="romaji-auto" title="' + label[1] + '" data-source="' + esc(row.romaji_source || 'auto') + '">' + label[0] + '</span>' + (row.romaji_asr && row.romaji_source !== 'manual' ? ' <span class="romaji-asr" title="' + esc('語音辨識聽到：' + row.romaji_asr.heard + (row.romaji_asr.suggest ? '（羅馬字 ' + row.romaji_asr.suggest + '）' : '') + '；點羅馬字可修改') + '">讀音可能不同</span>' : '') + '</div>';
   }
   function bindRomaji(div, item) {
     if (typeof div.querySelector !== 'function') return;
