@@ -1809,21 +1809,49 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     try { return await request; }
     finally { finished = true; clearInterval(timer); if (shown) busy.end('scan'); }
   }
-  let serverDown = false;
+  let serverDown = false, changeCount = 0;
+  // A bump that only touched other songs must not reload the page, interrupt the player or move the cursor: refresh just those songs and the list.
+  async function quietChange(change) {
+    if (!change || change.kind !== 'song' || !change.songs || !change.songs.length) return false;
+    const touched = change.songs;
+    if (state.activeSong != null && touched.includes(state.activeSong)) return false;
+    for (const key of state.edits.keys()) if (touched.includes(Number(key.split(':')[0]))) return false;
+    try {
+      const list = await api('/api/songs');
+      if (list.length !== state.songs.length || list.some((song, i) => draftId(song) !== draftId(state.songs[i]))) return false;
+      const details = await Promise.all(touched.map(index => api('/api/song/' + index)));
+      const old = new Map(state.songs.map(song => [song.index, song]));
+      state.songs = list.map(song => {
+        const at = touched.indexOf(song.index), detail = at >= 0 ? details[at] : old.get(song.index).detail;
+        return Object.assign({}, song, {has_flac:detail.has_flac, has_stem:detail.has_stem, detail});
+      });
+      state.rows = [];
+      state.songs.forEach(song => (song.detail.rows || []).forEach(row => state.rows.push({song,row})));
+      state.rows.sort((a,b) => a.song.index - b.song.index || a.row.entry - b.row.entry);
+      changeCount = 0;
+      render();
+      return true;
+    } catch (_) { return false; }
+  }
   async function watchFiles() {
     try {
       draftBeat();
-      const generation = (await withScanProgress(api('/api/version'))).generation;
+      const version = await withScanProgress(api('/api/version' + (seenGeneration !== null ? '?since=' + seenGeneration : '')));
+      const generation = version.generation;
       if (serverDown) { serverDown = false; busy.clearFail(); busy.ok('伺服器已恢復'); refreshPending = true; }
       if (state.exporting && seenGeneration !== null) { if (generation !== seenGeneration) { deferredGeneration = generation; exportPolled.add(generation); } }  // judged when the export answers
       else {
-        if (seenGeneration !== null && generation !== seenGeneration) refreshPending = true;
+        if (seenGeneration !== null && generation !== seenGeneration) {
+          changeCount += version.change && version.change.count || 0;
+          if (!(await quietChange(version.change))) refreshPending = true;
+        }
         seenGeneration = generation;
       }
       if (refreshPending && !state.player.active) {
         refreshPending = false;
         await load();
-        state.notice = '偵測到檔案變動，已自動更新。';
+        state.notice = changeCount ? '偵測到 ' + changeCount + ' 個檔案變更，已自動更新。' : '偵測到檔案變動，已自動更新。';
+        changeCount = 0;
         render();
       }
     } catch (error) { serverDown = true; busy.fail(error.message === '伺服器沒有回應' ? '伺服器沒有回應，重試中…' : '載入失敗：' + error.message + '，重試中…'); }  // try again next tick

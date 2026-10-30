@@ -1753,6 +1753,18 @@ class JobRunner:
         return best
 
 
+# Files in an audio folder that cannot change a song: only audio, LRC and lyrics files (plus the report folder's own two kinds) count.
+_FOLDER_WATCH_SUFFIXES = (".flac", ".m4a", ".mp3", ".wav", ".ogg", ".opus", ".aac", ".wma", ".ape", ".mp4", ".lrc", ".txt", ".lyrics")
+_FOLDER_IGNORE_SUFFIXES = (".bak", ".tmp", ".part", ".temp", ".crdownload", ".swp")
+
+
+def _folder_file_matters(name):
+    folded = name.casefold()
+    if folded in {"desktop.ini", "thumbs.db"} or folded.startswith(("~", ".")) or folded.endswith(_FOLDER_IGNORE_SUFFIXES):
+        return False
+    return folded.endswith(_FOLDER_WATCH_SUFFIXES)
+
+
 _OWN_LOGS = {"export.log", "export-log.jsonl"}  # written by the server itself; never a reason to refresh
 # Sidecars the server writes beside a song (first save, every save, every decision): each belongs to its song (see _song_files),
 # so a folder listing must not count them as unknown files - that made the first save after a poll rescan every report.
@@ -1787,6 +1799,7 @@ class ReviewStore:
         self.reload_progress = {"active": False, "done": 0, "total": 0}
         self.file_stats = {}
         self.generation = 0
+        self.changes = []  # (generation, kind, song indexes, changed-file count) of the last bumps, so a page can tell whether its open song was touched
         self.epoch = 0  # bumped by every swap of the song list or of the baseline; an off-lock rescan that straddles one is dropped
         self._refresh_gate = threading.Lock()  # one disk poll/rescan at a time; a second /api/version just answers with the current generation
         self.reload()
@@ -1810,7 +1823,7 @@ class ReviewStore:
         def listing(folder, suffixes=None):
             try:
                 for child in sorted(folder.iterdir(), key=lambda item: item.name):
-                    if child.is_file() and (suffixes is None or child.name.endswith(suffixes)) and child.name not in _OWN_LOGS and not child.name.endswith(_SIDECAR_SUFFIXES):
+                    if child.is_file() and (child.name.endswith(suffixes) if suffixes else _folder_file_matters(child.name)) and child.name not in _OWN_LOGS and not child.name.endswith(_SIDECAR_SUFFIXES):
                         stat(child)
             except OSError:
                 seen[str(folder)] = "unreadable"
@@ -1859,7 +1872,7 @@ class ReviewStore:
                 self.targets.append(value)
             self.reload()
             self._remember()
-            self.generation += 1
+            self._bump("full", changed=[value], source="import")
 
     def _owners(self, songs=None):
         """File path -> set of indexes of the songs that own it (its report, LRC, audio or CTC audio); songs may share a file."""
@@ -1868,6 +1881,45 @@ class ReviewStore:
             for key in _song_files(song):
                 owners.setdefault(key, set()).add(index)
         return owners
+
+    def _bump(self, kind, songs=(), count=0, changed=(), source="poll"):
+        """Move the generation (caller holds the store lock) and remember what it was, for /api/version and review-server.log."""
+        self.generation += 1
+        self.changes.append((self.generation, kind, tuple(sorted(songs)), int(count)))
+        del self.changes[:-64]
+        if source == "poll":
+            self._log_refresh(kind, changed, source)
+        return self.generation
+
+    def _log_refresh(self, kind, changed, source):
+        try:
+            line = "%s refresh kind=%s changed=%s source=%s" % (datetime.now(timezone.utc).isoformat(timespec="seconds"), kind, "|".join(sorted(map(str, changed)))[:2000], source)
+            with open(self.report_dir.parent / "review-server.log", "a", encoding="utf-8", newline="\n") as handle:
+                handle.write(line + "\n")
+        except OSError:
+            pass
+
+    def changes_since(self, since):
+        """What moved after generation ``since``: ('full'|'song', song indexes, file count); full when unknown or too old."""
+        changes = list(self.changes)  # appended under the store lock, replaced slice-wise: a copy is consistent enough
+        if since is None or not changes or since < changes[0][0] - 1:
+            return "full", [], 0
+        fresh = [item for item in changes if item[0] > since]
+        if any(item[1] == "full" for item in fresh):
+            return "full", [], sum(item[3] for item in fresh)
+        return "song", sorted({index for item in fresh for index in item[2]}), sum(item[3] for item in fresh)
+
+    def absorb_own_file(self, path):
+        """A file the server itself just wrote (a decision log line): adopt its stat into the baseline and move nothing else -
+        no re-read of the song, no generation bump. Caller holds the store lock."""
+        key = str(path)
+        try:
+            info = pathlib.Path(key).stat()
+            self.file_stats[key] = (info.st_size, info.st_mtime_ns)
+        except (OSError, ValueError):
+            self.file_stats[key] = None
+        self.version = self._digest(self.file_stats)
+        self.epoch += 1  # a scan that started before this write holds the older stat of it: drop it, the next poll redoes it
 
     def refresh_if_changed(self):
         """Refresh what changed on disk: one song when only its own files moved, everything when reports came or went.
@@ -1895,17 +1947,16 @@ class ReviewStore:
                     self.file_stats = fresh
                     self.version = self._digest(fresh)
                     self.epoch += 1
-                    self.generation += 1
-                    return self.generation
+                    return self._bump("full", count=len(changed), changed=changed)
             with self.lock:
                 if self.epoch != epoch:
                     return self.generation
-                for index in sorted(set().union(*(owners[key] for key in changed))):
+                touched = sorted(set().union(*(owners[key] for key in changed)))
+                for index in touched:
                     self.song(index)
                 self._remember()
                 self.epoch += 1
-                self.generation += 1
-                return self.generation
+                return self._bump("song", touched, len(changed), changed)
         finally:
             self._refresh_gate.release()
 
@@ -1937,8 +1988,7 @@ class ReviewStore:
                     self.file_stats.pop(key, None)
             self.version = self._digest(self.file_stats)
             self.epoch += 1
-            self.generation += 1
-            return self.generation
+            return self._bump("song", {index, *co_owners}, source="export")
 
     def absorb_change(self, index):
         """Our own save: re-read this song and adopt the new stats of its own files (LRC, auto snapshot, edits log...) as the baseline,
@@ -1958,8 +2008,7 @@ class ReviewStore:
                     self.file_stats[key] = None
             self.version = self._digest(self.file_stats)
             self.epoch += 1
-            self.generation += 1
-            return self.generation
+            return self._bump("song", {index, *(i for key in own for i in owners.get(key, ()))}, source="save")
 
     def _own_files(self, index):
         song = self.songs[index] if 0 <= index < len(self.songs) else {}
@@ -2123,7 +2172,14 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
             if not self._token_header_ok():
                 self._send(403, b"forbidden\n", "text/plain; charset=utf-8")
                 return
-            self._json(200, {"generation": self.server.store.refresh_if_changed(), "port_notice": getattr(self.server, "port_notice", "")})
+            store = self.server.store
+            generation = store.refresh_if_changed()
+            payload = {"generation": generation, "port_notice": getattr(self.server, "port_notice", "")}
+            since = urllib.parse.parse_qs(parsed.query).get("since", [""])[0]
+            if since.isdigit() and int(since) != generation:
+                kind, songs, count = store.changes_since(int(since))
+                payload["change"] = {"kind": kind, "songs": songs, "count": count}
+            self._json(200, payload)
             return
         if parsed.path == "/api/status":
             if not self._token_header_ok():
@@ -2218,12 +2274,16 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
         waited = time.perf_counter()
         with self.server.store.lock:
             lock_wait = round((time.perf_counter() - waited) * 1000)
-            song = self.server.store.song(int(match.group(1)))
+            # A decision only appends to its log: it needs the rows already in memory, not a re-read of the report.
+            song = (self.server.store.cached_song if match.group(2) == "decision" else self.server.store.song)(int(match.group(1)))
             if song is None or self.server.store.read_only:
                 self._json(403, {"error": "read-only"})
                 return
             if match.group(2) == "decision":
-                self._json(*_record_decision(song, body))
+                status, result = _record_decision(song, body)
+                if status == 200:
+                    self.server.store.absorb_own_file(_decisions_path(song))  # our own log line: not a change, no re-read, no refresh
+                self._json(status, result)
                 return
             if match.group(2) == "export":
                 store = self.server.store

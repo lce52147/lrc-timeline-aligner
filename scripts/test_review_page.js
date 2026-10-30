@@ -70,7 +70,7 @@ async function fetchMock(url, options={}) {
   if (options.method === 'POST' && (options.headers || {})['Content-Type'] !== 'application/json') return {ok:false,status:415,statusText:'Unsupported Media Type',json:async()=>{throw new Error('not json');}};
   if (url === '/api/songs' && listMode === 'down') throw new TypeError('Failed to fetch');
   if (url === '/api/songs') { loadCalls++; songListCalls++; return {ok:true,json:async()=>[song]}; }
-  if (url === '/api/version') return {ok:true,json:async()=>({generation:0})};
+  if (url.split('?')[0] === '/api/version') return {ok:true,json:async()=>({generation:0})};
   if (url === '/api/jobs' && !options.method) return {ok:true,json:async()=>jobsState};
   if (url === '/api/jobs') { jobsPosts.push(JSON.parse(options.body)); return {ok:true,json:async()=>({job:'j1',items:1,rejected:[]})}; }
   if (url === '/api/import/inspect') { inspectPosts.push(JSON.parse(options.body)); return {ok:true,json:async()=>({items:[{audio:'D:\\m\\new.flac',name:'new',lyrics:'D:\\m\\new.lyrics.txt',existing_lrc:false},{audio:'D:\\m\\bare.flac',name:'bare',lyrics:null,existing_lrc:true}],skipped:[]})}; }

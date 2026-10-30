@@ -1104,6 +1104,45 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
             self.assertEqual(self.store.refresh_if_changed(), generation + 1)   # an outside decision still reaches the other tabs
             self.assertEqual(self.store.refresh_if_changed(), generation + 1)
 
+    def test_bg_logging_decisions_never_bumps_the_generation(self) -> None:
+        self.store.refresh_if_changed()
+        generation = self.store.generation
+        with mock.patch.object(review_server.ReviewStore, "_build", side_effect=AssertionError("full rescan")),                 mock.patch.object(review_server, "_song_payload", side_effect=AssertionError("song re-read")):
+            for number in range(40):   # a long listening session: autoplay + batch keep
+                status = self._json_request("POST", "/api/song/0/decision", {"entry": 2, "decision": "keep", "cs": None, "source": "autoplay"})[0]
+                self.assertEqual(status, 200)
+                self.assertEqual(self.store.refresh_if_changed(), generation, "decision %d made the poll refresh" % number)
+        self.assertEqual(json.loads(self._request("GET", "/api/version", **{"X-Review-Token": self.server.token})[2])["generation"], generation)
+
+    def test_bg_external_change_is_still_detected_and_logged(self) -> None:
+        self.store.refresh_if_changed()
+        generation = self.store.generation
+        time.sleep(0.02)
+        self.output.write_bytes(self.original + b"[01:03.00]six" + chr(10).encode())
+        self.assertEqual(self.store.refresh_if_changed(), generation + 1)
+        kind, songs, count = self.store.changes_since(generation)
+        self.assertEqual((kind, songs), ("song", [0]))
+        self.assertGreaterEqual(count, 1)
+        log = (self.store.report_dir.parent / "review-server.log").read_text(encoding="utf-8")
+        self.assertIn("refresh kind=song", log)
+        self.assertIn("song.lrc", log)
+        self.assertIn("source=poll", log)
+
+    def test_bg_new_report_is_a_full_rescan_and_junk_files_are_ignored(self) -> None:
+        self.store.refresh_if_changed()
+        generation = self.store.generation
+        for name in ("desktop.ini", "Thumbs.db", "song.flac.bak", "song.tmp", "cover.jpg", "~lock.txt"):
+            (self.root / name).write_bytes(b"x")
+        self.assertEqual(self.store.refresh_if_changed(), generation, "a file that cannot change a song made the poll refresh")
+        (self.root / "other.flac").write_bytes(b"0123")
+        self.assertEqual(self.store.refresh_if_changed(), generation + 1)
+        self.assertEqual(self.store.changes_since(generation)[0], "full")
+        report = self.report.with_name("brand-new.align-report.json")
+        report.write_bytes(self.report.read_bytes())
+        before = self.store.generation
+        self.assertEqual(self.store.refresh_if_changed(), before + 1)
+        self.assertEqual(self.store.changes_since(before)[0], "full")
+
     def test_ay_save_answer_carries_the_generation_and_the_next_poll_adds_nothing(self) -> None:
         status, result = self._save_entry(3, 330)
         self.assertEqual(status, 200)

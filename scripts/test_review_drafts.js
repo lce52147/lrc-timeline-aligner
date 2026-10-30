@@ -59,7 +59,7 @@ async function boot(storage, songs, opts = {}) {
         return response(true, 200, {base_sha256: s.sha, server_read_only: false, has_flac: true, has_stem: true, rows: s.rows.map(r => rowOf(s, r))});
       }
       if (url === '/api/jobs') return response(true, 200, {import_enabled: false, jobs: []});
-      if (url === '/api/version') return response(true, 200, {generation: opts.gen ? opts.gen.value : 0, port_notice: opts.portNotice || ''});
+      if (url.split('?')[0] === '/api/version') return response(true, 200, {generation: opts.gen ? opts.gen.value : 0, port_notice: opts.portNotice || ''});
       throw Error('unexpected fetch ' + url);
     }};
   context.globalThis = context;
