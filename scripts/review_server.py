@@ -827,32 +827,15 @@ _ROMAJI_CACHE = OrderedDict()
 _ROMAJI_CACHE_LIMIT = 64
 
 
-def _romaji_converter():
-    # Same optional pykakasi converter the aligner uses (auto_lrc.optional_kakasi_converter).
-    global _KAKASI
-    if _KAKASI is None:
-        try:
-            import pykakasi
-            _KAKASI = pykakasi.kakasi()
-        except Exception:
-            _KAKASI = False
-    return _KAKASI or None
+def _romanize_line(text):
+    # Shared reading module (unidic morphological reading; pykakasi + post-fixes fallback).
+    import lrc_reading
+
+    return lrc_reading.romanize_line(text)
 
 
-_KAKASI = None
-
-
-def _romanize_line(converter, text):
-    parts = []
-    for item in converter.convert(text):
-        word = re.sub(r"[^a-z]+", "", str(item.get("hepburn", "")).lower()) if isinstance(item, dict) else ""
-        if word:
-            parts.append(word)
-    return " ".join(parts)
-
-
-def _song_romaji(report_path, sha, first_lines):
-    """Display-only Hepburn romaji of each entry's first text line; None where it does not apply."""
+def _song_romaji(report_path, sha, first_lines, stored=None):
+    """Display romaji of each entry's first text line: the report's own `romaji_display` when present, else the shared module (cached)."""
     if not any(_KANA_RE.search(line) for line in first_lines):
         return [None] * len(first_lines)
     key = (str(report_path), sha)
@@ -861,15 +844,12 @@ def _song_romaji(report_path, sha, first_lines):
         _ROMAJI_CACHE.move_to_end(key)
         return cached
     result = []
-    try:
-        converter = _romaji_converter()
-    except Exception:
-        converter = None
+    stored = stored or {}
     for line in first_lines:
-        value = None
-        if converter is not None and (_KANA_RE.search(line) or _CJK_RE.search(line)):
+        value = stored.get(line)
+        if value is None and (_KANA_RE.search(line) or _CJK_RE.search(line)):
             try:
-                value = _romanize_line(converter, line) or None
+                value = _romanize_line(line) or None
             except Exception:
                 value = None
         result.append(value)
@@ -1009,7 +989,14 @@ def _song_payload(report_path, report, anchor=None):
             rows.append(row)
         try:
             romaji = _song_romaji(
-                report_path, _sha256_bytes(current_raw), [(row["lyrics"][0] if row["lyrics"] else "") for row in rows]
+                report_path, _sha256_bytes(current_raw), [(row["lyrics"][0] if row["lyrics"] else "") for row in rows],
+                {
+                    item["romaji_display_text"]: item["romaji_display"]
+                    for item in assignments
+                    if isinstance(item, dict)
+                    and isinstance(item.get("romaji_display"), str)
+                    and isinstance(item.get("romaji_display_text"), str)
+                },
             )
         except Exception:
             romaji = [None] * len(rows)

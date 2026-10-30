@@ -39805,7 +39805,39 @@ def report_artifact_paths(audio_path: Path, output_path: Path, report_dir: Path)
     )
 
 
+def annotate_display_romaji(report: dict[str, object]) -> None:
+    """Additive per-entry spaced Hepburn romaji (`romaji_display`) from the shared reading module.
+
+    The existing compact `romaji` field is the aligner's target and is left untouched.
+    """
+    entries = report.get(_RUNTIME_LYRIC_ENTRIES_KEY)
+    assignments = report.get("assignments")
+    if not isinstance(entries, (list, tuple)) or not isinstance(assignments, list):
+        return
+    try:
+        import lrc_reading
+
+        system = lrc_reading.reading_system()
+        done = False
+        for row in assignments:
+            number = row.get("entry") if isinstance(row, dict) else None
+            if not isinstance(number, int) or not 1 <= number <= len(entries) or "romaji_display" in row:
+                continue
+            line = entry_sung_text(entries[number - 1])
+            if lrc_reading.has_japanese(line):
+                value = lrc_reading.romanize_line(line)
+                if value:
+                    row["romaji_display"] = value
+                    row["romaji_display_text"] = line
+                    done = True
+        if done:
+            report["romaji_display_system"] = system
+    except Exception:
+        return
+
+
 def write_alignment_report(report_path: Path, report: dict[str, object]) -> None:
+    annotate_display_romaji(report)
     apply_weak_review_policy(report)
     report["algorithm_revision"] = LRC_ALGORITHM_REVISION
     _validate_backend_provenance_projection(report)

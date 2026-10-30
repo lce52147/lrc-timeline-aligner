@@ -132,7 +132,7 @@ class ReviewServerTests(unittest.TestCase):
         detail = self._payload_with_text({"]one": "]こんにちは", "]two a": "]きょう", "]two b": "]today", "]three": "]three"})
         rows = detail["rows"]
         self.assertTrue(rows, "fixture produced no rows")
-        self.assertEqual(rows[0]["romaji"], "konnichiha")
+        self.assertEqual(rows[0]["romaji"], "konnichiwa")
         self.assertEqual(rows[1]["romaji"], "kyou", "only the first line of an entry is romanised")
         self.assertNotIn("romaji", rows[2], "English lines in a Japanese song get none")
         self.assertRegex(rows[0]["romaji"], r"^[a-z ]+$")
@@ -145,22 +145,26 @@ class ReviewServerTests(unittest.TestCase):
     def test_romaji_is_cached_per_report_and_lrc_hash(self) -> None:
         self._payload_with_text({"]one": "]こんにちは"})
         self.assertEqual(len(review_server._ROMAJI_CACHE), 1)
-        with mock.patch.object(review_server, "_romaji_converter", side_effect=AssertionError("cache miss")):
+        with mock.patch.object(review_server, "_romanize_line", side_effect=AssertionError("cache miss")):
             again = review_server._song_payload(self.report, json.loads(self.report.read_text(encoding="utf-8")))
-        self.assertEqual(again["rows"][0]["romaji"], "konnichiha")
+        self.assertEqual(again["rows"][0]["romaji"], "konnichiwa")
 
-    def test_romaji_converter_failure_leaves_rows_without_romaji(self) -> None:
-        class Broken:
-            def convert(self, _text):
-                raise RuntimeError("boom")
-        for converter in (Broken(), None):
-            with mock.patch.object(review_server, "_romaji_converter", return_value=converter):
-                detail = self._payload_with_text({"]one": "]こんにちは"})
-            self.assertTrue(detail["rows"])
-            self.assertTrue(all("romaji" not in row for row in detail["rows"]))
-        with mock.patch.object(review_server, "_romaji_converter", side_effect=RuntimeError("boom")):
+    def test_romaji_failure_leaves_rows_without_romaji(self) -> None:
+        with mock.patch.object(review_server, "_romanize_line", side_effect=RuntimeError("boom")):
             detail = self._payload_with_text({"]one": "]こんにちは"})
+        self.assertTrue(detail["rows"])
         self.assertTrue(all("romaji" not in row for row in detail["rows"]))
+
+    def test_report_stored_romaji_display_wins_when_the_line_matches(self) -> None:
+        report = json.loads(self.report.read_text(encoding="utf-8"))
+        line = "こんにちは"
+        for item in report["assignments"]:
+            item["romaji_display"] = "stored value"
+            item["romaji_display_text"] = line
+        self.report.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+        detail = self._payload_with_text({"]one": "]" + line, "]two a": "]きょう"})
+        self.assertEqual(detail["rows"][0]["romaji"], "stored value")
+        self.assertEqual(detail["rows"][1]["romaji"], "kyou", "an edited line is recomputed, not served stale")
 
     def test_reason_codes_normalize_dicts_scalars_and_fallbacks(self) -> None:
         self.assertEqual(
