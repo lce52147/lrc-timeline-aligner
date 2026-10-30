@@ -149,6 +149,40 @@ class ReviewServerTests(unittest.TestCase):
             again = review_server._song_payload(self.report, json.loads(self.report.read_text(encoding="utf-8")))
         self.assertEqual(again["rows"][0]["romaji"], "konnichiwa")
 
+    def test_bj_romaji_dictionary_and_manual_override_persist(self) -> None:
+        import lrc_reading
+        dictionary = self.root / "reading_overrides.tsv"
+        dictionary.write_text("", encoding="utf-8")
+        previous = os.environ.get(lrc_reading.OVERRIDES_ENV)
+        os.environ[lrc_reading.OVERRIDES_ENV] = str(dictionary)
+        try:
+            detail = self._payload_with_text({"]one": "]飛沫く波と嘶き"})
+            self.assertEqual(detail["rows"][0]["romaji_source"], "auto")
+            self.server.store.refresh_song(0, [])
+            self.assertEqual(self._detail()["rows"][0]["lyrics"][0], "飛沫く波と嘶き")
+            self.assertEqual(self._json_request("POST", "/api/song/0/romaji", {"entry": 1, "romaji": "しぶく なみ to inanaki"})[0], 200)
+            sidecar = self.report.with_name(self.report.name.replace(".align-report.json", ".romaji-overrides.json"))
+            self.assertTrue(sidecar.is_file())
+            row = self._detail()["rows"][0]
+            self.assertEqual((row["romaji"], row["romaji_source"]), ("shibuku nami to inanaki", "manual"))
+            self.assertNotIn("shibuku", self.output.read_text(encoding="utf-8"), "never written into the LRC")
+            self.assertEqual(self._json_request("POST", "/api/song/0/romaji", {"entry": 1, "romaji": ""})[0], 400)
+            self.assertEqual(self._json_request("POST", "/api/song/0/romaji", {"entry": 1, "surface": "無", "reading": "なし"})[0], 400, "surface must be in the line")
+            self.assertEqual(self._json_request("POST", "/api/song/0/romaji", {"entry": 1, "surface": "飛沫く", "reading": "kana"})[0], 400)
+            status, _h, data = self._json_request("POST", "/api/song/0/romaji", {"entry": 1, "surface": "飛沫く", "reading": "しぶく"})
+            self.assertEqual(status, 200, data)
+            self.assertIn("飛沫く\tしぶく", dictionary.read_text(encoding="utf-8"))
+            self.assertEqual(self._json_request("POST", "/api/song/0/romaji", {"entry": 1, "clear": True})[0], 200)
+            row = self._detail()["rows"][0]
+            self.assertEqual((row["romaji"], row["romaji_source"]), ("shibuku nami to inanaki", "dict"))
+            self.assertEqual(self._json_request("POST", "/api/song/0/romaji", {"entry": 1, "romaji": "x", "extra": 1})[0], 400)
+        finally:
+            if previous is None:
+                os.environ.pop(lrc_reading.OVERRIDES_ENV, None)
+            else:
+                os.environ[lrc_reading.OVERRIDES_ENV] = previous
+            review_server._ROMAJI_CACHE.clear()
+
     def test_romaji_failure_leaves_rows_without_romaji(self) -> None:
         with mock.patch.object(review_server, "_romanize_line", side_effect=RuntimeError("boom")):
             detail = self._payload_with_text({"]one": "]こんにちは"})

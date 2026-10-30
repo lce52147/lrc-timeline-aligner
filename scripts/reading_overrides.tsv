@@ -1,0 +1,8 @@
+# Shared reading dictionary: surface<TAB>kana reading<TAB>optional context (text that must be in the same line).
+# A surface ending in okurigana is a verb/adjective: its stem also applies before inflected endings (飛沫いて, 飛沫かない).
+# Edited by hand or from the review page (套用到所有歌). Used by the review page romaji; the aligner uses it only with LRC_ALIGN_READING_DICT=1.
+飛沫く	しぶく
+嘶く	いななく
+微睡む	まどろむ
+漁る	あさる
+過去形	かこけい

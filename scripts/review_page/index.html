@@ -91,6 +91,8 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
 .tile .bar{width:100%;margin-top:8px;height:4px}
 .row{padding:24px 26px;gap:16px}
 .lyric{font-size:24px}
+.romaji-text{cursor:text;border-bottom:1px dotted var(--fg-3,#8a8f98)}
+.romaji-edit{margin-top:4px}.romaji-edit input{font:inherit;font-size:14px}.romaji-input{width:min(100%,32em)}.romaji-edit button{margin-left:6px}.romaji-dict{margin-top:4px}
 .romaji-auto{font-size:11px;color:var(--fg-3,#8a8f98);margin-left:4px;user-select:none}
 .romaji{font-size:15px;line-height:1.4;color:var(--fg-2);margin-top:4px;user-select:text;overflow-wrap:anywhere}
 .options{gap:12px}.option{padding:14px 16px}
@@ -1234,7 +1236,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     div.innerHTML = '<div class="meta"><span class="num">#' + row.entry + '</span><span>·</span><span class="num">目前 ' + time(chosen) + '</span>' +
       (edit ? '<span class="pill num">原 ' + time(row.current_cs) + '</span>' : '') + (isDone(item) ? '<span class="pill">已確認</span>' : '') + '</div>' +
       '<div class="lyric">' + (lyrics || '<span class="muted">no lyric text</span>') + '</div>' +
-      (row.romaji ? '<div class="romaji">' + esc(row.romaji) + ' <span class="romaji-auto" title="機器自動產生">自動</span></div>' : '') +
+      romajiMarkup(item) +
       '<div class="why' + (whyKind === 'detected' ? '' : whyKind === 'unconfirmed' ? ' unconfirmed' : ' ok') + '"><span class="ic">' + (whyKind === 'detected' ? '!' : whyKind === 'unconfirmed' ? '?' : '✓') + '</span><span><span class="kind">' + whyLabel + '</span>' + esc(sentence) + '</span></div>' +
       (ordering ? '<div class="order-warning">注意：目前時間超出前後句的順序。</div>' : '') +
       (conflict ? '<div class="order-warning">conflict: 這筆時間在暫存後被改過，請重新選一個選項或按 U。</div>' : '') +
@@ -1259,6 +1261,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     div.querySelectorAll('.candidate-apply').forEach(button => button.addEventListener('click', event => {
       event.stopPropagation(); button.blur(); const list = button.dataset.candidateList === 'extra' ? extraCandidates : candidates; const candidate = list[Number(button.dataset.candidate)]; if (candidate && editable(song)) applyCandidate(item, candidate);
     }));
+    bindRomaji(div, item);
     div.querySelectorAll('.ab-play').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); button.blur(); if (selectedCandidate) playAB(item, selectedCandidate); }));
     div.querySelectorAll('.nudge-button').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); button.blur(); nudge(item, Number(button.dataset.delta)); }));
     div.querySelectorAll('.accept').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); button.blur(); accept(item); }));
@@ -1517,6 +1520,55 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       renderExportInfo();
       exportBox().hidden = false;
     } catch (error) { exportBadgeFail(error.message || String(error)); }
+  }
+  // Romaji line: click to correct it. 儲存此句 keeps it for this song only (a sidecar beside the report, not in the LRC);
+  // 套用到所有歌 adds a word -> kana reading to the shared dictionary so every line and song with that word is fixed.
+  const ROMAJI_SOURCES = {auto:['自動', '機器自動產生'], dict:['字典', '來自共用讀音字典'], manual:['手動', '你手動輸入的羅馬字']};
+  function romajiMarkup(item) {
+    const row = item.row;
+    const edit = state.romajiEdit;
+    if (edit && edit.song === item.song.index && edit.entry === row.entry) {
+      return '<div class="romaji-edit"><input type="text" class="romaji-input" value="' + esc(edit.text) + '" placeholder="正確的羅馬字或假名" aria-label="romaji">' +
+        '<button type="button" class="romaji-save">儲存此句</button>' + (row.romaji_source === 'manual' ? '<button type="button" class="romaji-clear">還原自動</button>' : '') + '<button type="button" class="romaji-cancel">取消</button>' +
+        '<div class="romaji-dict"><span class="muted">字典（所有歌）：</span><input type="text" class="romaji-surface" value="' + esc(edit.surface) + '" placeholder="漢字詞，如 飛沫く" size="10"> → <input type="text" class="romaji-reading" value="' + esc(edit.reading) + '" placeholder="讀音假名，如 しぶく" size="10">' +
+        '<button type="button" class="romaji-apply">套用到所有歌</button></div>' + (edit.message ? '<div class="meta">' + esc(edit.message) + '</div>' : '') + '</div>';
+    }
+    if (!row.romaji) return '';
+    const label = ROMAJI_SOURCES[row.romaji_source] || ROMAJI_SOURCES.auto;
+    return '<div class="romaji" title="點一下修改羅馬字"><span class="romaji-text">' + esc(row.romaji) + '</span> <span class="romaji-auto" title="' + label[1] + '" data-source="' + esc(row.romaji_source || 'auto') + '">' + label[0] + '</span></div>';
+  }
+  function bindRomaji(div, item) {
+    if (typeof div.querySelector !== 'function') return;
+    const open = div.querySelector('.romaji-text');
+    if (open) open.addEventListener('click', event => { event.stopPropagation(); state.romajiEdit = {song:item.song.index, entry:item.row.entry, text:item.row.romaji || '', surface:'', reading:'', message:''}; render(); });
+    const box = div.querySelector('.romaji-edit');
+    if (!box) return;
+    const edit = state.romajiEdit;
+    const field = (cls, key) => box.querySelector(cls).addEventListener('input', event => { edit[key] = event.target.value; });
+    field('.romaji-input', 'text'); field('.romaji-surface', 'surface'); field('.romaji-reading', 'reading');
+    box.addEventListener('click', event => event.stopPropagation());
+    const post = async body => {
+      try {
+        const result = await api('/api/song/' + item.song.index + '/romaji', {method:'POST', body:JSON.stringify(Object.assign({entry:item.row.entry}, body))});
+        return result;
+      } catch (error) { edit.message = error.message; render(); return null; }
+    };
+    const done = async result => {
+      if (!result) return;
+      state.romajiEdit = null;
+      if (result.romaji) { item.row.romaji = result.romaji; item.row.romaji_source = result.source; }
+      state.notice = result.surface ? '已加入字典：' + result.surface + ' → ' + result.reading + '（其他歌重新開啟後生效）' : '羅馬字已儲存';
+      if (result.surface) await refreshSongNow(item.song.index).catch(() => {}); else render();
+    };
+    box.querySelector('.romaji-save').addEventListener('click', async () => done(await post({romaji:edit.text})));
+    const clear = box.querySelector('.romaji-clear');
+    if (clear) clear.addEventListener('click', async () => done(await post({clear:true})));
+    box.querySelector('.romaji-cancel').addEventListener('click', () => { state.romajiEdit = null; render(); });
+    box.querySelector('.romaji-apply').addEventListener('click', async () => done(await post({surface:edit.surface, reading:edit.reading})));
+    box.querySelector('.romaji-input').addEventListener('keydown', async event => {
+      if (event.key === 'Enter') { event.preventDefault(); done(await post({romaji:edit.text})); }
+      if (event.key === 'Escape') { event.preventDefault(); state.romajiEdit = null; render(); }
+    });
   }
   async function refreshSong(index) {
     busy.begin('song', '重新整理中…');

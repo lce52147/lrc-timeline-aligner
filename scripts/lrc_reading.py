@@ -9,6 +9,8 @@ post-fixes (small っ geminates the next consonant, particles は/へ/を).
 
 from __future__ import annotations
 
+import os
+import pathlib
 import re
 import unicodedata
 from functools import lru_cache
@@ -56,6 +58,128 @@ _LOAN = {
     ("ヴ", "ォ"): "vo", ("イ", "ェ"): "ye",
 }
 _PARTICLE_ROMA = {"は": "wa", "へ": "e", "を": "wo"}
+
+
+# ---- shared reading dictionary (scripts/reading_overrides.tsv) -------------------------------------
+# One entry per line: surface <TAB> kana reading [<TAB> context].  A surface that ends in okurigana
+# (飛沫く -> しぶく) is a verb/adjective entry: its stem (飛沫 -> しぶ) also applies before any
+# inflected ending of the same kana row (飛沫いて, 飛沫かない, 飛沫き ...).  Longest surface wins.
+# The optional context is a text that must appear in the same line for the entry to apply.
+OVERRIDES_ENV = "LRC_READING_OVERRIDES"
+ALIGN_DICT_ENV = "LRC_ALIGN_READING_DICT"
+DEFAULT_OVERRIDES = pathlib.Path(__file__).with_name("reading_overrides.tsv")
+_ROWS = {
+    "く": "かきくけこい", "ぐ": "がぎぐげごい", "す": "さしすせそ", "つ": "たちつてとっ", "ぬ": "なにぬねの",
+    "ぶ": "ばびぶべぼん", "む": "まみむめもん", "る": "らりるれろっ", "う": "わあいうえおっ",
+}
+_ICHIDAN = "るれろよてたなずま"
+_KANA_ONLY_RE = re.compile(r"^[ぁ-ゟー]+$")
+
+
+def overrides_path() -> pathlib.Path:
+    return pathlib.Path(os.environ.get(OVERRIDES_ENV) or DEFAULT_OVERRIDES)
+
+
+def parse_overrides(text: str):
+    """Entries [(surface, reading, context, stem_surface, stem_reading, followers)] longest surface first."""
+    entries = []
+    for raw in (text or "").splitlines():
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        parts = raw.split("\t")
+        if len(parts) < 2:
+            continue
+        surface, reading = parts[0].strip(), parts[1].strip()
+        context = parts[2].strip() if len(parts) > 2 else ""
+        if not surface or not _KANA_ONLY_RE.match(reading) or not _CJK_RE.search(surface):
+            continue
+        stem_surface = stem_reading = followers = ""
+        last = surface[-1]
+        if len(surface) > 1 and last in _ROWS and reading.endswith(last) and len(reading) > 1:
+            stem_surface, stem_reading = surface[:-1], reading[:-1]
+            followers = _ROWS[last] + (_ICHIDAN if last == "る" else "")
+        entries.append((surface, reading, context, stem_surface, stem_reading, followers))
+    entries.sort(key=lambda item: -len(item[0]))
+    return entries
+
+
+_OVERRIDE_CACHE: dict = {}
+
+
+def load_overrides(path=None):
+    """Parsed dictionary, re-read when the file changes (so an entry added on the review page applies at once)."""
+    target = pathlib.Path(path) if path else overrides_path()
+    try:
+        info = target.stat()
+        stamp = (str(target), info.st_mtime_ns, info.st_size)
+    except OSError:
+        return []
+    cached = _OVERRIDE_CACHE.get(stamp[0])
+    if cached and cached[0] == stamp:
+        return cached[1]
+    try:
+        entries = parse_overrides(target.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError):
+        entries = []
+    _OVERRIDE_CACHE[stamp[0]] = (stamp, entries)
+    return entries
+
+
+_HOLD_OPEN, _HOLD_CLOSE = chr(0xE000), chr(0xE001)
+
+
+def _word_gap(out) -> str:
+    """A kanji word starts a new word: keep the tagger from gluing its kana reading onto a preceding particle."""
+    return " " if out and _KANA_RE.match(out[-1][-1:]) else ""
+
+
+def apply_overrides(text: str, entries=None):
+    """(text with dictionary words replaced by their kana reading, number of replacements)."""
+    entries = load_overrides() if entries is None else entries
+    if not entries or not _CJK_RE.search(text or ""):
+        return text, 0
+    out: list[str] = []
+    hits = 0
+    i = 0
+    while i < len(text):
+        replaced = False
+        if _CJK_RE.match(text[i]):
+            for surface, reading, context, stem_surface, stem_reading, followers in entries:
+                if context and context not in text:
+                    continue
+                if text.startswith(surface, i):
+                    # A noun-like entry stays one word: the tagger would split its kana again (かこけい -> かこ けい).
+                    out.append(_HOLD_OPEN + reading + _HOLD_CLOSE if not stem_surface else _word_gap(out) + reading)
+                    i += len(surface)
+                    replaced = True
+                    break
+                if stem_surface and text.startswith(stem_surface, i):
+                    after = text[i + len(stem_surface):i + len(stem_surface) + 1]
+                    if after and after in followers:
+                        out.append(_word_gap(out) + stem_reading)
+                        i += len(stem_surface)
+                        replaced = True
+                        break
+        if replaced:
+            hits += 1
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out), hits
+
+
+def dictionary_hits(text: str) -> int:
+    return apply_overrides(unicodedata.normalize("NFKC", text or ""))[1]
+
+
+def kana_text_to_romaji(text: str) -> str:
+    """Spaced romaji of a user-typed reading: kana is converted word by word, latin letters are kept (lowercased)."""
+    words = []
+    for token in re.split(r"\s+", unicodedata.normalize("NFKC", text or "").strip()):
+        roma = re.sub(r"[^a-z0-9]+", "", kana_to_romaji(token))
+        if roma:
+            words.append(roma)
+    return " ".join(words)
 
 
 def _to_katakana(text: str) -> str:
@@ -244,9 +368,22 @@ def _fallback_words(text: str):
     return words
 
 
-def romanize_words(text: str, phonetic: bool = False) -> list[str]:
+def romanize_words(text: str, phonetic: bool = False, use_dictionary: bool = True) -> list[str]:
     """Spaced Hepburn words for a lyric line ('' list when nothing readable)."""
     text = unicodedata.normalize("NFKC", text or "")
+    if use_dictionary:
+        text = apply_overrides(text)[0]
+        if _HOLD_OPEN in text:
+            held = re.split(_HOLD_OPEN + "([^" + _HOLD_CLOSE + "]*)" + _HOLD_CLOSE, text)
+            words: list[str] = []
+            for index, part in enumerate(held):
+                if index % 2:
+                    roma = re.sub(r"[^a-z0-9]+", "", kana_to_romaji(part.replace("ヲ", "オ") if phonetic else part))
+                    if roma:
+                        words.append(roma)
+                elif part.strip():
+                    words.extend(romanize_words(part, phonetic, use_dictionary=False))
+            return words
     if not text.strip():
         return []
     if _tagger() is not None:
@@ -271,9 +408,15 @@ def romanize_line(text: str) -> str:
     return " ".join(romanize_words(text))
 
 
-def romanize_compact(text: str) -> str:
-    """Alignment romaji: the same reading with the spaces removed."""
-    return "".join(romanize_words(text, phonetic=True))
+def romanize_compact(text: str, use_dictionary: bool | None = None) -> str:
+    """Alignment romaji: the same reading with the spaces removed.
+
+    The reading dictionary is OFF here unless LRC_ALIGN_READING_DICT=1 (or ``use_dictionary=True``): the
+    aligner keeps its published readings until the dictionary is validated against alignment runs.
+    """
+    if use_dictionary is None:
+        use_dictionary = os.environ.get(ALIGN_DICT_ENV) == "1"
+    return "".join(romanize_words(text, phonetic=True, use_dictionary=use_dictionary))
 
 
 def has_japanese(text: str) -> bool:

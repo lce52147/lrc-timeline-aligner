@@ -835,29 +835,165 @@ def _romanize_line(text):
     return lrc_reading.romanize_line(text)
 
 
+def _dictionary_stamp():
+    import lrc_reading
+
+    try:
+        info = lrc_reading.overrides_path().stat()
+        return (info.st_mtime_ns, info.st_size)
+    except OSError:
+        return None
+
+
 def _song_romaji(report_path, sha, first_lines, stored=None):
-    """Display romaji of each entry's first text line: the report's own `romaji_display` when present, else the shared module (cached)."""
+    """Display romaji of each entry's first text line (cached).
+
+    A line holding a word of the shared reading dictionary is read through it (it wins over the report's own
+    `romaji_display`, which carries the analyzer's misreading); otherwise the report's value, otherwise the analyzer.
+    """
     if not any(_KANA_RE.search(line) for line in first_lines):
         return [None] * len(first_lines)
-    key = (str(report_path), sha)
+    key = (str(report_path), sha, _dictionary_stamp())
     cached = _ROMAJI_CACHE.get(key)
     if cached is not None:
         _ROMAJI_CACHE.move_to_end(key)
         return cached
+    import lrc_reading
+
     result = []
     stored = stored or {}
     for line in first_lines:
         value = stored.get(line)
-        if value is None and (_KANA_RE.search(line) or _CJK_RE.search(line)):
-            try:
-                value = _romanize_line(line) or None
-            except Exception:
-                value = None
+        if value is None or lrc_reading.dictionary_hits(line):
+            if _KANA_RE.search(line) or _CJK_RE.search(line):
+                try:
+                    value = _romanize_line(line) or value
+                except Exception:
+                    pass
         result.append(value)
     _ROMAJI_CACHE[key] = result
     while len(_ROMAJI_CACHE) > _ROMAJI_CACHE_LIMIT:
         _ROMAJI_CACHE.popitem(last=False)
     return result
+
+
+def _romaji_overrides_path(report_path):
+    report_path = pathlib.Path(report_path)
+    return report_path.with_name(report_path.name.replace(".align-report.json", "") + ".romaji-overrides.json")
+
+
+def _load_romaji_overrides(report_path):
+    """Per-song hand-typed romaji, keyed by the line's lyric text (so it survives reloads and a moved line)."""
+    try:
+        data = json.loads(_romaji_overrides_path(report_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    lines = data.get("lines") if isinstance(data, dict) else None
+    return {k: v for k, v in lines.items() if isinstance(k, str) and isinstance(v, str) and v} if isinstance(lines, dict) else {}
+
+
+def _romaji_source(line, manual):
+    import lrc_reading
+
+    if line in manual:
+        return "manual"
+    return "dict" if lrc_reading.dictionary_hits(line) else "auto"
+
+
+_SURFACE_MAX = 24
+
+
+def _save_romaji(song, body):
+    """Store a hand-typed romaji for one line (per-song sidecar), or add a surface->reading pair to the shared dictionary."""
+    import lrc_reading
+
+    if song["read_only"]:
+        return 403, {"error": song["read_only_reason"] or "read-only"}
+    if set(body) - {"entry", "romaji", "surface", "reading", "clear"}:
+        return 400, {"error": "unknown fields"}
+    try:
+        entry = int(body.get("entry"))
+    except (TypeError, ValueError):
+        return 400, {"error": "invalid entry"}
+    row = next((item for item in song.get("rows", []) if item.get("entry") == entry), None)
+    if row is None or not row.get("lyrics"):
+        return 400, {"error": "unknown entry"}
+    line = row["lyrics"][0]
+    if "surface" in body or "reading" in body:
+        surface = str(body.get("surface") or "").strip()
+        reading = str(body.get("reading") or "").strip()
+        if not surface or len(surface) > _SURFACE_MAX or not _CJK_RE.search(surface) or "\t" in surface or "\n" in surface:
+            return 400, {"error": "surface must be a short kanji word"}
+        if surface not in line:
+            return 400, {"error": "surface is not in this line"}
+        if not lrc_reading._KANA_ONLY_RE.match(reading) or len(reading) > 40:
+            return 400, {"error": "reading must be kana"}
+        path = lrc_reading.overrides_path()
+        try:
+            existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+            kept = [
+                raw for raw in existing.splitlines()
+                if raw.split("\t", 1)[0].strip() != surface or raw.lstrip().startswith("#")
+            ]
+            kept.append(surface + "\t" + reading)
+            stage = _stage_bytes(path, ("\n".join(kept) + "\n").encode("utf-8"))
+            os.replace(stage, path)
+        except OSError as error:
+            return 500, {"error": "could not write dictionary: " + str(error)}
+        _ROMAJI_CACHE.clear()
+        return 200, {"entry": entry, "surface": surface, "reading": reading, "source": "dict", "romaji": _romanize_line(line)}
+    path = _romaji_overrides_path(song["report"])
+    manual = _load_romaji_overrides(song["report"])
+    if body.get("clear"):
+        manual.pop(line, None)
+    else:
+        text = lrc_reading.kana_text_to_romaji(str(body.get("romaji") or ""))
+        if not text or len(text) > 400:
+            return 400, {"error": "romaji must not be empty"}
+        manual[line] = text
+    try:
+        stage = _stage_bytes(path, (json.dumps({"lines": manual}, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+        os.replace(stage, path)
+    except OSError as error:
+        return 500, {"error": "could not write override: " + str(error)}
+    if body.get("clear"):
+        return 200, {"entry": entry, "romaji": _romanize_line(line) or None, "source": _romaji_source(line, manual)}
+    return 200, {"entry": entry, "romaji": manual[line], "source": "manual"}
+
+
+def _apply_romaji(song):
+    """Set each row's romaji and its source (手動 / 字典 / 自動) from the current per-song overrides and shared dictionary.
+
+    Called whenever a song is built and whenever it is served, so a dictionary entry added for one song reaches every other song at once.
+    """
+    rows = song.get("rows") or []
+    for row in rows:
+        row.pop("romaji", None)
+        row.pop("romaji_source", None)
+    if not rows:
+        return
+    report = song.get("report_data") if isinstance(song.get("report_data"), dict) else {}
+    assignments = report.get("assignments") if isinstance(report.get("assignments"), list) else []
+    try:
+        romaji = _song_romaji(
+            song["report"], song.get("base_sha256", ""), [(row["lyrics"][0] if row.get("lyrics") else "") for row in rows],
+            {
+                item["romaji_display_text"]: item["romaji_display"]
+                for item in assignments
+                if isinstance(item, dict)
+                and isinstance(item.get("romaji_display"), str)
+                and isinstance(item.get("romaji_display_text"), str)
+            },
+        )
+    except Exception:
+        romaji = [None] * len(rows)
+    manual = _load_romaji_overrides(song["report"])
+    for row, value in zip(rows, romaji):
+        line = row["lyrics"][0] if row.get("lyrics") else ""
+        if line in manual:
+            row["romaji"], row["romaji_source"] = manual[line], "manual"
+        elif value:
+            row["romaji"], row["romaji_source"] = value, _romaji_source(line, {})
 
 
 def _song_payload(report_path, report, anchor=None):
@@ -995,23 +1131,7 @@ def _song_payload(report_path, report, anchor=None):
                 "dropped_count": len(extra_candidates),
             }
             rows.append(row)
-        try:
-            romaji = _song_romaji(
-                report_path, _sha256_bytes(current_raw), [(row["lyrics"][0] if row["lyrics"] else "") for row in rows],
-                {
-                    item["romaji_display_text"]: item["romaji_display"]
-                    for item in assignments
-                    if isinstance(item, dict)
-                    and isinstance(item.get("romaji_display"), str)
-                    and isinstance(item.get("romaji_display_text"), str)
-                },
-            )
-        except Exception:
-            romaji = [None] * len(rows)
-        for row, value in zip(rows, romaji):
-            if value:
-                row["romaji"] = value
-    return {
+    payload = {
         "report": str(report_path),
         "song": report_path.name.replace(".align-report.json", ""),
         "rows": rows,
@@ -1037,6 +1157,8 @@ def _song_payload(report_path, report, anchor=None):
         "edits": edits_path,
         "anchor": str(anchor) if anchor else None,
     }
+    _apply_romaji(payload)
+    return payload
 
 
 def _song_stub(report_path, error):
@@ -2122,6 +2244,7 @@ class ReviewStore:
 
 
 def _public_song(song, server_read_only=False):
+    _apply_romaji(song)
     payload = {key: value for key, value in song.items() if key not in {"report_data", "output", "auto", "edits"}}
     payload["server_read_only"] = bool(server_read_only)
     return payload
@@ -2304,7 +2427,7 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
             if self._admin_ok():
                 self._json(200, {"state": self.server.hot.request(), **self.server.hot.info()})
             return
-        match = re.fullmatch(r"/api/song/(\d+)/(save|decision|export)", parsed.path)
+        match = re.fullmatch(r"/api/song/(\d+)/(save|decision|export|romaji)", parsed.path)
         cancel = re.fullmatch(r"/api/jobs/([A-Za-z0-9_]+)/cancel", parsed.path)
         if not match and not cancel and parsed.path not in self._IMPORT_POSTS:
             self._send(404, b"not found\n", "text/plain; charset=utf-8")
@@ -2337,7 +2460,7 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
         with self.server.store.lock:
             lock_wait = round((time.perf_counter() - waited) * 1000)
             # A decision only appends to its log: it needs the rows already in memory, not a re-read of the report.
-            song = (self.server.store.cached_song if match.group(2) == "decision" else self.server.store.song)(int(match.group(1)))
+            song = (self.server.store.cached_song if match.group(2) in ("decision", "romaji") else self.server.store.song)(int(match.group(1)))
             if song is None or self.server.store.read_only:
                 self._json(403, {"error": "read-only"})
                 return
@@ -2345,6 +2468,10 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
                 status, result = _record_decision(song, body)
                 if status == 200:
                     self.server.store.absorb_own_file(_decisions_path(song))  # our own log line: not a change, no re-read, no refresh
+                self._json(status, result)
+                return
+            if match.group(2) == "romaji":
+                status, result = _save_romaji(song, body)
                 self._json(status, result)
                 return
             if match.group(2) == "export":
