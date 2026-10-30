@@ -21,6 +21,8 @@ translation is ever invented from search snippets.
 """
 from __future__ import annotations
 
+import copy
+import difflib
 import hashlib
 import unicodedata
 from urllib.parse import urlparse
@@ -254,6 +256,67 @@ def _cross_entry(primary: Assessment, other: Assessment, diff) -> dict:
     }
 
 
+MAX_FILLED_LINES = 3
+
+
+def fill_missing_lines(
+    primary: LyricCandidate, others: list[LyricCandidate]
+) -> tuple[LyricCandidate, list[dict]]:
+    """Add whole lines that an agreeing independent source has and the primary lacks.
+
+    A page can silently drop a short or repeated line (a one-word refrain, the
+    closing line).  Cross-verification reports it as ``missing_in_a`` but the
+    sources still agree, so the primary was used as it stood.  Each missing
+    line is inserted where a line-level alignment of the two sources puts it; a source that would add more than MAX_FILLED_LINES
+    lines is left alone (then it is a different arrangement, not a dropped
+    line).  Callers pass lyric sources only: a blog page's commentary
+    around the lyric must never be added.  Returns ``(candidate, added)``; the candidate is the primary itself
+    when nothing was added.
+    """
+    base_rows = [row for row in primary.lines if row.original.strip()]
+    for other in others:
+        a_lines = [row.original for row in base_rows]
+        other_rows = [row for row in other.lines if row.original.strip()]
+        diff = compare_lyrics(a_lines, [row.original for row in other_rows])
+        missing = [d.b_line for d in diff.real_diffs if d.kind == "missing_in_a" and d.b_line]
+        others_real = [d for d in diff.real_diffs if d.kind != "missing_in_a"]
+        if not missing or others_real or len(missing) > MAX_FILLED_LINES:
+            continue
+        # Place the lines by a line-level alignment (the joined-text pairs are
+        # ambiguous around repeated refrains).  Only pure insertions and
+        # same-size replacements (notation) are allowed; anything else is not
+        # a dropped line.
+        matcher = difflib.SequenceMatcher(
+            None,
+            [canonical_text(t, drop_parens=False) for t in a_lines],
+            [canonical_text(row.original, drop_parens=False) for row in other_rows],
+            autojunk=False,
+        )
+        merged: list[LyricPair] = []
+        inserted: list[int] = []
+        aligned = True
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag == "insert":
+                merged.extend(other_rows[j1:j2])
+                inserted.extend(range(j1 + 1, j2 + 1))
+            elif tag == "equal" or (tag == "replace" and i2 - i1 == j2 - j1):
+                merged.extend(base_rows[i1:i2])
+            else:
+                aligned = False
+                break
+        if not aligned or not inserted or len(inserted) > MAX_FILLED_LINES:
+            continue
+        missing = inserted
+        added = [
+            {"source": other.source, "url": other.url, "other_line": b, "text": other_rows[b - 1].original}
+            for b in sorted(missing)
+        ]
+        filled = copy.copy(primary)
+        filled.lines = [LyricPair(row.original, row.translation) for row in merged]
+        return filled, added
+    return primary, []
+
+
 def choose_verified_original(
     identity: TrackIdentity,
     candidates: list[LyricCandidate],
@@ -327,7 +390,13 @@ def choose_verified_original(
             if strong_support or (exact_titles and not conflicts_with_strong):
                 evidence = evidence_for(primary, "verified", "two_source_agreement", cross, agreeing)
                 evidence["artist_confirmed"] = strong_support
-                return primary.candidate, evidence
+                chosen, added = fill_missing_lines(
+                    primary.candidate,
+                    [item.candidate for item in agreeing if item.trust != "web"],
+                )
+                if added:
+                    evidence["lines_added_from_cross_source"] = added
+                return chosen, evidence
         if primary.trust == "publisher" and primary.strong and primary.sanity["ok"]:
             evidence = evidence_for(primary, "verified", "trusted_source_sanity", cross, [])
             evidence["artist_confirmed"] = True

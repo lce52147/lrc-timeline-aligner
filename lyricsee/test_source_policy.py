@@ -172,5 +172,65 @@ class SourcePolicyTests(unittest.TestCase):
         self.assertNotIn("連連",reviewed[1].translation)
 
 
+class DroppedShortLineTests(unittest.TestCase):
+    """A publisher page that lost a short line is completed from the agreeing source."""
+
+    def setUp(self):
+        self.identity=TrackIdentity("Sample","Singer",duration=200.0)
+        self.full=[LyricPair(f"君の声と星が光る夜に{i}") for i in range(14)]
+        self.full.insert(0,LyricPair("空へ"))
+        self.full.insert(8,LyricPair("空へ"))
+        self.full.append(LyricPair("空は青く"))
+
+    def _pair(self, drop):
+        short=[row for i,row in enumerate(self.full) if i not in drop]
+        primary=candidate("uta-net","https://www.uta-net.com/song/1/",short)
+        other=candidate("lrclib","https://lrclib.net/api/get/1",list(self.full))
+        return primary,other
+
+    def _texts(self, cand):
+        return [row.original for row in cand.lines]
+
+    def test_dropped_closing_line_is_restored(self):
+        primary,other=self._pair({len(self.full)-1})
+        chosen,evidence=choose_verified_original(self.identity,[primary,other])
+        self.assertEqual(self._texts(chosen),self._texts(other))
+        self.assertEqual(evidence["verification_status"],"verified")
+        self.assertEqual(evidence["primary_source"],"uta-net")
+        added=evidence["lines_added_from_cross_source"]
+        self.assertEqual([a["text"] for a in added],["空は青く"])
+
+    def test_dropped_repeated_refrain_is_restored_in_place(self):
+        primary,other=self._pair({8})
+        chosen,_=choose_verified_original(self.identity,[primary,other])
+        self.assertEqual(self._texts(chosen),self._texts(other))
+
+    def test_dropped_opening_line_is_restored(self):
+        primary,other=self._pair({0})
+        chosen,_=choose_verified_original(self.identity,[primary,other])
+        self.assertEqual(self._texts(chosen),self._texts(other))
+
+    def test_complete_primary_is_returned_untouched(self):
+        primary=candidate("uta-net","https://www.uta-net.com/song/1/",list(self.full))
+        other=candidate("lrclib","https://lrclib.net/api/get/1",list(self.full))
+        chosen,evidence=choose_verified_original(self.identity,[primary,other])
+        self.assertIs(chosen,primary)
+        self.assertNotIn("lines_added_from_cross_source",evidence)
+
+    def test_web_page_commentary_is_never_added(self):
+        primary=candidate("uta-net","https://www.uta-net.com/song/1/",list(self.full))
+        web=candidate("google:home.gamer.com.tw","https://home.gamer.com.tw/artwork.php?sn=1",
+                      list(self.full)+[LyricPair("ピアノ：誰か")])
+        chosen,evidence=choose_verified_original(self.identity,[primary,web])
+        self.assertIs(chosen,primary)
+        self.assertNotIn("lines_added_from_cross_source",evidence)
+
+    def test_source_with_many_extra_lines_is_not_merged(self):
+        primary,other=self._pair({1,3,5,7})
+        chosen,evidence=choose_verified_original(self.identity,[primary,other])
+        self.assertIs(chosen,primary)
+        self.assertNotIn("lines_added_from_cross_source",evidence)
+
+
 if __name__ == "__main__":
     unittest.main()
