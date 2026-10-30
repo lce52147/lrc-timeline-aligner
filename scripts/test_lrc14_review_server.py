@@ -120,6 +120,48 @@ class ReviewServerTests(unittest.TestCase):
             "GET", "/api/song/0", **{"X-Review-Token": self.server.token}
         )[2])
 
+    def _payload_with_text(self, replacements):
+        raw = self.output.read_bytes()
+        for old, new in replacements.items():
+            raw = raw.replace(old.encode(), new.encode("utf-8"))
+        self.output.write_bytes(raw)
+        review_server._ROMAJI_CACHE.clear()
+        return review_server._song_payload(self.report, json.loads(self.report.read_text(encoding="utf-8")))
+
+    def test_romaji_is_added_to_japanese_first_lines_only(self) -> None:
+        detail = self._payload_with_text({"]one": "]こんにちは", "]two a": "]きょう", "]two b": "]today", "]three": "]three"})
+        rows = detail["rows"]
+        self.assertTrue(rows, "fixture produced no rows")
+        self.assertEqual(rows[0]["romaji"], "konnichiha")
+        self.assertEqual(rows[1]["romaji"], "kyou", "only the first line of an entry is romanised")
+        self.assertNotIn("romaji", rows[2], "English lines in a Japanese song get none")
+        self.assertRegex(rows[0]["romaji"], r"^[a-z ]+$")
+
+    def test_romaji_absent_for_chinese_only_song(self) -> None:
+        detail = self._payload_with_text({"]one": "]你好", "]two a": "]今天"})
+        self.assertTrue(detail["rows"])
+        self.assertTrue(all("romaji" not in row for row in detail["rows"]))
+
+    def test_romaji_is_cached_per_report_and_lrc_hash(self) -> None:
+        self._payload_with_text({"]one": "]こんにちは"})
+        self.assertEqual(len(review_server._ROMAJI_CACHE), 1)
+        with mock.patch.object(review_server, "_romaji_converter", side_effect=AssertionError("cache miss")):
+            again = review_server._song_payload(self.report, json.loads(self.report.read_text(encoding="utf-8")))
+        self.assertEqual(again["rows"][0]["romaji"], "konnichiha")
+
+    def test_romaji_converter_failure_leaves_rows_without_romaji(self) -> None:
+        class Broken:
+            def convert(self, _text):
+                raise RuntimeError("boom")
+        for converter in (Broken(), None):
+            with mock.patch.object(review_server, "_romaji_converter", return_value=converter):
+                detail = self._payload_with_text({"]one": "]こんにちは"})
+            self.assertTrue(detail["rows"])
+            self.assertTrue(all("romaji" not in row for row in detail["rows"]))
+        with mock.patch.object(review_server, "_romaji_converter", side_effect=RuntimeError("boom")):
+            detail = self._payload_with_text({"]one": "]こんにちは"})
+        self.assertTrue(all("romaji" not in row for row in detail["rows"]))
+
     def test_reason_codes_normalize_dicts_scalars_and_fallbacks(self) -> None:
         self.assertEqual(
             lrc_review_tsv.reason_codes_for(

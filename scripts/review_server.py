@@ -808,6 +808,64 @@ def _lyrics_embedded(audio_value):
     return False
 
 
+_KANA_RE = re.compile("[ぁ-ゟァ-ヿㇰ-ㇿｦ-ﾟ]")
+_CJK_RE = re.compile("[㐀-鿿]")
+_ROMAJI_CACHE = OrderedDict()
+_ROMAJI_CACHE_LIMIT = 64
+
+
+def _romaji_converter():
+    # Same optional pykakasi converter the aligner uses (auto_lrc.optional_kakasi_converter).
+    global _KAKASI
+    if _KAKASI is None:
+        try:
+            import pykakasi
+            _KAKASI = pykakasi.kakasi()
+        except Exception:
+            _KAKASI = False
+    return _KAKASI or None
+
+
+_KAKASI = None
+
+
+def _romanize_line(converter, text):
+    parts = []
+    for item in converter.convert(text):
+        word = re.sub(r"[^a-z]+", "", str(item.get("hepburn", "")).lower()) if isinstance(item, dict) else ""
+        if word:
+            parts.append(word)
+    return " ".join(parts)
+
+
+def _song_romaji(report_path, sha, first_lines):
+    """Display-only Hepburn romaji of each entry's first text line; None where it does not apply."""
+    if not any(_KANA_RE.search(line) for line in first_lines):
+        return [None] * len(first_lines)
+    key = (str(report_path), sha)
+    cached = _ROMAJI_CACHE.get(key)
+    if cached is not None:
+        _ROMAJI_CACHE.move_to_end(key)
+        return cached
+    result = []
+    try:
+        converter = _romaji_converter()
+    except Exception:
+        converter = None
+    for line in first_lines:
+        value = None
+        if converter is not None and (_KANA_RE.search(line) or _CJK_RE.search(line)):
+            try:
+                value = _romanize_line(converter, line) or None
+            except Exception:
+                value = None
+        result.append(value)
+    _ROMAJI_CACHE[key] = result
+    while len(_ROMAJI_CACHE) > _ROMAJI_CACHE_LIMIT:
+        _ROMAJI_CACHE.popitem(last=False)
+    return result
+
+
 def _song_payload(report_path, report, anchor=None):
     report = _relocated(report, anchor)
     assignments = report.get("assignments") if isinstance(report.get("assignments"), list) else []
@@ -936,6 +994,15 @@ def _song_payload(report_path, report, anchor=None):
                 "dropped_count": len(extra_candidates),
             }
             rows.append(row)
+        try:
+            romaji = _song_romaji(
+                report_path, _sha256_bytes(current_raw), [(row["lyrics"][0] if row["lyrics"] else "") for row in rows]
+            )
+        except Exception:
+            romaji = [None] * len(rows)
+        for row, value in zip(rows, romaji):
+            if value:
+                row["romaji"] = value
     return {
         "report": str(report_path),
         "song": report_path.name.replace(".align-report.json", ""),

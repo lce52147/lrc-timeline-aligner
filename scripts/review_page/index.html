@@ -91,6 +91,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
 .tile .bar{width:100%;margin-top:8px;height:4px}
 .row{padding:24px 26px;gap:16px}
 .lyric{font-size:24px}
+.romaji{font-size:15px;line-height:1.4;color:var(--fg-2);margin-top:4px;user-select:text;overflow-wrap:anywhere}
 .options{gap:12px}.option{padding:14px 16px}
 .actions{padding-top:4px}
 .queue-list{padding:16px 18px 14px}
@@ -1186,6 +1187,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     div.innerHTML = '<div class="meta"><span class="num">#' + row.entry + '</span><span>·</span><span class="num">目前 ' + time(chosen) + '</span>' +
       (edit ? '<span class="pill num">原 ' + time(row.current_cs) + '</span>' : '') + (isDone(item) ? '<span class="pill">已確認</span>' : '') + '</div>' +
       '<div class="lyric">' + (lyrics || '<span class="muted">no lyric text</span>') + '</div>' +
+      (row.romaji ? '<div class="romaji">' + esc(row.romaji) + '</div>' : '') +
       '<div class="why' + (alternatives.length ? '' : ' ok') + '"><span class="ic">' + (alternatives.length ? '!' : '✓') + '</span><span>' + esc(sentence) + '</span></div>' +
       (ordering ? '<div class="order-warning">注意：目前時間超出前後句的順序。</div>' : '') +
       (conflict ? '<div class="order-warning">conflict: 這筆時間在暫存後被改過，請重新選一個選項或按 U。</div>' : '') +
