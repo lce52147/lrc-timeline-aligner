@@ -261,5 +261,34 @@ class SongRiskTests(unittest.TestCase):
         self.assertIsNone(review_presentation.song_risk({})["class"])
 
 
+class ShortGapFlagTests(unittest.TestCase):
+    def test_ratio_constant_is_one_third(self):
+        self.assertAlmostEqual(review_presentation.SANITY_SHORT_GAP_RATIO, 1 / 3)
+
+    def test_flags_gap_under_a_third_of_median(self):
+        # gaps 300 300 50 300 -> median 300, 50/300 < 1/3; the last line has no gap
+        times = [0, 300, 600, 650, 950]
+        self.assertEqual(review_presentation.short_gap_flags(times), [False, False, True, False, False])
+
+    def test_exactly_a_third_is_not_flagged(self):
+        self.assertEqual(review_presentation.short_gap_flags([0, 300, 600, 700]), [False, False, False, False])
+
+    def test_median_is_over_positive_gaps_of_timed_lines(self):
+        # None rows are skipped (gap runs to the next timed line); the non-positive gap is left out of the median but flagged
+        times = [0, None, 300, 600, 600, 900]
+        self.assertEqual(review_presentation.short_gap_flags(times), [False, False, False, True, False, False])
+
+    def test_even_count_median_averages_the_middle_pair(self):
+        # positive gaps 100 200 300 400 -> median 250; 80 < 250/3 is False, 83 is False, 100 is False
+        self.assertEqual(review_presentation.short_gap_flags([0, 100, 300, 600, 1000]), [False] * 5)
+        self.assertEqual(review_presentation.short_gap_flags([0, 80, 330, 630, 1030])[0], True)
+
+    def test_degenerate_inputs(self):
+        self.assertEqual(review_presentation.short_gap_flags([]), [])
+        self.assertEqual(review_presentation.short_gap_flags([5]), [False])
+        self.assertEqual(review_presentation.short_gap_flags([5, 5, 5]), [False, False, False])
+        self.assertEqual(review_presentation.short_gap_flags([None, None]), [False, False])
+
+
 if __name__ == "__main__":
     unittest.main()

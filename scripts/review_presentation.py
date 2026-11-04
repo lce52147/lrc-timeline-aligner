@@ -13,6 +13,28 @@ OPTION_CLUSTER_CS = 25
 KEEP_FOLD_CS = 15
 MAX_ALTERNATIVES = 2
 
+# A line not asked for review is flagged when its gap to the next timed line is under this share of the song's median positive gap.
+SANITY_SHORT_GAP_RATIO = 1 / 3
+SANITY_SHORT_GAP = "short-gap"
+
+
+def short_gap_flags(times_cs: list[int | None]) -> list[bool]:
+    """Per line (in order): True when the gap to the next timed line is under SANITY_SHORT_GAP_RATIO of the song's median positive gap.
+
+    The median runs over the gaps between consecutive timed lines; the last timed line has no gap and is never flagged.
+    """
+    timed = [index for index, value in enumerate(times_cs) if value is not None]
+    gaps = [times_cs[b] - times_cs[a] for a, b in zip(timed, timed[1:])]
+    positive = sorted(gap for gap in gaps if gap > 0)
+    flags = [False] * len(times_cs)
+    if not positive:
+        return flags
+    middle = len(positive) // 2
+    median = positive[middle] if len(positive) % 2 else (positive[middle - 1] + positive[middle]) / 2
+    for index, gap in zip(timed, gaps):
+        flags[index] = gap / median < SANITY_SHORT_GAP_RATIO
+    return flags
+
 # Generic codes only say "not auto-confirmed"; they are not a detected problem.
 GENERIC_CODES = ("insufficient-minimum-proof", "timing-evidence-unverified", "unverified", "review-required")
 UNCONFIRMED_SENTENCE = "沒有發現具體問題，只是證據不夠一致，系統沒有自動確認，請聽一下。"

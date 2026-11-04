@@ -2175,6 +2175,30 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         self.assertEqual(logged["risk_basis"], rows[3]["risk_basis"])
         self.assertEqual(logged["risk"], rows[3]["risk"])
 
+    def test_sanity_short_gap_only_on_unreviewed_rows_and_logged(self) -> None:
+        data = json.loads(self.report.read_text(encoding="utf-8"))
+        data["assignments"][1].update({"review_required": False, "verification_status": "verified"})
+        self.report.write_text(json.dumps(data), encoding="utf-8")
+        with mock.patch.object(review_presentation, "short_gap_flags", lambda times: [True] * len(times)):
+            self.store.reload()
+            rows = self.store.cached_song(0)["rows"]
+        unreviewed = [row for row in rows if row["review"] != "REVIEW"]
+        self.assertTrue(unreviewed, "fixture needs a line that is not asked for review")
+        for row in rows:
+            if row["review"] == "REVIEW":
+                self.assertIsNone(row["sanity"], "REVIEW rows are already queued")
+                self.assertIsNone(row["short_gap_seconds"])
+            else:
+                self.assertEqual(row["sanity"], "short-gap")
+                self.assertIsInstance(row["short_gap_seconds"], float)
+        song = self.store.cached_song(0)
+        status, _ = review_server._record_decision(song, {"entry": unreviewed[0]["entry"], "decision": "keep"})
+        self.assertEqual(status, 200)
+        logged = json.loads((self.root / "song.review-decisions.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+        self.assertEqual(logged["sanity"], "short-gap")
+        self.store.reload()
+        self.assertTrue(all(row["sanity"] is None for row in self.store.cached_song(0)["rows"]), "the real rule flags nothing on a tiny song")
+
     def test_many_flac_targets_parse_each_report_once(self) -> None:
         # Loading a 180-song review used to parse every report once per FLAC target (O(n^2)).
         songs = []

@@ -417,6 +417,34 @@ vm.runInNewContext(script, context, {filename:'review_page/index.html'});
   assert.equal(decisionPosts.at(-1).entry, 3, 'keeping the high-risk line logs that line');
   queueEl.children = []; test.render();
   assert.equal(documentMock.getElementById('left-song').textContent, 1, 'confirming the high-risk line reduces the count');
+  // ---- sanity flag: a non-REVIEW line with a short gap to the next line joins 一般, counted and tagged ----
+  const qLines = () => listWrap().filter(c => /^q( cur)?( done)?( other)?$/.test(c.className));
+  const mkSane = entry => Object.assign({}, item, {row:Object.assign({}, item.row, {entry, current_cs:entry * 100, review:'TRUSTED', risk:null, sanity:'short-gap', short_gap_seconds:0.3, candidates:[]})});
+  test.state.rows = [mkRow(1, 'high'), mkSane(2), mkRow(3, 'low'), Object.assign({}, mkSane(4), {row:Object.assign({}, mkSane(4).row, {sanity:null})})];
+  test.state.done.clear(); test.state.edits.clear(); test.state.selected = 0; test.state.showLow = false; test.state.showAll = false;
+  queueEl.children = []; test.render();
+  assert.deepEqual(lines(), [1, 2], 'the flagged line is queued; the unflagged unmarked and the folded low-risk lines are not');
+  assert.deepEqual(headings(), ['高風險：先聽這些', '一般'], 'the flagged line sits in the 一般 group');
+  assert.match(qLines()[1].innerHTML, /間隔過短/, 'the flagged line carries the small tag');
+  assert.match(qLines()[1].innerHTML, /到下一句只有 0\.3 秒，可能時間偏了/, 'the tooltip names the gap');
+  assert.equal(documentMock.getElementById('left-song').textContent, 2, 'the flagged line counts toward 剩幾句');
+  test.keep(test.state.rows[1]); await flush();
+  assert.equal(decisionPosts.at(-1).entry, 2, 'keeping a flagged line logs it like any other');
+  queueEl.children = []; test.render();
+  assert.equal(documentMock.getElementById('left-song').textContent, 1, 'confirming it reduces the count');
+  test.state.showAll = true; queueEl.children = []; test.render();
+  assert.match(qLines()[1].innerHTML, /間隔過短/, 'the whole-song view shows the same tag');
+  assert.ok(!/ other/.test(qLines()[1].className), 'a flagged line is not dimmed as unmarked');
+  assert.ok(!/間隔過短/.test(qLines()[3].innerHTML), 'an unflagged line has no tag');
+  // a song whose only open lines are skippable is not 免審 while a flagged line is open
+  test.state.showAll = false; test.state.done.clear(); test.state.edits.clear();
+  test.state.rows = [mkRow(3, 'low'), mkSane(2)];
+  documentMock.getElementById('rail').children = []; test.render();
+  assert.ok(tabs().length && tabs().every(c => !/免審/.test(c.innerHTML)) && tabs().some(c => /剩 1/.test(c.innerHTML)), 'a flagged line keeps the song out of 免審');
+  test.state.showAll = false;
+  test.state.rows = [Object.assign({}, item, {row:Object.assign({}, item.row, {risk:'normal'})}), mkRow(2, 'low'), mkRow(3, 'high'), mkRow(4, 'low')];
+  test.state.done.clear(); test.state.edits.clear(); test.state.selected = 0; test.state.showLow = false;
+  queueEl.children = []; test.render();
   console.log('review page risk grouping tests: PASS');
 
   // ---- reviewer settings: autoplay on row change, batch keep, one-key option accept ----

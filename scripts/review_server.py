@@ -1099,6 +1099,7 @@ def _song_payload(report_path, report, anchor=None):
         # Neighbour fit uses the LRC as it is now, so a corrected neighbour counts.
         written = [line_time(current_lines, indexes[0]) for indexes in mapping]
         speech_rate = review_presentation.song_speech_rate(assigned, written)
+        short_gap = review_presentation.short_gap_flags(written)
 
         for index, line_indexes in enumerate(mapping):
             assignment = assigned[index]
@@ -1161,6 +1162,10 @@ def _song_payload(report_path, report, anchor=None):
                 "review": status,
                 "risk": risk_tier,
                 "risk_basis": risk_basis,
+                "sanity": review_presentation.SANITY_SHORT_GAP if status != "REVIEW" and short_gap[index] else None,
+                "short_gap_seconds": (
+                    next((value for value in written[index + 1:] if value is not None), current_cs) - current_cs
+                ) / 100.0 if status != "REVIEW" and short_gap[index] else None,
                 "fit": fit,
                 "severity_rank": listed_row.get("severity_rank"),
                 "severity_score": feature.get("severity_score", 0),
@@ -1286,6 +1291,7 @@ def _record_decision(song, body):
         "review": row.get("review"),
         "risk": row.get("risk"),
         "risk_basis": row.get("risk_basis"),
+        "sanity": row.get("sanity"),
         "reason_codes": list(row.get("reason_codes") or []),
         "severity_rank": row.get("severity_rank"),
         "candidate_spread_s": row.get("candidate_spread"),

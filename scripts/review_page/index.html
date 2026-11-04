@@ -14,7 +14,7 @@ button:hover:not(:disabled){background:var(--panel-3);border-color:var(--line-2)
 .num{font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-variant-numeric:tabular-nums}
 .glass{background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:0 12px 40px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.05);backdrop-filter:blur(18px) saturate(1.3);-webkit-backdrop-filter:blur(18px) saturate(1.3)}
 header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--line);background:rgba(12,15,26,.7);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);position:sticky;top:0;z-index:2}
-header .song-name{font-weight:600;font-size:15px;max-width:34vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}header .risk{padding:2px 8px;border-radius:999px;background:rgba(255,99,71,.22);color:#ffb4a2;font-size:12px;white-space:nowrap}header .spacer{flex:1}.muted{color:var(--fg-3)}
+header .song-name{font-weight:600;font-size:15px;max-width:34vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}header .risk{padding:2px 8px;border-radius:999px;background:rgba(255,99,71,.22);color:#ffb4a2;font-size:12px;white-space:nowrap}header .spacer{flex:1}.sanity-tag{margin-left:6px;padding:0 6px;border-radius:999px;background:rgba(255,184,77,.2);color:#ffcf8a;font-size:11px;white-space:nowrap}.muted{color:var(--fg-3)}
 .vol{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--fg-2)}.vol button{padding:4px 8px;min-width:34px}.vol input{width:110px;accent-color:var(--accent-2);cursor:pointer}.vol .num{min-width:64px;text-align:right;font-family:ui-monospace,Consolas,monospace}
 .tile{display:flex;align-items:center;gap:8px;padding:4px 10px;border-radius:10px;background:var(--panel-2);border:1px solid var(--line)}
 .tile .lbl{font-size:11px;color:var(--fg-3);letter-spacing:.04em}.tile .val{font-size:16px;font-weight:600}
@@ -263,13 +263,16 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     String(Math.floor(cs/6000)).padStart(2,'0') + ':' + String(Math.floor(cs%6000/100)).padStart(2,'0') + '.' + String(cs%100).padStart(2,'0');
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   // REVIEW lines are grouped by risk (high first); low-risk lines stay folded until opened and are not counted as left.
-  const riskRank = item => item.row.review !== 'REVIEW' ? 3 : ({high:0, normal:1, low:2}[item.row.risk] ?? 1);
-  const counted = item => item.row.review === 'REVIEW' && item.row.risk !== 'low';
+  // A line nobody asked to review but whose gap to the next line is suspiciously short joins the 一般 group and is counted like one.
+  const sane = item => item.row.review !== 'REVIEW' && !!item.row.sanity;
+  const sanityText = row => '到下一句只有 ' + (row.short_gap_seconds != null ? Number(row.short_gap_seconds).toFixed(1) : '?') + ' 秒，可能時間偏了';
+  const riskRank = item => sane(item) ? 1 : item.row.review !== 'REVIEW' ? 3 : ({high:0, normal:1, low:2}[item.row.risk] ?? 1);
+  const counted = item => sane(item) || (item.row.review === 'REVIEW' && item.row.risk !== 'low');
   // Whole-song view (default): every line in lyric order, so a wrong line the detector missed can still be fixed and logged.
   const visible = () => {
     const rows = state.rows.filter(item => state.activeSong == null || item.song.index === state.activeSong);
     if (state.showAll) return rows;
-    return rows.filter(item => item.row.review === 'REVIEW' && (riskRank(item) !== 2 || state.showLow))
+    return rows.filter(item => sane(item) || (item.row.review === 'REVIEW' && (riskRank(item) !== 2 || state.showLow)))
       .map((item, index) => [item, index]).sort((a, b) => riskRank(a[0]) - riskRank(b[0]) || a[1] - b[1]).map(pair => pair[0]);
   };
   // In the LRC entry model a 00:00.00 line would be read as the title card; entries stay at 0.01 s or later.
@@ -1219,11 +1222,11 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
         wrap.appendChild(head);
       }
       const line = document.createElement('div');
-      line.className = 'q' + (index === state.selected ? ' cur' : '') + (done ? ' done' : '') + (state.showAll && row.review !== 'REVIEW' && !edit && !done ? ' other' : '');
+      line.className = 'q' + (index === state.selected ? ' cur' : '') + (done ? ' done' : '') + (state.showAll && row.review !== 'REVIEW' && !sane(item) && !edit && !done ? ' other' : '');
       const options = optionsOf(row).filter(option => option.kind !== 'keep');
-      const tier = state.showAll ? (row.review !== 'REVIEW' ? '' : ['高風險 · ', '待審 · ', '可略過 · '][riskRank(item)] || '') : '';
-      const hint = done ? (edit ? '已改 ' + deltaText(edit.cs - row.current_cs) : '已確認') : edit ? '暫存 ' + deltaText(edit.cs - row.current_cs) : row.review !== 'REVIEW' ? '未標記' : tier + (options.length ? (options.every(o => o.kind === 'earlier') ? '提早?' : options.every(o => o.kind === 'later') ? '延後?' : '不一致') : '確認');
-      line.innerHTML = '<span class="num">' + row.entry + '</span><span class="num">' + time(working(item)) + '</span><span class="ly">' + esc((row.lyrics || [row.lyric || ''])[0]) + '</span><span class="st">' + hint + '</span>';
+      const tier = state.showAll ? (row.review !== 'REVIEW' ? (sane(item) ? '待審 · ' : '') : ['高風險 · ', '待審 · ', '可略過 · '][riskRank(item)] || '') : '';
+      const hint = done ? (edit ? '已改 ' + deltaText(edit.cs - row.current_cs) : '已確認') : edit ? '暫存 ' + deltaText(edit.cs - row.current_cs) : row.review !== 'REVIEW' && !sane(item) ? '未標記' : tier + (options.length ? (options.every(o => o.kind === 'earlier') ? '提早?' : options.every(o => o.kind === 'later') ? '延後?' : '不一致') : '確認');
+      line.innerHTML = '<span class="num">' + row.entry + '</span><span class="num">' + time(working(item)) + '</span><span class="ly">' + esc((row.lyrics || [row.lyric || ''])[0]) + (sane(item) ? ' <span class="sanity-tag" title="' + esc(sanityText(row)) + '">間隔過短</span>' : '') + '</span><span class="st">' + hint + '</span>';
       line.addEventListener('click', () => { select(item); state.notice = ''; render(); });
       wrap.appendChild(line);
     });
