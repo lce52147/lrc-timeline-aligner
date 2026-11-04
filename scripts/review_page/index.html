@@ -164,7 +164,8 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   </table>
   <label><input id="untrusted" type="checkbox"> 顯示整首歌詞（照歌詞順序列出每一句，包含沒被標為待審的句子）</label>
   <div><label><input id="autoplay" type="checkbox"> 換句時自動播放（Enter / K / ↑ ↓ 跳到下一句就先聽開頭）</label></div>
-  <div><label><input id="batch-skip" type="checkbox"> 在「可略過」摺疊處顯示「全部維持」按鈕</label></div>
+  <div><label><input id="show-low" type="checkbox"> <span id="show-low-text">顯示可略過的句子</span>（預設不列，也不計入剩餘）</label></div>
+  <div><label><input id="batch-skip" type="checkbox"> 顯示可略過的句子時，同時顯示「全部維持」按鈕</label></div>
   <div style="margin-top:12px;text-align:right"><button id="help-close">關閉</button></div>
 </div></div>
 <div class="help" id="shutdown-box" hidden><div class="box glass">
@@ -280,6 +281,9 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   const isDone = item => state.done.has(keyFor(item));
   const pendingOf = song => state.rows.filter(item => item.song.index === song.index && counted(item)).length;
   const leftOf = song => state.rows.filter(item => item.song.index === song.index && counted(item) && !isDone(item)).length;
+  const lowLeftOf = song => state.rows.filter(item => item.song.index === song.index && item.row.review === 'REVIEW' && item.row.risk === 'low' && !isDone(item)).length;
+  // A song whose only unconfirmed REVIEW lines are skippable: marked 免審 and queued after the songs that need a listen.
+  const skipOnly = song => !unreachable(song) && leftOf(song) === 0 && lowLeftOf(song) > 0;
   const lowOf = song => state.rows.filter(item => item.song.index === song.index && item.row.review === 'REVIEW' && item.row.risk === 'low').length;
   // A song the page cannot review at all: read-only for its own reason (not the server flag) and no rows came back.
   const unreachable = song => !!song.read_only && !(song.detail?.rows || []).length;
@@ -389,8 +393,8 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   function toggleMute() { volume.muted = !volume.muted; applyVolume(); }
   // Reviewer settings (on by default, remembered in the browser): autoplay on row change, batch-keep button.
   const SETTINGS_KEY = 'lrc-review-settings';
-  try { const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null'); if (saved && typeof saved === 'object') { state.autoplay = !!saved.autoplay; state.batchSkip = !!saved.batchSkip; if (typeof saved.showAll === 'boolean') state.showAll = saved.showAll; } } catch (_) {}
-  function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({autoplay:state.autoplay, batchSkip:state.batchSkip, showAll:state.showAll})); } catch (_) {} }
+  try { const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null'); if (saved && typeof saved === 'object') { state.autoplay = !!saved.autoplay; state.batchSkip = !!saved.batchSkip; if (typeof saved.showAll === 'boolean') state.showAll = saved.showAll; if (typeof saved.showLow === 'boolean') state.showLow = saved.showLow; } } catch (_) {}
+  function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({autoplay:state.autoplay, batchSkip:state.batchSkip, showAll:state.showAll, showLow:state.showLow})); } catch (_) {} }
   // ---- unsaved-edit drafts: survive a server restart or a closed tab ----
   // A stored draft is {saved_at, tabs:{tabId:lastBeat}, base_sha256, edits, more:[{base_sha256, edits}]}. Each group's base_sha256 is
   // the file sha its edits' base_cs were taken from (an edit carries it as bsha), so a group whose sha differs from the file is stale.
@@ -1147,14 +1151,15 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       const pending = pendingOf(item), left = leftOf(item), off = unreachable(item);
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = 'song-tab' + (item.index === state.activeSong ? ' active' : '') + (off ? ' off' : left ? ' todo' : ' done');
-      button.innerHTML = '<span class="dot"></span><span class="t">' + esc(item.song) + '</span><span class="n num">' + (off ? '唯讀' : left ? '剩 ' + left : '✓') + '</span>';
+      button.className = 'song-tab' + (item.index === state.activeSong ? ' active' : '') + (off ? ' off' : left ? ' todo' : skipOnly(item) ? ' todo skip-only' : ' done');
+      button.innerHTML = '<span class="dot"></span><span class="t">' + esc(item.song) + '</span><span class="n num">' + (off ? '唯讀' : left ? '剩 ' + left : skipOnly(item) ? '免審' : '✓') + '</span>';
       button.addEventListener('click', () => { flushDraft(); state.activeSong = item.index; state.selected = 0; state.notice = ''; render(); });
       return button;
     };
     const reachable = state.songs.filter(song => !unreachable(song)), hidden = state.songs.filter(unreachable);
     // Every reviewed song stays listed: songs with lines left come first, finished ones below.
-    const todo = reachable.filter(item => leftOf(item) > 0), done = reachable.filter(item => leftOf(item) === 0);
+    const needs = reachable.filter(item => leftOf(item) > 0), skipOnlySongs = reachable.filter(skipOnly);
+    const todo = needs.concat(skipOnlySongs), done = reachable.filter(item => leftOf(item) === 0 && !skipOnly(item));
     const heading = (text, count) => { const h = document.createElement('h2'); h.className = 'rail-sec'; h.textContent = text + ' ' + count; rail.appendChild(h); };
     heading('待確認', todo.length);
     todo.forEach(item => rail.appendChild(songTab(item)));
@@ -1223,25 +1228,19 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       wrap.appendChild(line);
     });
     const lowCount = song ? lowOf(song) : 0;
-    if (lowCount && !state.showAll) {
-      const fold = document.createElement('button');
-      fold.type = 'button';
-      fold.className = 'q-fold';
-      fold.textContent = (state.showLow ? '▾ 收起' : '▸ 展開') + '可略過的 ' + lowCount + ' 句（多個偵測結果一致或前後銜接合理，不計入剩餘）';
-      fold.addEventListener('click', () => { state.showLow = !state.showLow; render(); });
-      wrap.appendChild(fold);
-      if (state.batchSkip && song && editable(song)) {
-        const pending = state.rows.filter(item => item.song.index === song.index && item.row.review === 'REVIEW' && item.row.risk === 'low' && !isDone(item) && !editFor(item));
-        if (pending.length) {
-          const batch = document.createElement('button');
-          batch.type = 'button';
-          batch.className = 'q-fold';
-          batch.textContent = '全部維持可略過的 ' + pending.length + ' 句';
-          batch.addEventListener('click', () => batchKeep(song));
-          wrap.appendChild(batch);
-        }
+    if (lowCount && !state.showAll && state.showLow && state.batchSkip && song && editable(song)) {
+      const pending = state.rows.filter(item => item.song.index === song.index && item.row.review === 'REVIEW' && item.row.risk === 'low' && !isDone(item) && !editFor(item));
+      if (pending.length) {
+        const batch = document.createElement('button');
+        batch.type = 'button';
+        batch.className = 'q-fold';
+        batch.textContent = '全部維持可略過的 ' + pending.length + ' 句';
+        batch.addEventListener('click', () => batchKeep(song));
+        wrap.appendChild(batch);
       }
     }
+    const lowText = document.getElementById('show-low-text');
+    if (lowText) lowText.textContent = '顯示可略過的句子（' + (song ? lowCount : 0) + '）';
     list.appendChild(wrap);
     list.appendChild(viewToggle);
     queue.appendChild(list);
@@ -1724,6 +1723,8 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   document.getElementById('untrusted').addEventListener('change', event => { setShowAll(event.target.checked); });
   document.getElementById('autoplay').checked = state.autoplay;
   document.getElementById('autoplay').addEventListener('change', event => { state.autoplay = event.target.checked; saveSettings(); });
+  document.getElementById('show-low').checked = state.showLow;
+  document.getElementById('show-low').addEventListener('change', event => { state.showLow = event.target.checked; saveSettings(); state.selected = 0; render(); });
   document.getElementById('batch-skip').checked = state.batchSkip;
   document.getElementById('batch-skip').addEventListener('change', event => { state.batchSkip = event.target.checked; saveSettings(); render(); });
   document.getElementById('mode').addEventListener('click', event => { event.currentTarget.blur(); stopPlayer(); state.mode = state.mode === 'flac' ? 'stem' : 'flac'; render(); });
