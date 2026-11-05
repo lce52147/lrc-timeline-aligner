@@ -27,6 +27,8 @@ from model_cache import ModelCacheMiss
 import lrc_stage_timings
 
 
+# TODO(split batch D): once every module exists, make a missing listed file a
+# hard error and pin the file set with a test (review-A N1).
 _ALGORITHM_SOURCE_MODULES = (
     "runtime_base",
     "audio_features",

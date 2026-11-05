@@ -11,24 +11,9 @@ import contextlib
 import sys
 from unittest import mock
 
-SPLIT_MODULES = (
-    "auto_lrc",
-    "runtime_base",
-    "audio_features",
-    "lyrics_io",
-    "timing_core",
-    "report_trust",
-    "ctc_refinement",
-    "acoustic_hypotheses",
-    "asr_backends",
-    "local_whisper_retry",
-    "central_peer_recovery",
-    "neutral_arbitration",
-    "central_commit",
-    "backend_bundle",
-    "postcentral_recovery",
-    "runtime_evidence_binding",
-)
+import runtime_base
+
+SPLIT_MODULES = ("auto_lrc",) + runtime_base._ALGORITHM_SOURCE_MODULES
 
 
 class _Patcher:
@@ -39,10 +24,14 @@ class _Patcher:
 
     def start(self):
         stack = contextlib.ExitStack()
+        bound = False
         for module_name in SPLIT_MODULES:
             module = sys.modules.get(module_name)
             if module is not None and hasattr(module, self._name):
                 stack.enter_context(mock.patch.object(module, self._name, self._new))
+                bound = True
+        if not bound:
+            raise AttributeError(f"no split module binds {self._name!r}")
         self._stack = stack
         return self._new
 
@@ -65,7 +54,11 @@ def patch(name, new=mock.DEFAULT, **kwargs):
 
 def assign(name, value):
     """Direct ``auto_lrc.name = value`` equivalent for every module binding name."""
+    bound = False
     for module_name in SPLIT_MODULES:
         module = sys.modules.get(module_name)
         if module is not None and hasattr(module, name):
             setattr(module, name, value)
+            bound = True
+    if not bound:
+        raise AttributeError(f"no split module binds {name!r}")
