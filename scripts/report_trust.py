@@ -24,7 +24,7 @@ _LATE_BOUND_CALLBACKS = (
 
 def _unbound_callback(name):
     def _raise(*args, **kwargs):
-        raise _CallbackLrcError(f"{name} is not bound; import auto_lrc first")
+        raise _CallbackLrcError(f"{name} is not bound yet (bind_late_callbacks has not run)")
 
     return _raise
 
