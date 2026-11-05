@@ -67,7 +67,7 @@ class ManualEditTests(unittest.TestCase):
         args = auto_lrc.build_parser().parse_args(argv)
         with (
             split_patch.patch("probe_duration", return_value=2.0),
-            mock.patch.object(auto_lrc, "audio_track_labels", return_value=("", "Song")),
+            split_patch.patch("audio_track_labels", return_value=("", "Song")),
         ):
             result = auto_lrc.process_audio(audio, args)
         report, _audit, _template = auto_lrc.report_artifact_paths(audio, output, reports)

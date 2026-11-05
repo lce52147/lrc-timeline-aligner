@@ -1208,4 +1208,29 @@ def _bounded_retry_protocol_revision(helper_sha256: str) -> str:
     })
 
 
+@dataclass(frozen=True)
+class TimingTokenSpan:
+    start: float
+    end: float
+    score: float
+    token: str = ""
+
+
+def _timing_spans_from_value(value: object) -> tuple[TimingTokenSpan, ...]:
+    if not isinstance(value, list):
+        return ()
+    spans: list[TimingTokenSpan] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        try:
+            start = float(item.get("start"))
+            end = float(item.get("end"))
+            score = float(item.get("score", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            continue
+        spans.append(TimingTokenSpan(start, end, score, str(item.get("char") or "")))
+    return tuple(sorted(spans, key=lambda span: (span.start, span.end)))
+
+
 lrc_stage_timings.install(globals(), lrc_stage_timings.STAGE_TIMING_SPEC, owner=True)

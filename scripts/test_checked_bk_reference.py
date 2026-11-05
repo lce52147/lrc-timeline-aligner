@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import auto_lrc as a
+import split_patch
 
 
 class CheckedBkReferenceTests(unittest.TestCase):
@@ -39,7 +40,7 @@ class CheckedBkReferenceTests(unittest.TestCase):
             a.find_lyrics(self.audio,include_checked=False)
         self.assertEqual(a.find_lyrics(self.audio,include_checked=True),self.bk)
     def test_opt_in_accepts_exact_lyrics_with_metadata_card(self):
-        with patch.object(a,'audio_track_labels',return_value=('Artist','Song')):
+        with split_patch.patch("audio_track_labels",return_value=('Artist','Song')):
             result=a.checked_lrc_timing_hint(self.audio,self.entries,self.untimed)
         self.assertIsNotNone(result)
         lyrics,times,report=result
@@ -49,14 +50,14 @@ class CheckedBkReferenceTests(unittest.TestCase):
         self.assertFalse(report['independent_auto_benchmark_eligible'])
         self.assertEqual(len(lyrics),2)
     def test_bad_lyric_order_must_fail_closed(self):
-        with patch.object(a,'audio_track_labels',return_value=('Artist','Song')):
+        with split_patch.patch("audio_track_labels",return_value=('Artist','Song')):
             result=a.checked_lrc_timing_hint(
                 self.audio,list(reversed(self.entries)),self.untimed)
         self.assertIsNone(result)
     def test_refusing_self_as_secondary_checked_source(self):
         # If source lyrics are already the BK file, the outer checked branch
         # must honor its explicit timestamps rather than comparing it to itself.
-        with patch.object(a,'audio_track_labels',return_value=('Artist','Song')):
+        with split_patch.patch("audio_track_labels",return_value=('Artist','Song')):
             result=a.checked_lrc_timing_hint(self.audio,self.entries,self.bk)
         self.assertIsNone(result)
     def test_oogg_rana_bk_provenance_not_a_sung_line(self):
@@ -66,7 +67,7 @@ class CheckedBkReferenceTests(unittest.TestCase):
         self.assertTrue(raw.saw_timestamps)
         self.assertIn('[oogg_rana]',raw.metadata_lines)
         self.assertEqual(len(raw.entries),3)
-        with patch.object(a,'audio_track_labels',return_value=('Artist','Song')):
+        with split_patch.patch("audio_track_labels",return_value=('Artist','Song')):
             hint=a.checked_lrc_timing_hint(self.audio,self.entries,self.untimed)
         self.assertIsNotNone(hint)
         self.assertEqual(hint[1],[11.25,22.75])
@@ -89,7 +90,7 @@ class CheckedBkReferenceTests(unittest.TestCase):
         self.bk.write_text('[00:00.00]singing at zero\n'
                            '[00:11.25]first singing line\n'
                            '[00:22.75]second singing line\n',encoding='utf-8')
-        with patch.object(a,'audio_track_labels',return_value=('Artist','Song')):
+        with split_patch.patch("audio_track_labels",return_value=('Artist','Song')):
             result=a.checked_lrc_timing_hint(self.audio,self.entries,self.untimed)
         self.assertIsNone(result)
 

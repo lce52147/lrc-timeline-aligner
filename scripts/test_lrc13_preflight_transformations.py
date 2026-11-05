@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 import auto_lrc
+import split_patch
 
 
 class PreflightTransformations(unittest.TestCase):
@@ -19,7 +20,7 @@ class PreflightTransformations(unittest.TestCase):
                 encoding="utf-8",
             )
             document = auto_lrc.load_lyrics(path)
-            with mock.patch.object(auto_lrc, "audio_track_labels", return_value=("Artist", "Song")):
+            with split_patch.patch("audio_track_labels", return_value=("Artist", "Song")):
                 result = auto_lrc.build_lyric_preflight(
                     path, document, document.entries, Path("song.flac")
                 )

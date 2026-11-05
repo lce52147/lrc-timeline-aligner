@@ -225,7 +225,7 @@ class ProductionIntegrationTests(unittest.TestCase):
         args = auto_lrc.build_parser().parse_args(args_list)
         os.environ["LRC_STAGE_TIMINGS"] = "1" if enabled else "0"
         output = io.StringIO()
-        with split_patch.patch("run_command", return_value=SimpleNamespace(returncode=0, stdout='{"format":{"duration":"2.0"}}', stderr="")), mock.patch.object(auto_lrc, "audio_track_labels", return_value=("", "Song")), redirect_stdout(output):
+        with split_patch.patch("run_command", return_value=SimpleNamespace(returncode=0, stdout='{"format":{"duration":"2.0"}}', stderr="")), split_patch.patch("audio_track_labels", return_value=("", "Song")), redirect_stdout(output):
             auto_lrc.process_audio(audio, args)
         report_path, _, _ = auto_lrc.report_artifact_paths(audio, root / "song.lrc", root / "reports")
         return (root / "song.lrc").read_bytes(), json.loads(report_path.read_text(encoding="utf-8")), output.getvalue()

@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 import auto_lrc as a
+import split_patch
 from segment_skeleton_consensus import TestedRow,choose_acoustic_joint_passages
 
 
@@ -23,7 +24,7 @@ class OptionAIntegrationTests(unittest.TestCase):
             args=SimpleNamespace(skeleton=skeleton,timing_source="auto",
                                  whisperx_device="cuda")
             with patch.object(a,"run_ctc_alignment",return_value=(original,report)),\
-                 patch.object(a,"entry_sung_text",side_effect=lambda x:x),\
+                 split_patch.patch("entry_sung_text",side_effect=lambda x:x),\
                  patch("segment_skeleton_production.run_segment_skeleton",
                    return_value=([2.,5.,8.,11.],{**report,"segment_skeleton_status":{
                      "status":"SEGMENT_CURRENT","whole_song":True}},

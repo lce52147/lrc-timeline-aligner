@@ -10,6 +10,7 @@ from pathlib import Path
 os.environ.setdefault("LRC_MODEL_CACHE", "0")
 
 import auto_lrc  # noqa: E402
+import split_patch
 from auto_lrc import LyricEntry  # noqa: E402
 
 
@@ -110,7 +111,7 @@ def run_local_window(
     original_run = auto_lrc.subprocess.run
     original_python = auto_lrc.default_ctc_python
     auto_lrc.subprocess.run = helper  # type: ignore[assignment]
-    auto_lrc.default_ctc_python = lambda: Path("python")  # type: ignore[assignment]
+    split_patch.assign("default_ctc_python", lambda: Path("python"))  # type: ignore[assignment]
     try:
         _, _, changes = auto_lrc.apply_ctc_local_window_realign(
             Path("dummy.flac"),
@@ -123,7 +124,7 @@ def run_local_window(
         )
     finally:
         auto_lrc.subprocess.run = original_run  # type: ignore[assignment]
-        auto_lrc.default_ctc_python = original_python  # type: ignore[assignment]
+        split_patch.assign("default_ctc_python", original_python)  # type: ignore[assignment]
     return changes
 
 
@@ -284,7 +285,7 @@ def run_with_shadows(
     original_run = auto_lrc.subprocess.run
     original_python = auto_lrc.default_ctc_python
     auto_lrc.subprocess.run = helper  # type: ignore[assignment]
-    auto_lrc.default_ctc_python = lambda: Path("python")  # type: ignore[assignment]
+    split_patch.assign("default_ctc_python", lambda: Path("python"))  # type: ignore[assignment]
     try:
         auto_lrc.apply_ctc_local_window_realign(
             Path("dummy.flac"), entries, list(times), report, silent_raw(times), duration, args,
@@ -295,7 +296,7 @@ def run_with_shadows(
         )
     finally:
         auto_lrc.subprocess.run = original_run  # type: ignore[assignment]
-        auto_lrc.default_ctc_python = original_python  # type: ignore[assignment]
+        split_patch.assign("default_ctc_python", original_python)  # type: ignore[assignment]
 
 
 class LocalWindowShadowTests(unittest.TestCase):
@@ -350,7 +351,7 @@ class LocalWindowShadowTests(unittest.TestCase):
         original_run = auto_lrc.subprocess.run
         original_python = auto_lrc.default_ctc_python
         auto_lrc.subprocess.run = helper  # type: ignore[assignment]
-        auto_lrc.default_ctc_python = lambda: Path("python")  # type: ignore[assignment]
+        split_patch.assign("default_ctc_python", lambda: Path("python"))  # type: ignore[assignment]
         try:
             for shadow in (False, True):
                 auto_lrc.apply_ctc_local_window_realign(
@@ -360,7 +361,7 @@ class LocalWindowShadowTests(unittest.TestCase):
                 )
         finally:
             auto_lrc.subprocess.run = original_run  # type: ignore[assignment]
-            auto_lrc.default_ctc_python = original_python  # type: ignore[assignment]
+            split_patch.assign("default_ctc_python", original_python)  # type: ignore[assignment]
         self.assertEqual(len(helper.calls), 1)
         self.assertEqual(
             sorted(report["ctc_local_window_shadow"]["region-radius-1"]["rows"]),  # type: ignore[index]

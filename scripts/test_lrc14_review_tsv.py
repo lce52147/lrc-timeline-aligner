@@ -144,7 +144,7 @@ class ReviewSeverityTests(unittest.TestCase):
             output = io.StringIO()
             with (
                 split_patch.patch("probe_duration", return_value=2.0),
-                mock.patch.object(auto_lrc, "audio_track_labels", return_value=("", "Song")),
+                split_patch.patch("audio_track_labels", return_value=("", "Song")),
                 mock.patch.object(auto_lrc, "write_review_tsv"),
                 redirect_stdout(output),
             ):

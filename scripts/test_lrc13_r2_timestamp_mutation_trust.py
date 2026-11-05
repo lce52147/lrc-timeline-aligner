@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 
 import auto_lrc
+import split_patch
 
 
 class TimestampMutationTrustTests(unittest.TestCase):
@@ -45,14 +46,14 @@ class TimestampMutationTrustTests(unittest.TestCase):
         }
         old_analyze = auto_lrc.analyze_audio
         old_first = auto_lrc.first_local_onset
-        auto_lrc.analyze_audio = lambda *_args, **_kwargs: features  # type: ignore[assignment]
+        split_patch.assign("analyze_audio", lambda *_args, **_kwargs: features)  # type: ignore[assignment]
         auto_lrc.first_local_onset = lambda *_args, **_kwargs: 19.5  # type: ignore[assignment]
         try:
             _, result, changes = auto_lrc.apply_hybrid_ctc_opening_onset_backtrack(
                 Path("dummy.flac"), [10.0, 20.0, 30.0], report, 40.0
             )
         finally:
-            auto_lrc.analyze_audio = old_analyze  # type: ignore[assignment]
+            split_patch.assign("analyze_audio", old_analyze)  # type: ignore[assignment]
             auto_lrc.first_local_onset = old_first  # type: ignore[assignment]
         self.assertEqual(len(changes), 1)
         row = result["assignments"][1]  # type: ignore[index]
@@ -98,7 +99,7 @@ class TimestampMutationTrustTests(unittest.TestCase):
             ]
         }
         old = auto_lrc.vocal_onset_features
-        auto_lrc.vocal_onset_features = lambda *_args, **_kwargs: (features, None)  # type: ignore[assignment]
+        split_patch.assign("vocal_onset_features", lambda *_args, **_kwargs: (features, None))  # type: ignore[assignment]
         try:
             _, result, changes = auto_lrc.apply_vocal_onset_tiebreak(
                 [10.0, 20.0, 25.0],
@@ -109,7 +110,7 @@ class TimestampMutationTrustTests(unittest.TestCase):
                 object(),  # type: ignore[arg-type]
             )
         finally:
-            auto_lrc.vocal_onset_features = old  # type: ignore[assignment]
+            split_patch.assign("vocal_onset_features", old)  # type: ignore[assignment]
         self.assertEqual(len(changes), 1)
         row = result["assignments"][1]  # type: ignore[index]
         self.assertFalse(row["timing_trusted"])

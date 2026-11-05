@@ -311,7 +311,7 @@ class AnchorHintTests(unittest.TestCase):
 
     def test_generated_title_card_is_not_reused_as_alignment_lyric(self) -> None:
         original_labels = auto_lrc.audio_track_labels
-        auto_lrc.audio_track_labels = lambda _path: ("Demo Artist", "Demo Song")  # type: ignore[assignment]
+        split_patch.assign("audio_track_labels", lambda _path: ("Demo Artist", "Demo Song"))  # type: ignore[assignment]
         try:
             entries = [
                 LyricEntry(["Demo Artist - Demo Song"], 0),
@@ -322,11 +322,11 @@ class AnchorHintTests(unittest.TestCase):
 
             self.assertEqual([entry.lines[0] for entry in kept], ["synthetic lyric line"])
         finally:
-            auto_lrc.audio_track_labels = original_labels  # type: ignore[assignment]
+            split_patch.assign("audio_track_labels", original_labels)  # type: ignore[assignment]
 
     def test_generated_title_card_match_is_ascii_case_insensitive(self) -> None:
         original_labels = auto_lrc.audio_track_labels
-        auto_lrc.audio_track_labels = lambda _path: ("MyGO!!!!!", "影色舞")  # type: ignore[assignment]
+        split_patch.assign("audio_track_labels", lambda _path: ("MyGO!!!!!", "影色舞"))  # type: ignore[assignment]
         try:
             entries = [
                 LyricEntry(["Mygo!!!!! - 影色舞"], 0),
@@ -337,12 +337,12 @@ class AnchorHintTests(unittest.TestCase):
 
             self.assertEqual([entry.lines[0] for entry in kept], ["synthetic lyric line"])
         finally:
-            auto_lrc.audio_track_labels = original_labels  # type: ignore[assignment]
+            split_patch.assign("audio_track_labels", original_labels)  # type: ignore[assignment]
 
     def test_title_artist_order_card_is_not_aligned_as_lyric(self) -> None:
         # c10: "Ever be my love - 山田タマル" at 0.00 was aligned as lyric #1.
         original_labels = auto_lrc.audio_track_labels
-        auto_lrc.audio_track_labels = lambda _path: ("山田タマル", "Ever be my love")  # type: ignore[assignment]
+        split_patch.assign("audio_track_labels", lambda _path: ("山田タマル", "Ever be my love"))  # type: ignore[assignment]
         try:
             entries = [
                 LyricEntry(["Ever be my love - 山田タマル"], 0),
@@ -353,11 +353,11 @@ class AnchorHintTests(unittest.TestCase):
 
             self.assertEqual([entry.lines[0] for entry in kept], ["synthetic lyric line"])
         finally:
-            auto_lrc.audio_track_labels = original_labels  # type: ignore[assignment]
+            split_patch.assign("audio_track_labels", original_labels)  # type: ignore[assignment]
 
     def test_card_shaped_lines_that_do_not_match_tags_are_kept(self) -> None:
         original_labels = auto_lrc.audio_track_labels
-        auto_lrc.audio_track_labels = lambda _path: ("Demo Artist", "Demo Song")  # type: ignore[assignment]
+        split_patch.assign("audio_track_labels", lambda _path: ("Demo Artist", "Demo Song"))  # type: ignore[assignment]
         try:
             entries = [
                 LyricEntry(["Demo Song - Someone Else"], 0),
@@ -369,11 +369,11 @@ class AnchorHintTests(unittest.TestCase):
 
             self.assertEqual(len(kept), 3)
         finally:
-            auto_lrc.audio_track_labels = original_labels  # type: ignore[assignment]
+            split_patch.assign("audio_track_labels", original_labels)  # type: ignore[assignment]
 
     def test_title_only_tags_never_match_a_reversed_card(self) -> None:
         original_labels = auto_lrc.audio_track_labels
-        auto_lrc.audio_track_labels = lambda _path: ("", "Demo Song")  # type: ignore[assignment]
+        split_patch.assign("audio_track_labels", lambda _path: ("", "Demo Song"))  # type: ignore[assignment]
         try:
             entries = [LyricEntry(["Demo Song - anything"], 0)]
 
@@ -381,11 +381,11 @@ class AnchorHintTests(unittest.TestCase):
 
             self.assertEqual(len(kept), 1)
         finally:
-            auto_lrc.audio_track_labels = original_labels  # type: ignore[assignment]
+            split_patch.assign("audio_track_labels", original_labels)  # type: ignore[assignment]
 
     def test_untimed_source_title_is_preserved_as_potential_sung_lyric(self) -> None:
         original_labels = auto_lrc.audio_track_labels
-        auto_lrc.audio_track_labels = lambda _path: ("", "Song Title")  # type: ignore[assignment]
+        split_patch.assign("audio_track_labels", lambda _path: ("", "Song Title"))  # type: ignore[assignment]
         try:
             entries = [
                 LyricEntry(["Song Title", "Song translation"]),
@@ -396,7 +396,7 @@ class AnchorHintTests(unittest.TestCase):
 
             self.assertEqual([entry.lines[0] for entry in kept], ["Song Title", "actual lyric"])
         finally:
-            auto_lrc.audio_track_labels = original_labels  # type: ignore[assignment]
+            split_patch.assign("audio_track_labels", original_labels)  # type: ignore[assignment]
 
     def test_probe_option_parses_without_output_path(self) -> None:
         args = build_parser().parse_args(["song.flac", "--probe"])
@@ -553,7 +553,7 @@ class TimingTrustTests(unittest.TestCase):
             return Result()
 
         auto_lrc.subprocess.run = fake_run  # type: ignore[assignment]
-        auto_lrc.default_ctc_python = lambda: Path("python")  # type: ignore[assignment]
+        split_patch.assign("default_ctc_python", lambda: Path("python"))  # type: ignore[assignment]
         try:
             refined, _, changes = apply_ctc_local_window_realign(
                 Path("dummy.flac"),
@@ -566,7 +566,7 @@ class TimingTrustTests(unittest.TestCase):
             )
         finally:
             auto_lrc.subprocess.run = original_run  # type: ignore[assignment]
-            auto_lrc.default_ctc_python = original_python  # type: ignore[assignment]
+            split_patch.assign("default_ctc_python", original_python)  # type: ignore[assignment]
 
         self.assertAlmostEqual(captured["end"], 40.0, places=3)
         self.assertAlmostEqual(refined[0], 10.0, places=3)
@@ -642,7 +642,7 @@ class TimingTrustTests(unittest.TestCase):
             return Result()
 
         auto_lrc.subprocess.run = fake_run  # type: ignore[assignment]
-        auto_lrc.default_ctc_python = lambda: Path("python")  # type: ignore[assignment]
+        split_patch.assign("default_ctc_python", lambda: Path("python"))  # type: ignore[assignment]
         try:
             refined, report, changes = apply_ctc_local_window_realign(
                 Path("dummy.flac"),
@@ -655,7 +655,7 @@ class TimingTrustTests(unittest.TestCase):
             )
         finally:
             auto_lrc.subprocess.run = original_run  # type: ignore[assignment]
-            auto_lrc.default_ctc_python = original_python  # type: ignore[assignment]
+            split_patch.assign("default_ctc_python", original_python)  # type: ignore[assignment]
 
         self.assertEqual(changes, [])
         self.assertAlmostEqual(refined[2], 25.0, places=3)
@@ -1657,7 +1657,7 @@ class CtcAcousticBacktrackTests(unittest.TestCase):
             segments=[],
         )
         original_analyze_audio = auto_lrc.analyze_audio
-        auto_lrc.analyze_audio = lambda audio_path, duration: features  # type: ignore[assignment]
+        split_patch.assign("analyze_audio", lambda audio_path, duration: features)  # type: ignore[assignment]
         try:
             entries = [LyricEntry(["previous"]), LyricEntry(["The bubbles"]), LyricEntry(["next"])]
             timestamps = [15.0, 20.0, 25.0]
@@ -1700,7 +1700,7 @@ class CtcAcousticBacktrackTests(unittest.TestCase):
             assignment = report["assignments"][1]  # type: ignore[index]
             self.assertNotIn("ctc_forward_supported_prefix_recovery_trusted", assignment)
         finally:
-            auto_lrc.analyze_audio = original_analyze_audio  # type: ignore[assignment]
+            split_patch.assign("analyze_audio", original_analyze_audio)  # type: ignore[assignment]
 
     def test_crossline_initial_recovery_keeps_a_normal_initial_cluster(self) -> None:
         timestamps = [39.46, 46.15, 52.91]
@@ -1812,7 +1812,7 @@ class CtcAcousticBacktrackTests(unittest.TestCase):
             segments=[],
         )
         original_analyze_audio = auto_lrc.analyze_audio
-        auto_lrc.analyze_audio = lambda audio_path, duration: features  # type: ignore[assignment]
+        split_patch.assign("analyze_audio", lambda audio_path, duration: features)  # type: ignore[assignment]
         try:
             entries = [LyricEntry(["previous"]), LyricEntry(["理"]), LyricEntry(["next"])]
             timestamps = [10.0, 20.0, 25.0]
@@ -1862,7 +1862,7 @@ class CtcAcousticBacktrackTests(unittest.TestCase):
             self.assertEqual(timestamps[1], 20.0)
             self.assertEqual(report["ctc_acoustic_backtrack_count"], 0)
         finally:
-            auto_lrc.analyze_audio = original_analyze_audio  # type: ignore[assignment]
+            split_patch.assign("analyze_audio", original_analyze_audio)  # type: ignore[assignment]
 
 
 class VocalOnsetTiebreakTests(unittest.TestCase):
@@ -2008,7 +2008,7 @@ class VocalOnsetTiebreakTests(unittest.TestCase):
         onset_strength[np.where(np.isclose(frame_times, 20.2))[0][0]] = 0.40
         features = AudioFeatures(30.0, frame_times, np.full_like(frame_times, -20.0), onset_strength, [])
         original_features = auto_lrc.vocal_onset_features
-        auto_lrc.vocal_onset_features = lambda audio, duration, args: (features, None)  # type: ignore[assignment]
+        split_patch.assign("vocal_onset_features", lambda audio, duration, args: (features, None))  # type: ignore[assignment]
         try:
             report: dict[str, object] = {
                 "assignments": [
@@ -2033,7 +2033,7 @@ class VocalOnsetTiebreakTests(unittest.TestCase):
             self.assertEqual(changes[0]["reason"], "demucs-vocal-onset-prefers-ctc")
             self.assertEqual(result["vocal_onset_refinement"]["change_count"], 1)  # type: ignore[index]
         finally:
-            auto_lrc.vocal_onset_features = original_features  # type: ignore[assignment]
+            split_patch.assign("vocal_onset_features", original_features)  # type: ignore[assignment]
 
     def test_backtracks_from_ctc_first_token_candidate_for_weak_prefix(self) -> None:
         features = AudioFeatures(
@@ -2044,7 +2044,7 @@ class VocalOnsetTiebreakTests(unittest.TestCase):
             segments=[],
         )
         original_analyze_audio = auto_lrc.analyze_audio
-        auto_lrc.analyze_audio = lambda audio_path, duration: features  # type: ignore[assignment]
+        split_patch.assign("analyze_audio", lambda audio_path, duration: features)  # type: ignore[assignment]
         try:
             entries = [LyricEntry(["previous"]), LyricEntry(["target"]), LyricEntry(["next"])]
             timestamps = [10.0, 20.0, 30.0]
@@ -2076,7 +2076,7 @@ class VocalOnsetTiebreakTests(unittest.TestCase):
             hypotheses = report["assignments"][1]["alignment_hypotheses"]  # type: ignore[index]
             self.assertTrue(any(item["raw_candidate_time"] == 18.6 and item["mode"] == "ctc-first-token-posterior" for item in hypotheses))
         finally:
-            auto_lrc.analyze_audio = original_analyze_audio  # type: ignore[assignment]
+            split_patch.assign("analyze_audio", original_analyze_audio)  # type: ignore[assignment]
 
     def test_rejects_first_token_candidate_inside_previous_reliable_tail(self) -> None:
         features = AudioFeatures(
@@ -2087,7 +2087,7 @@ class VocalOnsetTiebreakTests(unittest.TestCase):
             segments=[],
         )
         original_analyze_audio = auto_lrc.analyze_audio
-        auto_lrc.analyze_audio = lambda audio_path, duration: features  # type: ignore[assignment]
+        split_patch.assign("analyze_audio", lambda audio_path, duration: features)  # type: ignore[assignment]
         try:
             entries = [LyricEntry(["previous"]), LyricEntry(["target"]), LyricEntry(["next"])]
             timestamps = [10.0, 20.0, 30.0]
@@ -2118,7 +2118,7 @@ class VocalOnsetTiebreakTests(unittest.TestCase):
             rejection = report["ctc_acoustic_backtrack_rejections"][0]
             self.assertEqual(rejection["reason"], "candidate-borrows-previous-line-tail")
         finally:
-            auto_lrc.analyze_audio = original_analyze_audio  # type: ignore[assignment]
+            split_patch.assign("analyze_audio", original_analyze_audio)  # type: ignore[assignment]
 
     def test_short_acoustic_backtrack_rejects_an_unsupported_weak_prefix(self) -> None:
         frame_times = np.round(np.arange(0.0, 40.0, 0.1), 3).astype(np.float32)
@@ -2132,7 +2132,7 @@ class VocalOnsetTiebreakTests(unittest.TestCase):
             segments=[],
         )
         original_analyze_audio = auto_lrc.analyze_audio
-        auto_lrc.analyze_audio = lambda audio_path, duration: features  # type: ignore[assignment]
+        split_patch.assign("analyze_audio", lambda audio_path, duration: features)  # type: ignore[assignment]
         try:
             entries = [LyricEntry(["previous"]), LyricEntry(["The bubbles"]), LyricEntry(["next"])]
             timestamps = [15.0, 20.0, 25.0]
@@ -2162,7 +2162,7 @@ class VocalOnsetTiebreakTests(unittest.TestCase):
             self.assertEqual(timestamps[1], 20.0)
             self.assertEqual(report["ctc_acoustic_backtrack_rejection_count"], 1)
         finally:
-            auto_lrc.analyze_audio = original_analyze_audio  # type: ignore[assignment]
+            split_patch.assign("analyze_audio", original_analyze_audio)  # type: ignore[assignment]
 
     def test_short_low_ctc_snap_uses_nearby_acoustic_onset(self) -> None:
         frame_times = np.round(np.arange(0.0, 40.0, 0.1), 3).astype(np.float32)
@@ -2176,7 +2176,7 @@ class VocalOnsetTiebreakTests(unittest.TestCase):
             segments=[],
         )
         original_analyze_audio = auto_lrc.analyze_audio
-        auto_lrc.analyze_audio = lambda audio_path, duration: features  # type: ignore[assignment]
+        split_patch.assign("analyze_audio", lambda audio_path, duration: features)  # type: ignore[assignment]
         try:
             entries = [LyricEntry(["previous"]), LyricEntry(["target"]), LyricEntry(["next"])]
             timestamps = [15.0, 20.0, 25.0]
@@ -2204,7 +2204,7 @@ class VocalOnsetTiebreakTests(unittest.TestCase):
             hypotheses = report["assignments"][1]["alignment_hypotheses"]  # type: ignore[index]
             self.assertTrue(any(item["raw_candidate_time"] == 19.6 and item["direct_onset_support"] == "supported" for item in hypotheses))
         finally:
-            auto_lrc.analyze_audio = original_analyze_audio  # type: ignore[assignment]
+            split_patch.assign("analyze_audio", original_analyze_audio)  # type: ignore[assignment]
 
     def test_short_acoustic_snap_keeps_credible_ctc_start_when_backtrack_harms_pacing(self) -> None:
         frame_times = np.round(np.arange(0.0, 40.0, 0.1), 3).astype(np.float32)
@@ -2218,7 +2218,7 @@ class VocalOnsetTiebreakTests(unittest.TestCase):
             segments=[],
         )
         original_analyze_audio = auto_lrc.analyze_audio
-        auto_lrc.analyze_audio = lambda audio_path, duration: features  # type: ignore[assignment]
+        split_patch.assign("analyze_audio", lambda audio_path, duration: features)  # type: ignore[assignment]
         try:
             entries = [LyricEntry(["previous phrase"]), LyricEntry(["target phrase"]), LyricEntry(["next phrase"])]
             timestamps = [15.0, 20.0, 25.0]
@@ -2243,7 +2243,7 @@ class VocalOnsetTiebreakTests(unittest.TestCase):
             self.assertEqual(changes, [])
             self.assertEqual(timestamps[1], 20.0)
         finally:
-            auto_lrc.analyze_audio = original_analyze_audio  # type: ignore[assignment]
+            split_patch.assign("analyze_audio", original_analyze_audio)  # type: ignore[assignment]
 
 
 class WhisperxCandidateFusionTests(unittest.TestCase):
@@ -2296,7 +2296,7 @@ class WhisperxAcousticBoundaryTests(unittest.TestCase):
             segments=[],
         )
         original_analyze_audio = auto_lrc.analyze_audio
-        auto_lrc.analyze_audio = lambda audio_path, duration: features  # type: ignore[assignment]
+        split_patch.assign("analyze_audio", lambda audio_path, duration: features)  # type: ignore[assignment]
         try:
             report: dict[str, object] = {
                 "timing_entries": 3,
@@ -2332,7 +2332,7 @@ class WhisperxAcousticBoundaryTests(unittest.TestCase):
             self.assertEqual(suspicious[0]["severity"], "low")  # type: ignore[index]
             self.assertTrue(suspicious[0]["review_required"])  # type: ignore[index]
         finally:
-            auto_lrc.analyze_audio = original_analyze_audio  # type: ignore[assignment]
+            split_patch.assign("analyze_audio", original_analyze_audio)  # type: ignore[assignment]
 
     def test_close_neighbor_can_snap_forward_to_next_strong_onset(self) -> None:
         frame_times = np.round(np.arange(0.0, 30.0, 0.1), 3).astype(np.float32)
@@ -2346,7 +2346,7 @@ class WhisperxAcousticBoundaryTests(unittest.TestCase):
             segments=[],
         )
         original_analyze_audio = auto_lrc.analyze_audio
-        auto_lrc.analyze_audio = lambda audio_path, duration: features  # type: ignore[assignment]
+        split_patch.assign("analyze_audio", lambda audio_path, duration: features)  # type: ignore[assignment]
         try:
             report: dict[str, object] = {
                 "timing_entries": 3,
@@ -2382,7 +2382,7 @@ class WhisperxAcousticBoundaryTests(unittest.TestCase):
             assignments = refined_report["assignments"]  # type: ignore[assignment]
             self.assertFalse(assignments[1]["timing_trusted"])  # type: ignore[index]
         finally:
-            auto_lrc.analyze_audio = original_analyze_audio  # type: ignore[assignment]
+            split_patch.assign("analyze_audio", original_analyze_audio)  # type: ignore[assignment]
 
 
 class AuditExportTests(unittest.TestCase):
@@ -2514,7 +2514,7 @@ class AuditExportTests(unittest.TestCase):
             segments=[],
         )
         original_analyze_audio = auto_lrc.analyze_audio
-        auto_lrc.analyze_audio = lambda audio_path, duration: features  # type: ignore[assignment]
+        split_patch.assign("analyze_audio", lambda audio_path, duration: features)  # type: ignore[assignment]
         try:
             entries = [LyricEntry(["previous"]), LyricEntry(["Underwater"]), LyricEntry(["next"])]
             timestamps = [5.0, 10.0, 15.0]
@@ -2561,7 +2561,7 @@ class AuditExportTests(unittest.TestCase):
             self.assertEqual(assignment["ctc_effective_token_start_index"], 1)
             self.assertTrue(assignment["ctc_forward_supported_prefix_recovery_trusted"])
         finally:
-            auto_lrc.analyze_audio = original_analyze_audio  # type: ignore[assignment]
+            split_patch.assign("analyze_audio", original_analyze_audio)  # type: ignore[assignment]
 
     def test_provisional_boundary_detection_does_not_lower_trust(self) -> None:
         entries = [LyricEntry(["previous"]), LyricEntry(["current"])]
@@ -2665,13 +2665,13 @@ class AudioAuditV7Tests(unittest.TestCase):
         onset_strength[np.argmin(np.abs(frame_times - 13.56))] = 0.80
         features = AudioFeatures(25.0, frame_times, np.zeros_like(frame_times), onset_strength, [])
         original = auto_lrc.analyze_audio
-        auto_lrc.analyze_audio = lambda *_args, **_kwargs: features
+        split_patch.assign("analyze_audio", lambda *_args, **_kwargs: features)
         try:
             changes = apply_ctc_forward_supported_prefix_recovery(
                 Path("dummy.wav"), entries, timestamps, report, 25.0
             )
         finally:
-            auto_lrc.analyze_audio = original
+            split_patch.assign("analyze_audio", original)
 
         self.assertEqual(len(changes), 1)
         self.assertAlmostEqual(timestamps[1], 13.56, places=2)
@@ -2738,7 +2738,7 @@ class GeorgetteBoundaryRegressionTests(unittest.TestCase):
             segments=[],
         )
         original_analyze_audio = auto_lrc.analyze_audio
-        auto_lrc.analyze_audio = lambda *_args, **_kwargs: features  # type: ignore[assignment]
+        split_patch.assign("analyze_audio", lambda *_args, **_kwargs: features)  # type: ignore[assignment]
         try:
             entries = [
                 LyricEntry(["前の合成試験行"]),
@@ -2787,7 +2787,7 @@ class GeorgetteBoundaryRegressionTests(unittest.TestCase):
             self.assertEqual(rejection["reason"], "candidate-borrows-previous-line-tail")
             self.assertAlmostEqual(rejection["candidate_gap_seconds"], 0.040, places=3)
         finally:
-            auto_lrc.analyze_audio = original_analyze_audio  # type: ignore[assignment]
+            split_patch.assign("analyze_audio", original_analyze_audio)  # type: ignore[assignment]
 
     def test_0344_weak_zero_gap_after_again_stays_review_required(self) -> None:
         entries = [LyricEntry(["... again"]), LyricEntry(["Everlasting test pattern ever ever ever"])]
@@ -2900,7 +2900,7 @@ class GeorgetteBoundaryRegressionTests(unittest.TestCase):
             segments=[],
         )
         original_analyze_audio = auto_lrc.analyze_audio
-        auto_lrc.analyze_audio = lambda *_args, **_kwargs: features  # type: ignore[assignment]
+        split_patch.assign("analyze_audio", lambda *_args, **_kwargs: features)  # type: ignore[assignment]
         try:
             entries = [LyricEntry(["... again"]), LyricEntry(["everlastin ever 離れぬように"])]
             report: dict[str, object] = {
@@ -2949,7 +2949,7 @@ class GeorgetteBoundaryRegressionTests(unittest.TestCase):
             self.assertTrue(current["timing_audit_trusted"])
             self.assertFalse(bool(current.get("review_required")))
         finally:
-            auto_lrc.analyze_audio = original_analyze_audio  # type: ignore[assignment]
+            split_patch.assign("analyze_audio", original_analyze_audio)  # type: ignore[assignment]
 
     def test_final_guard_catches_80ms_again_leak_with_isolated_first_token(self) -> None:
         """Regression for the v2 miss: token 0 looked usable, the prefix did not."""
@@ -2964,7 +2964,7 @@ class GeorgetteBoundaryRegressionTests(unittest.TestCase):
             segments=[],
         )
         original_analyze_audio = auto_lrc.analyze_audio
-        auto_lrc.analyze_audio = lambda *_args, **_kwargs: features  # type: ignore[assignment]
+        split_patch.assign("analyze_audio", lambda *_args, **_kwargs: features)  # type: ignore[assignment]
         try:
             entries = [LyricEntry(["... again"]), LyricEntry(["everlastin ever 離れぬように"])]
             report: dict[str, object] = {
@@ -3014,7 +3014,7 @@ class GeorgetteBoundaryRegressionTests(unittest.TestCase):
             self.assertAlmostEqual(timestamps[1], 226.16, places=2)
             self.assertTrue(report["assignments"][1]["timing_audit_trusted"])  # type: ignore[index]
         finally:
-            auto_lrc.analyze_audio = original_analyze_audio  # type: ignore[assignment]
+            split_patch.assign("analyze_audio", original_analyze_audio)  # type: ignore[assignment]
 
     def test_final_guard_salvages_onset_from_rejected_right_edge_row(self) -> None:
         frame_times = np.round(np.arange(143.0, 149.0, 0.01), 3).astype(np.float32)
@@ -3028,7 +3028,7 @@ class GeorgetteBoundaryRegressionTests(unittest.TestCase):
             segments=[],
         )
         original_analyze_audio = auto_lrc.analyze_audio
-        auto_lrc.analyze_audio = lambda *_args, **_kwargs: features  # type: ignore[assignment]
+        split_patch.assign("analyze_audio", lambda *_args, **_kwargs: features)  # type: ignore[assignment]
         try:
             entries = [LyricEntry(["previous"]), LyricEntry(["もつれたまま"]), LyricEntry(["next"])]
             report: dict[str, object] = {
@@ -3090,7 +3090,7 @@ class GeorgetteBoundaryRegressionTests(unittest.TestCase):
             self.assertTrue(report["assignments"][1]["ctc_final_timing_guard_unresolved"])  # type: ignore[index]
             self.assertFalse(report["assignments"][1]["timing_audit_trusted"])  # type: ignore[index]
         finally:
-            auto_lrc.analyze_audio = original_analyze_audio  # type: ignore[assignment]
+            split_patch.assign("analyze_audio", original_analyze_audio)  # type: ignore[assignment]
 
     def test_path_fracture_detects_disconnected_ctc_islands(self) -> None:
         assignment = {
@@ -4233,7 +4233,7 @@ class CentralTimingStateTests(unittest.TestCase):
         state = auto_lrc.build_final_timing_state(((candidate,),))
         before = state.written_times
         original_labels = auto_lrc.audio_track_labels
-        auto_lrc.audio_track_labels = lambda _path: ("", "generic")  # type: ignore[assignment]
+        split_patch.assign("audio_track_labels", lambda _path: ("", "generic"))  # type: ignore[assignment]
         try:
             with TemporaryDirectory() as temp_name:
                 root = Path(temp_name)
@@ -4249,7 +4249,7 @@ class CentralTimingStateTests(unittest.TestCase):
                 )
                 written = output.read_text(encoding="utf-8-sig")
         finally:
-            auto_lrc.audio_track_labels = original_labels  # type: ignore[assignment]
+            split_patch.assign("audio_track_labels", original_labels)  # type: ignore[assignment]
         self.assertIs(state.written_times, before)
         self.assertIn(f"[{state.written_times[0].lrc_tag}]generic line", written)
 
@@ -4283,7 +4283,7 @@ class CentralTimingStateTests(unittest.TestCase):
             ])
             with (
                 split_patch.patch("probe_duration", return_value=2.0),
-                mock.patch.object(auto_lrc, "audio_track_labels", return_value=("MiXeD ARTIST", "Song")),
+                split_patch.patch("audio_track_labels", return_value=("MiXeD ARTIST", "Song")),
             ):
                 auto_lrc.process_audio(audio, args)
             written = output.read_text(encoding="utf-8-sig")
@@ -5266,8 +5266,8 @@ class CentralTimingStateTests(unittest.TestCase):
             )
             return list(timestamps), report, evaluated, []
 
-        auto_lrc.default_ctc_ready = lambda: True  # type: ignore[assignment]
-        auto_lrc.default_whisperx_ready = lambda: False  # type: ignore[assignment]
+        split_patch.assign("default_ctc_ready", lambda: True)  # type: ignore[assignment]
+        split_patch.assign("default_whisperx_ready", lambda: False)  # type: ignore[assignment]
         auto_lrc.try_ctc_candidate = infer  # type: ignore[assignment]
         auto_lrc._central_preview_generation_candidates = generation_candidates  # type: ignore[assignment]
         auto_lrc.prepare_backend_timing_preview = preview  # type: ignore[assignment]
@@ -5356,15 +5356,15 @@ class CentralTimingStateTests(unittest.TestCase):
                         counts["commit"] += 1
                         return real_commit(selected, selected_report)
 
-                    auto_lrc.probe_duration = lambda _path: 20.0  # type: ignore[assignment]
-                    auto_lrc.find_anchor_hints = lambda *_args: None  # type: ignore[assignment]
-                    auto_lrc.default_ctc_ready = lambda: True  # type: ignore[assignment]
-                    auto_lrc.default_whisperx_ready = lambda: False  # type: ignore[assignment]
+                    split_patch.assign("probe_duration", lambda _path: 20.0)  # type: ignore[assignment]
+                    split_patch.assign("find_anchor_hints", lambda *_args: None)  # type: ignore[assignment]
+                    split_patch.assign("default_ctc_ready", lambda: True)  # type: ignore[assignment]
+                    split_patch.assign("default_whisperx_ready", lambda: False)  # type: ignore[assignment]
                     auto_lrc.run_ctc_alignment = explicit_inference  # type: ignore[assignment]
                     auto_lrc.run_auto_backend_competition = competition  # type: ignore[assignment]
                     auto_lrc.prepare_backend_timing_preview = preview  # type: ignore[assignment]
                     auto_lrc.commit_evaluated_backend = commit  # type: ignore[assignment]
-                    auto_lrc.audio_track_labels = lambda _path: ("", "generic")  # type: ignore[assignment]
+                    split_patch.assign("audio_track_labels", lambda _path: ("", "generic"))  # type: ignore[assignment]
                     output = temp / f"{timing_source}.lrc"
                     report_dir = temp / f"{timing_source}-reports"
                     args = build_parser().parse_args([
@@ -6804,7 +6804,7 @@ class CandidateGenerationCleanupTests(unittest.TestCase):
             segments=[],
         )
         original_analyze_audio = auto_lrc.analyze_audio
-        auto_lrc.analyze_audio = lambda *_args, **_kwargs: features  # type: ignore[assignment]
+        split_patch.assign("analyze_audio", lambda *_args, **_kwargs: features)  # type: ignore[assignment]
         try:
             report: dict[str, object] = {
                 "backend": "whisperx",
@@ -6839,7 +6839,7 @@ class CandidateGenerationCleanupTests(unittest.TestCase):
             self.assertFalse(report["acoustic_late_onset_refinement_authoritative"])
             self.assertFalse(report["acoustic_late_onset_refinement_mutates_baseline"])
         finally:
-            auto_lrc.analyze_audio = original_analyze_audio  # type: ignore[assignment]
+            split_patch.assign("analyze_audio", original_analyze_audio)  # type: ignore[assignment]
 
     def test_hybrid_ctc_derivation_preserves_base_candidate_by_copy(self) -> None:
         source = auto_lrc.algorithm_source_text()
@@ -7311,11 +7311,11 @@ class TailAwareCrossLineRetryTests(unittest.TestCase):
     def test_18c_missing_helper_returns_error_outcome_and_no_second_attempt(self) -> None:
         entries, sets, _report, capability, epoch, requests = self.fixture()
         original = auto_lrc.run_command
-        auto_lrc.run_command = lambda *_args, **_kwargs: (_ for _ in ()).throw(LrcError("missing python"))  # type: ignore[assignment]
+        split_patch.assign("run_command", lambda *_args, **_kwargs: (_ for _ in ()).throw(LrcError("missing python")))  # type: ignore[assignment]
         try:
             first = auto_lrc.execute_crossline_retry_epoch(epoch, capability, entries, sets, 20.0, requests)
         finally:
-            auto_lrc.run_command = original  # type: ignore[assignment]
+            split_patch.assign("run_command", original)  # type: ignore[assignment]
         self.assertEqual(len(first), 1)
         self.assertEqual(first[0].status, "error")
         self.assertEqual(auto_lrc.build_final_timing_state(sets).decisions[1].status, "provisional_unresolved")
@@ -7432,8 +7432,8 @@ class GeorgetteBoundaryRegressionContinuedTests(unittest.TestCase):
         original_analyze_audio = auto_lrc.analyze_audio
         original_analyze_vocal = auto_lrc.analyze_vocal_onsets
         original_prefix_probe = auto_lrc.run_ctc_prefix_probe
-        auto_lrc.analyze_audio = lambda *_args, **_kwargs: features  # type: ignore[assignment]
-        auto_lrc.analyze_vocal_onsets = lambda *_args, **_kwargs: features  # type: ignore[assignment]
+        split_patch.assign("analyze_audio", lambda *_args, **_kwargs: features)  # type: ignore[assignment]
+        split_patch.assign("analyze_vocal_onsets", lambda *_args, **_kwargs: features)  # type: ignore[assignment]
         auto_lrc.run_ctc_prefix_probe = lambda *_args, **_kwargs: {  # type: ignore[assignment]
             "accepted": True,
             "candidate": 12.75,
@@ -7487,8 +7487,8 @@ class GeorgetteBoundaryRegressionContinuedTests(unittest.TestCase):
             self.assertEqual(changes[0]["reason"], "independent-lyric-prefix-ctc-probe")
             self.assertTrue(report["assignments"][1]["ctc_prefix_probe_recovery"])  # type: ignore[index]
         finally:
-            auto_lrc.analyze_audio = original_analyze_audio  # type: ignore[assignment]
-            auto_lrc.analyze_vocal_onsets = original_analyze_vocal  # type: ignore[assignment]
+            split_patch.assign("analyze_audio", original_analyze_audio)  # type: ignore[assignment]
+            split_patch.assign("analyze_vocal_onsets", original_analyze_vocal)  # type: ignore[assignment]
             auto_lrc.run_ctc_prefix_probe = original_prefix_probe  # type: ignore[assignment]
 
     def test_untrusted_crossline_recovery_does_not_leave_stale_effective_index(self) -> None:
@@ -7696,7 +7696,7 @@ class OccurrenceRecurrenceZeroTrustTests(unittest.TestCase):
             segments=[],
         )
         original = auto_lrc.analyze_vocal_onsets
-        auto_lrc.analyze_vocal_onsets = lambda _audio, _duration: features  # type: ignore[assignment]
+        split_patch.assign("analyze_vocal_onsets", lambda _audio, _duration: features)  # type: ignore[assignment]
         try:
             spans = [
                 {"char": chr(97 + (index % 20)), "start": 10.0 + index * 0.40, "end": 10.02 + index * 0.40, "score": 0.25}
@@ -7717,7 +7717,7 @@ class OccurrenceRecurrenceZeroTrustTests(unittest.TestCase):
             self.assertFalse(report["vocal_onset_confirmation_authoritative"])
             self.assertFalse(report["vocal_onset_confirmation_mutates_baseline"])
         finally:
-            auto_lrc.analyze_vocal_onsets = original  # type: ignore[assignment]
+            split_patch.assign("analyze_vocal_onsets", original)  # type: ignore[assignment]
 
     def test_global_recurrence_search_requires_a_distinct_full_line_match(self) -> None:
         rng = np.random.default_rng(7)
@@ -13303,7 +13303,7 @@ class V152BoundaryContentConvergenceRegressionTests(unittest.TestCase):
              mock.patch.object(auto_lrc, "_run_whispercpp_wav", return_value=raw_segments), \
              mock.patch.object(auto_lrc, "run_whisperx_alignment", return_value=aligned_payload), \
              mock.patch.object(auto_lrc, "match_whisper_segments", return_value=([.4, 1.2, 2.4], local_report)), \
-             mock.patch.object(auto_lrc, "japanese_romaji", side_effect=fake_romaji):
+             split_patch.patch("japanese_romaji", side_effect=fake_romaji):
             outcome = auto_lrc.execute_local_whisper_request(
                 request, capability, entries, mock.Mock(), cache={}, runtime_stats={}
             )
@@ -13364,7 +13364,7 @@ class V152BoundaryContentConvergenceRegressionTests(unittest.TestCase):
              mock.patch.object(auto_lrc, "run_whisperx_alignment", return_value=aligned_payload), \
              mock.patch.object(auto_lrc, "whisperx_segments", return_value=aligned_segments), \
              mock.patch.object(auto_lrc, "match_whisper_segments", return_value=([.4, 1.2, 3.0], local_report)), \
-             mock.patch.object(auto_lrc, "japanese_romaji", side_effect=fake_romaji):
+             split_patch.patch("japanese_romaji", side_effect=fake_romaji):
             outcome = auto_lrc.execute_local_whisper_request(
                 request, capability, entries, mock.Mock(), cache={}, runtime_stats={}
             )
@@ -13382,7 +13382,7 @@ class V152BoundaryContentConvergenceRegressionTests(unittest.TestCase):
             if text in {"東京", "とうきょう"}:
                 return "tokyo"
             return real_romaji(text) or text
-        with mock.patch.object(auto_lrc, "japanese_romaji", side_effect=fake_romaji):
+        with split_patch.patch("japanese_romaji", side_effect=fake_romaji):
             matches = auto_lrc._aligned_exact_phonetic_target_matches("東京", segments)
         self.assertEqual(len(matches), 2)
         self.assertNotEqual(matches[0]["match_revision"], matches[1]["match_revision"])
@@ -13683,8 +13683,8 @@ class ZeroReferenceAutoIsolationTests(unittest.TestCase):
                 split_patch.patch("default_ctc_ready", return_value=True), \
                 split_patch.patch("default_whisperx_ready", return_value=False), \
                 mock.patch.object(auto_lrc, "run_auto_backend_competition", side_effect=competition), \
-                mock.patch.object(auto_lrc, "audio_track_labels", return_value=("", "generic")), \
-                mock.patch.object(auto_lrc, "checked_lrc_timing_hint", side_effect=AssertionError("checked hint read")):
+                split_patch.patch("audio_track_labels", return_value=("", "generic")), \
+                split_patch.patch("checked_lrc_timing_hint", side_effect=AssertionError("checked hint read")):
                 auto_lrc.process_audio(audio, args)
             report_path = next((root / "reports").glob("*.json"))
             persisted = json.loads(report_path.read_text(encoding="utf-8"))

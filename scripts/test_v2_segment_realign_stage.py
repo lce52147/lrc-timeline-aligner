@@ -16,6 +16,7 @@ os.environ.setdefault("LRC_MODEL_CACHE", "0")
 import numpy as np  # noqa: E402
 
 import auto_lrc  # noqa: E402
+import split_patch
 from auto_lrc import LyricEntry  # noqa: E402
 
 VERSE1 = ["asa no hikari ga", "mado wo tataku", "kimi no koe ga", "kikoeta ki ga shita"]
@@ -114,13 +115,13 @@ class Patched:
             def absent(self, seconds: float) -> bool:
                 return absent
 
-        auto_lrc._run_model_helper_command = lambda command, **kwargs: helper(command, **kwargs)  # type: ignore[assignment]
-        auto_lrc.default_ctc_python = lambda: Path("python")  # type: ignore[assignment]
-        auto_lrc.analyze_audio = lambda path, duration: auto_lrc.AudioFeatures(  # type: ignore[assignment]
+        split_patch.assign("_run_model_helper_command", lambda command, **kwargs: helper(command, **kwargs))  # type: ignore[assignment]
+        split_patch.assign("default_ctc_python", lambda: Path("python"))  # type: ignore[assignment]
+        split_patch.assign("analyze_audio", lambda path, duration: auto_lrc.AudioFeatures(  # type: ignore[assignment]
             duration, np.zeros(0), np.zeros(0), np.zeros(0), list(SEGMENTS)
-        )
-        auto_lrc.vocal_stem_levels = lambda report: Levels()  # type: ignore[assignment]
-        auto_lrc._ctc_model_blob_sha256 = lambda: "test-model-blob"  # type: ignore[assignment]
+        ))
+        split_patch.assign("vocal_stem_levels", lambda report: Levels())  # type: ignore[assignment]
+        split_patch.assign("_ctc_model_blob_sha256", lambda: "test-model-blob")  # type: ignore[assignment]
         return self
 
     def __exit__(self, *exc: object) -> bool:

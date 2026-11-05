@@ -61,3 +61,11 @@ class _Patcher:
 
 def patch(name, new=mock.DEFAULT, **kwargs):
     return _Patcher(name, new, kwargs)
+
+
+def assign(name, value):
+    """Direct ``auto_lrc.name = value`` equivalent for every module binding name."""
+    for module_name in SPLIT_MODULES:
+        module = sys.modules.get(module_name)
+        if module is not None and hasattr(module, name):
+            setattr(module, name, value)

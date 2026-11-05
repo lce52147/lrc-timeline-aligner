@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 
 import auto_lrc
+import split_patch
 
 
 class TailRepairScoreTests(unittest.TestCase):
@@ -40,10 +41,10 @@ class TailRepairScoreTests(unittest.TestCase):
         )
         auto_lrc.low_confidence_tail_start = lambda _report: 1  # type: ignore[assignment]
         auto_lrc.has_repeated_asr_tail = lambda *_args, **_kwargs: True  # type: ignore[assignment]
-        auto_lrc.analyze_audio = lambda *_args, **_kwargs: features  # type: ignore[assignment]
+        split_patch.assign("analyze_audio", lambda *_args, **_kwargs: features)  # type: ignore[assignment]
         auto_lrc.first_sustained_onset = lambda *_args, **_kwargs: 25.0  # type: ignore[assignment]
-        auto_lrc.weighted_rough_times = lambda *_args, **_kwargs: [25.0, 30.0]  # type: ignore[assignment]
-        auto_lrc.snap_to_onsets = lambda times, *_args, **_kwargs: list(times)  # type: ignore[assignment]
+        split_patch.assign("weighted_rough_times", lambda *_args, **_kwargs: [25.0, 30.0])  # type: ignore[assignment]
+        split_patch.assign("snap_to_onsets", lambda times, *_args, **_kwargs: list(times))  # type: ignore[assignment]
         try:
             repaired, changes = auto_lrc.repair_tail_hallucination(
                 Path("dummy.flac"),
