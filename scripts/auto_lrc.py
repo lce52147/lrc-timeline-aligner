@@ -159,9 +159,17 @@ from backend_bundle import (
     central_selection_reason,
     select_evaluated_backend,
 )
+from central_commit_tail import (
+    _BACKEND_PROVENANCE_PROJECTION_SCHEMA_VERSION,
+    _apply_evaluated_backend_projection,
+    _build_backend_provenance_projection_seed,
+    _finalize_backend_provenance_projection,
+    _postcentral_existing_conflict_projection,
+    commit_evaluated_backend,
+    validate_backend_selection,
+)
 from central_peer_recovery import (
     RECOVERY_REVIEW_MOVE_THRESHOLD_CENTISECONDS,
-    _BACKEND_PROVENANCE_PROJECTION_SCHEMA_VERSION,
     _HUBERT_EXISTING_CANDIDATE_RECOVERY_MODE,
     _HUBERT_RECOVERY_DIRECT_ONSET_KIND,
     _KNOWN_LYRIC_HUBERT_AUDIO_LOADER,
@@ -181,10 +189,7 @@ from central_peer_recovery import (
     _PEER_EXISTING_CANDIDATE_RECOVERY_MODE,
     _R2T_NEUTRAL_CONFLICT_PROBE_KEY,
     _R2T_NEUTRAL_CONFLICT_PROBE_MODE,
-    _apply_evaluated_backend_projection,
-    _build_backend_provenance_projection_seed,
     _existing_peer_recovery_representative,
-    _finalize_backend_provenance_projection,
     _hubert_neutral_probe_window_start,
     _hubert_probe_window_covers_hypotheses,
     _hubert_probe_window_covers_request_hypotheses,
@@ -219,7 +224,6 @@ from central_peer_recovery import (
     _postcentral_acquire_known_lyric_hubert_tails,
     _postcentral_acquire_targeted_joint_ctc_tails,
     _postcentral_bundle_with_additional_tail_observations,
-    _postcentral_existing_conflict_projection,
     _postcentral_plan_known_lyric_hubert_current_probe_requests,
     _postcentral_plan_known_lyric_hubert_predecessor_only_requests,
     _postcentral_plan_known_lyric_hubert_requests,
@@ -242,9 +246,7 @@ from central_peer_recovery import (
     _update_projection_seed_for_arbitrated_selection,
     _update_projection_seed_for_hubert_recovery,
     _update_projection_seed_for_peer_recovery,
-    commit_evaluated_backend,
     run_r2t_unified_neutral_conflict_probe,
-    validate_backend_selection,
 )
 from local_whisper_retry import (
     CROSSLINE_RETRY_FORWARD_OVERLAP_SECONDS,

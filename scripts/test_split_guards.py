@@ -21,6 +21,7 @@ EXPECTED_SOURCE_FILES = (
     "auto_lrc.py",
     "backend_bundle.py",
     "central_commit.py",
+    "central_commit_tail.py",
     "central_peer_recovery.py",
     "ctc_refinement.py",
     "local_whisper_retry.py",

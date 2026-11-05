@@ -40,6 +40,7 @@ _ALGORITHM_SOURCE_MODULES = (
     "local_whisper_retry",
     "central_commit",
     "backend_bundle",
+    "central_commit_tail",
     "central_peer_recovery",
 )
 
