@@ -558,6 +558,60 @@ def _seconds_cs(value):
     return None if number is None else _round_cs(number)
 
 
+def _tick_candidates(assignment, diagnostics, current_cs):
+    """Every timed candidate on one line, for the waveform ticks (display only).
+
+    Same sources the CAL2 analysis counted: accepted, rejected, hypothesis raw time and onsets, CTC
+    first-token candidates and local-whisper diagnostic times. Times within 5 cs merge (best score
+    kept, `n` counts the members); times within 5 cs of the current time are left out.
+    """
+    lead_ms = _number(assignment.get("start_lead_ms"))
+    lead_cs = int(round(lead_ms / 10.0)) if lead_ms and lead_ms > 0 else 0
+    raw = []
+
+    def add(value, source, score):
+        cs = _seconds_cs(value)
+        if cs is None:
+            return
+        number = _number(score)
+        raw.append({"cs": max(0, cs - lead_cs), "source": str(source), "score": 0.0 if number is None else float(number)})
+
+    def listed(key):
+        value = assignment.get(key)
+        return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+    for item in listed("candidates"):
+        add(item.get("time"), item.get("source", "candidate"), item.get("score"))
+    for item in listed("rejected_candidates"):
+        add(item.get("time"), item.get("source", "rejected"), item.get("score"))
+    for item in listed("alignment_hypotheses"):
+        source = item.get("source", "hypothesis")
+        add(item.get("raw_candidate_time"), source, item.get("confidence"))
+        for key in ("acoustic_onset_time", "direct_onset_time"):
+            add(item.get(key), "%s:%s" % (source, key), item.get("acoustic_strength"))
+    for item in listed("ctc_first_token_candidates"):
+        add(item.get("time"), "ctc-first-token", item.get("score"))
+    for item in diagnostics or ():
+        for key, value in item.items():
+            if "time" in key and isinstance(value, (int, float)) and not isinstance(value, bool):
+                add(value, "local-whisper:%s" % key, item.get("score"))
+    groups = []
+    for member in sorted(raw, key=lambda item: (-item["score"], item["cs"], item["source"])):
+        group = next((item for item in groups if abs(item[0]["cs"] - member["cs"]) <= 5), None)
+        if group is None:
+            groups.append([member])
+        else:
+            group.append(member)
+    ticks = []
+    for group in groups:
+        best = group[0]
+        if current_cs is not None and abs(best["cs"] - current_cs) <= 5:
+            continue
+        ticks.append({"cs": best["cs"], "source": best["source"], "score": best["score"], "n": len(group)})
+    ticks.sort(key=lambda item: item["cs"])
+    return ticks
+
+
 def _candidate_rows(assignment, current_cs, auto_cs):
     raw = []
     diagnostic_sources = {"raw_asr", "precentral-recommendation"}
@@ -1098,6 +1152,12 @@ def _song_payload(report_path, report, anchor=None):
 
         # Neighbour fit uses the LRC as it is now, so a corrected neighbour counts.
         written = [line_time(current_lines, indexes[0]) for indexes in mapping]
+        diagnostics = report.get("local_whisper_evidence_diagnostics")
+        diagnostics = diagnostics.get("entries") if isinstance(diagnostics, dict) else None
+        diagnostics_by_entry = {}
+        for item in diagnostics if isinstance(diagnostics, list) else []:
+            if isinstance(item, dict) and isinstance(item.get("entry"), int):
+                diagnostics_by_entry.setdefault(item["entry"], []).append(item)
         speech_rate = review_presentation.song_speech_rate(assigned, written)
         short_gap = review_presentation.short_gap_flags(written)
 
@@ -1175,6 +1235,9 @@ def _song_payload(report_path, report, anchor=None):
                 "candidates": candidates,
                 "extra_candidates": extra_candidates,
                 "dropped_count": len(extra_candidates),
+                "tick_candidates": _tick_candidates(
+                    assignment, diagnostics_by_entry.get(assignment.get("entry")), current_cs,
+                ),
             }
             rows.append(row)
     payload = {

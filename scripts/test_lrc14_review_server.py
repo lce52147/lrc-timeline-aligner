@@ -2199,6 +2199,39 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         self.store.reload()
         self.assertTrue(all(row["sanity"] is None for row in self.store.cached_song(0)["rows"]), "the real rule flags nothing on a tiny song")
 
+    def test_tick_candidates_collect_merge_and_skip_current(self) -> None:
+        assignment = {
+            "entry": 7,
+            "candidates": [{"time": 10.00, "source": "ctc-current", "score": 0.9}, {"time": 12.50, "source": "whisper", "score": 0.4}],
+            "rejected_candidates": [{"time": 12.52, "source": "old", "score": 0.7}, {"time": 20.0, "source": "far", "score": 0.1}],
+            "alignment_hypotheses": [
+                {"source": "hyp", "raw_candidate_time": 15.0, "confidence": 0.3, "acoustic_onset_time": 15.3, "acoustic_strength": 0.8},
+                {"source": "broken", "raw_candidate_time": None},
+            ],
+            "ctc_first_token_candidates": [{"time": 11.0, "score": 0.5}],
+        }
+        diagnostics = [{"entry": 7, "onset_time": 11.03, "score": 0.2, "ignored": "x"}]
+        ticks = review_server._tick_candidates(assignment, diagnostics, 1000)
+        self.assertEqual([tick["cs"] for tick in ticks], [1100, 1252, 1500, 1530, 2000], "sorted, current time (10.00) excluded")
+        self.assertEqual(set(ticks[0]), {"cs", "source", "score", "n"})
+        merged = ticks[1]
+        self.assertEqual((merged["source"], merged["score"], merged["n"]), ("old", 0.7, 2), "12.50 and 12.52 merge, best score kept")
+        self.assertEqual(ticks[0]["n"], 2, "ctc first token and the whisper diagnostic onset merge")
+        self.assertEqual(review_server._tick_candidates({}, None, None), [])
+        # nothing else on the row changes
+        self.assertEqual(review_server._tick_candidates(assignment, diagnostics, 1000), ticks)
+
+    def test_rows_carry_tick_candidates(self) -> None:
+        data = json.loads(self.report.read_text(encoding="utf-8"))
+        data["assignments"][1]["candidates"] = [{"time": 99.0, "source": "far", "score": 0.5}]
+        data["local_whisper_evidence_diagnostics"] = {"entries": [{"entry": data["assignments"][1].get("entry", 2), "onset_time": 98.0, "score": 0.1}]}
+        self.report.write_text(json.dumps(data), encoding="utf-8")
+        self.store.reload()
+        rows = self.store.cached_song(0)["rows"]
+        self.assertTrue(all(isinstance(row["tick_candidates"], list) for row in rows))
+        self.assertIn(9900, [tick["cs"] for tick in rows[1]["tick_candidates"]])
+        self.assertIn(9800, [tick["cs"] for tick in rows[1]["tick_candidates"]])
+
     def test_many_flac_targets_parse_each_report_once(self) -> None:
         # Loading a 180-song review used to parse every report once per FLAC target (O(n^2)).
         songs = []
