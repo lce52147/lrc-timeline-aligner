@@ -122,5 +122,9 @@ class TimestampMutationTrustTests(unittest.TestCase):
         self.assertNotIn("timing_trusted_sources", row)
 
 
+def tearDownModule() -> None:
+    split_patch.assert_clean()
+
+
 if __name__ == "__main__":
     unittest.main()

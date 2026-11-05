@@ -101,10 +101,7 @@ class Patched:
         self.vocal_absent = vocal_absent
 
     def __enter__(self) -> "Patched":
-        self.saved = (
-            auto_lrc._run_model_helper_command, auto_lrc.default_ctc_python, auto_lrc.analyze_audio,
-            auto_lrc.vocal_stem_levels, auto_lrc._ctc_model_blob_sha256,
-        )
+        self.restores = []
         helper = self.helper
         absent = self.vocal_absent
 
@@ -115,20 +112,18 @@ class Patched:
             def absent(self, seconds: float) -> bool:
                 return absent
 
-        split_patch.assign("_run_model_helper_command", lambda command, **kwargs: helper(command, **kwargs))  # type: ignore[assignment]
-        split_patch.assign("default_ctc_python", lambda: Path("python"))  # type: ignore[assignment]
-        split_patch.assign("analyze_audio", lambda path, duration: auto_lrc.AudioFeatures(  # type: ignore[assignment]
+        self.restores.append(split_patch.assign("_run_model_helper_command", lambda command, **kwargs: helper(command, **kwargs)))  # type: ignore[assignment]
+        self.restores.append(split_patch.assign("default_ctc_python", lambda: Path("python")))  # type: ignore[assignment]
+        self.restores.append(split_patch.assign("analyze_audio", lambda path, duration: auto_lrc.AudioFeatures(  # type: ignore[assignment]
             duration, np.zeros(0), np.zeros(0), np.zeros(0), list(SEGMENTS)
-        ))
-        split_patch.assign("vocal_stem_levels", lambda report: Levels())  # type: ignore[assignment]
-        split_patch.assign("_ctc_model_blob_sha256", lambda: "test-model-blob")  # type: ignore[assignment]
+        )))
+        self.restores.append(split_patch.assign("vocal_stem_levels", lambda report: Levels()))  # type: ignore[assignment]
+        self.restores.append(split_patch.assign("_ctc_model_blob_sha256", lambda: "test-model-blob"))  # type: ignore[assignment]
         return self
 
     def __exit__(self, *exc: object) -> bool:
-        (
-            auto_lrc._run_model_helper_command, auto_lrc.default_ctc_python, auto_lrc.analyze_audio,
-            auto_lrc.vocal_stem_levels, auto_lrc._ctc_model_blob_sha256,
-        ) = self.saved
+        for restore in reversed(self.restores):
+            restore()
         return False
 
 
@@ -312,6 +307,10 @@ class SegmentRealignStageTests(unittest.TestCase):
         self.assertEqual(auto_lrc.segment_realign_row_status(rows, 0, 10.0, {"ctc_score": 0.10, "ctc_token_spans": spans(10.0)}, None), "REVIEW")
         self.assertEqual(auto_lrc.segment_realign_row_status(rows, 0, 10.0, weak, None), "REVIEW")
         self.assertEqual(auto_lrc.segment_realign_row_status(rows, 0, 10.0, None, None), "REVIEW")
+
+
+def tearDownModule() -> None:
+    split_patch.assert_clean()
 
 
 if __name__ == "__main__":

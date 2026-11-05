@@ -5152,14 +5152,6 @@ class CentralTimingStateTests(unittest.TestCase):
             "validation": 0,
             "collect": 0,
         }
-        originals = (
-            auto_lrc.apply_anchor_hints,
-            auto_lrc.score_line_timing_candidates,
-            auto_lrc.apply_short_duplicate_acoustic_recovery,
-            auto_lrc.apply_post_score_audio_validation,
-            auto_lrc.collect_central_timing_candidates,
-            auto_lrc.ctc_alignment_audio_path,
-        )
 
         def anchors(_entries, timestamps, _report, _path, _duration):
             counts["anchor"] += 1
@@ -5181,12 +5173,13 @@ class CentralTimingStateTests(unittest.TestCase):
             counts["collect"] += 1
             return ((candidate,),), {"probe_calls": 1}
 
-        split_patch.assign("apply_anchor_hints", anchors)  # type: ignore[assignment]
-        split_patch.assign("score_line_timing_candidates", score)  # type: ignore[assignment]
-        split_patch.assign("apply_short_duplicate_acoustic_recovery", duplicate)  # type: ignore[assignment]
-        split_patch.assign("apply_post_score_audio_validation", validation)  # type: ignore[assignment]
-        split_patch.assign("collect_central_timing_candidates", collect)  # type: ignore[assignment]
-        split_patch.assign("ctc_alignment_audio_path", lambda _report, audio: audio)  # type: ignore[assignment]
+        restores = []
+        restores.append(split_patch.assign("apply_anchor_hints", anchors))  # type: ignore[assignment]
+        restores.append(split_patch.assign("score_line_timing_candidates", score))  # type: ignore[assignment]
+        restores.append(split_patch.assign("apply_short_duplicate_acoustic_recovery", duplicate))  # type: ignore[assignment]
+        restores.append(split_patch.assign("apply_post_score_audio_validation", validation))  # type: ignore[assignment]
+        restores.append(split_patch.assign("collect_central_timing_candidates", collect))  # type: ignore[assignment]
+        restores.append(split_patch.assign("ctc_alignment_audio_path", lambda _report, audio: audio))  # type: ignore[assignment]
         try:
             previews = []
             for backend in ("auto-candidate", "explicit-candidate"):
@@ -5202,14 +5195,8 @@ class CentralTimingStateTests(unittest.TestCase):
                 )
                 previews.append((preview_report, evaluated))
         finally:
-            (
-                auto_lrc.apply_anchor_hints,
-                auto_lrc.score_line_timing_candidates,
-                auto_lrc.apply_short_duplicate_acoustic_recovery,
-                auto_lrc.apply_post_score_audio_validation,
-                auto_lrc.collect_central_timing_candidates,
-                auto_lrc.ctc_alignment_audio_path,
-            ) = originals
+            for restore in reversed(restores):
+                restore()
         self.assertEqual(counts, {key: 2 for key in counts})
         selection = auto_lrc.select_evaluated_backend(
             tuple(evaluated for _report, evaluated in previews)
@@ -5229,14 +5216,6 @@ class CentralTimingStateTests(unittest.TestCase):
         counts = {"inference": 0, "preview": 0, "commit": 0}
         preview_backends: list[str] = []
         cache_ids: list[int] = []
-        originals = (
-            auto_lrc.default_ctc_ready,
-            auto_lrc.default_whisperx_ready,
-            auto_lrc.try_ctc_candidate,
-            auto_lrc._central_preview_generation_candidates,
-            auto_lrc.prepare_backend_timing_preview,
-            auto_lrc.commit_evaluated_backend,
-        )
 
         def infer(*_args, **_kwargs):
             counts["inference"] += 1
@@ -5272,14 +5251,15 @@ class CentralTimingStateTests(unittest.TestCase):
             )
             return list(timestamps), report, evaluated, []
 
-        split_patch.assign("default_ctc_ready", lambda: True)  # type: ignore[assignment]
-        split_patch.assign("default_whisperx_ready", lambda: False)  # type: ignore[assignment]
-        split_patch.assign("try_ctc_candidate", infer)  # type: ignore[assignment]
-        split_patch.assign("_central_preview_generation_candidates", generation_candidates)  # type: ignore[assignment]
-        split_patch.assign("prepare_backend_timing_preview", preview)  # type: ignore[assignment]
-        split_patch.assign("commit_evaluated_backend", lambda *_args, **_kwargs: counts.update(  # type: ignore[assignment]
+        restores = []
+        restores.append(split_patch.assign("default_ctc_ready", lambda: True))  # type: ignore[assignment]
+        restores.append(split_patch.assign("default_whisperx_ready", lambda: False))  # type: ignore[assignment]
+        restores.append(split_patch.assign("try_ctc_candidate", infer))  # type: ignore[assignment]
+        restores.append(split_patch.assign("_central_preview_generation_candidates", generation_candidates))  # type: ignore[assignment]
+        restores.append(split_patch.assign("prepare_backend_timing_preview", preview))  # type: ignore[assignment]
+        restores.append(split_patch.assign("commit_evaluated_backend", lambda *_args, **_kwargs: counts.update(  # type: ignore[assignment]
             {"commit": counts["commit"] + 1}
-        ))
+        )))
         try:
             # The bare ``object()`` args cannot drive a real WhisperX pass, so the
             # python-availability probe is pinned off regardless of whether the
@@ -5293,14 +5273,8 @@ class CentralTimingStateTests(unittest.TestCase):
                     None,
                 )
         finally:
-            (
-                auto_lrc.default_ctc_ready,
-                auto_lrc.default_whisperx_ready,
-                auto_lrc.try_ctc_candidate,
-                auto_lrc._central_preview_generation_candidates,
-                auto_lrc.prepare_backend_timing_preview,
-                auto_lrc.commit_evaluated_backend,
-            ) = originals
+            for restore in reversed(restores):
+                restore()
         self.assertEqual(timestamps, [12.0])
         self.assertEqual(report["backend"], backend)
         self.assertEqual(counts["inference"], 1)
@@ -5312,17 +5286,6 @@ class CentralTimingStateTests(unittest.TestCase):
 
     def test_process_auto_reuses_selection_and_explicit_previews_once(self) -> None:
         candidate = self.candidate(12.0, self.coherent_spans(12.0), current=True)
-        original_functions = (
-            auto_lrc.probe_duration,
-            auto_lrc.find_anchor_hints,
-            auto_lrc.default_ctc_ready,
-            auto_lrc.default_whisperx_ready,
-            auto_lrc.run_ctc_alignment,
-            auto_lrc.run_auto_backend_competition,
-            auto_lrc.prepare_backend_timing_preview,
-            auto_lrc.commit_evaluated_backend,
-            auto_lrc.audio_track_labels,
-        )
         real_commit = auto_lrc.commit_evaluated_backend
 
         with TemporaryDirectory() as temp_name:
@@ -5362,15 +5325,16 @@ class CentralTimingStateTests(unittest.TestCase):
                         counts["commit"] += 1
                         return real_commit(selected, selected_report)
 
-                    split_patch.assign("probe_duration", lambda _path: 20.0)  # type: ignore[assignment]
-                    split_patch.assign("find_anchor_hints", lambda *_args: None)  # type: ignore[assignment]
-                    split_patch.assign("default_ctc_ready", lambda: True)  # type: ignore[assignment]
-                    split_patch.assign("default_whisperx_ready", lambda: False)  # type: ignore[assignment]
-                    split_patch.assign("run_ctc_alignment", explicit_inference)  # type: ignore[assignment]
-                    auto_lrc.run_auto_backend_competition = competition  # type: ignore[assignment]
-                    split_patch.assign("prepare_backend_timing_preview", preview)  # type: ignore[assignment]
-                    split_patch.assign("commit_evaluated_backend", commit)  # type: ignore[assignment]
-                    split_patch.assign("audio_track_labels", lambda _path: ("", "generic"))  # type: ignore[assignment]
+                    restores = []
+                    restores.append(split_patch.assign("probe_duration", lambda _path: 20.0))  # type: ignore[assignment]
+                    restores.append(split_patch.assign("find_anchor_hints", lambda *_args: None))  # type: ignore[assignment]
+                    restores.append(split_patch.assign("default_ctc_ready", lambda: True))  # type: ignore[assignment]
+                    restores.append(split_patch.assign("default_whisperx_ready", lambda: False))  # type: ignore[assignment]
+                    restores.append(split_patch.assign("run_ctc_alignment", explicit_inference))  # type: ignore[assignment]
+                    restores.append(split_patch.assign("run_auto_backend_competition", competition))  # type: ignore[assignment]
+                    restores.append(split_patch.assign("prepare_backend_timing_preview", preview))  # type: ignore[assignment]
+                    restores.append(split_patch.assign("commit_evaluated_backend", commit))  # type: ignore[assignment]
+                    restores.append(split_patch.assign("audio_track_labels", lambda _path: ("", "generic")))  # type: ignore[assignment]
                     output = temp / f"{timing_source}.lrc"
                     report_dir = temp / f"{timing_source}-reports"
                     args = build_parser().parse_args([
@@ -5385,17 +5349,8 @@ class CentralTimingStateTests(unittest.TestCase):
                     try:
                         result = auto_lrc.process_audio(audio, args)
                     finally:
-                        (
-                            auto_lrc.probe_duration,
-                            auto_lrc.find_anchor_hints,
-                            auto_lrc.default_ctc_ready,
-                            auto_lrc.default_whisperx_ready,
-                            auto_lrc.run_ctc_alignment,
-                            auto_lrc.run_auto_backend_competition,
-                            auto_lrc.prepare_backend_timing_preview,
-                            auto_lrc.commit_evaluated_backend,
-                            auto_lrc.audio_track_labels,
-                        ) = original_functions
+                        for restore in reversed(restores):
+                            restore()
                     self.assertEqual(result, output.resolve())
                     self.assertEqual(counts["commit"], 1)
                     if timing_source == "auto":
@@ -14477,6 +14432,10 @@ class BackendParticipationTests(unittest.TestCase):
         failures = report[auto_lrc._RUNTIME_BACKEND_PARTICIPATION_KEY]["evidence_producers_failed"]
         self.assertEqual(failures[0]["producer"], "apply_vocal_activity_reentry_hypotheses")
 
+
+
+def tearDownModule() -> None:
+    split_patch.assert_clean()
 
 
 if __name__ == "__main__":

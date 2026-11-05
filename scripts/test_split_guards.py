@@ -10,6 +10,7 @@ from unittest import mock
 
 import auto_lrc
 import runtime_base
+import split_patch
 
 SCRIPTS = Path(__file__).resolve().parent
 
@@ -106,6 +107,16 @@ class LateBoundCallbackTests(unittest.TestCase):
         for name in report_trust._LATE_BOUND_CALLBACKS:
             self.assertIs(getattr(report_trust, name), getattr(auto_lrc, name), name)
 
+    def test_report_trust_callbacks_are_the_central_commit_owner_objects(self):
+        import central_commit
+        import report_trust
+        self.assertEqual(
+            sorted(report_trust._LATE_BOUND_CALLBACKS),
+            ["_final_post_central_material_conflict_entries", "_suspicious_entry_requires_review_for_decision"],
+        )
+        for name in report_trust._LATE_BOUND_CALLBACKS:
+            self.assertIs(getattr(report_trust, name), getattr(central_commit, name), name)
+
     def test_audio_api_is_bound_in_every_module_that_late_binds_it(self):
         import asr_backends
         import central_commit
@@ -131,6 +142,63 @@ class LateBoundCallbackTests(unittest.TestCase):
         self.assertEqual(namespace, {"_x": 5})
         with self.assertRaises(AttributeError):
             runtime_base.bind_late_callbacks(namespace, ("_x",), {"_y": 5})
+
+
+class SplitPatchAssignRestoreTests(unittest.TestCase):
+    NAME = "analyze_audio"
+
+    def _bindings(self):
+        return {m: id(getattr(__import__(m), self.NAME)) for m in split_patch.SPLIT_MODULES if hasattr(__import__(m), self.NAME)}
+
+    def tearDown(self):
+        split_patch._ACTIVE.clear()
+
+    def test_restore_callable_puts_back_every_module_binding(self):
+        before = self._bindings()
+        self.assertGreater(len(before), 1)
+        restore = split_patch.assign(self.NAME, lambda *a, **k: None)
+        self.assertNotEqual(self._bindings(), before)
+        with self.assertRaises(AssertionError):
+            split_patch.assert_clean()
+        restore()
+        self.assertEqual(self._bindings(), before)
+        split_patch.assert_clean()
+
+    def test_facade_only_restore_is_reported(self):
+        original = auto_lrc.analyze_audio
+        before = self._bindings()
+        restore = split_patch.assign(self.NAME, lambda *a, **k: None)
+        try:
+            auto_lrc.analyze_audio = original  # the leak this guard exists for
+            with self.assertRaisesRegex(AssertionError, self.NAME):
+                split_patch.assert_clean()
+        finally:
+            restore()
+        self.assertEqual(self._bindings(), before)
+
+    def test_assigning_the_originals_back_counts_as_restoring(self):
+        original = auto_lrc.analyze_audio
+        before = self._bindings()
+        split_patch.assign(self.NAME, lambda *a, **k: None)
+        split_patch.assign(self.NAME, original)
+        self.assertEqual(self._bindings(), before)
+        split_patch.assert_clean()
+
+    def test_modules_that_assign_clean_up_in_tear_down_module(self):
+        for path in sorted(SCRIPTS.glob("test_*.py")):
+            source = path.read_text(encoding="utf-8")
+            tree = ast.parse(source)
+            if not any(
+                isinstance(n, ast.Call) and ast.unparse(n.func) == "split_patch.assign" for n in ast.walk(tree)
+            ):
+                continue
+            hooks = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "tearDownModule"]
+            self.assertEqual(len(hooks), 1, f"{path.name} needs tearDownModule calling split_patch.assert_clean()")
+            self.assertIn("split_patch.assert_clean", ast.unparse(hooks[0]), path.name)
+
+
+def tearDownModule() -> None:
+    split_patch.assert_clean()
 
 
 if __name__ == "__main__":

@@ -608,5 +608,9 @@ class WideRegionAdmissionTests(unittest.TestCase):
                 self.assertNotEqual(decision.candidate.source, auto_lrc.CTC_WIDE_REGION_FALLBACK_SOURCE)
 
 
+def tearDownModule() -> None:
+    split_patch.assert_clean()
+
+
 if __name__ == "__main__":
     unittest.main()
