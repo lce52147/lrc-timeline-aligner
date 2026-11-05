@@ -151,6 +151,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     <tr><td>Shift+A / Shift+B</td><td>直接採用 A / B，跳下一筆</td></tr>
     <tr><td>← → 或 [ ]</td><td>−0.1 / +0.1 秒（Shift：0.01 秒）</td></tr>
     <tr><td>Enter</td><td>接受目前值，跳下一筆</td></tr>
+    <tr><td>T</td><td>播放中聽到開口就按：把這句起點設在播放位置（扣掉反應補償），跳下一筆</td></tr>
     <tr><td>K</td><td>維持原值，跳下一筆</td></tr>
     <tr><td>U</td><td>復原這筆</td></tr>
     <tr><td>↑ / ↓</td><td>上一筆 / 下一筆</td></tr>
@@ -164,6 +165,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   </table>
   <label><input id="untrusted" type="checkbox"> 顯示整首歌詞（照歌詞順序列出每一句，包含沒被標為待審的句子）</label>
   <div><label><input id="autoplay" type="checkbox"> 換句時自動播放（Enter / K / ↑ ↓ 跳到下一句就先聽開頭）</label></div>
+  <div><label>T 鍵反應補償 <input id="tap-comp" type="number" min="0" max="0.5" step="0.05" style="width:5em"> 秒（0–0.5，預設 0.15；按 T 時起點 = 播放位置 − 補償）</label></div>
   <div><label><input id="show-low" type="checkbox"> <span id="show-low-text">顯示可略過的句子</span>（預設不列，也不計入剩餘）</label></div>
   <div><label><input id="batch-skip" type="checkbox"> 顯示可略過的句子時，同時顯示「全部維持」按鈕</label></div>
   <div style="margin-top:12px;text-align:right"><button id="help-close">關閉</button></div>
@@ -1004,7 +1006,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     stage(item, option.cs, 'option:' + sourceText(option), 0);
     playAround(item, option.cs);
   }
-  function nudge(item, deltaCs) {
+  function nudge(item, deltaCs, source) {
     if (!editable(item.song)) return;
     if (conflicted(item)) {
       state.error = '這筆的時間在暫存後被改過，請重新選一個選項或按 U 復原再微調。';
@@ -1015,7 +1017,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     const cs = Math.max(minCsOf(item), before + deltaCs);
     const actualDelta = cs - before;
     const existing = editFor(item);
-    stage(item, cs, existing?.source || 'nudge', (existing?.nudge_cs || 0) + actualDelta);
+    stage(item, cs, source || existing?.source || 'nudge', (existing?.nudge_cs || 0) + actualDelta);
     playAround(item, cs);
   }
   // Typed timestamps: mm:ss.xx, m:ss.x or plain seconds set the time; +0.1 / -0.05 move it (seconds). Null = not a time.
@@ -1065,6 +1067,32 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       else if (event.key === 'Escape') { event.preventDefault(); finished = true; input.value = shown; mark(''); input.blur(); }
     });
     input.addEventListener('blur', commit);
+  }
+  // Tap T while a clip plays: the line starts where the playhead is, minus a reaction allowance (0-0.5 s, remembered).
+  const TAP_COMP_KEY = 'lrc-review-tap-comp';
+  const TAP_COMP_DEFAULT = 0.15, TAP_COMP_MAX = 0.5;
+  const clampTapComp = value => { const n = Number(value); return Number.isFinite(n) ? Math.min(TAP_COMP_MAX, Math.max(0, n)) : TAP_COMP_DEFAULT; };
+  state.tapComp = TAP_COMP_DEFAULT;
+  try { const saved = localStorage.getItem(TAP_COMP_KEY); if (saved != null) state.tapComp = clampTapComp(saved); } catch (_) {}
+  function setTapComp(value) { state.tapComp = clampTapComp(value); try { localStorage.setItem(TAP_COMP_KEY, String(state.tapComp)); } catch (_) {} return state.tapComp; }
+  // Goes through nudge() (staged edit, draft, floor, playback jump), then logs the verdict with source 'tap' and moves on like Enter does.
+  function tapStart(item) {
+    const audio = state.player.active;
+    if (!audio || state.player.ab || audio.paused) { state.notice = '先播放再按 T'; render(); return false; }
+    if (!editable(item.song)) return false;
+    if (conflicted(item)) { nudge(item, 0, 'tap'); return false; }
+    const target = Math.max(minCsOf(item), Math.round((audio.currentTime - state.tapComp) * 100));
+    const before = working(item) || 0;
+    nudge(item, target - before, 'tap');
+    const edit = editFor(item);
+    if (edit) recordDecision(item, 'change', edit.cs, 'tap'); else recordDecision(item, 'keep', item.row.current_cs, 'tap');
+    markDone(item);
+    if (state.showAll) {
+      state.selected = Math.min(visible().length - 1, state.selected + 1);
+      render();
+      autoplaySelected();
+    } else nextRow();
+    return true;
   }
   function setShowAll(on) {
     const current = visible()[state.selected];
@@ -1728,6 +1756,8 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   document.getElementById('autoplay').addEventListener('change', event => { state.autoplay = event.target.checked; saveSettings(); });
   document.getElementById('show-low').checked = state.showLow;
   document.getElementById('show-low').addEventListener('change', event => { state.showLow = event.target.checked; saveSettings(); state.selected = 0; render(); });
+  document.getElementById('tap-comp').value = String(state.tapComp);
+  document.getElementById('tap-comp').addEventListener('change', event => { event.target.value = String(setTapComp(event.target.value)); });
   document.getElementById('batch-skip').checked = state.batchSkip;
   document.getElementById('batch-skip').addEventListener('change', event => { state.batchSkip = event.target.checked; saveSettings(); render(); });
   document.getElementById('mode').addEventListener('click', event => { event.currentTarget.blur(); stopPlayer(); state.mode = state.mode === 'flac' ? 'stem' : 'flac'; render(); });
@@ -1757,6 +1787,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       if (option && editable(item.song)) { stage(item, option.cs, 'option:' + sourceText(option), 0); accept(item); }
       return;
     }
+    if (event.key.toLowerCase() === 't') { event.preventDefault(); tapStart(item); return; }
     if (event.key.toLowerCase() === 'k') { event.preventDefault(); keep(item); return; }
     if (event.key.toLowerCase() === 'u') { event.preventDefault(); state.edits.delete(keyFor(item)); setDirty(); render(); return; }
     if (event.key.toLowerCase() === 'v') { event.preventDefault(); stopPlayer(); state.mode = state.mode === 'flac' ? 'stem' : 'flac'; render(); return; }

@@ -88,7 +88,7 @@ async function fetchMock(url, options={}) {
 let source = fs.readFileSync('scripts/review_page/index.html','utf8');
 const match = source.match(/<script>\r?\n([\s\S]*?)\r?\n<\/script>/);
 assert.ok(match, 'page script missing');
-const script = match[1].replace(/  load\(\)\.then\(\(\) => \{ refreshJobs\(\); watchFiles\(\); \}\);\r?\n\}\)\(\);/, '  globalThis.__reviewTest = {state, render, playAround, playAB, stopPlayer, select, stage, save, rowElement, attachPeaks, accept, keep, openImport, inspectImports, startImport, refreshJobs, renderImport, volume, volumeGain, sliderToDb, dbToSlider, setVolumeDb, toggleMute, setShowAll, load, busy, parseTimeInput, applyTypedTime, nudge};\n  load().then(() => { refreshJobs(); watchFiles(); });\n})();');
+const script = match[1].replace(/  load\(\)\.then\(\(\) => \{ refreshJobs\(\); watchFiles\(\); \}\);\r?\n\}\)\(\);/, '  globalThis.__reviewTest = {state, render, playAround, playAB, stopPlayer, select, stage, save, rowElement, attachPeaks, accept, keep, openImport, inspectImports, startImport, refreshJobs, renderImport, volume, volumeGain, sliderToDb, dbToSlider, setVolumeDb, toggleMute, setShowAll, load, busy, parseTimeInput, applyTypedTime, nudge, tapStart, setTapComp};\n  load().then(() => { refreshJobs(); watchFiles(); });\n})();');
 const storage = new Map();
 const localStorageMock = {getItem(key) { return storage.has(key) ? storage.get(key) : null; }, setItem(key, value) { storage.set(key, String(value)); }, removeItem(key) { storage.delete(key); }};
 const context = {Date: FakeDate, AbortController: class { constructor() { this.signal = {}; } abort() {} }, console, document:documentMock, localStorage:localStorageMock, addEventListener(){}, URLSearchParams: class { constructor(){ } get(){return 'token';} }, location:{search:'',hash:''}, fetch:fetchMock, Audio:AudioMock, setTimeout:fakeSetTimeout, clearTimeout:fakeClearTimeout, setInterval:fakeSetInterval, clearInterval:fakeClearInterval, alert(){}, Promise, encodeURIComponent, Map, Set, Number, String, Math, JSON, Object, Error, RegExp};
@@ -244,6 +244,51 @@ vm.runInNewContext(script, context, {filename:'review_page/index.html'});
       documentMock.createElement = realCreate; test.state.edits.clear();
     }
     test.state.edits.clear(); test.state.dirty = false; test.state.rows.pop(); test.render();
+  }
+
+  // ---- S5: tap T sets the line start at the playhead ----
+  {
+    const keydown = documentMock.listeners.get('keydown'), keyOf = it => String(it.song.index) + ':' + it.row.entry;
+    const first = test.state.rows[0];
+    const second = Object.assign({}, first, {row:Object.assign({}, first.row, {entry:8, current_cs:400})});
+    test.state.rows.push(second);
+    const reset = () => { test.state.edits.clear(); test.state.done.clear(); test.state.dirty = false; test.state.notice = ''; test.state.error = ''; decisionPosts.length = 0; test.setTapComp(0.15); test.setShowAll(false); test.select(first); test.state.selected = test.state.rows.filter(r => r.song.index === 0).indexOf(first); };
+    const press = (key, target) => keydown({key, target:target || {closest: () => null}, preventDefault(){}});
+    const playAt = async t => { await test.playAround(first, 100); const audio = test.state.player.active; audio.currentTime = t; audio.paused = false; };
+    reset(); test.state.autoplay = false; const startIndex = test.state.selected;
+    // playing: start = playhead - 0.15 s, same edit shape as a nudge, source tap
+    await playAt(2.5); press('t');
+    const edit = test.state.edits.get(keyOf(first));
+    assert.equal(edit.cs, 235, 'S5: start = playhead 2.50 - 0.15 s');
+    assert.equal(edit.source, 'tap'); assert.equal(edit.nudge_cs, 135); assert.equal(edit.base_cs, 100);
+    assert.equal(test.state.dirty, true, 'S5: a tap marks the draft dirty');
+    assert.deepEqual(decisionPosts.at(-1), {entry:first.row.entry, decision:'change', cs:235, source:'tap'}, 'S5: decision logged with source tap');
+    assert.notEqual(test.state.selected, startIndex, 'S5: moves on to the next line');
+    // capital T works too; the floor holds
+    reset(); await playAt(0.05); press('T');
+    assert.equal(test.state.edits.get(keyOf(first)).cs, 0, 'S5: never below the floor');
+    // not playing: nothing changes, a hint shows
+    reset(); test.stopPlayer(); const idle = test.state.selected; press('t');
+    assert.equal(test.state.edits.size, 0, 'S5: no edit when nothing plays'); assert.equal(decisionPosts.length, 0);
+    assert.equal(test.state.selected, idle); assert.equal(test.state.notice, '先播放再按 T');
+    // paused clip counts as not playing
+    reset(); await playAt(2.5); test.state.player.active.paused = true; press('t');
+    assert.equal(test.state.edits.size, 0, 'S5: a paused clip is not playing');
+    // focused input: ignored
+    reset(); await playAt(2.5); press('t', {type:'text', closest: sel => /input/.test(sel) ? {} : null});
+    assert.equal(test.state.edits.size, 0, 'S5: T typed in an input does not tap');
+    // compensation setting: clamped, remembered, used
+    assert.equal(test.setTapComp(0.3), 0.3); assert.equal(storage.get('lrc-review-tap-comp'), '0.3');
+    assert.equal(test.setTapComp(9), 0.5); assert.equal(test.setTapComp(-1), 0); assert.equal(test.setTapComp('x'), 0.15);
+    reset(); test.setTapComp(0.3); await playAt(2.5); press('t');
+    assert.equal(test.state.edits.get(keyOf(first)).cs, 220, 'S5: compensation 0.3 s');
+    // whole-song view picks the next line
+    reset(); test.setShowAll(true); test.select(first); await playAt(2.5); const at = test.state.selected; press('t');
+    assert.equal(test.state.selected, Math.min(test.state.rows.length - 1, at + 1), 'S5: whole-song view selects the next line');
+    // other keys unchanged: K still keeps
+    reset(); test.setShowAll(false); test.select(first); press('k');
+    assert.equal(test.state.edits.size, 0); assert.equal(decisionPosts.at(-1).source, 'keep');
+    test.setTapComp(0.15); test.state.autoplay = true; reset(); test.setShowAll(true); test.state.rows.pop(); test.render();
   }
 
   // ---- import panel ----
