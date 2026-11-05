@@ -19,6 +19,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import auto_lrc  # noqa: E402
+import split_patch
 import file_digest  # noqa: E402
 import runtime_paths  # noqa: E402
 
@@ -61,8 +62,7 @@ class TailContextValidityMemoTests(unittest.TestCase):
 
     def test_verdict_is_computed_once_per_context_object(self) -> None:
         context = _context()
-        with mock.patch.object(
-            auto_lrc, "_tail_context_is_valid_uncached", wraps=auto_lrc._tail_context_is_valid_uncached
+        with split_patch.patch("_tail_context_is_valid_uncached", wraps=auto_lrc._tail_context_is_valid_uncached
         ) as uncached:
             self.assertTrue(auto_lrc._tail_context_is_valid(context))
             self.assertTrue(auto_lrc._tail_context_is_valid(context))
@@ -73,8 +73,7 @@ class TailContextValidityMemoTests(unittest.TestCase):
 
     def test_invalid_contexts_are_remembered_as_invalid(self) -> None:
         unsorted = _context(row_revisions=("r2", "r1"))
-        with mock.patch.object(
-            auto_lrc, "_tail_context_is_valid_uncached", wraps=auto_lrc._tail_context_is_valid_uncached
+        with split_patch.patch("_tail_context_is_valid_uncached", wraps=auto_lrc._tail_context_is_valid_uncached
         ) as uncached:
             self.assertFalse(auto_lrc._tail_context_is_valid(unsorted))
             self.assertFalse(auto_lrc._tail_context_is_valid(unsorted))

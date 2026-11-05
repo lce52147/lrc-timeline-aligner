@@ -3,6 +3,7 @@ import unittest
 from types import SimpleNamespace as NS
 from unittest import mock
 import auto_lrc
+import split_patch
 
 
 class RecurrenceFinalSelectionTests(unittest.TestCase):
@@ -16,8 +17,8 @@ class RecurrenceFinalSelectionTests(unittest.TestCase):
                       rejection_reasons=())
         for policy in ("default", "ctc-first"):
             with (self.subTest(policy=policy),
-                mock.patch.object(auto_lrc, "evaluate_timing_candidate", side_effect=evaluate),
-                mock.patch.object(auto_lrc, "candidate_dominates", return_value=True),
+                split_patch.patch("evaluate_timing_candidate", side_effect=evaluate),
+                split_patch.patch("candidate_dominates", return_value=True),
             ):
                 decision = auto_lrc.select_timing_decision(
                     entry_index=0, candidates=(current, recurrence),

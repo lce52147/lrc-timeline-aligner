@@ -38,7 +38,7 @@ class ProductionPostscoreThreeRepeatsTests(unittest.TestCase):
             assignment.setdefault('alignment_hypotheses',[]).append(kwargs)
         with split_patch.patch("analyze_audio",return_value=fake),\
              patch.object(a,'nearest_local_peak',side_effect=fake_peak),\
-             patch.object(a,'record_alignment_hypothesis',side_effect=capture):
+             split_patch.patch("record_alignment_hypothesis",side_effect=capture):
             changes=a.apply_post_score_audio_validation(
                  self.stem,self.entries,self.times,self.report,30.)
         self.assertEqual(self.times,saved)
