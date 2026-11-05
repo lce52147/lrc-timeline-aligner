@@ -354,7 +354,7 @@ class StageArgsTests(unittest.TestCase):
         self.assertEqual(r2_pipeline.auto_lrc.build_parser().parse_args(["song.flac", "--stage-timings-pass", "final"]).stage_timings_pass, "final")
 
     def test_stage_spec_rebinding_contract(self):
-        tree = ast.parse(Path(auto_lrc.__file__).read_text(encoding="utf-8"))
+        tree = ast.parse(auto_lrc.algorithm_source_text())
         for parent in ast.walk(tree):
             for child in ast.iter_child_nodes(parent):
                 child.parent = parent

@@ -70,7 +70,53 @@ PREFIX_ACOUSTIC_ASSOCIATION_SECONDS = 0.22
 TRUSTED_ALIGNMENT_SCORE = 0.62
 COLLAPSE_SEGMENT_SCORE = 0.30
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-_LOADED_SOURCE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+_ALGORITHM_SOURCE_MODULES = (
+    "runtime_base",
+    "audio_features",
+    "lyrics_io",
+    "timing_core",
+    "report_trust",
+    "ctc_refinement",
+    "acoustic_hypotheses",
+    "asr_backends",
+    "local_whisper_retry",
+    "central_peer_recovery",
+    "neutral_arbitration",
+    "central_commit",
+    "backend_bundle",
+    "postcentral_recovery",
+    "runtime_evidence_binding",
+)
+
+
+def _algorithm_source_files() -> list[Path]:
+    """Source files whose bytes define the loaded algorithm (missing ones skipped)."""
+    here = Path(__file__).resolve().parent
+    paths = [here / "auto_lrc.py"]
+    paths.extend(here / f"{name}.py" for name in _ALGORITHM_SOURCE_MODULES)
+    return sorted(path for path in paths if path.is_file())
+
+
+def _algorithm_source_sha256() -> str:
+    digest = hashlib.sha256()
+    for path in _algorithm_source_files():
+        digest.update(path.name.encode("utf-8") + b"\x00")
+        digest.update(path.read_bytes() + b"\x00")
+    return digest.hexdigest()
+
+
+def algorithm_source_text() -> str:
+    """Concatenated algorithm source (for source-inspection tests)."""
+    parts = []
+    for path in _algorithm_source_files():
+        text = path.read_text(encoding="utf-8")
+        if parts:
+            text = text.replace("from __future__ import annotations\n", "", 1)
+        parts.append(text)
+    return "\n".join(parts)
+
+
+_LOADED_SOURCE_SHA256 = _algorithm_source_sha256()
 DEFAULT_REPORT_DIR = runtime_paths.reports_dir()
 DEFAULT_PROBE_DIR = runtime_paths.probes_dir()
 DEFAULT_VOCAL_CACHE_DIR = runtime_paths.vocal_cache_dir()
@@ -5469,6 +5515,24 @@ def segment_postcentral_nonmonotonic(
     )
 
 
+class _AudioApi:
+    """Singleton namespace handed to segment producers as ``audio_api``.
+
+    Attribute reads resolve against this module's globals at call time so that
+    test patches and stage-timing wrappers stay visible; unknown names raise
+    AttributeError so ``hasattr`` probes keep their meaning.
+    """
+
+    def __getattr__(self, name):
+        try:
+            return globals()[name]
+        except KeyError:
+            raise AttributeError(name) from None
+
+
+_AUDIO_API = _AudioApi()
+
+
 def validated_loaded_source_sha256() -> str:
     """Bind evidence to the code loaded on process startup, fail on mid-run edit.
 
@@ -5476,7 +5540,7 @@ def validated_loaded_source_sha256() -> str:
     that changed Python source was the code the running process executed.
     """
     try:
-        on_disk = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+        on_disk = _algorithm_source_sha256()
     except OSError as exc:
         raise LrcError(f"Cannot verify running algorithm source: {exc}") from exc
     if on_disk != _LOADED_SOURCE_SHA256:
@@ -12448,7 +12512,7 @@ def try_ctc_candidate(
                     lyric_texts=[entry_sung_text(entry) for entry in entries],
                     vocal_stem=ctc_alignment_audio_path(report, audio_path),
                     duration=duration,
-                    audio_api=sys.modules[__name__],
+                    audio_api=_AUDIO_API,
                     python_exe=default_ctc_python(),
                     ctc_helper=Path(__file__).resolve().parent / "ctc_align.py",
                     device=str(getattr(args, "whisperx_device", "auto")),
@@ -28510,7 +28574,7 @@ def prepare_backend_timing_preview(
             lyric_texts=[entry_sung_text(entry) for entry in entries],
             vocal_stem=final_alignment_audio,
             duration=duration,
-            audio_api=sys.modules[__name__],
+            audio_api=_AUDIO_API,
             python_exe=default_ctc_python(),
             ctc_helper=Path(__file__).resolve().parent / "ctc_align.py",
             device=str(getattr(args, "whisperx_device", "auto")),
@@ -40768,38 +40832,7 @@ def main(argv: list[str] | None = None) -> int:
     return 1 if failures else 0
 
 
-_STAGE_TIMING_SPEC = (
-    ("process_audio", "song", "song"),
-    ("load_lyrics", "load-lyrics", "top"),
-    ("build_lyric_preflight", "lyric-preflight", "top"),
-    ("probe_duration", "probe-duration", "top"),
-    ("run_backend_competition_over_skeleton_gate", "backend-competition", "top"),
-    ("prepare_backend_timing_preview", "timing-preview", "top"),
-    ("_precommit_neutral_boundary_arbitration", "neutral-arbitration", "top"),
-    ("_postcentral_acquire_targeted_joint_ctc_tails", "postcentral-ctc-tails", "top"),
-    ("_postcentral_acquire_known_lyric_hubert_tails", "postcentral-hubert-tails", "top"),
-    ("_precommit_hubert_existing_candidate_recovery", "hubert-recovery", "top"),
-    ("_precommit_independent_peer_existing_candidate_recovery", "peer-recovery", "top"),
-    ("commit_evaluated_backend", "commit-backend", "top"),
-    ("_apply_multimodel_consensus_runtime", "multimodel-consensus", "top"),
-    ("_postcommit_recompute_duplicate_review", "duplicate-review", "top"),
-    ("compute_final_timing_self_check", "self-check", "top"),
-    ("commit_final_timing_state", "commit-final", "top"),
-    ("write_review_tsv", "write-review-tsv", "top"),
-    ("write_lrc", "write-lrc", "top"),
-    ("write_alignment_report", "write-report", "top"),
-    ("_publish_lrc_report", "publish", "top"),
-    ("run_auto_backend_competition", "competition-pass", "nested"),
-    ("decode_temp_wav", "decode-wav", "nested"),
-    ("try_whispercpp_diagnostic_candidate", "raw-asr", "nested"),
-    ("try_ctc_candidate", "ctc-whole", "nested"),
-    ("prepare_vocal_ctc_audio", "separation", "nested"),
-    ("apply_ctc_local_window_realign", "ctc-local-windows", "nested"),
-    ("run_ctc_local_window_shadows", "ctc-window-shadows", "nested"),
-    ("run_whisperx_best_candidate", "whisperx", "nested"),
-    ("_model_cache_read", "model-cache-read", "read"),
-    ("_model_cache_write", "model-cache-write", "write"),
-)
+_STAGE_TIMING_SPEC = lrc_stage_timings.STAGE_TIMING_SPEC
 
 lrc_stage_timings.install(globals(), _STAGE_TIMING_SPEC)
 

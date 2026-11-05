@@ -15,6 +15,42 @@ _ACTIVE = None
 _TLS = threading.local()
 _PENDING = {}
 _INSTALL = {"wrapped": [], "missing": []}
+
+# Rows: (function name, stage label, role).  Each owner module calls
+# install(globals(), STAGE_TIMING_SPEC, owner=True) at the end of its own
+# import so importers that bind names from it receive the wrapped function.
+STAGE_TIMING_SPEC = (
+    ("process_audio", "song", "song"),
+    ("load_lyrics", "load-lyrics", "top"),
+    ("build_lyric_preflight", "lyric-preflight", "top"),
+    ("probe_duration", "probe-duration", "top"),
+    ("run_backend_competition_over_skeleton_gate", "backend-competition", "top"),
+    ("prepare_backend_timing_preview", "timing-preview", "top"),
+    ("_precommit_neutral_boundary_arbitration", "neutral-arbitration", "top"),
+    ("_postcentral_acquire_targeted_joint_ctc_tails", "postcentral-ctc-tails", "top"),
+    ("_postcentral_acquire_known_lyric_hubert_tails", "postcentral-hubert-tails", "top"),
+    ("_precommit_hubert_existing_candidate_recovery", "hubert-recovery", "top"),
+    ("_precommit_independent_peer_existing_candidate_recovery", "peer-recovery", "top"),
+    ("commit_evaluated_backend", "commit-backend", "top"),
+    ("_apply_multimodel_consensus_runtime", "multimodel-consensus", "top"),
+    ("_postcommit_recompute_duplicate_review", "duplicate-review", "top"),
+    ("compute_final_timing_self_check", "self-check", "top"),
+    ("commit_final_timing_state", "commit-final", "top"),
+    ("write_review_tsv", "write-review-tsv", "top"),
+    ("write_lrc", "write-lrc", "top"),
+    ("write_alignment_report", "write-report", "top"),
+    ("_publish_lrc_report", "publish", "top"),
+    ("run_auto_backend_competition", "competition-pass", "nested"),
+    ("decode_temp_wav", "decode-wav", "nested"),
+    ("try_whispercpp_diagnostic_candidate", "raw-asr", "nested"),
+    ("try_ctc_candidate", "ctc-whole", "nested"),
+    ("prepare_vocal_ctc_audio", "separation", "nested"),
+    ("apply_ctc_local_window_realign", "ctc-local-windows", "nested"),
+    ("run_ctc_local_window_shadows", "ctc-window-shadows", "nested"),
+    ("run_whisperx_best_candidate", "whisperx", "nested"),
+    ("_model_cache_read", "model-cache-read", "read"),
+    ("_model_cache_write", "model-cache-write", "write"),
+)
 _PROGRESS_START = None
 
 
@@ -401,18 +437,29 @@ def _install_special(name, label, fn, role):
     return timed(label, fn, cache_kind=cache_kind, function_name=name)
 
 
-def install(namespace, spec):
+def install(namespace, spec, owner=False):
     global _PROGRESS_START
-    try:
-        _PROGRESS_START = namespace.get("PROGRESS_START")
-    except Exception:
-        _PROGRESS_START = None
-    _INSTALL["wrapped"] = []
-    _INSTALL["missing"] = []
+    if owner:
+        # Owner pass: wrap only functions this namespace defines itself and
+        # keep accumulated results; the facade pass reports what is missing.
+        if namespace.get("PROGRESS_START") is not None:
+            _PROGRESS_START = namespace.get("PROGRESS_START")
+    else:
+        try:
+            _PROGRESS_START = namespace.get("PROGRESS_START")
+        except Exception:
+            _PROGRESS_START = None
+        _INSTALL["wrapped"] = []
+        _INSTALL["missing"] = []
     for row in spec:
         try:
             name, label, role = row[:3]
             fn = namespace.get(name)
+            if owner and (
+                fn is None
+                or getattr(fn, "__module__", None) != namespace.get("__name__")
+            ):
+                continue
             if fn is None:
                 _INSTALL["missing"].append(name)
                 continue

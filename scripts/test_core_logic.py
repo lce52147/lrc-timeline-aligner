@@ -4856,12 +4856,12 @@ class CentralTimingStateTests(unittest.TestCase):
         args = auto_lrc.build_parser().parse_args(["song.flac"])
         self.assertFalse(args.strict_review)
         self.assertFalse(args.fail_on_review_required)
-        source = Path(auto_lrc.__file__).read_text(encoding="utf-8")
+        source = auto_lrc.algorithm_source_text()
         self.assertNotIn("Refusing to write untrusted LRC", source)
         self.assertNotIn("blocking untrusted LRC", source)
 
     def test_production_source_contains_no_song_specific_alignment_literals(self) -> None:
-        source = Path(auto_lrc.__file__).read_text(encoding="utf-8")
+        source = auto_lrc.algorithm_source_text()
         for forbidden in ("Georgette", "エガクミライ", "\\u79c1"):
             self.assertNotIn(forbidden, source)
 
@@ -5463,7 +5463,7 @@ class CentralTimingStateTests(unittest.TestCase):
         self.assertTrue(actionable["assignments"][0]["review_required"])  # type: ignore[index]
 
     def test_auto_and_explicit_paths_share_preview_and_single_commit(self) -> None:
-        source = Path(auto_lrc.__file__).read_text(encoding="utf-8")
+        source = auto_lrc.algorithm_source_text()
         module = ast.parse(source)
         process = next(
             node for node in module.body
@@ -5491,13 +5491,13 @@ class CentralTimingStateTests(unittest.TestCase):
         self.assertEqual(len(commits), 1)
 
     def test_production_source_has_no_fixture_or_phoneme_recovery_branch(self) -> None:
-        source = Path(auto_lrc.__file__).read_text(encoding="utf-8")
+        source = auto_lrc.algorithm_source_text()
         self.assertNotIn("Georgette", source)
         self.assertNotIn("motsuretamama", source)
         self.assertNotIn("romaji.startswith", source)
 
     def test_no_timestamp_mutation_after_central_finalizer(self) -> None:
-        source = Path(auto_lrc.__file__).read_text(encoding="utf-8")
+        source = auto_lrc.algorithm_source_text()
         module = ast.parse(source)
         process = next(
             node for node in module.body
@@ -6673,7 +6673,7 @@ class UnresolvedEvidenceRequirementsProjectionTests(unittest.TestCase):
 
 class CandidateGenerationCleanupTests(unittest.TestCase):
     def test_active_automatic_precentral_stages_do_not_write_assignment_timestamp(self) -> None:
-        source = Path(auto_lrc.__file__).read_text(encoding="utf-8")
+        source = auto_lrc.algorithm_source_text()
         module = ast.parse(source)
         names = {
             "apply_ctc_acoustic_backtrack",
@@ -6843,7 +6843,7 @@ class CandidateGenerationCleanupTests(unittest.TestCase):
             auto_lrc.analyze_audio = original_analyze_audio  # type: ignore[assignment]
 
     def test_hybrid_ctc_derivation_preserves_base_candidate_by_copy(self) -> None:
-        source = Path(auto_lrc.__file__).read_text(encoding="utf-8")
+        source = auto_lrc.algorithm_source_text()
         module = ast.parse(source)
         function = next(
             node
@@ -7376,7 +7376,7 @@ class TailAwareCrossLineRetryTests(unittest.TestCase):
         self.assertEqual(diagnostics["legacy_prefix_probe_candidate_generation"]["active_candidate_count"], 0)  # type: ignore[index]
 
     def test_23b_collector_has_no_dormant_prefix_probe_candidate_construction(self) -> None:
-        source = Path(auto_lrc.__file__).read_text(encoding="utf-8")
+        source = auto_lrc.algorithm_source_text()
         module = ast.parse(source)
         collector = next(item for item in module.body if isinstance(item, ast.FunctionDef) and item.name == "collect_central_timing_candidates")
         collector_source = ast.unparse(collector)
@@ -7385,7 +7385,7 @@ class TailAwareCrossLineRetryTests(unittest.TestCase):
         self.assertNotIn("prefix_assignment_items", collector_source)
 
     def test_24_production_source_has_zero_legacy_boundary_stage_callers(self) -> None:
-        source = Path(auto_lrc.__file__).read_text(encoding="utf-8")
+        source = auto_lrc.algorithm_source_text()
         module = ast.parse(source)
         callers = []
         for node in ast.walk(module):
@@ -7401,7 +7401,7 @@ class TailAwareCrossLineRetryTests(unittest.TestCase):
         self.assertEqual(callers, [])
 
     def test_25_inactive_legacy_console_never_claims_forward_prefix_was_applied(self) -> None:
-        source = Path(auto_lrc.__file__).read_text(encoding="utf-8")
+        source = auto_lrc.algorithm_source_text()
         self.assertNotIn("CTC forward weak-prefix recovery applied", source)
         self.assertIn("CTC legacy forward weak-prefix evidence (inactive)", source)
 
@@ -8168,7 +8168,7 @@ class FixedPointPhaseCZeroTrustTests(unittest.TestCase):
         ))
 
     def test_new_phase_c_producers_are_candidate_only(self) -> None:
-        source = Path(auto_lrc.__file__).read_text(encoding="utf-8")
+        source = auto_lrc.algorithm_source_text()
         module = ast.parse(source)
         names = {
             "apply_phonetic_onset_fusion_hypotheses",
@@ -8188,7 +8188,7 @@ class FixedPointPhaseCZeroTrustTests(unittest.TestCase):
             self.assertIn("record_alignment_hypothesis", body, name)
 
     def test_no_unbound_independent_tail_evidence_in_functions(self) -> None:
-        source = Path(auto_lrc.__file__).read_text(encoding="utf-8")
+        source = auto_lrc.algorithm_source_text()
         module = ast.parse(source)
         offenders: list[str] = []
         for node in module.body:
@@ -8321,7 +8321,7 @@ class FixedPointPhaseCZeroTrustTests(unittest.TestCase):
         self.assertFalse(auto_lrc.trusted_tail_release_provenance_is_valid(base, audio, wrong_raw, 1))
 
     def test_update_metrics_preserves_central_candidate_identity_trust(self) -> None:
-        source_sha = auto_lrc.hashlib.sha256(Path(auto_lrc.__file__).read_bytes()).hexdigest()
+        source_sha = auto_lrc.validated_loaded_source_sha256()
         report: dict[str, object] = {
             "backend": "ctc",
             "timing_entries": 1,
@@ -11881,7 +11881,7 @@ class V145ContentTimingSeparationRegressionTests(unittest.TestCase):
         self.assertNotEqual(before, after)
 
     def test_runtime_lyric_entries_are_never_serialized(self) -> None:
-        source = Path(auto_lrc.__file__).read_text(encoding="utf-8")
+        source = auto_lrc.algorithm_source_text()
         tree = ast.parse(source)
         writer = next(
             node for node in tree.body
@@ -14195,7 +14195,7 @@ class V12Node19ExistingPeerRecoveryEligibilityTests(unittest.TestCase):
         self.assertEqual(reason, "representative-not-central-valid-in-selected-context")
 
     def test_peer_recovery_runs_after_hubert_predecessor_recovery(self) -> None:
-        source = Path(auto_lrc.__file__).read_text(encoding="utf-8")
+        source = auto_lrc.algorithm_source_text()
         module = ast.parse(source)
         process = next(
             node for node in module.body
@@ -14323,7 +14323,7 @@ class V12Node19DuplicateOwnerRecomputeTests(unittest.TestCase):
         self.assertIn("duplicate_occurrence_offset_mismatch", first["flags"])
 
     def test_duplicate_review_refresh_is_postcommit_only(self) -> None:
-        source = Path(auto_lrc.__file__).read_text(encoding="utf-8")
+        source = auto_lrc.algorithm_source_text()
         module = ast.parse(source)
         private_replay = next(
             node for node in module.body

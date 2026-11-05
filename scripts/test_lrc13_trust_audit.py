@@ -13,7 +13,7 @@ def verified_report() -> dict[str, object]:
         "backend": "ctc",
         "timing_entries": 1,
         "timing_state_schema_version": 3,
-        "algorithm_source_sha256": hashlib.sha256(Path(auto_lrc.__file__).read_bytes()).hexdigest(),
+        "algorithm_source_sha256": auto_lrc.validated_loaded_source_sha256(),
         "candidate_selection": {
             "status": "selected", "metric_stage": "central-evaluated",
             "selected_backend": "ctc",

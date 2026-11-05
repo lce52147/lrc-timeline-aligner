@@ -27,7 +27,7 @@ class TimingPolicyRegressionTests(unittest.TestCase):
         )
 
     def test_all_reachable_private_replays_inherit_selected_policy(self) -> None:
-        tree = ast.parse(Path(auto_lrc.__file__).read_text(encoding="utf-8"))
+        tree = ast.parse(auto_lrc.algorithm_source_text())
         replay_calls = [
             call for call in ast.walk(tree)
             if isinstance(call, ast.Call)
@@ -54,7 +54,7 @@ class TimingPolicyRegressionTests(unittest.TestCase):
 
 
     def test_ctc_evidence_binding_runs_on_actual_generation_path(self) -> None:
-        tree = ast.parse(Path(auto_lrc.__file__).read_text(encoding="utf-8"))
+        tree = ast.parse(auto_lrc.algorithm_source_text())
         generation = next(
             node for node in tree.body
             if isinstance(node, ast.FunctionDef)
@@ -144,7 +144,7 @@ class TimingPolicyRegressionTests(unittest.TestCase):
         )
 
     def test_evaluator_does_not_drop_whisper_evidence_before_central(self) -> None:
-        tree = ast.parse(Path(auto_lrc.__file__).read_text(encoding="utf-8"))
+        tree = ast.parse(auto_lrc.algorithm_source_text())
         evaluator = next(
             node for node in tree.body
             if isinstance(node, ast.FunctionDef)
