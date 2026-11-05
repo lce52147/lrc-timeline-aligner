@@ -166,7 +166,6 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   <div><label><input id="autoplay" type="checkbox"> 換句時自動播放（Enter / K / ↑ ↓ 跳到下一句就先聽開頭）</label></div>
   <div><label><input id="show-low" type="checkbox"> <span id="show-low-text">顯示可略過的句子</span>（預設不列，也不計入剩餘）</label></div>
   <div><label><input id="batch-skip" type="checkbox"> 顯示可略過的句子時，同時顯示「全部維持」按鈕</label></div>
-  <div><label><input id="show-ticks" type="checkbox"> 在波形上顯示候選刻度</label>（波形下緣的綠色細線是報告裡各候選的時間，越高表示越多來源指向同處；點一條刻度就和在波形上點那個位置一樣，從那裡播放，之後照平常流程微調或接受）</div>
   <div style="margin-top:12px;text-align:right"><button id="help-close">關閉</button></div>
 </div></div>
 <div class="help" id="shutdown-box" hidden><div class="box glass">
@@ -211,7 +210,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   const token = new URLSearchParams(location.search).get('t') || new URLSearchParams(location.hash.slice(1)).get('t');
   const queue = document.getElementById('queue');
   const status = document.getElementById('status');
-  const state = {songs:[], rows:[], edits:new Map(), peaks:new Map(), decoded:new Map(), done:new Set(), dirty:false, selected:0, activeSong:null, showUnreachable:false, showDone:true, showLow:false, showTicks:true, showAll:true, autoplay:true, batchSkip:true, mode:'flac', details:false, importEnabled:false, imports:[], jobs:[], jobsSeen:new Set(), player:{audio:new Map(), handlers:new Map(), seq:0, timer:null, active:null, ab:null}, error:'', notice:'', portNotice:'', exporting:false, exportIndex:null};
+  const state = {songs:[], rows:[], edits:new Map(), peaks:new Map(), decoded:new Map(), done:new Set(), dirty:false, selected:0, activeSong:null, showUnreachable:false, showDone:true, showLow:false, showAll:true, autoplay:true, batchSkip:true, mode:'flac', details:false, importEnabled:false, imports:[], jobs:[], jobsSeen:new Set(), player:{audio:new Map(), handlers:new Map(), seq:0, timer:null, active:null, ab:null}, error:'', notice:'', portNotice:'', exporting:false, exportIndex:null};
   const api = async (path, options={}) => {
     const headers = Object.assign({'X-Review-Token':token}, options.body ? {'Content-Type':'application/json'} : {}, options.headers || {});
     // A read that nobody answers must not hang the page: give up after a minute (a rescan on the server holds /api/version that long at most).
@@ -397,8 +396,8 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   function toggleMute() { volume.muted = !volume.muted; applyVolume(); }
   // Reviewer settings (on by default, remembered in the browser): autoplay on row change, batch-keep button.
   const SETTINGS_KEY = 'lrc-review-settings';
-  try { const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null'); if (saved && typeof saved === 'object') { state.autoplay = !!saved.autoplay; state.batchSkip = !!saved.batchSkip; if (typeof saved.showAll === 'boolean') state.showAll = saved.showAll; if (typeof saved.showLow === 'boolean') state.showLow = saved.showLow; if (typeof saved.showTicks === 'boolean') state.showTicks = saved.showTicks; } } catch (_) {}
-  function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({autoplay:state.autoplay, batchSkip:state.batchSkip, showAll:state.showAll, showLow:state.showLow, showTicks:state.showTicks})); } catch (_) {} }
+  try { const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null'); if (saved && typeof saved === 'object') { state.autoplay = !!saved.autoplay; state.batchSkip = !!saved.batchSkip; if (typeof saved.showAll === 'boolean') state.showAll = saved.showAll; if (typeof saved.showLow === 'boolean') state.showLow = saved.showLow; } } catch (_) {}
+  function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({autoplay:state.autoplay, batchSkip:state.batchSkip, showAll:state.showAll, showLow:state.showLow})); } catch (_) {} }
   // ---- unsaved-edit drafts: survive a server restart or a closed tab ----
   // A stored draft is {saved_at, tabs:{tabId:lastBeat}, base_sha256, edits, more:[{base_sha256, edits}]}. Each group's base_sha256 is
   // the file sha its edits' base_cs were taken from (an edit carries it as bsha), so a group whose sha differs from the file is stale.
@@ -846,8 +845,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   }
   // ---- waveform ----
   function cssVar(name, fallback) { try { return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback; } catch (error) { return fallback; } }
-  function tickHeight(tick) { return Math.min(22, 8 + 5 * ((tick.n || 1) - 1)); }
-  function paintPeaks(canvas, payload, markerCs, marks, message, ticks) {
+  function paintPeaks(canvas, payload, markerCs, marks, message) {
     const context = canvas.getContext?.('2d');
     if (!context) return;
     // Backing store follows the displayed size so the CSS width:100% never stretches the text.
@@ -888,13 +886,6 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
           context.beginPath(); context.moveTo(x(cs), 0); context.lineTo(x(cs), bottom); context.stroke(); context.setLineDash?.([]);
           if (label && context.fillText) { context.fillStyle = color; context.font = '600 11px ui-monospace, Consolas, monospace'; context.textAlign = 'left'; context.fillText(label, x(cs) + 4, 13); }
         };
-        if (context.fillRect) (ticks || []).forEach(tick => {
-          if (tick.cs < payload.from_cs || tick.cs > payload.to_cs) return;
-          const h = tickHeight(tick);
-          context.globalAlpha = Math.min(1, .55 + .15 * ((tick.n || 1) - 1));
-          context.fillStyle = cssVar('--ok', '#5fd3a0'); context.fillRect(x(tick.cs) - 1, bottom - h, 2, h);
-          context.globalAlpha = 1;
-        });
         (marks || []).forEach(m => mark(m.cs, m.color, m.label, m.dash));
         mark(markerCs, cssVar('--hot', '#ffb454'), 'now');
       }
@@ -938,21 +929,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     if (item.row.previous?.cs != null) marks.push({cs:item.row.previous.cs, color:cssVar('--fg-3', '#6b7d95'), label:'prev', dash:[2, 4]});
     if (item.row.next?.cs != null) marks.push({cs:item.row.next.cs, color:cssVar('--fg-3', '#6b7d95'), label:'next', dash:[2, 4]});
     optionsOf(item.row).filter(option => option.kind !== 'keep').forEach(option => marks.push({cs:option.cs, color:cssVar('--fg-2', '#9fb0c6'), label:option.label, dash:[6, 4]}));
-    const ticks = state.showTicks && Array.isArray(item.row.tick_candidates) ? item.row.tick_candidates.filter(tick => Number.isFinite(tick?.cs) && tick.cs >= fromCs && tick.cs <= toCs) : [];
-    const paint = markerCs => paintPeaks(canvas, payload || {from_cs:fromCs, to_cs:toCs, peaks:[]}, markerCs, marks, message, ticks);
-    // A tick is hit when the pointer is within 5 px of it, in the lower band where the ticks are drawn.
-    const tickAt = event => {
-      if (!ticks.length) return null;
-      const rect = canvas.getBoundingClientRect?.(); if (!rect || !(rect.width > 0)) return null;
-      const px = event.clientX - rect.left, py = event.clientY - rect.top, bottom = rect.height - 14;
-      let best = null, bestDx = 6;
-      ticks.forEach(tick => {
-        const dx = Math.abs(px - (tick.cs - fromCs) * rect.width / (toCs - fromCs));
-        if (dx < bestDx && py >= bottom - tickHeight(tick) - 3 && py <= bottom + 2) { best = tick; bestDx = dx; }
-      });
-      return best;
-    };
-    const tickText = tick => time(tick.cs) + ' · ' + (tick.n || 1) + ' 個來源' + (tick.source ? '（' + tick.source + '）' : '');
+    const paint = markerCs => paintPeaks(canvas, payload || {from_cs:fromCs, to_cs:toCs, peaks:[]}, markerCs, marks, message);
     if (payload) paint(startCs);
     else {
       message = '讀取波形中…'; paint(startCs); message = '';
@@ -972,28 +949,12 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       const cs = Math.max(0, Math.min(drag.startCs + 300, Math.max(drag.startCs - 300, drag.startCs + deltaCs)));
       drag.previewCs = cs; paint(cs);
     };
-    let tickDown = null;
     canvas.addEventListener('pointerdown', event => {
       if (event.button !== 0 || startCs == null) return;
-      const hit = tickAt(event);
-      if (hit) { event.stopPropagation(); tickDown = hit; return; }
       event.stopPropagation(); drag = {startX:event.clientX, startCs, previewCs:startCs};
       canvas.setPointerCapture?.(event.pointerId);
     });
-    canvas.addEventListener('pointermove', event => {
-      if (drag) { event.stopPropagation(); preview(event); return; }
-      const hit = tickAt(event);
-      if (canvas.style) canvas.style.cursor = hit ? 'pointer' : '';
-      if (hit) canvas.title = tickText(hit); else canvas.removeAttribute?.('title');
-    });
-    // Clicking a tick lands the start there exactly as releasing a drag at that spot does: staged, then played from there.
-    canvas.addEventListener('pointerup', event => {
-      if (!tickDown) return;
-      event.stopPropagation();
-      const hit = tickAt(event), tick = tickDown; tickDown = null;
-      if (hit === tick) { stage(item, tick.cs, 'drag', 0); playAround(item, tick.cs); }
-    });
-    canvas.addEventListener('pointercancel', () => { tickDown = null; });
+    canvas.addEventListener('pointermove', event => { if (drag) { event.stopPropagation(); preview(event); } });
     const finish = event => {
       if (!drag) return;
       event.stopPropagation();
@@ -1767,8 +1728,6 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   document.getElementById('autoplay').addEventListener('change', event => { state.autoplay = event.target.checked; saveSettings(); });
   document.getElementById('show-low').checked = state.showLow;
   document.getElementById('show-low').addEventListener('change', event => { state.showLow = event.target.checked; saveSettings(); state.selected = 0; render(); });
-  document.getElementById('show-ticks').checked = state.showTicks;
-  document.getElementById('show-ticks').addEventListener('change', event => { state.showTicks = event.target.checked; saveSettings(); render(); });
   document.getElementById('batch-skip').checked = state.batchSkip;
   document.getElementById('batch-skip').addEventListener('change', event => { state.batchSkip = event.target.checked; saveSettings(); render(); });
   document.getElementById('mode').addEventListener('click', event => { event.currentTarget.blur(); stopPlayer(); state.mode = state.mode === 'flac' ? 'stem' : 'flac'; render(); });
