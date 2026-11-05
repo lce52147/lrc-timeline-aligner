@@ -2564,6 +2564,8 @@ def main(argv: list[str] | None = None) -> int:
 
 _STAGE_TIMING_SPEC = lrc_stage_timings.STAGE_TIMING_SPEC
 
+lrc_stage_timings.install(globals(), _STAGE_TIMING_SPEC)
+
 asr_backends.bind_late_callbacks(
     _AUDIO_API=_AUDIO_API,
 )
@@ -2571,8 +2573,6 @@ asr_backends.bind_late_callbacks(
 central_peer_recovery.bind_late_callbacks(
     _AUDIO_API=_AUDIO_API,
 )
-
-lrc_stage_timings.install(globals(), _STAGE_TIMING_SPEC)
 
 if __name__ == "__main__":
     raise SystemExit(main())

@@ -12,7 +12,7 @@ from timing_core import BackendContentIdentityObservation, CentralTrustSummary, 
 from lyrics_io import AsrSegment, LRC_ALGORITHM_REVISION, LyricEntry, _BACKEND_PROVENANCE_PROJECTION_KEY, _RUNTIME_LYRIC_ENTRIES_KEY, annotate_display_romaji, entry_sung_text, first_forced_char_time, format_lrc_time, load_anchor_hints, lyric_anchor_profile, match_anchor_entries, normalize_match_text, ratio_percent
 from audio_features import HOP_SECONDS
 from runtime_base import LrcError, _timing_content_digest, canonicalize_lrc_time, validated_loaded_source_sha256
-from runtime_base import LrcError as _CallbackLrcError
+from runtime_base import bind_late_callbacks as _bind_late_callbacks, unbound_callback
 import lrc_stage_timings
 
 
@@ -22,23 +22,13 @@ _LATE_BOUND_CALLBACKS = (
 )
 
 
-def _unbound_callback(name):
-    def _raise(*args, **kwargs):
-        raise _CallbackLrcError(f"{name} is not bound yet (bind_late_callbacks has not run)")
-
-    return _raise
-
-
-# Back-edges into later modules: auto_lrc binds the real functions once they exist.
-_final_post_central_material_conflict_entries = _unbound_callback("_final_post_central_material_conflict_entries")
-_suspicious_entry_requires_review_for_decision = _unbound_callback("_suspicious_entry_requires_review_for_decision")
+# Back-edges into later modules: the owner binds the real objects once they exist.
+_final_post_central_material_conflict_entries = unbound_callback("_final_post_central_material_conflict_entries")
+_suspicious_entry_requires_review_for_decision = unbound_callback("_suspicious_entry_requires_review_for_decision")
 
 
 def bind_late_callbacks(**callbacks):
-    for name, function in callbacks.items():
-        if name not in _LATE_BOUND_CALLBACKS:
-            raise AttributeError(name)
-        globals()[name] = function
+    _bind_late_callbacks(globals(), _LATE_BOUND_CALLBACKS, callbacks)
 
 
 COLLAPSE_SEGMENT_SCORE = 0.30

@@ -27,8 +27,7 @@ from model_cache import ModelCacheMiss
 import lrc_stage_timings
 
 
-# TODO(split batch D): once every module exists, make a missing listed file a
-# hard error and pin the file set with a test (review-A N1).
+# Every listed module must exist next to auto_lrc.py; test_split_guards pins this set.
 _ALGORITHM_SOURCE_MODULES = (
     "runtime_base",
     "audio_features",
@@ -40,20 +39,18 @@ _ALGORITHM_SOURCE_MODULES = (
     "asr_backends",
     "local_whisper_retry",
     "central_peer_recovery",
-    "neutral_arbitration",
-    "central_commit",
-    "backend_bundle",
-    "postcentral_recovery",
-    "runtime_evidence_binding",
 )
 
 
 def _algorithm_source_files() -> list[Path]:
-    """Source files whose bytes define the loaded algorithm (missing ones skipped)."""
+    """Source files whose bytes define the loaded algorithm; a missing one is an error."""
     here = Path(__file__).resolve().parent
     paths = [here / "auto_lrc.py"]
     paths.extend(here / f"{name}.py" for name in _ALGORITHM_SOURCE_MODULES)
-    return sorted(path for path in paths if path.is_file())
+    missing = [path.name for path in paths if not path.is_file()]
+    if missing:
+        raise RuntimeError(f"algorithm source file missing: {', '.join(missing)}")
+    return sorted(paths)
 
 
 def _algorithm_source_sha256() -> str:
@@ -596,6 +593,31 @@ class LrcError(RuntimeError):
     pass
 
 
+# Late binding for back-edges between split modules: a module holds a placeholder
+# for a name owned by a later module, and the owner binds the real object once it
+# exists.  Using a placeholder before it is bound is a wiring bug (RuntimeError).
+def unbound_callback(name):
+    def _raise(*args, **kwargs):
+        raise RuntimeError(f"{name} is not bound yet (bind_late_callbacks has not run)")
+
+    return _raise
+
+
+class UnboundNamespace:
+    def __init__(self, name):
+        self._name = name
+
+    def __getattr__(self, attr):
+        raise RuntimeError(f"{self._name} is not bound yet (bind_late_callbacks has not run)")
+
+
+def bind_late_callbacks(namespace, allowed, callbacks):
+    for name, function in callbacks.items():
+        if name not in allowed:
+            raise AttributeError(name)
+        namespace[name] = function
+
+
 def _model_cache_only_active() -> bool:
     return model_cache.cache_only_active()
 
@@ -713,7 +735,7 @@ def validated_loaded_source_sha256() -> str:
     """
     try:
         on_disk = _algorithm_source_sha256()
-    except OSError as exc:
+    except (OSError, RuntimeError) as exc:
         raise LrcError(f"Cannot verify running algorithm source: {exc}") from exc
     if on_disk != _LOADED_SOURCE_SHA256:
         raise LrcError(

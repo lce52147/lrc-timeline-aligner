@@ -27,7 +27,7 @@ from lyrics_io import LRC_ALGORITHM_REVISION, LyricEntry, _BACKEND_PROVENANCE_PR
 from audio_features import HOP_SECONDS, analyze_vocal_onsets, vocal_stem_levels
 from runtime_base import DEFAULT_EVIDENCE_WORKERS, LrcError, _path_sha256, _stable_file_sha256, _timing_content_digest, canonicalize_lrc_time, default_ctc_python, default_whisperx_python, gpu_compute_phase, progress_log, run_command, validated_loaded_source_sha256
 from runtime_base import TimingTokenSpan
-from runtime_base import LrcError as _CallbackLrcError
+from runtime_base import UnboundNamespace, bind_late_callbacks as _bind_late_callbacks, unbound_callback
 import lrc_stage_timings
 import report_trust
 
@@ -37,32 +37,12 @@ _LATE_BOUND_CALLBACKS = (
 )
 
 
-def _unbound_callback(name):
-    def _raise(*args, **kwargs):
-        raise _CallbackLrcError(f"{name} is not bound yet (bind_late_callbacks has not run)")
-
-    return _raise
-
-
-# Back-edges into later modules: auto_lrc binds the real functions once they exist.
-
-
-class _UnboundNamespace:
-    def __init__(self, name):
-        self._name = name
-
-    def __getattr__(self, attr):
-        raise _CallbackLrcError(f"{self._name} is not bound yet (bind_late_callbacks has not run)")
-
-
-_AUDIO_API = _UnboundNamespace("_AUDIO_API")
+# Back-edges into later modules: the owner binds the real objects once they exist.
+_AUDIO_API = UnboundNamespace("_AUDIO_API")
 
 
 def bind_late_callbacks(**callbacks):
-    for name, function in callbacks.items():
-        if name not in _LATE_BOUND_CALLBACKS:
-            raise AttributeError(name)
-        globals()[name] = function
+    _bind_late_callbacks(globals(), _LATE_BOUND_CALLBACKS, callbacks)
 
 
 _UNRESOLVED_EVIDENCE_REQUIREMENTS_SCHEMA_VERSION = 1
@@ -11850,11 +11830,12 @@ def commit_evaluated_backend(
     return _apply_evaluated_backend_projection(selection, report)
 
 
-# report_trust's back-edges into this module: bound here so every entry path that
-# imports central_peer_recovery has them before any report_trust caller runs.
+lrc_stage_timings.install(globals(), lrc_stage_timings.STAGE_TIMING_SPEC, owner=True)
+
+# report_trust's back-edges into this module: bound here, after this owner's
+# stage-timing install, so every entry path that imports central_peer_recovery has
+# them (as the final bindings) before any report_trust caller runs.
 report_trust.bind_late_callbacks(
     _final_post_central_material_conflict_entries=_final_post_central_material_conflict_entries,
     _suspicious_entry_requires_review_for_decision=_suspicious_entry_requires_review_for_decision,
 )
-
-lrc_stage_timings.install(globals(), lrc_stage_timings.STAGE_TIMING_SPEC, owner=True)
