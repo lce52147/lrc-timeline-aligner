@@ -19,6 +19,7 @@ EXPECTED_SOURCE_FILES = (
     "asr_backends.py",
     "audio_features.py",
     "auto_lrc.py",
+    "central_commit.py",
     "central_peer_recovery.py",
     "ctc_refinement.py",
     "local_whisper_retry.py",
@@ -103,16 +104,16 @@ class LateBoundCallbackTests(unittest.TestCase):
 
     def test_audio_api_is_bound_in_every_module_that_late_binds_it(self):
         import asr_backends
-        import central_peer_recovery
-        for module in (asr_backends, central_peer_recovery):
+        import central_commit
+        for module in (asr_backends, central_commit):
             self.assertEqual(module._LATE_BOUND_CALLBACKS, ("_AUDIO_API",))
             self.assertIs(module._AUDIO_API, auto_lrc._AUDIO_API, module.__name__)
 
     def test_bind_rejects_unknown_names(self):
         import asr_backends
-        import central_peer_recovery
+        import central_commit
         import report_trust
-        for module in (report_trust, asr_backends, central_peer_recovery):
+        for module in (report_trust, asr_backends, central_commit):
             with self.assertRaises(AttributeError, msg=module.__name__):
                 module.bind_late_callbacks(not_a_callback=lambda: None)
 

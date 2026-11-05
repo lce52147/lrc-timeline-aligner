@@ -38,6 +38,7 @@ _ALGORITHM_SOURCE_MODULES = (
     "acoustic_hypotheses",
     "asr_backends",
     "local_whisper_retry",
+    "central_commit",
     "central_peer_recovery",
 )
 
