@@ -23,7 +23,7 @@ class IsolatedPostscoreTests(unittest.TestCase):
            'suspicious_alignments':[],'ctc_audio_source':'vocal-stem','ctc_audio_path':str(vocal)}
    fake=object()
    with split_patch.patch("analyze_audio",return_value=fake) as analyze, \
-        patch.object(a,'nearest_local_peak',return_value={'time':1.,'delta_seconds':0.,'strength':.8}):
+        split_patch.patch("nearest_local_peak",return_value={'time':1.,'delta_seconds':0.,'strength':.8}):
     a.apply_post_score_audio_validation(Path('fullmix.flac'),rows,[1.,2.,3.],report,10.)
    self.assertEqual(analyze.call_args.args[0],vocal)
    self.assertEqual(len(report['post_score_all_line_vocal_audit']),3)
