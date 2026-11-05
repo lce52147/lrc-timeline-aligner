@@ -47,11 +47,11 @@ class PrivateShadowProvenanceTests(TestCase):
         with (
             split_patch.patch("update_report_confidence_metrics",
                               side_effect=simulated_postcommit_trust_change),
-            mock.patch.object(auto_lrc, "_build_unresolved_evidence_requirements_projection",
+            split_patch.patch("_build_unresolved_evidence_requirements_projection",
                               return_value={"status": "RETRIEVED"}),
-            mock.patch.object(auto_lrc, "run_r2t_unified_neutral_conflict_probe",
+            split_patch.patch("run_r2t_unified_neutral_conflict_probe",
                               side_effect=verify_probe),
-            mock.patch.object(auto_lrc, "_neutral_probe_trigger_rows", return_value=[]),
+            split_patch.patch("_neutral_probe_trigger_rows", return_value=[]),
         ):
             auto_lrc._precommit_neutral_boundary_arbitration(
                 Path("unused.flac"), [auto_lrc.LyricEntry(["synthetic"])],

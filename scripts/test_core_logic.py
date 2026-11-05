@@ -4940,7 +4940,7 @@ class CentralTimingStateTests(unittest.TestCase):
         original = auto_lrc.evaluate_final_timing_state_for_report
         original_collect = auto_lrc.collect_central_timing_candidates
         original_probe = auto_lrc.apply_final_ctc_timing_guard
-        auto_lrc.evaluate_final_timing_state_for_report = lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("re-evaluated"))  # type: ignore[assignment]
+        split_patch.assign("evaluate_final_timing_state_for_report", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("re-evaluated")))  # type: ignore[assignment]
         split_patch.assign("collect_central_timing_candidates", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("regenerated")))  # type: ignore[assignment]
         split_patch.assign("apply_final_ctc_timing_guard", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("re-probed")))  # type: ignore[assignment]
         try:
@@ -4948,7 +4948,7 @@ class CentralTimingStateTests(unittest.TestCase):
                 auto_lrc.select_evaluated_backend((evaluated,)), report
             )
         finally:
-            auto_lrc.evaluate_final_timing_state_for_report = original  # type: ignore[assignment]
+            split_patch.assign("evaluate_final_timing_state_for_report", original)  # type: ignore[assignment]
             split_patch.assign("collect_central_timing_candidates", original_collect)  # type: ignore[assignment]
             split_patch.assign("apply_final_ctc_timing_guard", original_probe)  # type: ignore[assignment]
         self.assertIs(committed, evaluated.state)
@@ -5270,10 +5270,10 @@ class CentralTimingStateTests(unittest.TestCase):
         split_patch.assign("default_whisperx_ready", lambda: False)  # type: ignore[assignment]
         split_patch.assign("try_ctc_candidate", infer)  # type: ignore[assignment]
         split_patch.assign("_central_preview_generation_candidates", generation_candidates)  # type: ignore[assignment]
-        auto_lrc.prepare_backend_timing_preview = preview  # type: ignore[assignment]
-        auto_lrc.commit_evaluated_backend = lambda *_args, **_kwargs: counts.update(  # type: ignore[assignment]
+        split_patch.assign("prepare_backend_timing_preview", preview)  # type: ignore[assignment]
+        split_patch.assign("commit_evaluated_backend", lambda *_args, **_kwargs: counts.update(  # type: ignore[assignment]
             {"commit": counts["commit"] + 1}
-        )
+        ))
         try:
             # The bare ``object()`` args cannot drive a real WhisperX pass, so the
             # python-availability probe is pinned off regardless of whether the
@@ -5362,8 +5362,8 @@ class CentralTimingStateTests(unittest.TestCase):
                     split_patch.assign("default_whisperx_ready", lambda: False)  # type: ignore[assignment]
                     split_patch.assign("run_ctc_alignment", explicit_inference)  # type: ignore[assignment]
                     auto_lrc.run_auto_backend_competition = competition  # type: ignore[assignment]
-                    auto_lrc.prepare_backend_timing_preview = preview  # type: ignore[assignment]
-                    auto_lrc.commit_evaluated_backend = commit  # type: ignore[assignment]
+                    split_patch.assign("prepare_backend_timing_preview", preview)  # type: ignore[assignment]
+                    split_patch.assign("commit_evaluated_backend", commit)  # type: ignore[assignment]
                     split_patch.assign("audio_track_labels", lambda _path: ("", "generic"))  # type: ignore[assignment]
                     output = temp / f"{timing_source}.lrc"
                     report_dir = temp / f"{timing_source}-reports"
@@ -5950,9 +5950,7 @@ class BackendPeerSimulationTests(unittest.TestCase):
             preview = [
                 {"timestamps": [1.0], "report": report, "evaluated": evaluated}
             ]
-            with mock.patch.object(
-                auto_lrc,
-                "_simulate_cross_backend_peer_graph",
+            with split_patch.patch("_simulate_cross_backend_peer_graph",
                 wraps=auto_lrc._simulate_cross_backend_peer_graph,
             ) as simulated:
                 auto_lrc._build_backend_provenance_projection_seed(
