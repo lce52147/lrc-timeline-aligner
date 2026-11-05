@@ -26,6 +26,7 @@ EXPECTED_SOURCE_FILES = (
     "ctc_refinement.py",
     "local_whisper_retry.py",
     "lyrics_io.py",
+    "neutral_arbitration.py",
     "report_trust.py",
     "runtime_base.py",
     "timing_core.py",
