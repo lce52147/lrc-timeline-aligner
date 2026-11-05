@@ -168,9 +168,9 @@ def align_song(
             "audio_revision": audio_revision,
             "model_revision": MODEL_REVISION,
         })
-        supported = auto_lrc._known_lyric_hubert_opening_is_supported(
+        supported = auto_lrc._known_lyric_hubert_opening_evidence(
             entry_index - 1, span_payload, request_revision
-        )
+        ) is not None
         result.append({
             "entry": entry_index,
             "time": round(float(span_payload[0]["start"]), 6),
