@@ -5176,9 +5176,9 @@ class CentralTimingStateTests(unittest.TestCase):
             return ((candidate,),), {"probe_calls": 1}
 
         split_patch.assign("apply_anchor_hints", anchors)  # type: ignore[assignment]
-        auto_lrc.score_line_timing_candidates = score  # type: ignore[assignment]
-        auto_lrc.apply_short_duplicate_acoustic_recovery = duplicate  # type: ignore[assignment]
-        auto_lrc.apply_post_score_audio_validation = validation  # type: ignore[assignment]
+        split_patch.assign("score_line_timing_candidates", score)  # type: ignore[assignment]
+        split_patch.assign("apply_short_duplicate_acoustic_recovery", duplicate)  # type: ignore[assignment]
+        split_patch.assign("apply_post_score_audio_validation", validation)  # type: ignore[assignment]
         auto_lrc.collect_central_timing_candidates = collect  # type: ignore[assignment]
         auto_lrc.ctc_alignment_audio_path = lambda _report, audio: audio  # type: ignore[assignment]
         try:
@@ -13409,7 +13409,7 @@ class V152BoundaryContentConvergenceRegressionTests(unittest.TestCase):
             rms_db=np.zeros(4), onset_strength=np.asarray([.1, .2, .95, .2]),
             segments=[(1.9, 2.8)],
         )
-        with mock.patch.object(auto_lrc, "_strong_vocal_onset_near", return_value=(2.1, .95, .80)):
+        with split_patch.patch("_strong_vocal_onset_near", return_value=(2.1, .95, .80)):
             candidate = auto_lrc._local_whisper_vocal_fusion_candidate(
                 entry_index=1, entry=entries[1], local_evidence=local_evidence,
                 vocal_onset_features=features, audio_revision="audio-sha",
@@ -13520,8 +13520,7 @@ class V152BoundaryContentConvergenceRegressionTests(unittest.TestCase):
             segments=[(1.8, 2.8)],
         )
         with split_patch.patch("runtime_local_whisper_evidence_for_entry", return_value=local_evidence
-        ), mock.patch.object(
-            auto_lrc, "_strong_vocal_onset_near", return_value=(2.1, .95, .80)
+        ), split_patch.patch("_strong_vocal_onset_near", return_value=(2.1, .95, .80)
         ):
             augmented = auto_lrc._augment_candidates_with_local_whisper_vocal_consensus(
                 ((), (parent,), ()), {}, entries, features, "audio-sha"
