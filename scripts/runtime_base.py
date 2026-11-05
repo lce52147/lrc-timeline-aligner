@@ -37,6 +37,7 @@ _ALGORITHM_SOURCE_MODULES = (
     "ctc_refinement",
     "acoustic_hypotheses",
     "asr_backends",
+    "runtime_evidence_binding",
     "local_whisper_retry",
     "central_commit",
     "backend_bundle",

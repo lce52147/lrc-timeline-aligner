@@ -29,6 +29,7 @@ EXPECTED_SOURCE_FILES = (
     "postcentral_recovery.py",
     "report_trust.py",
     "runtime_base.py",
+    "runtime_evidence_binding.py",
     "timing_core.py",
 )
 
