@@ -9,6 +9,7 @@ import hashlib
 import importlib.metadata
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import types
@@ -11846,7 +11847,24 @@ class V145ContentTimingSeparationRegressionTests(unittest.TestCase):
 
 
 
-class V146LocalWhisperEvidenceRegressionTests(unittest.TestCase):
+class _TempModelCacheMixin:
+    """Point LRC_MODEL_CACHE_DIR at a temp dir so local-whisper tests never read or write the tree's outputs/cache."""
+
+    def setUp(self) -> None:
+        super().setUp()  # type: ignore[misc]
+        folder = TemporaryDirectory()
+        self.addCleanup(folder.cleanup)  # type: ignore[attr-defined]
+        cache_root = Path(folder.name) / "cache"
+        env = mock.patch.dict(os.environ, {"LRC_MODEL_CACHE_DIR": str(cache_root)})
+        env.start()
+        self.addCleanup(env.stop)  # type: ignore[attr-defined]
+        # runtime_base binds DEFAULT_MODEL_CACHE_DIR at import, so the env var alone does not move it.
+        default_dir = split_patch.patch("DEFAULT_MODEL_CACHE_DIR", cache_root / "model-outputs")
+        default_dir.start()
+        self.addCleanup(default_dir.stop)  # type: ignore[attr-defined]
+
+
+class V146LocalWhisperEvidenceRegressionTests(_TempModelCacheMixin, unittest.TestCase):
     def span(self, start: float, token: str = "a") -> auto_lrc.TimingTokenSpan:
         return auto_lrc.TimingTokenSpan(start, start + 0.02, 0.5, token)
 
@@ -12816,7 +12834,7 @@ class V1410MaterialHypothesisReviewRegressionTests(unittest.TestCase):
         )
 
 
-class V15EvidenceConvergenceRegressionTests(unittest.TestCase):
+class V15EvidenceConvergenceRegressionTests(_TempModelCacheMixin, unittest.TestCase):
     def repeated_entries(self):
         return [
             LyricEntry(["anchor alpha"]),
@@ -12954,7 +12972,7 @@ class V15EvidenceConvergenceRegressionTests(unittest.TestCase):
              split_patch.patch("run_whisperx_alignment", return_value=aligned_payload), \
              split_patch.patch("match_whisper_segments", return_value=([.4, 1.2, 2.4, 3.5], local_report)):
             outcome = auto_lrc.execute_local_whisper_request(
-                request, capability, entries, mock.Mock(), cache={}, runtime_stats={}
+                request, capability, entries, mock.Mock(model_cache=True, model_cache_only=False), cache={}, runtime_stats={}
             )
         self.assertEqual(outcome.status, "evidence")
         self.assertEqual(outcome.reason, "trusted-local-whisper-exact-char-recovery-and-onset")
@@ -13038,7 +13056,7 @@ class V15EvidenceConvergenceRegressionTests(unittest.TestCase):
         self.assertNotIn(raw_candidate.candidate_id, {item.candidate_id for item in revised[2]})
         self.assertIn(ctc_local.candidate_id, {item.candidate_id for item in revised[2]})
 
-class V151MonotonicLocalProbingRegressionTests(unittest.TestCase):
+class V151MonotonicLocalProbingRegressionTests(_TempModelCacheMixin, unittest.TestCase):
     def test_context_prefix_onset_crosses_segments_without_full_exact_line(self):
         segments = [
             auto_lrc.AsrSegment(1.0, 1.5, "今日の", chars=[("今", 1.02), ("日", 1.20), ("の", 1.42)]),
@@ -13179,7 +13197,7 @@ class V151MonotonicLocalProbingRegressionTests(unittest.TestCase):
              split_patch.patch("run_whisperx_alignment", return_value=aligned_payload), \
              split_patch.patch("match_whisper_segments", return_value=([.4, 1.2, 2.4, 3.5], local_report)):
             outcome = auto_lrc.execute_local_whisper_request(
-                request, capability, entries, mock.Mock(), cache={}, runtime_stats={}
+                request, capability, entries, mock.Mock(model_cache=True, model_cache_only=False), cache={}, runtime_stats={}
             )
         self.assertEqual(outcome.status, "evidence")
         self.assertEqual(outcome.reason, "trusted-local-whisper-context-prefix-recovery-and-onset")
@@ -13187,7 +13205,7 @@ class V151MonotonicLocalProbingRegressionTests(unittest.TestCase):
         self.assertEqual(outcome.occurrence_binding["mode"], "sparse-sequence-bracket")
 
 
-class V152BoundaryContentConvergenceRegressionTests(unittest.TestCase):
+class V152BoundaryContentConvergenceRegressionTests(_TempModelCacheMixin, unittest.TestCase):
     def test_one_sided_sparse_fingerprint_cannot_claim_bracket_authority(self):
         entries = [
             LyricEntry(["anchor alpha"]), LyricEntry(["branch beta"]), LyricEntry(["repeat target"]),
@@ -13255,7 +13273,7 @@ class V152BoundaryContentConvergenceRegressionTests(unittest.TestCase):
              split_patch.patch("match_whisper_segments", return_value=([.4, 1.2, 2.4], local_report)), \
              split_patch.patch("japanese_romaji", side_effect=fake_romaji):
             outcome = auto_lrc.execute_local_whisper_request(
-                request, capability, entries, mock.Mock(), cache={}, runtime_stats={}
+                request, capability, entries, mock.Mock(model_cache=True, model_cache_only=False), cache={}, runtime_stats={}
             )
         self.assertEqual(outcome.status, "evidence")
         self.assertEqual(outcome.reason, "trusted-local-whisper-exact-phonetic-occurrence-only")
@@ -13316,7 +13334,7 @@ class V152BoundaryContentConvergenceRegressionTests(unittest.TestCase):
              split_patch.patch("match_whisper_segments", return_value=([.4, 1.2, 3.0], local_report)), \
              split_patch.patch("japanese_romaji", side_effect=fake_romaji):
             outcome = auto_lrc.execute_local_whisper_request(
-                request, capability, entries, mock.Mock(), cache={}, runtime_stats={}
+                request, capability, entries, mock.Mock(model_cache=True, model_cache_only=False), cache={}, runtime_stats={}
             )
         self.assertEqual(outcome.status, "invalid")
         self.assertEqual(outcome.reason, "target-phonetic-occurrence-ambiguous")
