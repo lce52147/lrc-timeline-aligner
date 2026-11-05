@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import auto_lrc
+import split_patch
 
 SCRIPTS = Path(__file__).resolve().parent
 RUN_HUB = SCRIPTS / "reviewers" / "run_hub.py"
@@ -95,7 +96,7 @@ class RunHubAlignSongTests(unittest.TestCase):
 
     def test_opening_evidence_call_receives_entry_index_payload_and_revision(self):
         module = _load_run_hub(span_count=2)
-        with mock.patch.object(auto_lrc, "_known_lyric_hubert_opening_evidence", return_value=object()) as evidence:
+        with split_patch.patch("_known_lyric_hubert_opening_evidence", return_value=object()) as evidence:
             rows, frames = self._align(module)
         self.assertEqual(frames, FRAMES)
         evidence.assert_called_once()
@@ -111,7 +112,7 @@ class RunHubAlignSongTests(unittest.TestCase):
 
     def test_none_evidence_marks_the_row_unsupported(self):
         module = _load_run_hub(span_count=2)
-        with mock.patch.object(auto_lrc, "_known_lyric_hubert_opening_evidence", return_value=None):
+        with split_patch.patch("_known_lyric_hubert_opening_evidence", return_value=None):
             rows, _frames = self._align(module)
         self.assertIs(rows[0]["opening_supported"], False)
         self.assertIs(rows[0]["trusted"], False)
