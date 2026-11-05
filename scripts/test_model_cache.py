@@ -17,6 +17,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import auto_lrc  # noqa: E402
+import split_patch
 import migrate_model_cache  # noqa: E402
 import model_cache as mc  # noqa: E402
 
@@ -73,7 +74,7 @@ class GoldenKeyTests(unittest.TestCase):
     def test_crossline_key_unchanged(self) -> None:
         case = self.fixture["cases"]["crossline-joint-ctc"]
         inputs = case["key_inputs"]
-        with mock.patch.object(auto_lrc, "_ctc_model_blob_sha256", return_value=inputs["model_blob_sha256"]):
+        with split_patch.patch("_ctc_model_blob_sha256", return_value=inputs["model_blob_sha256"]):
             got = auto_lrc._crossline_retry_helper_cache_key(
                 SimpleNamespace(
                     alignment_audio_revision=inputs["alignment_audio_sha256"],
@@ -217,8 +218,8 @@ class PolicyTests(unittest.TestCase):
     def test_crossline_cache_only_miss_raises_from_args_only(self) -> None:
         # Condition: LRC_MODEL_CACHE_ONLY unset; only args.model_cache_only=True.
         with TemporaryDirectory() as td, mock.patch.dict(os.environ, _CLEAN_ENV), \
-                mock.patch.object(auto_lrc, "DEFAULT_MODEL_CACHE_DIR", Path(td)), \
-                mock.patch.object(auto_lrc, "_ctc_model_blob_sha256", return_value="b" * 64):
+                split_patch.patch("DEFAULT_MODEL_CACHE_DIR", Path(td)), \
+                split_patch.patch("_ctc_model_blob_sha256", return_value="b" * 64):
             policy = mc.policy_from_env_and_args(argparse.Namespace(model_cache=True, model_cache_only=True))
             request = SimpleNamespace(
                 alignment_audio_revision="a" * 64, transcript_digest="t", window_start=0.0, window_end=1.0,
@@ -233,8 +234,8 @@ class PolicyTests(unittest.TestCase):
         import segment_skeleton_production as ssp
 
         with TemporaryDirectory() as td, mock.patch.dict(os.environ, _CLEAN_ENV), \
-                mock.patch.object(auto_lrc, "DEFAULT_MODEL_CACHE_DIR", Path(td)), \
-                mock.patch.object(auto_lrc, "_ctc_model_blob_sha256", return_value="b" * 64):
+                split_patch.patch("DEFAULT_MODEL_CACHE_DIR", Path(td)), \
+                split_patch.patch("_ctc_model_blob_sha256", return_value="b" * 64):
             root = Path(td)
             stem = root / "stem.wav"
             stem.write_bytes(b"pcm")

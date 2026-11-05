@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 import auto_lrc
+import split_patch
 
 
 def lock_is_held(path: Path) -> bool:
@@ -44,7 +45,7 @@ class WhisperCppGpuLockTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         root = Path(self.temp.name)
         self.lock_path = root / "gpu.lock"
-        patcher = mock.patch.object(auto_lrc, "WHISPERCPP_GPU_LOCK_PATH", self.lock_path)
+        patcher = split_patch.patch("WHISPERCPP_GPU_LOCK_PATH", self.lock_path)
         patcher.start()
         self.addCleanup(patcher.stop)
         env = mock.patch.dict(os.environ, {"LRC_WHISPERCPP_GPU_LOCK": "1"})
@@ -93,7 +94,7 @@ class WhisperCppGpuLockTests(unittest.TestCase):
             seen.append(lock_is_held(self.lock_path))
             return Failed()
 
-        with mock.patch.object(auto_lrc, "run_command", fake_run):
+        with split_patch.patch("run_command", fake_run):
             with self.assertRaises(auto_lrc.LrcError):
                 auto_lrc._run_whispercpp_wav(Path(self.temp.name) / "a.wav", self.args, suppress_nst=False)
         self.assertEqual(seen, [True])
@@ -107,7 +108,7 @@ class WhisperCppGpuLockTests(unittest.TestCase):
             return Failed()
 
         items = [("a", Path(self.temp.name) / "a.wav"), ("b", Path(self.temp.name) / "b.wav")]
-        with mock.patch.object(auto_lrc, "run_command", fake_run), \
+        with split_patch.patch("run_command", fake_run), \
                 mock.patch.object(auto_lrc, "_whispercpp_multifile_supported", return_value=True):
             results, errors = auto_lrc._run_whispercpp_wav_batch(items, self.args, suppress_nst=False)
         # One batch call, then the one-shot fallback for each file.
@@ -127,8 +128,8 @@ class WhisperCppGpuLockTests(unittest.TestCase):
             events.append("whisper.cpp")
             return Failed()
 
-        with mock.patch.object(auto_lrc, "_park_persistent_helper_mode", fake_park), \
-                mock.patch.object(auto_lrc, "run_command", fake_run):
+        with split_patch.patch("_park_persistent_helper_mode", fake_park), \
+                split_patch.patch("run_command", fake_run):
             with self.assertRaises(auto_lrc.LrcError):
                 auto_lrc._run_whispercpp_wav(Path(self.temp.name) / "a.wav", self.args, suppress_nst=False)
         self.assertEqual(
@@ -144,7 +145,7 @@ class WhisperCppGpuLockTests(unittest.TestCase):
             return Failed()
 
         with mock.patch.dict(os.environ, {"LRC_WHISPERCPP_GPU_LOCK": "0"}), \
-                mock.patch.object(auto_lrc, "run_command", fake_run):
+                split_patch.patch("run_command", fake_run):
             with self.assertRaises(auto_lrc.LrcError):
                 auto_lrc._run_whispercpp_wav(Path(self.temp.name) / "a.wav", self.args, suppress_nst=False)
         self.assertEqual(seen, [False])

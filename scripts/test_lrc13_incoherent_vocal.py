@@ -12,6 +12,7 @@ from unittest.mock import patch
 import numpy as np
 
 import auto_lrc
+import split_patch
 from auto_lrc import LyricEntry
 from test_lrc13_collapsed_local_window import FakeHelper, ctc_report, local_window_times, silent_raw
 
@@ -98,8 +99,7 @@ class LocalWindowVocalSilenceTests(unittest.TestCase):
             report["ctc_audio_path"] = str(stem)
             with patch.object(auto_lrc, "decode_audio", return_value=x), patch.object(
                 auto_lrc, "analyze_audio", return_value=features
-            ), patch.object(auto_lrc.subprocess, "run", helper), patch.object(
-                auto_lrc, "default_ctc_python", lambda: pathlib.Path("python")
+            ), patch.object(auto_lrc.subprocess, "run", helper), split_patch.patch("default_ctc_python", lambda: pathlib.Path("python")
             ):
                 levels = auto_lrc.vocal_stem_levels(report)
                 auto_lrc.apply_ctc_local_window_realign(
@@ -119,8 +119,7 @@ class LocalWindowVocalSilenceTests(unittest.TestCase):
         report = ctc_report(self.TIMES, self.EXTENTS)
         entries = [LyricEntry([f"line {i + 1}"]) for i in range(len(self.TIMES))]
         helper = FakeHelper({1: 10.0, 2: 26.0, 3: 33.0, 4: 47.0})
-        with patch.object(auto_lrc.subprocess, "run", helper), patch.object(
-            auto_lrc, "default_ctc_python", lambda: pathlib.Path("python")
+        with patch.object(auto_lrc.subprocess, "run", helper), split_patch.patch("default_ctc_python", lambda: pathlib.Path("python")
         ):
             auto_lrc.apply_ctc_local_window_realign(
                 pathlib.Path("dummy.flac"), entries, list(self.TIMES), report,

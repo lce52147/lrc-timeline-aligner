@@ -7,6 +7,7 @@ from tempfile import TemporaryDirectory
 from unittest import mock
 
 import auto_lrc
+import split_patch
 
 
 class DemucsSafeFilenameTests(unittest.TestCase):
@@ -37,7 +38,7 @@ class DemucsSafeFilenameTests(unittest.TestCase):
                     return subprocess.CompletedProcess(argv, 0, "", "")
 
                 with (
-                    mock.patch.object(auto_lrc, "default_ctc_python", return_value=py),
+                    split_patch.patch("default_ctc_python", return_value=py),
                     mock.patch.object(auto_lrc, "vocal_cache_identity", return_value={"vocal_cache_key":"same-key"}) as identity,
                     mock.patch.object(auto_lrc, "DEFAULT_VOCAL_CACHE_DIR", cache_root),
                     mock.patch.object(auto_lrc, "_demucs_vocal_stem_valid", return_value=True),
@@ -73,7 +74,7 @@ class DemucsSafeFilenameTests(unittest.TestCase):
                 return subprocess.CompletedProcess(argv, 0, "", "")
 
             with (
-                mock.patch.object(auto_lrc, "default_ctc_python", return_value=py),
+                split_patch.patch("default_ctc_python", return_value=py),
                 mock.patch.object(auto_lrc.subprocess, "run", side_effect=fake_run),
                 mock.patch.object(auto_lrc, "analyze_vocal_onsets", return_value="features"),
             ):

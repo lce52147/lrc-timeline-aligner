@@ -22,6 +22,7 @@ from unittest import mock
 os.environ.setdefault("LRC_MODEL_CACHE", "0")
 
 import auto_lrc
+import split_patch
 from auto_lrc import AsrSegment, LyricEntry, ModelCacheMiss
 
 
@@ -45,9 +46,9 @@ class ModelCacheReplayTests(unittest.TestCase):
             whisper_language="ja", model_cache=True, model_cache_only=False,
         )
         for patch in (
-            mock.patch.object(auto_lrc, "DEFAULT_MODEL_CACHE_DIR", root / "model-outputs"),
+            split_patch.patch("DEFAULT_MODEL_CACHE_DIR", root / "model-outputs"),
             mock.patch.object(auto_lrc, "_whispercpp_multifile_supported", return_value=True),
-            mock.patch.object(auto_lrc, "_gpu_coordination_enabled", return_value=False),
+            split_patch.patch("_gpu_coordination_enabled", return_value=False),
             mock.patch.dict(os.environ, {"LRC_MODEL_CACHE": "1", "LRC_MODEL_CACHE_ONLY": "0"}),
         ):
             patch.start()
@@ -63,7 +64,7 @@ class ModelCacheReplayTests(unittest.TestCase):
         return subprocess.CompletedProcess(command, 0, "", "")
 
     def test_batch_fills_cache_then_cache_only_replays_without_launch(self) -> None:
-        with mock.patch.object(auto_lrc, "run_command", side_effect=self.fake_batch_run) as run:
+        with split_patch.patch("run_command", side_effect=self.fake_batch_run) as run:
             first, errors = auto_lrc._run_whispercpp_wav_batch(self.wavs, self.args, suppress_nst=False)
         self.assertEqual(errors, {})
         self.assertEqual(run.call_count, 1)
@@ -80,7 +81,7 @@ class ModelCacheReplayTests(unittest.TestCase):
         }
 
         with mock.patch.dict(os.environ, {"LRC_MODEL_CACHE_ONLY": "1"}), \
-                mock.patch.object(auto_lrc, "run_command", side_effect=AssertionError("launched")):
+                split_patch.patch("run_command", side_effect=AssertionError("launched")):
             replay, errors = auto_lrc._run_whispercpp_wav_batch(self.wavs, self.args, suppress_nst=False)
         self.assertEqual(errors, {})
         self.assertEqual(replay, first)
@@ -98,7 +99,7 @@ class ModelCacheReplayTests(unittest.TestCase):
     def test_cache_only_miss_is_not_an_ordinary_failure(self) -> None:
         self.assertFalse(issubclass(ModelCacheMiss, Exception))
         with mock.patch.dict(os.environ, {"LRC_MODEL_CACHE_ONLY": "1"}), \
-                mock.patch.object(auto_lrc, "run_command", side_effect=AssertionError("launched")):
+                split_patch.patch("run_command", side_effect=AssertionError("launched")):
             with self.assertRaises(ModelCacheMiss):
                 auto_lrc._run_whispercpp_wav_batch(self.wavs, self.args, suppress_nst=False)
 
@@ -138,7 +139,7 @@ class ModelCacheReplayTests(unittest.TestCase):
         with mock.patch.object(
             auto_lrc, "try_whispercpp_diagnostic_candidate",
             return_value=([], {"assignments": []}, None, []),
-        ), mock.patch.object(auto_lrc, "default_ctc_ready", return_value=False), mock.patch.object(
+        ), split_patch.patch("default_ctc_ready", return_value=False), mock.patch.object(
             auto_lrc, "decode_temp_wav", return_value=None
         ):
             with self.assertRaisesRegex(ModelCacheMiss, "whisperx-python-unavailable"):
@@ -149,8 +150,8 @@ class ModelCacheReplayTests(unittest.TestCase):
     def test_cache_only_missing_ctc_backend_is_model_cache_miss(self) -> None:
         args = argparse.Namespace(**vars(self.args))
         args.model_cache_only = True
-        with mock.patch.object(auto_lrc, "default_ctc_ready", return_value=False), \
-                mock.patch.object(auto_lrc, "_whisperx_python_available", return_value=False), \
+        with split_patch.patch("default_ctc_ready", return_value=False), \
+                split_patch.patch("_whisperx_python_available", return_value=False), \
                 mock.patch.object(auto_lrc, "decode_temp_wav", return_value=None), \
                 mock.patch.object(
                     auto_lrc,
@@ -173,8 +174,8 @@ class ModelCacheReplayTests(unittest.TestCase):
                 seen_states.append(state)
 
         stderr = io.StringIO()
-        with mock.patch.object(auto_lrc, "default_ctc_ready", return_value=False), \
-                mock.patch.object(auto_lrc, "_whisperx_python_available", return_value=False), \
+        with split_patch.patch("default_ctc_ready", return_value=False), \
+                split_patch.patch("_whisperx_python_available", return_value=False), \
                 mock.patch.object(auto_lrc, "decode_temp_wav", return_value=None), \
                 mock.patch.object(
                     auto_lrc,

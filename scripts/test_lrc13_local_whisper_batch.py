@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import auto_lrc
+import split_patch
 
 
 def request(entry: int, start: float) -> SimpleNamespace:
@@ -35,7 +36,7 @@ class LocalWhisperBatchTests(unittest.TestCase):
             )
 
         stats = {"cache_hits": 0, "cache_misses": 0, "helper_invocations": 0}
-        with mock.patch.object(auto_lrc, "DEFAULT_EVIDENCE_WORKERS", 1), \
+        with split_patch.patch("DEFAULT_EVIDENCE_WORKERS", 1), \
                 mock.patch.object(auto_lrc, "_prepare_local_whisper_batch", fake_prepare), \
                 mock.patch.object(auto_lrc, "execute_local_whisper_request", fake_execute), \
                 mock.patch.object(auto_lrc, "_local_whisper_cache_key",

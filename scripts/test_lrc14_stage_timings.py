@@ -17,6 +17,7 @@ from types import SimpleNamespace
 import lrc_stage_timings as st
 import r2_pipeline
 import auto_lrc
+import split_patch
 
 
 class _Clock:
@@ -224,7 +225,7 @@ class ProductionIntegrationTests(unittest.TestCase):
         args = auto_lrc.build_parser().parse_args(args_list)
         os.environ["LRC_STAGE_TIMINGS"] = "1" if enabled else "0"
         output = io.StringIO()
-        with mock.patch.object(auto_lrc, "run_command", return_value=SimpleNamespace(returncode=0, stdout='{"format":{"duration":"2.0"}}', stderr="")), mock.patch.object(auto_lrc, "audio_track_labels", return_value=("", "Song")), redirect_stdout(output):
+        with split_patch.patch("run_command", return_value=SimpleNamespace(returncode=0, stdout='{"format":{"duration":"2.0"}}', stderr="")), mock.patch.object(auto_lrc, "audio_track_labels", return_value=("", "Song")), redirect_stdout(output):
             auto_lrc.process_audio(audio, args)
         report_path, _, _ = auto_lrc.report_artifact_paths(audio, root / "song.lrc", root / "reports")
         return (root / "song.lrc").read_bytes(), json.loads(report_path.read_text(encoding="utf-8")), output.getvalue()
@@ -269,9 +270,9 @@ class ProductionIntegrationTests(unittest.TestCase):
         st.install(namespace, (("process_audio", "song", "song"),))
         output = io.StringIO()
         with mock.patch.object(auto_lrc, "process_audio", namespace["process_audio"]), \
-             mock.patch.object(auto_lrc, "_apply_model_cache_flags", return_value="off"), \
-             mock.patch.object(auto_lrc, "_managed_temp_snapshot", return_value=set()), \
-             mock.patch.object(auto_lrc, "_cleanup_managed_temp_dirs_since"), redirect_stdout(output):
+             split_patch.patch("_apply_model_cache_flags", return_value="off"), \
+             split_patch.patch("_managed_temp_snapshot", return_value=set()), \
+             split_patch.patch("_cleanup_managed_temp_dirs_since"), redirect_stdout(output):
             self.assertEqual(auto_lrc.main(["song.flac"]), 0)
         self.assertEqual(calls, [None, "retry"])
         self.assertEqual(attempts, [1, 2])
@@ -284,9 +285,9 @@ class ProductionIntegrationTests(unittest.TestCase):
         namespace = {"process_audio": always_fail}
         st.install(namespace, (("process_audio", "song", "song"),))
         with mock.patch.object(auto_lrc, "process_audio", namespace["process_audio"]), \
-             mock.patch.object(auto_lrc, "_apply_model_cache_flags", return_value="off"), \
-             mock.patch.object(auto_lrc, "_managed_temp_snapshot", return_value=set()), \
-             mock.patch.object(auto_lrc, "_cleanup_managed_temp_dirs_since"), redirect_stdout(output):
+             split_patch.patch("_apply_model_cache_flags", return_value="off"), \
+             split_patch.patch("_managed_temp_snapshot", return_value=set()), \
+             split_patch.patch("_cleanup_managed_temp_dirs_since"), redirect_stdout(output):
             self.assertEqual(auto_lrc.main(["song.flac"]), 1)
         self.assertEqual(attempts, [1, 2])
         self.assertEqual(output.getvalue().count("TIMINGS pass=standalone"), 1)

@@ -12,6 +12,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import r2_pipeline
+import split_patch
 
 
 class R2PipelineTests(unittest.TestCase):
@@ -564,7 +565,7 @@ class TrackLabelFallbackTests(unittest.TestCase):
         def missing(args, **kwargs):
             raise auto_lrc.LrcError(f"Command not found: {args[0]}")
 
-        with mock.patch.object(auto_lrc, "run_command", side_effect=missing):
+        with split_patch.patch("run_command", side_effect=missing):
             self.assertEqual(auto_lrc.audio_track_labels(Path("x/song name.flac")), ("", "song name"))
 
 

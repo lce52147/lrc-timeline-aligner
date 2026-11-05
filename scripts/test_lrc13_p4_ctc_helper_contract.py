@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest import mock
 
 import auto_lrc
+import split_patch
 
 
 class CtcHelperRowContractTests(unittest.TestCase):
@@ -42,9 +43,7 @@ class CtcHelperRowContractTests(unittest.TestCase):
                     "prepare_vocal_ctc_audio",
                     return_value=(audio, "full-mix", None),
                 ),
-                mock.patch.object(
-                    auto_lrc,
-                    "default_ctc_python",
+                split_patch.patch("default_ctc_python",
                     return_value=Path(sys.executable),
                 ),
                 mock.patch.object(
@@ -52,9 +51,7 @@ class CtcHelperRowContractTests(unittest.TestCase):
                     "vocal_cache_identity",
                     return_value={},
                 ),
-                mock.patch.object(
-                    auto_lrc,
-                    "_run_model_helper_command",
+                split_patch.patch("_run_model_helper_command",
                     side_effect=fake_helper,
                 ),
             ):

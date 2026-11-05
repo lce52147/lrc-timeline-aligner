@@ -21,6 +21,7 @@ from pathlib import Path
 
 import numpy as np
 import auto_lrc
+import split_patch
 from auto_lrc import (
     AnchorHint,
     AudioFeatures,
@@ -161,9 +162,9 @@ class PersistentHelperRoutingTests(unittest.TestCase):
         with TemporaryDirectory() as temp_name:
             missing_worker = Path(temp_name) / "missing_worker.py"
             with (
-                mock.patch.object(auto_lrc, "_persistent_helper_worker_path", return_value=missing_worker),
-                mock.patch.object(auto_lrc, "run_command", return_value=expected) as run_command,
-                mock.patch.object(auto_lrc, "_PersistentHelperPool") as pool_class,
+                split_patch.patch("_persistent_helper_worker_path", return_value=missing_worker),
+                split_patch.patch("run_command", return_value=expected) as run_command,
+                split_patch.patch("_PersistentHelperPool") as pool_class,
             ):
                 result = auto_lrc._run_model_helper_command(
                     [sys.executable, str(Path(temp_name) / "helper.py"), "--probe"],
@@ -186,10 +187,10 @@ class PersistentHelperRoutingTests(unittest.TestCase):
             pool = mock.Mock()
             pool.run.return_value = expected
             with (
-                mock.patch.object(auto_lrc, "_persistent_helper_worker_path", return_value=worker),
-                mock.patch.object(auto_lrc, "_PersistentHelperPool", return_value=pool) as pool_class,
-                mock.patch.object(auto_lrc, "run_command") as run_command,
-                mock.patch.object(auto_lrc, "progress_log"),
+                split_patch.patch("_persistent_helper_worker_path", return_value=worker),
+                split_patch.patch("_PersistentHelperPool", return_value=pool) as pool_class,
+                split_patch.patch("run_command") as run_command,
+                split_patch.patch("progress_log"),
             ):
                 result = auto_lrc._run_model_helper_command(
                     [sys.executable, str(helper), "--probe"],
@@ -222,7 +223,7 @@ class VocalStemDeterminismTests(unittest.TestCase):
 
             args = type("Args", (), {"vocal_ctc": True})()
             with (
-                mock.patch.object(auto_lrc, "default_ctc_python", return_value=python_exe),
+                split_patch.patch("default_ctc_python", return_value=python_exe),
                 mock.patch.object(
                     auto_lrc,
                     "vocal_cache_identity",
@@ -4257,7 +4258,7 @@ class CentralTimingStateTests(unittest.TestCase):
     def test_audio_track_labels_preserve_artist_case(self) -> None:
         payload = json.dumps({"format": {"tags": {"ARTIST": "AC/DC feat. eVe", "TITLE": "Song"}}})
         completed = subprocess.CompletedProcess(["ffprobe"], 0, payload, "")
-        with mock.patch.object(auto_lrc, "run_command", return_value=completed):
+        with split_patch.patch("run_command", return_value=completed):
             artist, title = auto_lrc.audio_track_labels(Path("dummy.flac"))
         self.assertEqual(artist, "AC/DC feat. eVe")
         self.assertEqual(title, "Song")
@@ -5279,7 +5280,7 @@ class CentralTimingStateTests(unittest.TestCase):
             # The bare ``object()`` args cannot drive a real WhisperX pass, so the
             # python-availability probe is pinned off regardless of whether the
             # machine running the tests has a .venv-asr.
-            with mock.patch.object(auto_lrc, "_whisperx_python_available", return_value=False):
+            with split_patch.patch("_whisperx_python_available", return_value=False):
                 timestamps, report, backend, selection = auto_lrc.run_auto_backend_competition(
                     Path("dummy.flac"),
                     [LyricEntry(["generic"])],
@@ -11484,9 +11485,9 @@ class PathFreeCapabilityIdentityTests(unittest.TestCase):
             args_first = auto_lrc.build_parser().parse_args([str(first)])
             args_second = auto_lrc.build_parser().parse_args([str(second)])
             with (
-                mock.patch.object(auto_lrc, "default_whisper_cli", return_value=whisper_cli),
-                mock.patch.object(auto_lrc, "default_whisper_model", return_value=whisper_model),
-                mock.patch.object(auto_lrc, "default_whisperx_python", return_value=whisperx_python),
+                split_patch.patch("default_whisper_cli", return_value=whisper_cli),
+                split_patch.patch("default_whisper_model", return_value=whisper_model),
+                split_patch.patch("default_whisperx_python", return_value=whisperx_python),
             ):
                 local_first = auto_lrc.build_local_whisper_capability(first, args_first)
                 local_second = auto_lrc.build_local_whisper_capability(second, args_second)
@@ -12999,7 +13000,7 @@ class V15EvidenceConvergenceRegressionTests(unittest.TestCase):
             {"timestamp": 2.4, "score": .20, "segment": 3, "borrowed": False},
             {"timestamp": 3.5, "score": .94, "segment": 4, "borrowed": False},
         ]}
-        with mock.patch.object(auto_lrc, "_stable_file_sha256", return_value="audio"), \
+        with split_patch.patch("_stable_file_sha256", return_value="audio"), \
              mock.patch.object(auto_lrc, "decode_temp_wav_window", return_value=Path("window.wav")), \
              mock.patch.object(auto_lrc, "_run_whispercpp_wav", return_value=raw_segments), \
              mock.patch.object(auto_lrc, "run_whisperx_alignment", return_value=aligned_payload), \
@@ -13224,7 +13225,7 @@ class V151MonotonicLocalProbingRegressionTests(unittest.TestCase):
             {"timestamp": 2.4, "score": .20, "segment": 3, "borrowed": False},
             {"timestamp": 3.5, "score": .94, "segment": 4, "borrowed": False},
         ]}
-        with mock.patch.object(auto_lrc, "_stable_file_sha256", return_value="audio"), \
+        with split_patch.patch("_stable_file_sha256", return_value="audio"), \
              mock.patch.object(auto_lrc, "decode_temp_wav_window", return_value=Path("window.wav")), \
              mock.patch.object(auto_lrc, "_run_whispercpp_wav", return_value=raw_segments), \
              mock.patch.object(auto_lrc, "run_whisperx_alignment", return_value=aligned_payload), \
@@ -13299,7 +13300,7 @@ class V152BoundaryContentConvergenceRegressionTests(unittest.TestCase):
                 return "tokyo"
             return real_romaji(text) or text
 
-        with mock.patch.object(auto_lrc, "_stable_file_sha256", return_value="audio"), \
+        with split_patch.patch("_stable_file_sha256", return_value="audio"), \
              mock.patch.object(auto_lrc, "decode_temp_wav_window", return_value=Path("window.wav")), \
              mock.patch.object(auto_lrc, "_run_whispercpp_wav", return_value=raw_segments), \
              mock.patch.object(auto_lrc, "run_whisperx_alignment", return_value=aligned_payload), \
@@ -13359,7 +13360,7 @@ class V152BoundaryContentConvergenceRegressionTests(unittest.TestCase):
                 return "tokyo"
             return real_romaji(text) or text
 
-        with mock.patch.object(auto_lrc, "_stable_file_sha256", return_value="audio"), \
+        with split_patch.patch("_stable_file_sha256", return_value="audio"), \
              mock.patch.object(auto_lrc, "decode_temp_wav_window", return_value=Path("window.wav")), \
              mock.patch.object(auto_lrc, "_run_whispercpp_wav", return_value=raw_segments), \
              mock.patch.object(auto_lrc, "run_whisperx_alignment", return_value=aligned_payload), \
@@ -13681,8 +13682,8 @@ class ZeroReferenceAutoIsolationTests(unittest.TestCase):
                 "--report-dir", str(root / "reports"), "--overwrite",
             ])
             with mock.patch.object(auto_lrc, "probe_duration", return_value=20.0), \
-                mock.patch.object(auto_lrc, "default_ctc_ready", return_value=True), \
-                mock.patch.object(auto_lrc, "default_whisperx_ready", return_value=False), \
+                split_patch.patch("default_ctc_ready", return_value=True), \
+                split_patch.patch("default_whisperx_ready", return_value=False), \
                 mock.patch.object(auto_lrc, "run_auto_backend_competition", side_effect=competition), \
                 mock.patch.object(auto_lrc, "audio_track_labels", return_value=("", "generic")), \
                 mock.patch.object(auto_lrc, "checked_lrc_timing_hint", side_effect=AssertionError("checked hint read")):
@@ -14368,7 +14369,7 @@ class DemucsCacheIsolationTests(unittest.TestCase):
         self.key="isolated-test"
         self.args=type("Args",(),{"vocal_ctc":True})()
         for patch in (
-            mock.patch.object(auto_lrc,"default_ctc_python",return_value=self.python),
+            split_patch.patch("default_ctc_python",return_value=self.python),
             mock.patch.object(auto_lrc,"vocal_cache_identity",return_value={"vocal_cache_key":self.key}),
             mock.patch.object(auto_lrc,"DEFAULT_VOCAL_CACHE_DIR",self.cache_root),
         ):

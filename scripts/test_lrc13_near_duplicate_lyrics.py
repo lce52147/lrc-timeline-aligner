@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 import auto_lrc
+import split_patch
 from auto_lrc import LyricEntry, has_ambiguous_lyric_prefix
 from test_lrc13_collapsed_local_window import ctc_report
 
@@ -62,8 +63,7 @@ class NearDuplicateLyricTests(unittest.TestCase):
         raw["assignments"][3] = {"entry": 4, "timestamp": 30.0, "score": 0.95}
         entries = [LyricEntry([text]) for text in TEXTS]
         helper = RecordingHelper()
-        with patch.object(auto_lrc.subprocess, "run", helper), patch.object(
-            auto_lrc, "default_ctc_python", lambda: pathlib.Path("python")
+        with patch.object(auto_lrc.subprocess, "run", helper), split_patch.patch("default_ctc_python", lambda: pathlib.Path("python")
         ):
             auto_lrc.apply_ctc_local_window_realign(
                 pathlib.Path("dummy.flac"), entries, list(times), report, raw, 60.0,

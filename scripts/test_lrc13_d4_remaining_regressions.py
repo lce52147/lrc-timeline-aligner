@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import auto_lrc
+import split_patch
 from test_core_logic import V144JointBoundaryGraphRegressionTests
 
 
@@ -31,7 +32,7 @@ class HybridWindowBoundaryRegressionTests(unittest.TestCase):
             ]
         }
         args = SimpleNamespace(whisperx_device="cuda")
-        with mock.patch.object(auto_lrc, "_run_model_helper_command") as helper:
+        with split_patch.patch("_run_model_helper_command") as helper:
             helper.return_value = subprocess.CompletedProcess([], 1, "", "")
             refined, _report, changes = auto_lrc.apply_ctc_hybrid_window_realign(
                 Path("dummy.wav"),
@@ -95,9 +96,7 @@ class CrosslineTransientCacheRegressionTests(unittest.TestCase):
         entries, _candidate_sets, _report, capability, _epoch, request = fixture.joint_request()
         helper_cache: dict[str, tuple[str, object]] = {}
 
-        with mock.patch.object(
-            auto_lrc,
-            "_run_model_helper_command",
+        with split_patch.patch("_run_model_helper_command",
             side_effect=subprocess.TimeoutExpired(cmd=["ctc"], timeout=0.01),
         ):
             outcome = auto_lrc.invoke_crossline_retry(
@@ -124,7 +123,7 @@ class CrosslineTransientCacheRegressionTests(unittest.TestCase):
             output.write_text('{"entries": []}', encoding="utf-8")
             return subprocess.CompletedProcess(command, 0, "", "")
 
-        with mock.patch.object(auto_lrc, "_run_model_helper_command", side_effect=fake_helper):
+        with split_patch.patch("_run_model_helper_command", side_effect=fake_helper):
             outcome = auto_lrc.invoke_crossline_retry(
                 request,
                 capability,

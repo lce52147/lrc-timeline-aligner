@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch
 
 import auto_lrc
+import split_patch
 
 
 class CentralSourceValidationTests(unittest.TestCase):
@@ -19,9 +20,7 @@ class CentralSourceValidationTests(unittest.TestCase):
             "assignments": [{}],
             "central_timing_state": [{}],
         }
-        with patch.object(
-            auto_lrc,
-            "validated_loaded_source_sha256",
+        with split_patch.patch("validated_loaded_source_sha256",
             side_effect=auto_lrc.LrcError("source changed"),
         ):
             self.assertFalse(auto_lrc.report_has_verified_central_commit(report))
