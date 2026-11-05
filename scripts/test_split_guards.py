@@ -19,6 +19,7 @@ EXPECTED_SOURCE_FILES = (
     "asr_backends.py",
     "audio_features.py",
     "auto_lrc.py",
+    "backend_bundle.py",
     "central_commit.py",
     "central_peer_recovery.py",
     "ctc_refinement.py",
