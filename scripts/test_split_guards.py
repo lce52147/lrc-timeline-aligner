@@ -169,7 +169,7 @@ class SplitPatchAssignRestoreTests(unittest.TestCase):
         before = self._bindings()
         restore = split_patch.assign(self.NAME, lambda *a, **k: None)
         try:
-            auto_lrc.analyze_audio = original  # the leak this guard exists for
+            setattr(auto_lrc, self.NAME, original)  # the facade-only restore this guard exists for
             with self.assertRaisesRegex(AssertionError, self.NAME):
                 split_patch.assert_clean()
         finally:
