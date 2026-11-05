@@ -13,6 +13,7 @@ import numpy as np
 
 import auto_lrc
 import split_patch
+import audio_features
 from auto_lrc import LyricEntry
 from test_lrc13_collapsed_local_window import FakeHelper, ctc_report, local_window_times, silent_raw
 
@@ -97,7 +98,7 @@ class LocalWindowVocalSilenceTests(unittest.TestCase):
             stem.write_bytes(b"mock")
             report["ctc_audio_source"] = "vocal-stem"
             report["ctc_audio_path"] = str(stem)
-            with split_patch.patch("decode_audio", return_value=x), split_patch.patch("analyze_audio", return_value=features
+            with patch.object(audio_features, "decode_audio", return_value=x), split_patch.patch("analyze_audio", return_value=features
             ), patch.object(auto_lrc.subprocess, "run", helper), split_patch.patch("default_ctc_python", lambda: pathlib.Path("python")
             ):
                 levels = auto_lrc.vocal_stem_levels(report)

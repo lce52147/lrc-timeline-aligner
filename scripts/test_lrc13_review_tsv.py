@@ -1,8 +1,9 @@
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 import auto_lrc
-import split_patch
+import lyrics_io
 
 class ReviewSidecarTests(unittest.TestCase):
     def test_sidecar_metadata_and_review_rows(self):
@@ -105,7 +106,7 @@ class LyricParserRegressionTests(unittest.TestCase):
             auto_lrc.LyricEntry(["Another - Title"], 0),
             auto_lrc.LyricEntry(["Artist - Other"], 0),
         ]
-        with split_patch.patch("audio_track_labels", return_value=("Artist", "Title")):
+        with mock.patch.object(lyrics_io, "audio_track_labels", return_value=("Artist", "Title")):
             kept = auto_lrc.remove_generated_title_cards(entries, Path("song.flac"))
         self.assertEqual(kept, [entries[0], entries[2], entries[3], entries[4]])
 
@@ -152,7 +153,7 @@ class LyricParserRegressionTests(unittest.TestCase):
                 encoding="utf-8",
             )
             document = auto_lrc.load_lyrics(path)
-            with split_patch.patch("audio_track_labels", return_value=("Artist", "Title")):
+            with mock.patch.object(lyrics_io, "audio_track_labels", return_value=("Artist", "Title")):
                 kept = auto_lrc.remove_generated_title_cards(document.entries, Path("song.flac"))
                 preflight = auto_lrc.build_lyric_preflight(
                     path, document, kept, Path("song.flac")

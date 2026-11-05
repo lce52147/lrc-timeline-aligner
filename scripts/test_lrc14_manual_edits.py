@@ -17,6 +17,7 @@ if str(SCRIPTS) not in sys.path:
 
 import auto_lrc
 import split_patch
+import lyrics_io
 import lrc_manual_edits
 import lrc_publication
 import r2_pipeline
@@ -67,7 +68,7 @@ class ManualEditTests(unittest.TestCase):
         args = auto_lrc.build_parser().parse_args(argv)
         with (
             split_patch.patch("probe_duration", return_value=2.0),
-            split_patch.patch("audio_track_labels", return_value=("", "Song")),
+            mock.patch.object(lyrics_io, "audio_track_labels", return_value=("", "Song")),
         ):
             result = auto_lrc.process_audio(audio, args)
         report, _audit, _template = auto_lrc.report_artifact_paths(audio, output, reports)

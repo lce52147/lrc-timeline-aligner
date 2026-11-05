@@ -8,6 +8,7 @@ from unittest import mock
 
 import auto_lrc
 import split_patch
+import audio_features
 
 
 class DemucsSafeFilenameTests(unittest.TestCase):
@@ -40,8 +41,8 @@ class DemucsSafeFilenameTests(unittest.TestCase):
                 with (
                     split_patch.patch("default_ctc_python", return_value=py),
                     split_patch.patch("vocal_cache_identity", return_value={"vocal_cache_key":"same-key"}) as identity,
-                    split_patch.patch("DEFAULT_VOCAL_CACHE_DIR", cache_root),
-                    split_patch.patch("_demucs_vocal_stem_valid", return_value=True),
+                    mock.patch.object(audio_features, "DEFAULT_VOCAL_CACHE_DIR", cache_root),
+                    mock.patch.object(audio_features, "_demucs_vocal_stem_valid", return_value=True),
                     mock.patch.object(auto_lrc.subprocess, "run", side_effect=fake_run),
                 ):
                     actual, source, note = auto_lrc.prepare_vocal_ctc_audio(audio, type("Args", (), {"vocal_ctc": True})())

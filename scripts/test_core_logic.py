@@ -22,6 +22,12 @@ from pathlib import Path
 import numpy as np
 import auto_lrc
 import split_patch
+import audio_features
+import central_commit
+import ctc_refinement
+import local_whisper_retry
+import lyrics_io
+import runtime_base
 from auto_lrc import (
     AnchorHint,
     AudioFeatures,
@@ -162,9 +168,9 @@ class PersistentHelperRoutingTests(unittest.TestCase):
         with TemporaryDirectory() as temp_name:
             missing_worker = Path(temp_name) / "missing_worker.py"
             with (
-                split_patch.patch("_persistent_helper_worker_path", return_value=missing_worker),
+                mock.patch.object(runtime_base, "_persistent_helper_worker_path", return_value=missing_worker),
                 split_patch.patch("run_command", return_value=expected) as run_command,
-                split_patch.patch("_PersistentHelperPool") as pool_class,
+                mock.patch.object(runtime_base, "_PersistentHelperPool") as pool_class,
             ):
                 result = auto_lrc._run_model_helper_command(
                     [sys.executable, str(Path(temp_name) / "helper.py"), "--probe"],
@@ -187,8 +193,8 @@ class PersistentHelperRoutingTests(unittest.TestCase):
             pool = mock.Mock()
             pool.run.return_value = expected
             with (
-                split_patch.patch("_persistent_helper_worker_path", return_value=worker),
-                split_patch.patch("_PersistentHelperPool", return_value=pool) as pool_class,
+                mock.patch.object(runtime_base, "_persistent_helper_worker_path", return_value=worker),
+                mock.patch.object(runtime_base, "_PersistentHelperPool", return_value=pool) as pool_class,
                 split_patch.patch("run_command") as run_command,
                 split_patch.patch("progress_log"),
             ):
@@ -227,9 +233,9 @@ class VocalStemDeterminismTests(unittest.TestCase):
                 split_patch.patch("vocal_cache_identity",
                     return_value={"vocal_cache_key": "deterministic-test"},
                 ),
-                split_patch.patch("DEFAULT_VOCAL_CACHE_DIR", cache_root),
+                mock.patch.object(audio_features, "DEFAULT_VOCAL_CACHE_DIR", cache_root),
                 mock.patch.object(auto_lrc.subprocess, "run", side_effect=fake_run) as run_command,
-                split_patch.patch("_demucs_vocal_stem_valid", return_value=True),
+                mock.patch.object(audio_features, "_demucs_vocal_stem_valid", return_value=True),
             ):
                 path, source, status = auto_lrc.prepare_vocal_ctc_audio(audio, args)
 
@@ -311,7 +317,7 @@ class AnchorHintTests(unittest.TestCase):
 
     def test_generated_title_card_is_not_reused_as_alignment_lyric(self) -> None:
         original_labels = auto_lrc.audio_track_labels
-        split_patch.assign("audio_track_labels", lambda _path: ("Demo Artist", "Demo Song"))  # type: ignore[assignment]
+        lyrics_io.audio_track_labels = lambda _path: ("Demo Artist", "Demo Song")  # type: ignore[assignment]
         try:
             entries = [
                 LyricEntry(["Demo Artist - Demo Song"], 0),
@@ -322,11 +328,11 @@ class AnchorHintTests(unittest.TestCase):
 
             self.assertEqual([entry.lines[0] for entry in kept], ["synthetic lyric line"])
         finally:
-            split_patch.assign("audio_track_labels", original_labels)  # type: ignore[assignment]
+            lyrics_io.audio_track_labels = original_labels  # type: ignore[assignment]
 
     def test_generated_title_card_match_is_ascii_case_insensitive(self) -> None:
         original_labels = auto_lrc.audio_track_labels
-        split_patch.assign("audio_track_labels", lambda _path: ("MyGO!!!!!", "影色舞"))  # type: ignore[assignment]
+        lyrics_io.audio_track_labels = lambda _path: ("MyGO!!!!!", "影色舞")  # type: ignore[assignment]
         try:
             entries = [
                 LyricEntry(["Mygo!!!!! - 影色舞"], 0),
@@ -337,12 +343,12 @@ class AnchorHintTests(unittest.TestCase):
 
             self.assertEqual([entry.lines[0] for entry in kept], ["synthetic lyric line"])
         finally:
-            split_patch.assign("audio_track_labels", original_labels)  # type: ignore[assignment]
+            lyrics_io.audio_track_labels = original_labels  # type: ignore[assignment]
 
     def test_title_artist_order_card_is_not_aligned_as_lyric(self) -> None:
         # c10: "Ever be my love - 山田タマル" at 0.00 was aligned as lyric #1.
         original_labels = auto_lrc.audio_track_labels
-        split_patch.assign("audio_track_labels", lambda _path: ("山田タマル", "Ever be my love"))  # type: ignore[assignment]
+        lyrics_io.audio_track_labels = lambda _path: ("山田タマル", "Ever be my love")  # type: ignore[assignment]
         try:
             entries = [
                 LyricEntry(["Ever be my love - 山田タマル"], 0),
@@ -353,11 +359,11 @@ class AnchorHintTests(unittest.TestCase):
 
             self.assertEqual([entry.lines[0] for entry in kept], ["synthetic lyric line"])
         finally:
-            split_patch.assign("audio_track_labels", original_labels)  # type: ignore[assignment]
+            lyrics_io.audio_track_labels = original_labels  # type: ignore[assignment]
 
     def test_card_shaped_lines_that_do_not_match_tags_are_kept(self) -> None:
         original_labels = auto_lrc.audio_track_labels
-        split_patch.assign("audio_track_labels", lambda _path: ("Demo Artist", "Demo Song"))  # type: ignore[assignment]
+        lyrics_io.audio_track_labels = lambda _path: ("Demo Artist", "Demo Song")  # type: ignore[assignment]
         try:
             entries = [
                 LyricEntry(["Demo Song - Someone Else"], 0),
@@ -369,11 +375,11 @@ class AnchorHintTests(unittest.TestCase):
 
             self.assertEqual(len(kept), 3)
         finally:
-            split_patch.assign("audio_track_labels", original_labels)  # type: ignore[assignment]
+            lyrics_io.audio_track_labels = original_labels  # type: ignore[assignment]
 
     def test_title_only_tags_never_match_a_reversed_card(self) -> None:
         original_labels = auto_lrc.audio_track_labels
-        split_patch.assign("audio_track_labels", lambda _path: ("", "Demo Song"))  # type: ignore[assignment]
+        lyrics_io.audio_track_labels = lambda _path: ("", "Demo Song")  # type: ignore[assignment]
         try:
             entries = [LyricEntry(["Demo Song - anything"], 0)]
 
@@ -381,11 +387,11 @@ class AnchorHintTests(unittest.TestCase):
 
             self.assertEqual(len(kept), 1)
         finally:
-            split_patch.assign("audio_track_labels", original_labels)  # type: ignore[assignment]
+            lyrics_io.audio_track_labels = original_labels  # type: ignore[assignment]
 
     def test_untimed_source_title_is_preserved_as_potential_sung_lyric(self) -> None:
         original_labels = auto_lrc.audio_track_labels
-        split_patch.assign("audio_track_labels", lambda _path: ("", "Song Title"))  # type: ignore[assignment]
+        lyrics_io.audio_track_labels = lambda _path: ("", "Song Title")  # type: ignore[assignment]
         try:
             entries = [
                 LyricEntry(["Song Title", "Song translation"]),
@@ -396,7 +402,7 @@ class AnchorHintTests(unittest.TestCase):
 
             self.assertEqual([entry.lines[0] for entry in kept], ["Song Title", "actual lyric"])
         finally:
-            split_patch.assign("audio_track_labels", original_labels)  # type: ignore[assignment]
+            lyrics_io.audio_track_labels = original_labels  # type: ignore[assignment]
 
     def test_probe_option_parses_without_output_path(self) -> None:
         args = build_parser().parse_args(["song.flac", "--probe"])
@@ -2008,7 +2014,7 @@ class VocalOnsetTiebreakTests(unittest.TestCase):
         onset_strength[np.where(np.isclose(frame_times, 20.2))[0][0]] = 0.40
         features = AudioFeatures(30.0, frame_times, np.full_like(frame_times, -20.0), onset_strength, [])
         original_features = auto_lrc.vocal_onset_features
-        split_patch.assign("vocal_onset_features", lambda audio, duration, args: (features, None))  # type: ignore[assignment]
+        ctc_refinement.vocal_onset_features = lambda audio, duration, args: (features, None)  # type: ignore[assignment]
         try:
             report: dict[str, object] = {
                 "assignments": [
@@ -2033,7 +2039,7 @@ class VocalOnsetTiebreakTests(unittest.TestCase):
             self.assertEqual(changes[0]["reason"], "demucs-vocal-onset-prefers-ctc")
             self.assertEqual(result["vocal_onset_refinement"]["change_count"], 1)  # type: ignore[index]
         finally:
-            split_patch.assign("vocal_onset_features", original_features)  # type: ignore[assignment]
+            ctc_refinement.vocal_onset_features = original_features  # type: ignore[assignment]
 
     def test_backtracks_from_ctc_first_token_candidate_for_weak_prefix(self) -> None:
         features = AudioFeatures(
@@ -4233,7 +4239,7 @@ class CentralTimingStateTests(unittest.TestCase):
         state = auto_lrc.build_final_timing_state(((candidate,),))
         before = state.written_times
         original_labels = auto_lrc.audio_track_labels
-        split_patch.assign("audio_track_labels", lambda _path: ("", "generic"))  # type: ignore[assignment]
+        lyrics_io.audio_track_labels = lambda _path: ("", "generic")  # type: ignore[assignment]
         try:
             with TemporaryDirectory() as temp_name:
                 root = Path(temp_name)
@@ -4249,7 +4255,7 @@ class CentralTimingStateTests(unittest.TestCase):
                 )
                 written = output.read_text(encoding="utf-8-sig")
         finally:
-            split_patch.assign("audio_track_labels", original_labels)  # type: ignore[assignment]
+            lyrics_io.audio_track_labels = original_labels  # type: ignore[assignment]
         self.assertIs(state.written_times, before)
         self.assertIn(f"[{state.written_times[0].lrc_tag}]generic line", written)
 
@@ -4283,7 +4289,7 @@ class CentralTimingStateTests(unittest.TestCase):
             ])
             with (
                 split_patch.patch("probe_duration", return_value=2.0),
-                split_patch.patch("audio_track_labels", return_value=("MiXeD ARTIST", "Song")),
+                mock.patch.object(lyrics_io, "audio_track_labels", return_value=("MiXeD ARTIST", "Song")),
             ):
                 auto_lrc.process_audio(audio, args)
             written = output.read_text(encoding="utf-8-sig")
@@ -4941,7 +4947,7 @@ class CentralTimingStateTests(unittest.TestCase):
         original_collect = auto_lrc.collect_central_timing_candidates
         original_probe = auto_lrc.apply_final_ctc_timing_guard
         split_patch.assign("evaluate_final_timing_state_for_report", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("re-evaluated")))  # type: ignore[assignment]
-        split_patch.assign("collect_central_timing_candidates", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("regenerated")))  # type: ignore[assignment]
+        central_commit.collect_central_timing_candidates = lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("regenerated"))  # type: ignore[assignment]
         split_patch.assign("apply_final_ctc_timing_guard", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("re-probed")))  # type: ignore[assignment]
         try:
             committed = auto_lrc.commit_evaluated_backend(
@@ -4949,7 +4955,7 @@ class CentralTimingStateTests(unittest.TestCase):
             )
         finally:
             split_patch.assign("evaluate_final_timing_state_for_report", original)  # type: ignore[assignment]
-            split_patch.assign("collect_central_timing_candidates", original_collect)  # type: ignore[assignment]
+            central_commit.collect_central_timing_candidates = original_collect  # type: ignore[assignment]
             split_patch.assign("apply_final_ctc_timing_guard", original_probe)  # type: ignore[assignment]
         self.assertIs(committed, evaluated.state)
         self.assertEqual(report["trusted_percent"], evaluated.summary.overall_trusted_percent)
@@ -5278,7 +5284,7 @@ class CentralTimingStateTests(unittest.TestCase):
             # The bare ``object()`` args cannot drive a real WhisperX pass, so the
             # python-availability probe is pinned off regardless of whether the
             # machine running the tests has a .venv-asr.
-            with split_patch.patch("_whisperx_python_available", return_value=False):
+            with mock.patch.object(auto_lrc, "_whisperx_python_available", return_value=False):
                 timestamps, report, backend, selection = auto_lrc.run_auto_backend_competition(
                     Path("dummy.flac"),
                     [LyricEntry(["generic"])],
@@ -7430,7 +7436,7 @@ class GeorgetteBoundaryRegressionContinuedTests(unittest.TestCase):
         original_prefix_probe = auto_lrc.run_ctc_prefix_probe
         split_patch.assign("analyze_audio", lambda *_args, **_kwargs: features)  # type: ignore[assignment]
         split_patch.assign("analyze_vocal_onsets", lambda *_args, **_kwargs: features)  # type: ignore[assignment]
-        split_patch.assign("run_ctc_prefix_probe", lambda *_args, **_kwargs: {  # type: ignore[assignment]
+        ctc_refinement.run_ctc_prefix_probe = lambda *_args, **_kwargs: {  # type: ignore[assignment]
             "accepted": True,
             "candidate": 12.75,
             "ctc_score": 0.18,
@@ -7438,7 +7444,7 @@ class GeorgetteBoundaryRegressionContinuedTests(unittest.TestCase):
             "prefix_weak_ratio": 0.25,
             "prefix_span_seconds": 0.9,
             "prefix_text": "everlastin",
-        })
+        }
         try:
             entries = [LyricEntry(["... again"]), LyricEntry(["everlastin ever"])]
             report: dict[str, object] = {
@@ -7485,7 +7491,7 @@ class GeorgetteBoundaryRegressionContinuedTests(unittest.TestCase):
         finally:
             split_patch.assign("analyze_audio", original_analyze_audio)  # type: ignore[assignment]
             split_patch.assign("analyze_vocal_onsets", original_analyze_vocal)  # type: ignore[assignment]
-            split_patch.assign("run_ctc_prefix_probe", original_prefix_probe)  # type: ignore[assignment]
+            ctc_refinement.run_ctc_prefix_probe = original_prefix_probe  # type: ignore[assignment]
 
     def test_untrusted_crossline_recovery_does_not_leave_stale_effective_index(self) -> None:
         report: dict[str, object] = {
@@ -12048,7 +12054,7 @@ class V146LocalWhisperEvidenceRegressionTests(unittest.TestCase):
                 whisperx_device="cpu",
             )
             with (
-                split_patch.patch("decode_temp_wav_window",
+                mock.patch.object(local_whisper_retry, "decode_temp_wav_window",
                     side_effect=[LrcError("transient"), audio],
                 ),
                 split_patch.patch("_run_whispercpp_wav", return_value=raw),
@@ -12234,7 +12240,7 @@ class V146LocalWhisperEvidenceRegressionTests(unittest.TestCase):
             }
             # Deliberately return a bogus heuristic time (4.5 s). The evidence
             # must use the aligned target character onset (3.0 s) instead.
-            with split_patch.patch("decode_temp_wav_window", return_value=audio), \
+            with mock.patch.object(local_whisper_retry, "decode_temp_wav_window", return_value=audio), \
                  split_patch.patch("_run_whispercpp_wav", return_value=raw), \
                  split_patch.patch("run_whisperx_alignment", return_value={}), \
                  split_patch.patch("whisperx_segments", return_value=aligned), \
@@ -12988,7 +12994,7 @@ class V15EvidenceConvergenceRegressionTests(unittest.TestCase):
             {"timestamp": 3.5, "score": .94, "segment": 4, "borrowed": False},
         ]}
         with split_patch.patch("_stable_file_sha256", return_value="audio"), \
-             split_patch.patch("decode_temp_wav_window", return_value=Path("window.wav")), \
+             mock.patch.object(local_whisper_retry, "decode_temp_wav_window", return_value=Path("window.wav")), \
              split_patch.patch("_run_whispercpp_wav", return_value=raw_segments), \
              split_patch.patch("run_whisperx_alignment", return_value=aligned_payload), \
              split_patch.patch("match_whisper_segments", return_value=([.4, 1.2, 2.4, 3.5], local_report)):
@@ -13213,7 +13219,7 @@ class V151MonotonicLocalProbingRegressionTests(unittest.TestCase):
             {"timestamp": 3.5, "score": .94, "segment": 4, "borrowed": False},
         ]}
         with split_patch.patch("_stable_file_sha256", return_value="audio"), \
-             split_patch.patch("decode_temp_wav_window", return_value=Path("window.wav")), \
+             mock.patch.object(local_whisper_retry, "decode_temp_wav_window", return_value=Path("window.wav")), \
              split_patch.patch("_run_whispercpp_wav", return_value=raw_segments), \
              split_patch.patch("run_whisperx_alignment", return_value=aligned_payload), \
              split_patch.patch("match_whisper_segments", return_value=([.4, 1.2, 2.4, 3.5], local_report)):
@@ -13288,7 +13294,7 @@ class V152BoundaryContentConvergenceRegressionTests(unittest.TestCase):
             return real_romaji(text) or text
 
         with split_patch.patch("_stable_file_sha256", return_value="audio"), \
-             split_patch.patch("decode_temp_wav_window", return_value=Path("window.wav")), \
+             mock.patch.object(local_whisper_retry, "decode_temp_wav_window", return_value=Path("window.wav")), \
              split_patch.patch("_run_whispercpp_wav", return_value=raw_segments), \
              split_patch.patch("run_whisperx_alignment", return_value=aligned_payload), \
              split_patch.patch("match_whisper_segments", return_value=([.4, 1.2, 2.4], local_report)), \
@@ -13348,7 +13354,7 @@ class V152BoundaryContentConvergenceRegressionTests(unittest.TestCase):
             return real_romaji(text) or text
 
         with split_patch.patch("_stable_file_sha256", return_value="audio"), \
-             split_patch.patch("decode_temp_wav_window", return_value=Path("window.wav")), \
+             mock.patch.object(local_whisper_retry, "decode_temp_wav_window", return_value=Path("window.wav")), \
              split_patch.patch("_run_whispercpp_wav", return_value=raw_segments), \
              split_patch.patch("run_whisperx_alignment", return_value=aligned_payload), \
              split_patch.patch("whisperx_segments", return_value=aligned_segments), \
@@ -13398,7 +13404,7 @@ class V152BoundaryContentConvergenceRegressionTests(unittest.TestCase):
             rms_db=np.zeros(4), onset_strength=np.asarray([.1, .2, .95, .2]),
             segments=[(1.9, 2.8)],
         )
-        with split_patch.patch("_strong_vocal_onset_near", return_value=(2.1, .95, .80)):
+        with mock.patch.object(local_whisper_retry, "_strong_vocal_onset_near", return_value=(2.1, .95, .80)):
             candidate = auto_lrc._local_whisper_vocal_fusion_candidate(
                 entry_index=1, entry=entries[1], local_evidence=local_evidence,
                 vocal_onset_features=features, audio_revision="audio-sha",
@@ -13509,7 +13515,7 @@ class V152BoundaryContentConvergenceRegressionTests(unittest.TestCase):
             segments=[(1.8, 2.8)],
         )
         with split_patch.patch("runtime_local_whisper_evidence_for_entry", return_value=local_evidence
-        ), split_patch.patch("_strong_vocal_onset_near", return_value=(2.1, .95, .80)
+        ), mock.patch.object(local_whisper_retry, "_strong_vocal_onset_near", return_value=(2.1, .95, .80)
         ):
             augmented = auto_lrc._augment_candidates_with_local_whisper_vocal_consensus(
                 ((), (parent,), ()), {}, entries, features, "audio-sha"
@@ -13667,11 +13673,11 @@ class ZeroReferenceAutoIsolationTests(unittest.TestCase):
                 "--report-dir", str(root / "reports"), "--overwrite",
             ])
             with split_patch.patch("probe_duration", return_value=20.0), \
-                split_patch.patch("default_ctc_ready", return_value=True), \
-                split_patch.patch("default_whisperx_ready", return_value=False), \
+                mock.patch.object(auto_lrc, "default_ctc_ready", return_value=True), \
+                mock.patch.object(auto_lrc, "default_whisperx_ready", return_value=False), \
                 mock.patch.object(auto_lrc, "run_auto_backend_competition", side_effect=competition), \
-                split_patch.patch("audio_track_labels", return_value=("", "generic")), \
-                split_patch.patch("checked_lrc_timing_hint", side_effect=AssertionError("checked hint read")):
+                mock.patch.object(lyrics_io, "audio_track_labels", return_value=("", "generic")), \
+                mock.patch.object(auto_lrc, "checked_lrc_timing_hint", side_effect=AssertionError("checked hint read")):
                 auto_lrc.process_audio(audio, args)
             report_path = next((root / "reports").glob("*.json"))
             persisted = json.loads(report_path.read_text(encoding="utf-8"))
@@ -14356,7 +14362,7 @@ class DemucsCacheIsolationTests(unittest.TestCase):
         for patch in (
             split_patch.patch("default_ctc_python",return_value=self.python),
             split_patch.patch("vocal_cache_identity",return_value={"vocal_cache_key":self.key}),
-            split_patch.patch("DEFAULT_VOCAL_CACHE_DIR",self.cache_root),
+            mock.patch.object(audio_features, "DEFAULT_VOCAL_CACHE_DIR",self.cache_root),
         ):
             patch.start()
             self.addCleanup(patch.stop)
@@ -14376,7 +14382,7 @@ class DemucsCacheIsolationTests(unittest.TestCase):
         stale=self.cache_root/self.key/"htdemucs"/"00_failed"/"vocals.mp3"
         stale.parent.mkdir(parents=True,exist_ok=True)
         stale.write_bytes(b"STALE"*2000)
-        with self.run_fake_demucs(),split_patch.patch("_demucs_vocal_stem_valid",return_value=True):
+        with self.run_fake_demucs(),mock.patch.object(audio_features, "_demucs_vocal_stem_valid",return_value=True):
             path,kind,status=auto_lrc.prepare_vocal_ctc_audio(self.audio,self.args)
         self.assertEqual((path,kind,status),(self.cached,"vocal-stem","generated"))
         self.assertEqual(path.read_bytes(),b"NEW_VALID_STEM"*1000)
@@ -14388,14 +14394,14 @@ class DemucsCacheIsolationTests(unittest.TestCase):
         def validity(path,source):
             self.assertEqual(source,self.audio)
             return path.stat().st_size>4096
-        with self.run_fake_demucs(),split_patch.patch("_demucs_vocal_stem_valid",side_effect=validity):
+        with self.run_fake_demucs(),mock.patch.object(audio_features, "_demucs_vocal_stem_valid",side_effect=validity):
             path,kind,status=auto_lrc.prepare_vocal_ctc_audio(self.audio,self.args)
         self.assertEqual((kind,status),("vocal-stem","generated"))
         self.assertEqual(path.read_bytes(),b"NEW_VALID_STEM"*1000)
 
     def test_demucs_error_keeps_full_traceback_tail_and_log(self):
         error="Log progress "+"x"*800+"\nTraceback (most recent call last):\nFileNotFoundError: sentinel-root-cause"
-        with self.run_fake_demucs(stderr=error),split_patch.patch("_demucs_vocal_stem_valid",return_value=True):
+        with self.run_fake_demucs(stderr=error),mock.patch.object(audio_features, "_demucs_vocal_stem_valid",return_value=True):
             path,kind,status=auto_lrc.prepare_vocal_ctc_audio(self.audio,self.args)
         self.assertEqual((path,kind),(self.audio,"mix"))
         self.assertIn("FileNotFoundError: sentinel-root-cause",status)
@@ -14404,13 +14410,13 @@ class DemucsCacheIsolationTests(unittest.TestCase):
     def test_valid_cache_is_reused_without_demucs(self):
         self.cached.parent.mkdir(parents=True,exist_ok=True)
         self.cached.write_bytes(b"VALID"*2400)
-        with split_patch.patch("_demucs_vocal_stem_valid",return_value=True), \
+        with mock.patch.object(audio_features, "_demucs_vocal_stem_valid",return_value=True), \
              mock.patch.object(auto_lrc.subprocess,"run",side_effect=AssertionError("unexpected Demucs")):
             path,kind,status=auto_lrc.prepare_vocal_ctc_audio(self.audio,self.args)
         self.assertEqual((path,kind,status),(self.cached,"vocal-stem","cache-hit"))
 
     def test_generated_invalid_stem_is_rejected(self):
-        with self.run_fake_demucs(generate=b"X"),split_patch.patch("_demucs_vocal_stem_valid",return_value=False
+        with self.run_fake_demucs(generate=b"X"),mock.patch.object(audio_features, "_demucs_vocal_stem_valid",return_value=False
         ):
             path,kind,status=auto_lrc.prepare_vocal_ctc_audio(self.audio,self.args)
         self.assertEqual((path,kind,status),(self.audio,"mix","demucs-invalid-generated-vocal-stem"))

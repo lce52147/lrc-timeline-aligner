@@ -9,6 +9,7 @@ from unittest import mock
 
 import auto_lrc
 import split_patch
+import asr_backends
 
 
 class CtcHelperRowContractTests(unittest.TestCase):
@@ -38,7 +39,7 @@ class CtcHelperRowContractTests(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0, "", "")
 
             with (
-                split_patch.patch("prepare_vocal_ctc_audio",
+                mock.patch.object(asr_backends, "prepare_vocal_ctc_audio",
                     return_value=(audio, "full-mix", None),
                 ),
                 split_patch.patch("default_ctc_python",

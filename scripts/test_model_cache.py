@@ -18,6 +18,7 @@ if str(SCRIPTS) not in sys.path:
 
 import auto_lrc  # noqa: E402
 import split_patch
+import runtime_base
 import migrate_model_cache  # noqa: E402
 import model_cache as mc  # noqa: E402
 
@@ -218,7 +219,7 @@ class PolicyTests(unittest.TestCase):
     def test_crossline_cache_only_miss_raises_from_args_only(self) -> None:
         # Condition: LRC_MODEL_CACHE_ONLY unset; only args.model_cache_only=True.
         with TemporaryDirectory() as td, mock.patch.dict(os.environ, _CLEAN_ENV), \
-                split_patch.patch("DEFAULT_MODEL_CACHE_DIR", Path(td)), \
+                mock.patch.object(runtime_base, "DEFAULT_MODEL_CACHE_DIR", Path(td)), \
                 split_patch.patch("_ctc_model_blob_sha256", return_value="b" * 64):
             policy = mc.policy_from_env_and_args(argparse.Namespace(model_cache=True, model_cache_only=True))
             request = SimpleNamespace(
@@ -234,7 +235,7 @@ class PolicyTests(unittest.TestCase):
         import segment_skeleton_production as ssp
 
         with TemporaryDirectory() as td, mock.patch.dict(os.environ, _CLEAN_ENV), \
-                split_patch.patch("DEFAULT_MODEL_CACHE_DIR", Path(td)), \
+                mock.patch.object(runtime_base, "DEFAULT_MODEL_CACHE_DIR", Path(td)), \
                 split_patch.patch("_ctc_model_blob_sha256", return_value="b" * 64):
             root = Path(td)
             stem = root / "stem.wav"

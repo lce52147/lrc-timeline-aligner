@@ -23,6 +23,8 @@ os.environ.setdefault("LRC_MODEL_CACHE", "0")
 
 import auto_lrc
 import split_patch
+import asr_backends
+import runtime_base
 from auto_lrc import AsrSegment, LyricEntry, ModelCacheMiss
 
 
@@ -47,8 +49,8 @@ class ModelCacheReplayTests(unittest.TestCase):
         )
         for patch in (
             split_patch.patch("DEFAULT_MODEL_CACHE_DIR", root / "model-outputs"),
-            split_patch.patch("_whispercpp_multifile_supported", return_value=True),
-            split_patch.patch("_gpu_coordination_enabled", return_value=False),
+            mock.patch.object(asr_backends, "_whispercpp_multifile_supported", return_value=True),
+            mock.patch.object(runtime_base, "_gpu_coordination_enabled", return_value=False),
             mock.patch.dict(os.environ, {"LRC_MODEL_CACHE": "1", "LRC_MODEL_CACHE_ONLY": "0"}),
         ):
             patch.start()
@@ -126,7 +128,7 @@ class ModelCacheReplayTests(unittest.TestCase):
                 args = argparse.Namespace(**vars(self.args))
                 args.model_cache_only = True
                 setattr(args, missing_name, str(Path(self.td.name) / f"missing-{missing_name}"))
-                with split_patch.patch("try_ctc_candidate", side_effect=AssertionError("CTC reached")):
+                with mock.patch.object(auto_lrc, "try_ctc_candidate", side_effect=AssertionError("CTC reached")):
                     with self.assertRaisesRegex(ModelCacheMiss, "raw-ASR-backend-unavailable"):
                         auto_lrc.run_auto_backend_competition(
                             self.wavs[0][1], [], 1.0, args, None
@@ -136,9 +138,9 @@ class ModelCacheReplayTests(unittest.TestCase):
         args = argparse.Namespace(**vars(self.args))
         args.model_cache_only = True
         args.whisperx_python = str(Path(self.td.name) / "missing-whisperx-python")
-        with split_patch.patch("try_whispercpp_diagnostic_candidate",
+        with mock.patch.object(auto_lrc, "try_whispercpp_diagnostic_candidate",
             return_value=([], {"assignments": []}, None, []),
-        ), split_patch.patch("default_ctc_ready", return_value=False), split_patch.patch("decode_temp_wav", return_value=None
+        ), mock.patch.object(auto_lrc, "default_ctc_ready", return_value=False), split_patch.patch("decode_temp_wav", return_value=None
         ):
             with self.assertRaisesRegex(ModelCacheMiss, "whisperx-python-unavailable"):
                 auto_lrc.run_auto_backend_competition(
@@ -148,10 +150,10 @@ class ModelCacheReplayTests(unittest.TestCase):
     def test_cache_only_missing_ctc_backend_is_model_cache_miss(self) -> None:
         args = argparse.Namespace(**vars(self.args))
         args.model_cache_only = True
-        with split_patch.patch("default_ctc_ready", return_value=False), \
-                split_patch.patch("_whisperx_python_available", return_value=False), \
+        with mock.patch.object(auto_lrc, "default_ctc_ready", return_value=False), \
+                mock.patch.object(auto_lrc, "_whisperx_python_available", return_value=False), \
                 split_patch.patch("decode_temp_wav", return_value=None), \
-                split_patch.patch("try_whispercpp_diagnostic_candidate",
+                mock.patch.object(auto_lrc, "try_whispercpp_diagnostic_candidate",
                     return_value=([], {"assignments": []}, None, []),
                 ):
             with self.assertRaisesRegex(ModelCacheMiss, "ctc-python-or-helper-unavailable"):
@@ -170,13 +172,13 @@ class ModelCacheReplayTests(unittest.TestCase):
                 seen_states.append(state)
 
         stderr = io.StringIO()
-        with split_patch.patch("default_ctc_ready", return_value=False), \
-                split_patch.patch("_whisperx_python_available", return_value=False), \
+        with mock.patch.object(auto_lrc, "default_ctc_ready", return_value=False), \
+                mock.patch.object(auto_lrc, "_whisperx_python_available", return_value=False), \
                 split_patch.patch("decode_temp_wav", return_value=None), \
-                split_patch.patch("try_whispercpp_diagnostic_candidate",
+                mock.patch.object(auto_lrc, "try_whispercpp_diagnostic_candidate",
                     return_value=([], {"assignments": []}, None, []),
                 ), \
-                split_patch.patch("_record_backend_unavailable", side_effect=record), \
+                mock.patch.object(auto_lrc, "_record_backend_unavailable", side_effect=record), \
                 redirect_stderr(stderr):
             with self.assertRaisesRegex(auto_lrc.LrcError, "No usable alignment candidate"):
                 auto_lrc.run_auto_backend_competition(

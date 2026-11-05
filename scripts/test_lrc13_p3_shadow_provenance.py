@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest import TestCase, mock
 import auto_lrc
 import split_patch
+import neutral_arbitration
 import test_core_logic
 
 
@@ -49,9 +50,9 @@ class PrivateShadowProvenanceTests(TestCase):
                               side_effect=simulated_postcommit_trust_change),
             split_patch.patch("_build_unresolved_evidence_requirements_projection",
                               return_value={"status": "RETRIEVED"}),
-            split_patch.patch("run_r2t_unified_neutral_conflict_probe",
+            mock.patch.object(neutral_arbitration, "run_r2t_unified_neutral_conflict_probe",
                               side_effect=verify_probe),
-            split_patch.patch("_neutral_probe_trigger_rows", return_value=[]),
+            mock.patch.object(neutral_arbitration, "_neutral_probe_trigger_rows", return_value=[]),
         ):
             auto_lrc._precommit_neutral_boundary_arbitration(
                 Path("unused.flac"), [auto_lrc.LyricEntry(["synthetic"])],

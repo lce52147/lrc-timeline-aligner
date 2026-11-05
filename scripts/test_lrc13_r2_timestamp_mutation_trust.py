@@ -5,8 +5,10 @@ from pathlib import Path
 
 import numpy as np
 
+from unittest import mock
 import auto_lrc
 import split_patch
+import ctc_refinement
 
 
 class TimestampMutationTrustTests(unittest.TestCase):
@@ -99,7 +101,7 @@ class TimestampMutationTrustTests(unittest.TestCase):
             ]
         }
         old = auto_lrc.vocal_onset_features
-        split_patch.assign("vocal_onset_features", lambda *_args, **_kwargs: (features, None))  # type: ignore[assignment]
+        ctc_refinement.vocal_onset_features = lambda *_args, **_kwargs: (features, None)  # type: ignore[assignment]
         try:
             _, result, changes = auto_lrc.apply_vocal_onset_tiebreak(
                 [10.0, 20.0, 25.0],
@@ -110,7 +112,7 @@ class TimestampMutationTrustTests(unittest.TestCase):
                 object(),  # type: ignore[arg-type]
             )
         finally:
-            split_patch.assign("vocal_onset_features", old)  # type: ignore[assignment]
+            ctc_refinement.vocal_onset_features = old  # type: ignore[assignment]
         self.assertEqual(len(changes), 1)
         row = result["assignments"][1]  # type: ignore[index]
         self.assertFalse(row["timing_trusted"])

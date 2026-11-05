@@ -12,6 +12,8 @@ from unittest import mock
 
 import auto_lrc
 import split_patch
+import asr_backends
+import runtime_base
 
 
 def lock_is_held(path: Path) -> bool:
@@ -45,7 +47,7 @@ class WhisperCppGpuLockTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         root = Path(self.temp.name)
         self.lock_path = root / "gpu.lock"
-        patcher = split_patch.patch("WHISPERCPP_GPU_LOCK_PATH", self.lock_path)
+        patcher = mock.patch.object(runtime_base, "WHISPERCPP_GPU_LOCK_PATH", self.lock_path)
         patcher.start()
         self.addCleanup(patcher.stop)
         env = mock.patch.dict(os.environ, {"LRC_WHISPERCPP_GPU_LOCK": "1"})
@@ -109,7 +111,7 @@ class WhisperCppGpuLockTests(unittest.TestCase):
 
         items = [("a", Path(self.temp.name) / "a.wav"), ("b", Path(self.temp.name) / "b.wav")]
         with split_patch.patch("run_command", fake_run), \
-                split_patch.patch("_whispercpp_multifile_supported", return_value=True):
+                mock.patch.object(asr_backends, "_whispercpp_multifile_supported", return_value=True):
             results, errors = auto_lrc._run_whispercpp_wav_batch(items, self.args, suppress_nst=False)
         # One batch call, then the one-shot fallback for each file.
         self.assertEqual(seen, [True, True, True])

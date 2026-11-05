@@ -14,6 +14,7 @@ from unittest import mock
 
 import auto_lrc
 import split_patch
+import runtime_base
 from test_lrc13_whispercpp_gpu_lock import lock_is_held
 
 
@@ -81,7 +82,7 @@ class GpuComputePhaseTests(unittest.TestCase):
         auto_lrc._PARK_WATCHER["thread"] = None
 
     def test_watcher_parks_idle_resident_helpers_when_another_song_starts_whispercpp(self) -> None:
-        with split_patch.patch("WHISPERCPP_PARK_WATCH_SECONDS", 0.1):
+        with mock.patch.object(runtime_base, "WHISPERCPP_PARK_WATCH_SECONDS", 0.1):
             auto_lrc._ensure_whispercpp_park_watcher()
             child = hold_lock(self.whisper_lock, 1.5)
             time.sleep(0.8)
@@ -92,7 +93,7 @@ class GpuComputePhaseTests(unittest.TestCase):
         self.assertEqual(parked_during_run, ["whisperx:other-song-whispercpp", "ctc:other-song-whispercpp"])
 
     def test_watcher_never_parks_in_the_middle_of_a_request(self) -> None:
-        with split_patch.patch("WHISPERCPP_PARK_WATCH_SECONDS", 0.1):
+        with mock.patch.object(runtime_base, "WHISPERCPP_PARK_WATCH_SECONDS", 0.1):
             auto_lrc._enter_gpu_compute()
             try:
                 auto_lrc._ensure_whispercpp_park_watcher()
@@ -107,7 +108,7 @@ class GpuComputePhaseTests(unittest.TestCase):
     def test_gpu_work_parks_and_waits_while_another_song_runs_whispercpp(self) -> None:
         child = hold_lock(self.whisper_lock, 1.5)
         started = time.monotonic()
-        with split_patch.patch("_ensure_whispercpp_park_watcher", lambda: None):
+        with mock.patch.object(runtime_base, "_ensure_whispercpp_park_watcher", lambda: None):
             with auto_lrc.gpu_compute_phase():
                 waited = time.monotonic() - started
         finish(child)
@@ -127,7 +128,7 @@ class GpuComputePhaseTests(unittest.TestCase):
             return 1
 
         with split_patch.patch("_park_persistent_helper_mode", park), \
-                split_patch.patch("_ensure_whispercpp_park_watcher", lambda: None):
+                mock.patch.object(runtime_base, "_ensure_whispercpp_park_watcher", lambda: None):
             with auto_lrc.gpu_compute_phase():
                 child = hold_lock(self.whisper_lock, 1.0)
             self.assertFalse(lock_is_held(marker))
@@ -139,7 +140,7 @@ class GpuComputePhaseTests(unittest.TestCase):
         self.assertEqual(marker_held_at_park, [True, True])
 
     def test_nested_request_end_does_not_park_while_outer_request_runs(self) -> None:
-        with split_patch.patch("_ensure_whispercpp_park_watcher", lambda: None):
+        with mock.patch.object(runtime_base, "_ensure_whispercpp_park_watcher", lambda: None):
             with auto_lrc.gpu_compute_phase():
                 child = None
                 try:
@@ -152,7 +153,7 @@ class GpuComputePhaseTests(unittest.TestCase):
         self.assertEqual(parked_after_inner, [])
 
     def test_request_end_without_waiting_whispercpp_keeps_helpers_resident(self) -> None:
-        with split_patch.patch("_ensure_whispercpp_park_watcher", lambda: None):
+        with mock.patch.object(runtime_base, "_ensure_whispercpp_park_watcher", lambda: None):
             with auto_lrc.gpu_compute_phase():
                 pass
         self.assertEqual(self.parks, [])
@@ -189,7 +190,7 @@ class GpuComputePhaseTests(unittest.TestCase):
             seen.append(lock_is_held(marker))
             return subprocess.CompletedProcess(command, 0, "", "")
 
-        with split_patch.patch("_run_model_helper_command_now", fake_now):
+        with mock.patch.object(runtime_base, "_run_model_helper_command_now", fake_now):
             auto_lrc._run_model_helper_command(["python", "helper.py"], mode="ctc")
         self.assertEqual(seen, [True])
         self.assertFalse(lock_is_held(marker))

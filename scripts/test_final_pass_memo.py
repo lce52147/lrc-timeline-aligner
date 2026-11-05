@@ -20,6 +20,7 @@ if str(SCRIPTS) not in sys.path:
 
 import auto_lrc  # noqa: E402
 import split_patch
+import asr_backends
 import file_digest  # noqa: E402
 import runtime_paths  # noqa: E402
 
@@ -118,7 +119,7 @@ class WhisperXModelIdentityMemoTests(unittest.TestCase):
         return auto_lrc._whisperx_model_identity(Path(sys.executable), self.helper, language)
 
     def test_resolved_identity_survives_a_new_process(self) -> None:
-        with split_patch.patch("_probe_whisperx_model_identity", return_value=("align-model", "abc123")) as probe:
+        with mock.patch.object(asr_backends, "_probe_whisperx_model_identity", return_value=("align-model", "abc123")) as probe:
             self.assertEqual(self._lookup(), ("align-model", "abc123"))
             self.assertEqual(self._lookup(), ("align-model", "abc123"))
             self.assertEqual(probe.call_count, 1)
@@ -128,7 +129,7 @@ class WhisperXModelIdentityMemoTests(unittest.TestCase):
         self.assertTrue(file_digest.memo_path("whisperx-align-model.json").is_file())
 
     def test_hub_change_helper_change_or_language_retires_the_memo(self) -> None:
-        with split_patch.patch("_probe_whisperx_model_identity", return_value=("align-model", "abc123")) as probe:
+        with mock.patch.object(asr_backends, "_probe_whisperx_model_identity", return_value=("align-model", "abc123")) as probe:
             self._lookup()
             auto_lrc._whisperx_model_identity.cache_clear()
             self._lookup("en")
@@ -147,7 +148,7 @@ class WhisperXModelIdentityMemoTests(unittest.TestCase):
             self.assertEqual(probe.call_count, 4, "unchanged inputs answer from disk")
 
     def test_unresolved_probe_is_not_remembered(self) -> None:
-        with split_patch.patch("_probe_whisperx_model_identity", return_value=("unresolved", "unresolved")) as probe:
+        with mock.patch.object(asr_backends, "_probe_whisperx_model_identity", return_value=("unresolved", "unresolved")) as probe:
             self.assertEqual(self._lookup(), ("unresolved", "unresolved"))
             auto_lrc._whisperx_model_identity.cache_clear()
             self.assertEqual(self._lookup(), ("unresolved", "unresolved"))

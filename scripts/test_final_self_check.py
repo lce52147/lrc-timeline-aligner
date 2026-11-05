@@ -6,6 +6,7 @@ import numpy as np
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/'scripts'))
 import auto_lrc as l
 import split_patch
+import audio_features
 class H2Tests(unittest.TestCase):
     def make(self,times,words,source=None):
         decisions=[types.SimpleNamespace(written_time=types.SimpleNamespace(seconds=t),
@@ -23,7 +24,7 @@ class H2Tests(unittest.TestCase):
             path=pathlib.Path(tmp)/'vocals.mp3';path.write_bytes(b'mock')
             a['ctc_audio_path']=str(path)
             features=types.SimpleNamespace(segments=[(0,1),(2,3)])
-            with split_patch.patch("decode_audio",return_value=x),split_patch.patch("analyze_audio",return_value=features):
+            with patch.object(audio_features, "decode_audio",return_value=x),split_patch.patch("analyze_audio",return_value=features):
                 g=l.compute_final_timing_self_check(a,state,entries)
         self.assertEqual(g['vocal_status'],'checked')
         self.assertIn('F1-vocal-absent',g['flags_by_entry']['2'])
