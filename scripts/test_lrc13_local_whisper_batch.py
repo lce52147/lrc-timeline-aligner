@@ -37,9 +37,9 @@ class LocalWhisperBatchTests(unittest.TestCase):
 
         stats = {"cache_hits": 0, "cache_misses": 0, "helper_invocations": 0}
         with split_patch.patch("DEFAULT_EVIDENCE_WORKERS", 1), \
-                mock.patch.object(auto_lrc, "_prepare_local_whisper_batch", fake_prepare), \
-                mock.patch.object(auto_lrc, "execute_local_whisper_request", fake_execute), \
-                mock.patch.object(auto_lrc, "_local_whisper_cache_key",
+                split_patch.patch("_prepare_local_whisper_batch", fake_prepare), \
+                split_patch.patch("execute_local_whisper_request", fake_execute), \
+                split_patch.patch("_local_whisper_cache_key",
                                   lambda req, cap: f"w{req.window_start:g}"):
             outcomes = auto_lrc.run_local_whisper_requests(
                 requests, object(), [], object(), cache={}, stats=stats,

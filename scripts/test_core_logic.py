@@ -4941,7 +4941,7 @@ class CentralTimingStateTests(unittest.TestCase):
         original_collect = auto_lrc.collect_central_timing_candidates
         original_probe = auto_lrc.apply_final_ctc_timing_guard
         auto_lrc.evaluate_final_timing_state_for_report = lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("re-evaluated"))  # type: ignore[assignment]
-        auto_lrc.collect_central_timing_candidates = lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("regenerated"))  # type: ignore[assignment]
+        split_patch.assign("collect_central_timing_candidates", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("regenerated")))  # type: ignore[assignment]
         split_patch.assign("apply_final_ctc_timing_guard", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("re-probed")))  # type: ignore[assignment]
         try:
             committed = auto_lrc.commit_evaluated_backend(
@@ -4949,7 +4949,7 @@ class CentralTimingStateTests(unittest.TestCase):
             )
         finally:
             auto_lrc.evaluate_final_timing_state_for_report = original  # type: ignore[assignment]
-            auto_lrc.collect_central_timing_candidates = original_collect  # type: ignore[assignment]
+            split_patch.assign("collect_central_timing_candidates", original_collect)  # type: ignore[assignment]
             split_patch.assign("apply_final_ctc_timing_guard", original_probe)  # type: ignore[assignment]
         self.assertIs(committed, evaluated.state)
         self.assertEqual(report["trusted_percent"], evaluated.summary.overall_trusted_percent)
@@ -5179,7 +5179,7 @@ class CentralTimingStateTests(unittest.TestCase):
         split_patch.assign("score_line_timing_candidates", score)  # type: ignore[assignment]
         split_patch.assign("apply_short_duplicate_acoustic_recovery", duplicate)  # type: ignore[assignment]
         split_patch.assign("apply_post_score_audio_validation", validation)  # type: ignore[assignment]
-        auto_lrc.collect_central_timing_candidates = collect  # type: ignore[assignment]
+        split_patch.assign("collect_central_timing_candidates", collect)  # type: ignore[assignment]
         split_patch.assign("ctc_alignment_audio_path", lambda _report, audio: audio)  # type: ignore[assignment]
         try:
             previews = []
@@ -5269,7 +5269,7 @@ class CentralTimingStateTests(unittest.TestCase):
         split_patch.assign("default_ctc_ready", lambda: True)  # type: ignore[assignment]
         split_patch.assign("default_whisperx_ready", lambda: False)  # type: ignore[assignment]
         split_patch.assign("try_ctc_candidate", infer)  # type: ignore[assignment]
-        auto_lrc._central_preview_generation_candidates = generation_candidates  # type: ignore[assignment]
+        split_patch.assign("_central_preview_generation_candidates", generation_candidates)  # type: ignore[assignment]
         auto_lrc.prepare_backend_timing_preview = preview  # type: ignore[assignment]
         auto_lrc.commit_evaluated_backend = lambda *_args, **_kwargs: counts.update(  # type: ignore[assignment]
             {"commit": counts["commit"] + 1}
@@ -7058,11 +7058,11 @@ class TailAwareCrossLineRetryTests(unittest.TestCase):
         def fake(request, _capability, _entries):
             calls.append(request.request_revision)
             return auto_lrc.parse_crossline_retry_output(request, capability, entries, self.helper_payload(request, entries))
-        auto_lrc.invoke_crossline_retry = fake  # type: ignore[assignment]
+        split_patch.assign("invoke_crossline_retry", fake)  # type: ignore[assignment]
         try:
             outcomes = auto_lrc.execute_crossline_retry_epoch(epoch, capability, entries, sets, 20.0, tuple(reversed((*requests, *requests))))
         finally:
-            auto_lrc.invoke_crossline_retry = original  # type: ignore[assignment]
+            split_patch.assign("invoke_crossline_retry", original)  # type: ignore[assignment]
         self.assertEqual(len(calls), 1)
         self.assertEqual(len(outcomes), 1)
 
@@ -9835,8 +9835,7 @@ class V144JointBoundaryGraphRegressionTests(unittest.TestCase):
             timing_source_policy="ctc-first",
         )
         self.assertTrue(requests)
-        with mock.patch.object(
-            auto_lrc, "plan_crossline_retry_requests", return_value=()
+        with split_patch.patch("plan_crossline_retry_requests", return_value=()
         ) as planner:
             result = auto_lrc.execute_crossline_retry_epoch(
                 epoch,

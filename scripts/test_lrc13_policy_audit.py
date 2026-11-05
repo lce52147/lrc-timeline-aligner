@@ -7,6 +7,7 @@ from pathlib import Path
 import unittest
 
 import auto_lrc
+import split_patch
 
 
 class TimingPolicyRegressionTests(unittest.TestCase):
@@ -87,9 +88,9 @@ class TimingPolicyRegressionTests(unittest.TestCase):
         entries = [auto_lrc.LyricEntry(["hello"])]
         evidence = [([2.9], {"backend": "whisperx"}, "complete-independent-whisperx")]
         with (
-            mock.patch.object(auto_lrc, "bind_runtime_whisperx_row_evidence") as row,
-            mock.patch.object(auto_lrc, "bind_runtime_whisperx_ctc_consensus") as consensus,
-            mock.patch.object(auto_lrc, "bind_runtime_ctc_assignment_tail_fallback") as tail,
+            split_patch.patch("bind_runtime_whisperx_row_evidence") as row,
+            split_patch.patch("bind_runtime_whisperx_ctc_consensus") as consensus,
+            split_patch.patch("bind_runtime_ctc_assignment_tail_fallback") as tail,
         ):
             auto_lrc.bind_ctc_generation_candidate_evidence([candidate], entries, evidence)
             row.assert_called_once_with(report, entries, evidence)
