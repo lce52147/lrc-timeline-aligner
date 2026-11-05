@@ -197,6 +197,33 @@ class SplitPatchAssignRestoreTests(unittest.TestCase):
             self.assertIn("split_patch.assert_clean", ast.unparse(hooks[0]), path.name)
 
 
+class KnownLyricHubertHelperSourceTests(unittest.TestCase):
+    """The helper source tokens are substituted in the owner module, not the facade."""
+
+    DEV_6D153C7C_REVISION = "d8b64f3df558618f1bc68c7c7940c1e018ed76c5bd80f84e1ee4adf2f6bd12a3"
+
+    def test_owner_source_has_no_placeholder_tokens(self) -> None:
+        import postcentral_recovery
+
+        self.assertNotIn("__LRC_KNOWN_LYRIC_HUBERT_", postcentral_recovery._KNOWN_LYRIC_HUBERT_HELPER_SOURCE)
+
+    def test_facade_reexports_the_owner_object(self) -> None:
+        import postcentral_recovery
+
+        self.assertIs(
+            auto_lrc._KNOWN_LYRIC_HUBERT_HELPER_SOURCE,
+            postcentral_recovery._KNOWN_LYRIC_HUBERT_HELPER_SOURCE,
+        )
+
+    def test_helper_revision_matches_dev_export(self) -> None:
+        import postcentral_recovery
+
+        self.assertEqual(
+            postcentral_recovery._known_lyric_hubert_helper_revision(),
+            self.DEV_6D153C7C_REVISION,
+        )
+
+
 def tearDownModule() -> None:
     split_patch.assert_clean()
 

@@ -1793,19 +1793,6 @@ def run_backend_competition_over_skeleton_gate(
 
 
 _KNOWN_LYRIC_HUBERT_WHISPERX_VERSION = "3.8.6"
-for _known_lyric_hubert_contract_token, _known_lyric_hubert_contract_value in (
-    ("__LRC_KNOWN_LYRIC_HUBERT_PROTOCOL_REVISION__", _KNOWN_LYRIC_HUBERT_PROTOCOL_REVISION),
-    ("__LRC_KNOWN_LYRIC_HUBERT_MODEL_ID__", _KNOWN_LYRIC_HUBERT_MODEL_ID),
-    ("__LRC_KNOWN_LYRIC_HUBERT_MODEL_REVISION__", _KNOWN_LYRIC_HUBERT_MODEL_REVISION),
-    ("__LRC_KNOWN_LYRIC_HUBERT_MODEL_BLOB_SHA256__", _KNOWN_LYRIC_HUBERT_MODEL_BLOB_SHA256),
-    ("__LRC_KNOWN_LYRIC_HUBERT_LANGUAGE__", _KNOWN_LYRIC_HUBERT_LANGUAGE),
-    ("__LRC_KNOWN_LYRIC_HUBERT_AUDIO_LOADER__", _KNOWN_LYRIC_HUBERT_AUDIO_LOADER),
-    ("__LRC_KNOWN_LYRIC_HUBERT_CTC_ALIGNMENT__", _KNOWN_LYRIC_HUBERT_CTC_ALIGNMENT),
-):
-    _KNOWN_LYRIC_HUBERT_HELPER_SOURCE = _KNOWN_LYRIC_HUBERT_HELPER_SOURCE.replace(
-        _known_lyric_hubert_contract_token, _known_lyric_hubert_contract_value
-    )
-del _known_lyric_hubert_contract_token, _known_lyric_hubert_contract_value
 
 
 from lrc_review_tsv import format_top_review, write_review_tsv
