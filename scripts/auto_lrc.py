@@ -195,7 +195,7 @@ from neutral_arbitration import (
     _update_projection_seed_for_arbitrated_selection,
     run_r2t_unified_neutral_conflict_probe,
 )
-from central_peer_recovery import (
+from postcentral_recovery import (
     RECOVERY_REVIEW_MOVE_THRESHOLD_CENTISECONDS,
     _HUBERT_EXISTING_CANDIDATE_RECOVERY_MODE,
     _HUBERT_RECOVERY_DIRECT_ONSET_KIND,

@@ -1,4 +1,4 @@
-"""Extracted from auto_lrc.py (split step 10): central evaluation and commit, backend bundles, peer graph, post-central recovery, neutral arbitration."""
+"""Extracted from auto_lrc.py (split phase 2): post-central recovery: hubert and peer existing-candidate recovery, joint CTC tail acquisition, duplicate review recompute."""
 
 from __future__ import annotations
 

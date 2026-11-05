@@ -42,7 +42,7 @@ _ALGORITHM_SOURCE_MODULES = (
     "backend_bundle",
     "central_commit_tail",
     "neutral_arbitration",
-    "central_peer_recovery",
+    "postcentral_recovery",
 )
 
 
