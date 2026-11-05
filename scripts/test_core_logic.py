@@ -5180,7 +5180,7 @@ class CentralTimingStateTests(unittest.TestCase):
         split_patch.assign("apply_short_duplicate_acoustic_recovery", duplicate)  # type: ignore[assignment]
         split_patch.assign("apply_post_score_audio_validation", validation)  # type: ignore[assignment]
         auto_lrc.collect_central_timing_candidates = collect  # type: ignore[assignment]
-        auto_lrc.ctc_alignment_audio_path = lambda _report, audio: audio  # type: ignore[assignment]
+        split_patch.assign("ctc_alignment_audio_path", lambda _report, audio: audio)  # type: ignore[assignment]
         try:
             previews = []
             for backend in ("auto-candidate", "explicit-candidate"):
@@ -5268,7 +5268,7 @@ class CentralTimingStateTests(unittest.TestCase):
 
         split_patch.assign("default_ctc_ready", lambda: True)  # type: ignore[assignment]
         split_patch.assign("default_whisperx_ready", lambda: False)  # type: ignore[assignment]
-        auto_lrc.try_ctc_candidate = infer  # type: ignore[assignment]
+        split_patch.assign("try_ctc_candidate", infer)  # type: ignore[assignment]
         auto_lrc._central_preview_generation_candidates = generation_candidates  # type: ignore[assignment]
         auto_lrc.prepare_backend_timing_preview = preview  # type: ignore[assignment]
         auto_lrc.commit_evaluated_backend = lambda *_args, **_kwargs: counts.update(  # type: ignore[assignment]
@@ -5360,7 +5360,7 @@ class CentralTimingStateTests(unittest.TestCase):
                     split_patch.assign("find_anchor_hints", lambda *_args: None)  # type: ignore[assignment]
                     split_patch.assign("default_ctc_ready", lambda: True)  # type: ignore[assignment]
                     split_patch.assign("default_whisperx_ready", lambda: False)  # type: ignore[assignment]
-                    auto_lrc.run_ctc_alignment = explicit_inference  # type: ignore[assignment]
+                    split_patch.assign("run_ctc_alignment", explicit_inference)  # type: ignore[assignment]
                     auto_lrc.run_auto_backend_competition = competition  # type: ignore[assignment]
                     auto_lrc.prepare_backend_timing_preview = preview  # type: ignore[assignment]
                     auto_lrc.commit_evaluated_backend = commit  # type: ignore[assignment]
@@ -5597,9 +5597,7 @@ class CentralTimingStateTests(unittest.TestCase):
             audio = root / "projection.flac"
             audio.write_bytes(b"projection-audio")
             args = build_parser().parse_args([str(audio)])
-            with mock.patch.object(
-                auto_lrc,
-                "_whispercpp_runtime_artifact_hashes",
+            with split_patch.patch("_whispercpp_runtime_artifact_hashes",
                 return_value=None,
             ):
                 summary = auto_lrc._public_backend_capability_summary(
@@ -11382,9 +11380,7 @@ class WhisperXRefineContractTests(unittest.TestCase):
     def test_auto_lrc_missing_helper_provenance_fails_closed(self) -> None:
         payload = {"segments": []}
         self.assertIsNone(auto_lrc._whisperx_alignment_metadata(payload))
-        with mock.patch.object(
-            auto_lrc,
-            "_whispercpp_runtime_artifact_hashes",
+        with split_patch.patch("_whispercpp_runtime_artifact_hashes",
             return_value=("raw-executable", "raw-model"),
         ):
             self.assertIsNone(
@@ -12055,17 +12051,13 @@ class V146LocalWhisperEvidenceRegressionTests(unittest.TestCase):
                 whisperx_device="cpu",
             )
             with (
-                mock.patch.object(
-                    auto_lrc,
-                    "decode_temp_wav_window",
+                split_patch.patch("decode_temp_wav_window",
                     side_effect=[LrcError("transient"), audio],
                 ),
-                mock.patch.object(auto_lrc, "_run_whispercpp_wav", return_value=raw),
-                mock.patch.object(auto_lrc, "run_whisperx_alignment", return_value={}),
-                mock.patch.object(auto_lrc, "whisperx_segments", return_value=aligned),
-                mock.patch.object(
-                    auto_lrc,
-                    "match_whisper_segments",
+                split_patch.patch("_run_whispercpp_wav", return_value=raw),
+                split_patch.patch("run_whisperx_alignment", return_value={}),
+                split_patch.patch("whisperx_segments", return_value=aligned),
+                split_patch.patch("match_whisper_segments",
                     return_value=([1.0], local_report),
                 ),
             ):
@@ -12245,11 +12237,11 @@ class V146LocalWhisperEvidenceRegressionTests(unittest.TestCase):
             }
             # Deliberately return a bogus heuristic time (4.5 s). The evidence
             # must use the aligned target character onset (3.0 s) instead.
-            with mock.patch.object(auto_lrc, "decode_temp_wav_window", return_value=audio), \
-                 mock.patch.object(auto_lrc, "_run_whispercpp_wav", return_value=raw), \
-                 mock.patch.object(auto_lrc, "run_whisperx_alignment", return_value={}), \
-                 mock.patch.object(auto_lrc, "whisperx_segments", return_value=aligned), \
-                 mock.patch.object(auto_lrc, "match_whisper_segments", return_value=([0.5, 4.5, 6.0], local_report)):
+            with split_patch.patch("decode_temp_wav_window", return_value=audio), \
+                 split_patch.patch("_run_whispercpp_wav", return_value=raw), \
+                 split_patch.patch("run_whisperx_alignment", return_value={}), \
+                 split_patch.patch("whisperx_segments", return_value=aligned), \
+                 split_patch.patch("match_whisper_segments", return_value=([0.5, 4.5, 6.0], local_report)):
                 outcome = auto_lrc.execute_local_whisper_request(
                     request, cap, entries, auto_lrc.argparse.Namespace(whisper_cli=None, whisper_model=None, whisper_language="ja", whisper_suppress_nst=False, whisperx_python=None, whisperx_device="cpu"), cache={}
                 )
@@ -12999,10 +12991,10 @@ class V15EvidenceConvergenceRegressionTests(unittest.TestCase):
             {"timestamp": 3.5, "score": .94, "segment": 4, "borrowed": False},
         ]}
         with split_patch.patch("_stable_file_sha256", return_value="audio"), \
-             mock.patch.object(auto_lrc, "decode_temp_wav_window", return_value=Path("window.wav")), \
-             mock.patch.object(auto_lrc, "_run_whispercpp_wav", return_value=raw_segments), \
-             mock.patch.object(auto_lrc, "run_whisperx_alignment", return_value=aligned_payload), \
-             mock.patch.object(auto_lrc, "match_whisper_segments", return_value=([.4, 1.2, 2.4, 3.5], local_report)):
+             split_patch.patch("decode_temp_wav_window", return_value=Path("window.wav")), \
+             split_patch.patch("_run_whispercpp_wav", return_value=raw_segments), \
+             split_patch.patch("run_whisperx_alignment", return_value=aligned_payload), \
+             split_patch.patch("match_whisper_segments", return_value=([.4, 1.2, 2.4, 3.5], local_report)):
             outcome = auto_lrc.execute_local_whisper_request(
                 request, capability, entries, mock.Mock(), cache={}, runtime_stats={}
             )
@@ -13224,10 +13216,10 @@ class V151MonotonicLocalProbingRegressionTests(unittest.TestCase):
             {"timestamp": 3.5, "score": .94, "segment": 4, "borrowed": False},
         ]}
         with split_patch.patch("_stable_file_sha256", return_value="audio"), \
-             mock.patch.object(auto_lrc, "decode_temp_wav_window", return_value=Path("window.wav")), \
-             mock.patch.object(auto_lrc, "_run_whispercpp_wav", return_value=raw_segments), \
-             mock.patch.object(auto_lrc, "run_whisperx_alignment", return_value=aligned_payload), \
-             mock.patch.object(auto_lrc, "match_whisper_segments", return_value=([.4, 1.2, 2.4, 3.5], local_report)):
+             split_patch.patch("decode_temp_wav_window", return_value=Path("window.wav")), \
+             split_patch.patch("_run_whispercpp_wav", return_value=raw_segments), \
+             split_patch.patch("run_whisperx_alignment", return_value=aligned_payload), \
+             split_patch.patch("match_whisper_segments", return_value=([.4, 1.2, 2.4, 3.5], local_report)):
             outcome = auto_lrc.execute_local_whisper_request(
                 request, capability, entries, mock.Mock(), cache={}, runtime_stats={}
             )
@@ -13299,10 +13291,10 @@ class V152BoundaryContentConvergenceRegressionTests(unittest.TestCase):
             return real_romaji(text) or text
 
         with split_patch.patch("_stable_file_sha256", return_value="audio"), \
-             mock.patch.object(auto_lrc, "decode_temp_wav_window", return_value=Path("window.wav")), \
-             mock.patch.object(auto_lrc, "_run_whispercpp_wav", return_value=raw_segments), \
-             mock.patch.object(auto_lrc, "run_whisperx_alignment", return_value=aligned_payload), \
-             mock.patch.object(auto_lrc, "match_whisper_segments", return_value=([.4, 1.2, 2.4], local_report)), \
+             split_patch.patch("decode_temp_wav_window", return_value=Path("window.wav")), \
+             split_patch.patch("_run_whispercpp_wav", return_value=raw_segments), \
+             split_patch.patch("run_whisperx_alignment", return_value=aligned_payload), \
+             split_patch.patch("match_whisper_segments", return_value=([.4, 1.2, 2.4], local_report)), \
              split_patch.patch("japanese_romaji", side_effect=fake_romaji):
             outcome = auto_lrc.execute_local_whisper_request(
                 request, capability, entries, mock.Mock(), cache={}, runtime_stats={}
@@ -13359,11 +13351,11 @@ class V152BoundaryContentConvergenceRegressionTests(unittest.TestCase):
             return real_romaji(text) or text
 
         with split_patch.patch("_stable_file_sha256", return_value="audio"), \
-             mock.patch.object(auto_lrc, "decode_temp_wav_window", return_value=Path("window.wav")), \
-             mock.patch.object(auto_lrc, "_run_whispercpp_wav", return_value=raw_segments), \
-             mock.patch.object(auto_lrc, "run_whisperx_alignment", return_value=aligned_payload), \
-             mock.patch.object(auto_lrc, "whisperx_segments", return_value=aligned_segments), \
-             mock.patch.object(auto_lrc, "match_whisper_segments", return_value=([.4, 1.2, 3.0], local_report)), \
+             split_patch.patch("decode_temp_wav_window", return_value=Path("window.wav")), \
+             split_patch.patch("_run_whispercpp_wav", return_value=raw_segments), \
+             split_patch.patch("run_whisperx_alignment", return_value=aligned_payload), \
+             split_patch.patch("whisperx_segments", return_value=aligned_segments), \
+             split_patch.patch("match_whisper_segments", return_value=([.4, 1.2, 3.0], local_report)), \
              split_patch.patch("japanese_romaji", side_effect=fake_romaji):
             outcome = auto_lrc.execute_local_whisper_request(
                 request, capability, entries, mock.Mock(), cache={}, runtime_stats={}

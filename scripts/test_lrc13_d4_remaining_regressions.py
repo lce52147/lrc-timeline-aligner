@@ -70,16 +70,14 @@ class WhisperxSpliceOrderRegressionTests(unittest.TestCase):
 
         args = SimpleNamespace(whisper_suppress_nst=None)
         with (
-            mock.patch.object(
-                auto_lrc,
-                "try_whisperx_candidate",
+            split_patch.patch("try_whisperx_candidate",
                 side_effect=[
                     (normal_times, normal_report, None),
                     (sns_times, sns_report, None),
                 ],
             ),
-            mock.patch.object(auto_lrc, "needs_suppressed_retry", return_value=True),
-            mock.patch.object(auto_lrc, "low_confidence_run_start", return_value=2),
+            split_patch.patch("needs_suppressed_retry", return_value=True),
+            split_patch.patch("low_confidence_run_start", return_value=2),
             split_patch.patch("report_quality", side_effect=quality),
         ):
             timestamps, report = auto_lrc.run_whisperx_best_candidate(

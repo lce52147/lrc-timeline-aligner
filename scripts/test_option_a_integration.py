@@ -23,7 +23,7 @@ class OptionAIntegrationTests(unittest.TestCase):
                                for i,time in enumerate(original)]}
             args=SimpleNamespace(skeleton=skeleton,timing_source="auto",
                                  whisperx_device="cuda")
-            with patch.object(a,"run_ctc_alignment",return_value=(original,report)),\
+            with split_patch.patch("run_ctc_alignment",return_value=(original,report)),\
                  split_patch.patch("entry_sung_text",side_effect=lambda x:x),\
                  patch("segment_skeleton_production.run_segment_skeleton",
                    return_value=([2.,5.,8.,11.],{**report,"segment_skeleton_status":{

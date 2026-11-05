@@ -109,7 +109,7 @@ class WhisperCppGpuLockTests(unittest.TestCase):
 
         items = [("a", Path(self.temp.name) / "a.wav"), ("b", Path(self.temp.name) / "b.wav")]
         with split_patch.patch("run_command", fake_run), \
-                mock.patch.object(auto_lrc, "_whispercpp_multifile_supported", return_value=True):
+                split_patch.patch("_whispercpp_multifile_supported", return_value=True):
             results, errors = auto_lrc._run_whispercpp_wav_batch(items, self.args, suppress_nst=False)
         # One batch call, then the one-shot fallback for each file.
         self.assertEqual(seen, [True, True, True])
