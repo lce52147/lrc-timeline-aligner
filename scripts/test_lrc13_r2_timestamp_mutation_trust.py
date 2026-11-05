@@ -47,14 +47,14 @@ class TimestampMutationTrustTests(unittest.TestCase):
         old_analyze = auto_lrc.analyze_audio
         old_first = auto_lrc.first_local_onset
         split_patch.assign("analyze_audio", lambda *_args, **_kwargs: features)  # type: ignore[assignment]
-        auto_lrc.first_local_onset = lambda *_args, **_kwargs: 19.5  # type: ignore[assignment]
+        split_patch.assign("first_local_onset", lambda *_args, **_kwargs: 19.5)  # type: ignore[assignment]
         try:
             _, result, changes = auto_lrc.apply_hybrid_ctc_opening_onset_backtrack(
                 Path("dummy.flac"), [10.0, 20.0, 30.0], report, 40.0
             )
         finally:
             split_patch.assign("analyze_audio", old_analyze)  # type: ignore[assignment]
-            auto_lrc.first_local_onset = old_first  # type: ignore[assignment]
+            split_patch.assign("first_local_onset", old_first)  # type: ignore[assignment]
         self.assertEqual(len(changes), 1)
         row = result["assignments"][1]  # type: ignore[index]
         self.assertFalse(row["timing_trusted"])

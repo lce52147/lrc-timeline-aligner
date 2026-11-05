@@ -4942,7 +4942,7 @@ class CentralTimingStateTests(unittest.TestCase):
         original_probe = auto_lrc.apply_final_ctc_timing_guard
         auto_lrc.evaluate_final_timing_state_for_report = lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("re-evaluated"))  # type: ignore[assignment]
         auto_lrc.collect_central_timing_candidates = lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("regenerated"))  # type: ignore[assignment]
-        auto_lrc.apply_final_ctc_timing_guard = lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("re-probed"))  # type: ignore[assignment]
+        split_patch.assign("apply_final_ctc_timing_guard", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("re-probed")))  # type: ignore[assignment]
         try:
             committed = auto_lrc.commit_evaluated_backend(
                 auto_lrc.select_evaluated_backend((evaluated,)), report
@@ -4950,7 +4950,7 @@ class CentralTimingStateTests(unittest.TestCase):
         finally:
             auto_lrc.evaluate_final_timing_state_for_report = original  # type: ignore[assignment]
             auto_lrc.collect_central_timing_candidates = original_collect  # type: ignore[assignment]
-            auto_lrc.apply_final_ctc_timing_guard = original_probe  # type: ignore[assignment]
+            split_patch.assign("apply_final_ctc_timing_guard", original_probe)  # type: ignore[assignment]
         self.assertIs(committed, evaluated.state)
         self.assertEqual(report["trusted_percent"], evaluated.summary.overall_trusted_percent)
 
@@ -7366,11 +7366,11 @@ class TailAwareCrossLineRetryTests(unittest.TestCase):
             nonlocal calls
             calls += 1
             raise AssertionError("inactive legacy final guard executed")
-        auto_lrc.apply_final_ctc_timing_guard = forbidden  # type: ignore[assignment]
+        split_patch.assign("apply_final_ctc_timing_guard", forbidden)  # type: ignore[assignment]
         try:
             _sets, diagnostics = auto_lrc.collect_central_timing_candidates(Path("missing.wav"), entries, [12.0], report, 20.0, auto_lrc.argparse.Namespace(whisperx_device="cpu"))
         finally:
-            auto_lrc.apply_final_ctc_timing_guard = original  # type: ignore[assignment]
+            split_patch.assign("apply_final_ctc_timing_guard", original)  # type: ignore[assignment]
         self.assertEqual(calls, 0)
         self.assertEqual(diagnostics["legacy_prefix_probe_candidate_generation"]["active_candidate_count"], 0)  # type: ignore[index]
 
@@ -7434,7 +7434,7 @@ class GeorgetteBoundaryRegressionContinuedTests(unittest.TestCase):
         original_prefix_probe = auto_lrc.run_ctc_prefix_probe
         split_patch.assign("analyze_audio", lambda *_args, **_kwargs: features)  # type: ignore[assignment]
         split_patch.assign("analyze_vocal_onsets", lambda *_args, **_kwargs: features)  # type: ignore[assignment]
-        auto_lrc.run_ctc_prefix_probe = lambda *_args, **_kwargs: {  # type: ignore[assignment]
+        split_patch.assign("run_ctc_prefix_probe", lambda *_args, **_kwargs: {  # type: ignore[assignment]
             "accepted": True,
             "candidate": 12.75,
             "ctc_score": 0.18,
@@ -7442,7 +7442,7 @@ class GeorgetteBoundaryRegressionContinuedTests(unittest.TestCase):
             "prefix_weak_ratio": 0.25,
             "prefix_span_seconds": 0.9,
             "prefix_text": "everlastin",
-        }
+        })
         try:
             entries = [LyricEntry(["... again"]), LyricEntry(["everlastin ever"])]
             report: dict[str, object] = {
@@ -7489,7 +7489,7 @@ class GeorgetteBoundaryRegressionContinuedTests(unittest.TestCase):
         finally:
             split_patch.assign("analyze_audio", original_analyze_audio)  # type: ignore[assignment]
             split_patch.assign("analyze_vocal_onsets", original_analyze_vocal)  # type: ignore[assignment]
-            auto_lrc.run_ctc_prefix_probe = original_prefix_probe  # type: ignore[assignment]
+            split_patch.assign("run_ctc_prefix_probe", original_prefix_probe)  # type: ignore[assignment]
 
     def test_untrusted_crossline_recovery_does_not_leave_stale_effective_index(self) -> None:
         report: dict[str, object] = {
