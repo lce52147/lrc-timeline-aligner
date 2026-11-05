@@ -27,7 +27,7 @@ from timing_core import BoundedRetryCapability, CTC_SEVERE_INTERNAL_GAP_SECONDS,
 from lyrics_io import AsrSegment, LyricEntry, compact_latin, entry_sung_text, first_forced_char_time, is_instrumental_marker, japanese_romaji, normalize_match_text, ratio_percent, sequence_ratio
 from audio_features import HOP_SECONDS, SAMPLE_RATE, prepare_vocal_ctc_audio, vocal_cache_identity
 from runtime_base import AlignmentEvidenceRejected, LrcError, WhisperXEvidenceBundleError, _bounded_retry_protocol_revision, _canonical_json_digest, _ctc_model_blob_sha256, _managed_temp_dir, _model_cache_key, _model_cache_only, _model_cache_path, _model_cache_read, _model_cache_write, _path_sha256, _remove_stale_output, _run_model_helper_command, _stable_file_sha256, _timing_content_digest, canonicalize_lrc_time, default_ctc_python, default_whisper_cli, default_whisper_model, default_whisperx_python, gpu_compute_phase, progress_log, run_command, whispercpp_gpu_lock
-from runtime_base import UnboundNamespace, bind_late_callbacks as _bind_late_callbacks, unbound_callback
+from runtime_base import UnboundNamespace, bind_late_callbacks as _bind_late_callbacks
 import lrc_stage_timings
 
 

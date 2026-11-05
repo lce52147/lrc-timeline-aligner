@@ -1,4 +1,4 @@
-"""Extracted from auto_lrc.py (split step 9): local whisper and crossline retry planning and execution, runtime evidence binding, central timing candidate collection."""
+"""Extracted from auto_lrc.py (split step 9): local whisper and crossline retry planning and execution, central timing candidate collection."""
 
 from __future__ import annotations
 
