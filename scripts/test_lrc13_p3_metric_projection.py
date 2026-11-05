@@ -5,6 +5,7 @@ import unittest
 from unittest import mock
 
 import auto_lrc
+import split_patch
 import test_core_logic
 
 
@@ -48,8 +49,7 @@ class PostCommitSummaryContractTests(unittest.TestCase):
             report["review_required_percent"] = 100.0
             report["review_required"] = True
 
-        with mock.patch.object(
-            auto_lrc, "apply_central_summary_to_report",
+        with split_patch.patch("apply_central_summary_to_report",
             side_effect=stale_preview_summary,
         ):
             auto_lrc.commit_evaluated_backend(selection, report)
@@ -86,8 +86,7 @@ class PostCommitSummaryContractTests(unittest.TestCase):
             report["matched_entries"] = 0
             report["matched_percent"] = 0.0
 
-        with mock.patch.object(
-            auto_lrc, "apply_central_summary_to_report",
+        with split_patch.patch("apply_central_summary_to_report",
             side_effect=outdated_trust_summary,
         ):
             auto_lrc.commit_evaluated_backend(selection, report)

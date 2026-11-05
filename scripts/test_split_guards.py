@@ -63,5 +63,17 @@ class RunHubOpeningEvidenceTests(unittest.TestCase):
             self.assertIsNone(auto_lrc._known_lyric_hubert_opening_evidence(0, payload, "rev"), payload)
 
 
+class LateBoundCallbackTests(unittest.TestCase):
+    def test_report_trust_callbacks_are_bound_to_the_real_functions(self):
+        import report_trust
+        for name in report_trust._LATE_BOUND_CALLBACKS:
+            self.assertIs(getattr(report_trust, name), getattr(auto_lrc, name), name)
+
+    def test_bind_rejects_unknown_names(self):
+        import report_trust
+        with self.assertRaises(AttributeError):
+            report_trust.bind_late_callbacks(not_a_callback=lambda: None)
+
+
 if __name__ == "__main__":
     unittest.main()

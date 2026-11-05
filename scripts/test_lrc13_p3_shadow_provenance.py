@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest import TestCase, mock
 import auto_lrc
+import split_patch
 import test_core_logic
 
 
@@ -44,7 +45,7 @@ class PrivateShadowProvenanceTests(TestCase):
             return {"probe_revision": "synthetic", "entries": []}, {}
 
         with (
-            mock.patch.object(auto_lrc, "update_report_confidence_metrics",
+            split_patch.patch("update_report_confidence_metrics",
                               side_effect=simulated_postcommit_trust_change),
             mock.patch.object(auto_lrc, "_build_unresolved_evidence_requirements_projection",
                               return_value={"status": "RETRIEVED"}),

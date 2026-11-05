@@ -80,7 +80,7 @@ class WhisperxSpliceOrderRegressionTests(unittest.TestCase):
             ),
             mock.patch.object(auto_lrc, "needs_suppressed_retry", return_value=True),
             mock.patch.object(auto_lrc, "low_confidence_run_start", return_value=2),
-            mock.patch.object(auto_lrc, "report_quality", side_effect=quality),
+            split_patch.patch("report_quality", side_effect=quality),
         ):
             timestamps, report = auto_lrc.run_whisperx_best_candidate(
                 Path("dummy.flac"), [], 40.0, args

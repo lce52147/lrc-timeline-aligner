@@ -182,7 +182,7 @@ class ModelCacheReplayTests(unittest.TestCase):
                     "try_whispercpp_diagnostic_candidate",
                     return_value=([], {"assignments": []}, None, []),
                 ), \
-                mock.patch.object(auto_lrc, "_record_backend_unavailable", side_effect=record), \
+                split_patch.patch("_record_backend_unavailable", side_effect=record), \
                 redirect_stderr(stderr):
             with self.assertRaisesRegex(auto_lrc.LrcError, "No usable alignment candidate"):
                 auto_lrc.run_auto_backend_competition(

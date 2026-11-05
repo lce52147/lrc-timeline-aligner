@@ -5175,7 +5175,7 @@ class CentralTimingStateTests(unittest.TestCase):
             counts["collect"] += 1
             return ((candidate,),), {"probe_calls": 1}
 
-        auto_lrc.apply_anchor_hints = anchors  # type: ignore[assignment]
+        split_patch.assign("apply_anchor_hints", anchors)  # type: ignore[assignment]
         auto_lrc.score_line_timing_candidates = score  # type: ignore[assignment]
         auto_lrc.apply_short_duplicate_acoustic_recovery = duplicate  # type: ignore[assignment]
         auto_lrc.apply_post_score_audio_validation = validation  # type: ignore[assignment]
@@ -13519,8 +13519,7 @@ class V152BoundaryContentConvergenceRegressionTests(unittest.TestCase):
             rms_db=np.zeros(3), onset_strength=np.asarray([.1, .2, .95]),
             segments=[(1.8, 2.8)],
         )
-        with mock.patch.object(
-            auto_lrc, "runtime_local_whisper_evidence_for_entry", return_value=local_evidence
+        with split_patch.patch("runtime_local_whisper_evidence_for_entry", return_value=local_evidence
         ), mock.patch.object(
             auto_lrc, "_strong_vocal_onset_near", return_value=(2.1, .95, .80)
         ):
