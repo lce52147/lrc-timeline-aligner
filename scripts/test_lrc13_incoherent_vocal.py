@@ -97,8 +97,7 @@ class LocalWindowVocalSilenceTests(unittest.TestCase):
             stem.write_bytes(b"mock")
             report["ctc_audio_source"] = "vocal-stem"
             report["ctc_audio_path"] = str(stem)
-            with patch.object(auto_lrc, "decode_audio", return_value=x), patch.object(
-                auto_lrc, "analyze_audio", return_value=features
+            with split_patch.patch("decode_audio", return_value=x), split_patch.patch("analyze_audio", return_value=features
             ), patch.object(auto_lrc.subprocess, "run", helper), split_patch.patch("default_ctc_python", lambda: pathlib.Path("python")
             ):
                 levels = auto_lrc.vocal_stem_levels(report)

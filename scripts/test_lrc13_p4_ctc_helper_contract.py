@@ -38,17 +38,13 @@ class CtcHelperRowContractTests(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0, "", "")
 
             with (
-                mock.patch.object(
-                    auto_lrc,
-                    "prepare_vocal_ctc_audio",
+                split_patch.patch("prepare_vocal_ctc_audio",
                     return_value=(audio, "full-mix", None),
                 ),
                 split_patch.patch("default_ctc_python",
                     return_value=Path(sys.executable),
                 ),
-                mock.patch.object(
-                    auto_lrc,
-                    "vocal_cache_identity",
+                split_patch.patch("vocal_cache_identity",
                     return_value={},
                 ),
                 split_patch.patch("_run_model_helper_command",

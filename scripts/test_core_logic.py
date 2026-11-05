@@ -224,14 +224,12 @@ class VocalStemDeterminismTests(unittest.TestCase):
             args = type("Args", (), {"vocal_ctc": True})()
             with (
                 split_patch.patch("default_ctc_python", return_value=python_exe),
-                mock.patch.object(
-                    auto_lrc,
-                    "vocal_cache_identity",
+                split_patch.patch("vocal_cache_identity",
                     return_value={"vocal_cache_key": "deterministic-test"},
                 ),
-                mock.patch.object(auto_lrc, "DEFAULT_VOCAL_CACHE_DIR", cache_root),
+                split_patch.patch("DEFAULT_VOCAL_CACHE_DIR", cache_root),
                 mock.patch.object(auto_lrc.subprocess, "run", side_effect=fake_run) as run_command,
-                mock.patch.object(auto_lrc, "_demucs_vocal_stem_valid", return_value=True),
+                split_patch.patch("_demucs_vocal_stem_valid", return_value=True),
             ):
                 path, source, status = auto_lrc.prepare_vocal_ctc_audio(audio, args)
 
@@ -4284,7 +4282,7 @@ class CentralTimingStateTests(unittest.TestCase):
                 "--overwrite",
             ])
             with (
-                mock.patch.object(auto_lrc, "probe_duration", return_value=2.0),
+                split_patch.patch("probe_duration", return_value=2.0),
                 mock.patch.object(auto_lrc, "audio_track_labels", return_value=("MiXeD ARTIST", "Song")),
             ):
                 auto_lrc.process_audio(audio, args)
@@ -8079,7 +8077,7 @@ class FixedPointPhaseCZeroTrustTests(unittest.TestCase):
             audio = Path(temp_name) / "isolated-vocal.wav"
             audio.write_bytes(b"isolated-vocal-runtime-artifact")
             features, assignment, hypothesis = self._phonetic_runtime_fixture(audio)
-            with mock.patch.object(auto_lrc, "analyze_vocal_onsets", return_value=features):
+            with split_patch.patch("analyze_vocal_onsets", return_value=features):
                 self.assertTrue(auto_lrc.phonetic_onset_fusion_provenance_is_valid(
                     hypothesis, assignment, audio
                 ))
@@ -8115,7 +8113,7 @@ class FixedPointPhaseCZeroTrustTests(unittest.TestCase):
                 "backend": "ctc",
                 "assignments": [assignment],
             }
-            with mock.patch.object(auto_lrc, "analyze_vocal_onsets", return_value=features):
+            with split_patch.patch("analyze_vocal_onsets", return_value=features):
                 sets, _diagnostics = auto_lrc.collect_central_timing_candidates(
                     audio,
                     entries,
@@ -8265,7 +8263,7 @@ class FixedPointPhaseCZeroTrustTests(unittest.TestCase):
             audio = Path(temp_name) / "isolated-vocal.wav"
             audio.write_bytes(b"isolated-vocal-runtime-artifact")
             features, assignment, hypothesis = self._phonetic_runtime_fixture(audio)
-            with mock.patch.object(auto_lrc, "analyze_vocal_onsets", return_value=features):
+            with split_patch.patch("analyze_vocal_onsets", return_value=features):
                 self.assertTrue(auto_lrc.phonetic_onset_fusion_provenance_is_valid(
                     hypothesis, assignment, audio
                 ))
@@ -13607,7 +13605,7 @@ class ZeroReferenceAutoIsolationTests(unittest.TestCase):
                 str(audio), "--lyrics", str(lyrics), "--timing-source", "checked",
                 "--output", str(root / "result.lrc"), "--report-dir", str(root / "reports"), "--overwrite",
             ])
-            with mock.patch.object(auto_lrc, "probe_duration", return_value=20.0):
+            with split_patch.patch("probe_duration", return_value=20.0):
                 auto_lrc.process_audio(audio, args)
             report_path = next((root / "reports").glob("*.json"))
             report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -13627,7 +13625,7 @@ class ZeroReferenceAutoIsolationTests(unittest.TestCase):
                 str(audio), "--lyrics", str(lyrics), "--timing-source", "lyrics",
                 "--output", str(root / "result.lrc"), "--report-dir", str(root / "reports"), "--overwrite",
             ])
-            with mock.patch.object(auto_lrc, "probe_duration", return_value=20.0):
+            with split_patch.patch("probe_duration", return_value=20.0):
                 auto_lrc.process_audio(audio, args)
             report_path = next((root / "reports").glob("*.json"))
             report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -13681,7 +13679,7 @@ class ZeroReferenceAutoIsolationTests(unittest.TestCase):
                 str(audio), "--lyrics", str(lyric), "--output", str(root / "result.lrc"),
                 "--report-dir", str(root / "reports"), "--overwrite",
             ])
-            with mock.patch.object(auto_lrc, "probe_duration", return_value=20.0), \
+            with split_patch.patch("probe_duration", return_value=20.0), \
                 split_patch.patch("default_ctc_ready", return_value=True), \
                 split_patch.patch("default_whisperx_ready", return_value=False), \
                 mock.patch.object(auto_lrc, "run_auto_backend_competition", side_effect=competition), \
@@ -14370,8 +14368,8 @@ class DemucsCacheIsolationTests(unittest.TestCase):
         self.args=type("Args",(),{"vocal_ctc":True})()
         for patch in (
             split_patch.patch("default_ctc_python",return_value=self.python),
-            mock.patch.object(auto_lrc,"vocal_cache_identity",return_value={"vocal_cache_key":self.key}),
-            mock.patch.object(auto_lrc,"DEFAULT_VOCAL_CACHE_DIR",self.cache_root),
+            split_patch.patch("vocal_cache_identity",return_value={"vocal_cache_key":self.key}),
+            split_patch.patch("DEFAULT_VOCAL_CACHE_DIR",self.cache_root),
         ):
             patch.start()
             self.addCleanup(patch.stop)
@@ -14391,7 +14389,7 @@ class DemucsCacheIsolationTests(unittest.TestCase):
         stale=self.cache_root/self.key/"htdemucs"/"00_failed"/"vocals.mp3"
         stale.parent.mkdir(parents=True,exist_ok=True)
         stale.write_bytes(b"STALE"*2000)
-        with self.run_fake_demucs(),mock.patch.object(auto_lrc,"_demucs_vocal_stem_valid",return_value=True):
+        with self.run_fake_demucs(),split_patch.patch("_demucs_vocal_stem_valid",return_value=True):
             path,kind,status=auto_lrc.prepare_vocal_ctc_audio(self.audio,self.args)
         self.assertEqual((path,kind,status),(self.cached,"vocal-stem","generated"))
         self.assertEqual(path.read_bytes(),b"NEW_VALID_STEM"*1000)
@@ -14403,14 +14401,14 @@ class DemucsCacheIsolationTests(unittest.TestCase):
         def validity(path,source):
             self.assertEqual(source,self.audio)
             return path.stat().st_size>4096
-        with self.run_fake_demucs(),mock.patch.object(auto_lrc,"_demucs_vocal_stem_valid",side_effect=validity):
+        with self.run_fake_demucs(),split_patch.patch("_demucs_vocal_stem_valid",side_effect=validity):
             path,kind,status=auto_lrc.prepare_vocal_ctc_audio(self.audio,self.args)
         self.assertEqual((kind,status),("vocal-stem","generated"))
         self.assertEqual(path.read_bytes(),b"NEW_VALID_STEM"*1000)
 
     def test_demucs_error_keeps_full_traceback_tail_and_log(self):
         error="Log progress "+"x"*800+"\nTraceback (most recent call last):\nFileNotFoundError: sentinel-root-cause"
-        with self.run_fake_demucs(stderr=error),mock.patch.object(auto_lrc,"_demucs_vocal_stem_valid",return_value=True):
+        with self.run_fake_demucs(stderr=error),split_patch.patch("_demucs_vocal_stem_valid",return_value=True):
             path,kind,status=auto_lrc.prepare_vocal_ctc_audio(self.audio,self.args)
         self.assertEqual((path,kind),(self.audio,"mix"))
         self.assertIn("FileNotFoundError: sentinel-root-cause",status)
@@ -14419,14 +14417,13 @@ class DemucsCacheIsolationTests(unittest.TestCase):
     def test_valid_cache_is_reused_without_demucs(self):
         self.cached.parent.mkdir(parents=True,exist_ok=True)
         self.cached.write_bytes(b"VALID"*2400)
-        with mock.patch.object(auto_lrc,"_demucs_vocal_stem_valid",return_value=True), \
+        with split_patch.patch("_demucs_vocal_stem_valid",return_value=True), \
              mock.patch.object(auto_lrc.subprocess,"run",side_effect=AssertionError("unexpected Demucs")):
             path,kind,status=auto_lrc.prepare_vocal_ctc_audio(self.audio,self.args)
         self.assertEqual((path,kind,status),(self.cached,"vocal-stem","cache-hit"))
 
     def test_generated_invalid_stem_is_rejected(self):
-        with self.run_fake_demucs(generate=b"X"),mock.patch.object(
-            auto_lrc,"_demucs_vocal_stem_valid",return_value=False
+        with self.run_fake_demucs(generate=b"X"),split_patch.patch("_demucs_vocal_stem_valid",return_value=False
         ):
             path,kind,status=auto_lrc.prepare_vocal_ctc_audio(self.audio,self.args)
         self.assertEqual((path,kind,status),(self.audio,"mix","demucs-invalid-generated-vocal-stem"))
@@ -14442,7 +14439,7 @@ class DemucsCacheIsolationTests(unittest.TestCase):
             self.assertEqual(command[0],"ffprobe")
             return subprocess.CompletedProcess(command,0,json.dumps(sample),"")
         with mock.patch.object(auto_lrc.subprocess,"run",side_effect=runner), \
-             mock.patch.object(auto_lrc,"probe_duration",return_value=source_duration):
+             split_patch.patch("probe_duration",return_value=source_duration):
             self.assertTrue(auto_lrc._demucs_vocal_stem_valid(vocal,self.audio))
             sample["format"]["duration"]="10"
             self.assertFalse(auto_lrc._demucs_vocal_stem_valid(vocal,self.audio))
@@ -14479,7 +14476,7 @@ class BackendParticipationTests(unittest.TestCase):
     def test_evidence_producer_failure_is_recorded(self) -> None:
         report = {"assignments": [{}]}
         entries = [LyricEntry(["test"])]
-        with mock.patch.object(auto_lrc, "analyze_audio", side_effect=auto_lrc.LrcError("sentinel")):
+        with split_patch.patch("analyze_audio", side_effect=auto_lrc.LrcError("sentinel")):
             result = auto_lrc.apply_vocal_activity_reentry_hypotheses(
                 Path("missing.flac"), entries, [0.0], report, 1.0
             )

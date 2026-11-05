@@ -16,6 +16,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import auto_lrc
+import split_patch
 import lrc_manual_edits
 import lrc_publication
 import r2_pipeline
@@ -65,7 +66,7 @@ class ManualEditTests(unittest.TestCase):
             argv.append("--discard-manual-edits")
         args = auto_lrc.build_parser().parse_args(argv)
         with (
-            mock.patch.object(auto_lrc, "probe_duration", return_value=2.0),
+            split_patch.patch("probe_duration", return_value=2.0),
             mock.patch.object(auto_lrc, "audio_track_labels", return_value=("", "Song")),
         ):
             result = auto_lrc.process_audio(audio, args)
@@ -85,7 +86,7 @@ class ManualEditTests(unittest.TestCase):
                 "--output", str(output), "--report-dir", str(root / "reports"),
                 "--timing-source", "lyrics", "--overwrite",
             ])
-            with mock.patch.object(auto_lrc, "probe_duration", side_effect=AssertionError("probe called")):
+            with split_patch.patch("probe_duration", side_effect=AssertionError("probe called")):
                 with self.assertRaisesRegex(auto_lrc.LrcError, "Manual review edits detected"):
                     auto_lrc.process_audio(root / "song.flac", args)
 

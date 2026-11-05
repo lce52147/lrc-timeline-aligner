@@ -9,6 +9,7 @@ from unittest.mock import patch
 from types import SimpleNamespace
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 import auto_lrc as a
+import split_patch
 
 
 class ProductionPostscoreThreeRepeatsTests(unittest.TestCase):
@@ -35,7 +36,7 @@ class ProductionPostscoreThreeRepeatsTests(unittest.TestCase):
             return {'time':t,'delta_seconds':0.,'strength':.8}
         def capture(assignment,**kwargs):
             assignment.setdefault('alignment_hypotheses',[]).append(kwargs)
-        with patch.object(a,'analyze_audio',return_value=fake),\
+        with split_patch.patch("analyze_audio",return_value=fake),\
              patch.object(a,'nearest_local_peak',side_effect=fake_peak),\
              patch.object(a,'record_alignment_hypothesis',side_effect=capture):
             changes=a.apply_post_score_audio_validation(
