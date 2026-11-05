@@ -17,6 +17,7 @@ from types import SimpleNamespace
 import lrc_stage_timings as st
 import r2_pipeline
 import auto_lrc
+import runtime_base
 import split_patch
 
 
@@ -371,6 +372,10 @@ class StageArgsTests(unittest.TestCase):
         self.assertEqual(st.install_report()["missing"], [])
         for name, _label, _role in auto_lrc._STAGE_TIMING_SPEC:
             self.assertTrue(getattr(vars(auto_lrc)[name], "__stage_timing_wrapper__", False), name)
+            for module_name in runtime_base._ALGORITHM_SOURCE_MODULES:
+                owner = sys.modules.get(module_name)
+                if owner is not None and name in vars(owner) and getattr(vars(owner)[name], "__module__", None) == module_name:
+                    self.assertIs(vars(owner)[name], vars(auto_lrc)[name], name)
 
 
 class R2TimingTests(unittest.TestCase):
