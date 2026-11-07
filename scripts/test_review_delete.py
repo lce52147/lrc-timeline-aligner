@@ -190,10 +190,11 @@ class ReviewDeleteTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(self.output.read_bytes(), before)
 
-    def _direct_delete_save(self, fail_calls):
+    def _direct_delete_save(self, fail_calls, prepared=True):
         auto, edits_path = review_server.review_artifact_paths(self.report)
-        auto.write_bytes(self.output.read_bytes())
-        edits_path.write_text(json.dumps({"schema": 1, "auto_lrc_sha256": review_server._sha256_file(auto), "edits": []}), encoding="utf-8")
+        if prepared:
+            auto.write_bytes(self.output.read_bytes())
+            edits_path.write_text(json.dumps({"schema": 1, "auto_lrc_sha256": review_server._sha256_file(auto), "edits": []}), encoding="utf-8")
         detail = self._detail()
         row = next(item for item in detail["rows"] if item["entry"] == 1)
         body = {"base_sha256": detail["base_sha256"], "edits": [], "deletes": [{"entry": 1, "line_key": row["line_key"]}]}
@@ -219,6 +220,43 @@ class ReviewDeleteTests(unittest.TestCase):
         self.assertEqual(self.output.read_bytes(), before_output)
         self.assertEqual(json.loads(before_log).get("deleted_lines"), None)
         self.assertFalse(list(self.root.glob("*.stage")))
+
+    def test_first_save_rollback_removes_the_auto_baseline_it_published(self) -> None:
+        auto, edits_path = review_server.review_artifact_paths(self.report)
+        self.assertFalse(auto.exists() or edits_path.exists())
+        before_output = self.output.read_bytes()
+        (status, result), _edits_path = self._direct_delete_save({3}, prepared=False)   # replace calls: auto, LRC, log (fails), restore
+        self.assertEqual(status, 500)
+        self.assertIs(result["lrc_saved"], False)
+        self.assertEqual(self.output.read_bytes(), before_output)
+        self.assertFalse(auto.exists(), "the baseline the failed first save made is gone")
+        self.assertFalse(edits_path.exists())
+        self.assertFalse(list(self.root.glob("*.stage")))
+        self.assertEqual(self._detail()["rows"][1]["lyric"], "two a\ntwo b")   # still the report entry model, not the lrc fallback
+
+    def test_delete_returns_the_old_to_new_line_key_map(self) -> None:
+        detail = self._detail()
+        old = {row["entry"]: row["line_key"] for row in detail["rows"]}
+        status, result = self._save(deletes=[1], detail=detail)
+        self.assertEqual(status, 200)
+        key_map = result["line_key_map"]
+        self.assertIsNone(key_map[old[1]])
+        new = {row["lyric"]: row["line_key"] for row in result["rows"]}
+        self.assertEqual(key_map[old[2]], new["two a\ntwo b"])
+        self.assertEqual(key_map[old[5]], new["five"])
+        self.assertEqual(old[2].split(":")[1], key_map[old[2]].split(":")[1], "the text hash does not change")
+        self.assertEqual(int(old[2].split(":")[0]) - 1, int(key_map[old[2]].split(":")[0]))
+        self.assertNotIn("line_key_map", self._save(edits=[(2, 250)])[1], "a save without deletes carries no map")
+
+    def test_delete_that_would_merge_the_two_neighbours_is_422_and_writes_nothing(self) -> None:
+        before = self.output.read_bytes()
+        status, result = self._save(edits=[(3, 100)], deletes=[2])   # entries 1 and 3 would both sit at 00:01.00, next to each other
+        self.assertEqual(status, 422, result)
+        self.assertEqual(result["error"], "刪除後前後兩句時間相同會被合併，請先調整其中一句時間")
+        self.assertEqual(self.output.read_bytes(), before)
+        auto, edits_path = review_server.review_artifact_paths(self.report)
+        self.assertFalse(auto.exists() or edits_path.exists())
+        self.assertEqual(self._save(edits=[(3, 150)], deletes=[2])[0], 200, "different times: fine")
 
     def test_delete_log_and_rollback_failure_returns_text_and_writes_fallback(self) -> None:
         before_output = self.output.read_bytes()

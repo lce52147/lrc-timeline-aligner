@@ -10,7 +10,7 @@ const page = fs.readFileSync(path.join(__dirname, 'review_page', 'index.html'), 
 let source = page.split('<script>', 2)[1].split('</script>')[0];
 const hook = '  load().then(() => { refreshJobs(); watchFiles(); });\n})();';
 assert.ok(source.includes(hook), 'page bootstrap hook moved');
-source = source.replace(hook, '  globalThis.__t = {state, stage, load, refreshSong, flushDraft, watchFiles, settleExportGeneration, markDone, get seen() { return seenGeneration; }, get pending() { return refreshPending; }};\n  load().then(() => { refreshJobs(); watchFiles(); });\n})();');
+source = source.replace(hook, '  globalThis.__t = {state, stage, toggleDelete, load, refreshSong, flushDraft, watchFiles, settleExportGeneration, markDone, get seen() { return seenGeneration; }, get pending() { return refreshPending; }};\n  load().then(() => { refreshJobs(); watchFiles(); });\n})();');
 
 const KEY = 'lrc-review-drafts';
 function makeStorage(opts = {}) {
@@ -51,7 +51,15 @@ async function boot(storage, songs, opts = {}) {
         }
         s.sha = s.sha + '+'; // the file changed, as after a real save
         body.edits.forEach(e => { s.rows.find(r => r.entry === e.entry).current_cs = e.cs; });
-        return response(true, 200, Object.assign({base_sha256: s.sha, server_read_only: false, has_flac: true, has_stem: true, rows: s.rows.map(r => rowOf(s, r))}, opts.adjusted ? {adjusted_cs: opts.adjusted} : {}));
+        let keyMap = null;
+        if (body.deletes) { // the server drops those rows, renumbers the rest (line index = entry here) and answers old line_key -> new line_key
+          keyMap = {};
+          const gone = new Set(body.deletes.map(d => d.entry));
+          s.rows.filter(r => gone.has(r.entry)).forEach(r => { keyMap[r.line_key] = null; });
+          s.rows = s.rows.filter(r => !gone.has(r.entry));
+          s.rows.forEach((r, at) => { const old = r.line_key; r.entry = at + 1; r.line_key = (at + 1) + ':' + old.split(':')[1]; keyMap[old] = r.line_key; });
+        }
+        return response(true, 200, Object.assign({base_sha256: s.sha, server_read_only: false, has_flac: true, has_stem: true, rows: s.rows.map(r => rowOf(s, r))}, opts.adjusted ? {adjusted_cs: opts.adjusted} : {}, keyMap && !opts.noKeyMap ? {line_key_map: keyMap} : {}));
       }
       m = /^\/api\/song\/(\d+)$/.exec(url);
       if (m && !options.method) {
@@ -804,6 +812,125 @@ test('BG: a save writes only the open song; edits staged for another song (a res
   p.t.state.activeSong = 1;
   p.el('save').listeners.click(); await settle();
   assert.deepEqual(p.saves.map(save => save.index), [1], 'saving while that song is open writes it');
+});
+
+// ---- DEL1-FIX2: pending deletes in the draft, and the save remap ----
+const del8 = () => [1, 2, 3, 4, 5, 6, 7, 8].map(n => lk(n + ':h' + n, n, n * 1000));
+const deleteRow = (p, entry) => p.t.toggleDelete(p.rowOf(0, entry));
+
+test('DEL: toggling delete stores del + the earlier time draft as prev, and the draft carries both', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG, 's', del8())];
+  const p = await boot(st, songs);
+  p.edit(0, 3, 3100, 100);
+  deleteRow(p, 3);
+  const edit = p.t.state.edits.get('0:3');
+  assert.equal(edit.del, true);
+  assert.deepEqual({cs: edit.prev.cs, nudge_cs: edit.prev.nudge_cs}, {cs: 3100, nudge_cs: 100});
+  p.flush();
+  const stored = drafts(st)[SONG].edits.find(record => record.entry === 3);
+  assert.equal(stored.del, true);
+  assert.equal(stored.prev.cs, 3100);
+});
+
+test('DEL: a reload brings a pending delete back, aimed at the same line', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG, 's', del8())];
+  const p = await boot(st, songs);
+  deleteRow(p, 4);
+  p.flush();
+  const q = await boot(st, [mk('S', SONG, 's', del8())]);
+  const edit = q.t.state.edits.get('0:4');
+  assert.ok(edit && edit.del === true, 'pending delete restored');
+  assert.equal(edit.line_key, '4:h4');
+});
+
+test('DEL: 復原 restores the earlier time draft; with none the row is simply no longer staged', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG, 's', del8())];
+  const p = await boot(st, songs);
+  p.edit(0, 3, 3100, 100);
+  deleteRow(p, 3);
+  deleteRow(p, 3);
+  const back = p.t.state.edits.get('0:3');
+  assert.equal(back.del, undefined);
+  assert.equal(back.cs, 3100);
+  assert.equal(back.nudge_cs, 100);
+  p.flush();
+  assert.equal(drafts(st)[SONG].edits.find(record => record.entry === 3).del, undefined, 'the stored draft no longer says delete');
+  deleteRow(p, 5);
+  deleteRow(p, 5);
+  assert.equal(p.t.state.edits.has('0:5'), false);
+});
+
+test('DEL: the save body strips del/prev from edits and sends the deletes beside them', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG, 's', del8())];
+  const p = await boot(st, songs);
+  p.edit(0, 6, 6100, 100);
+  p.edit(0, 3, 3100, 100);
+  deleteRow(p, 3);
+  p.t.state.activeSong = 0;
+  p.el('save').listeners.click(); await settle();
+  const body = p.saves[0].body;
+  assert.deepEqual(body.deletes, [{entry: 3, line_key: '3:h3'}]);
+  assert.deepEqual(body.edits.map(edit => edit.entry), [6]);
+  body.edits.forEach(edit => { assert.equal('del' in edit, false); assert.equal('prev' in edit, false); assert.equal('base_cs' in edit, false); });
+});
+
+test('DEL: 已確認 marks below a deleted row survive the save, and the deleted row\'s own mark goes', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG, 's', del8())];
+  const p = await boot(st, songs);
+  [2, 3, 4, 5, 6, 7].forEach(entry => p.t.markDone(p.rowOf(0, entry)));
+  deleteRow(p, 2);
+  p.t.state.activeSong = 0;
+  p.el('save').listeners.click(); await settle();
+  assert.equal(p.t.state.rows.filter(item => item.song.index === 0).length, 7);
+  assert.deepEqual([...p.t.state.done].sort(), ['0:2', '0:3', '0:4', '0:5', '0:6'], 'old rows 3..7 are now 2..6 and still 已確認');
+  assert.equal(p.t.state.rows.find(item => item.row.line_key === '2:h3').row.lyrics[0], 'l2');
+});
+
+test('DEL: an edit below the deleted row is saved with it; edits and delete both leave the draft', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG, 's', del8())];
+  const p = await boot(st, songs);
+  p.edit(0, 7, 7100, 100);
+  p.flush();
+  deleteRow(p, 2);
+  p.t.state.activeSong = 0;
+  p.el('save').listeners.click(); await settle();
+  assert.equal(p.t.state.edits.size, 0);
+  assert.deepEqual(drafts(st), {}, 'saved edits and the delete leave the draft');
+});
+
+test('DEL: without the key map the marks are re-aimed by text, nearest at or above, and never onto other text', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG, 's', del8())];
+  const p = await boot(st, songs, {noKeyMap: true});
+  p.edit(0, 7, 7100, 100);
+  deleteRow(p, 2);
+  p.t.state.activeSong = 0;
+  p.el('save').listeners.click(); await settle();
+  assert.equal(p.t.state.rows.length, 7);
+  // another tab's draft for old row 6 (key 6:h6) names a line that is now row 5
+  const q = await boot(st, [mk('S', SONG, 's2', [1, 3, 4, 5, 6, 7, 8].map((n, at) => lk((at + 1) + ':h' + n, at + 1, n * 1000)))]);
+  st.map.set(KEY, JSON.stringify({[SONG]: {saved_at: Date.now(), tabs: {}, base_sha256: 's', edits: [
+    {entry: 6, cs: 6100, source: 'manual', nudge_cs: 100, base_cs: 6000, line_key: '6:h6', edited_at: 1},
+    {entry: 2, cs: 2100, source: 'manual', nudge_cs: 100, base_cs: 2000, line_key: '2:h2', edited_at: 1}]}}));
+  const r = await boot(st, [mk('S', SONG, 's2', [1, 3, 4, 5, 6, 7, 8].map((n, at) => lk((at + 1) + ':h' + n, at + 1, n * 1000)))]);
+  r.el('draft-stale-apply').listeners.click(); await settle();
+  assert.deepEqual([...r.t.state.edits.values()].map(e => [e.entry, e.line_key, e.cs]), [[5, '5:h6', 6100]], 'h6 found one row up; h2 (deleted text) is not attached anywhere');
+});
+
+test('DEL: Enter and K on a pending-delete row move on without accepting or keeping it', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG, 's', del8())];
+  const p = await boot(st, songs);
+  p.t.state.activeSong = 0; p.t.state.selected = 1; p.t.state.autoplay = false;
+  deleteRow(p, 2);
+  const press = key => p.docListeners.keydown({key, code: key, target: {closest: () => null}, preventDefault() {}, ctrlKey: false, altKey: false, metaKey: false, shiftKey: false});
+  press('Enter');
+  assert.equal(p.t.state.selected, 2, 'Enter advanced');
+  assert.equal(p.t.state.done.has('0:2'), false, 'the delete row was not marked 已確認');
+  assert.equal(p.t.state.edits.get('0:2').del, true);
+  p.t.state.selected = 1;
+  press('k');
+  assert.equal(p.t.state.selected, 2, 'K advanced');
+  assert.equal(p.t.state.done.has('0:2'), false);
+  assert.equal(p.t.state.edits.get('0:2').del, true, 'the pending delete is still there');
 });
 
 (async () => {

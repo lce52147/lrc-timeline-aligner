@@ -412,13 +412,26 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   // A row is identified by its line_key (first line index + text hash from the server), never by its entry number alone: an entry
   // number moves when the file's lines are regrouped. Rows or drafts without a line_key (older data) fall back to the entry number.
   const keyHash = key => String(key || '').split(':').slice(1).join(':');
-  function findRowFor(songIndex, edit) {
+  const keyIndex = key => Number(String(key || '').split(':')[0]);
+  // `used` (optional, one per batch) holds the rows an earlier edit of the same batch took, so a repeated line is never claimed twice.
+  function findRowFor(songIndex, edit, used) {
     const rows = state.rows.filter(item => item.song.index === songIndex);
     if (edit.line_key) {
       const exact = rows.find(item => item.row.line_key === edit.line_key);
-      if (exact) return exact;
+      if (exact) { if (used) used.add(exact); return exact; }
       const hash = keyHash(edit.line_key);
-      return rows.find(item => item.row.entry === edit.entry && item.row.line_key && keyHash(item.row.line_key) === hash && item.row.current_cs === edit.base_cs) || null;
+      const same = rows.find(item => item.row.entry === edit.entry && item.row.line_key && keyHash(item.row.line_key) === hash && item.row.current_cs === edit.base_cs);
+      if (same) { if (used) used.add(same); return same; }
+      // After a delete elsewhere (this or another tab) every line below it moved up: same text, nearest line at or above the old
+      // position, each row once. Never by entry number, and never onto a line with different text.
+      const at = keyIndex(edit.line_key);
+      if (!Number.isFinite(at)) return null;
+      const near = rows.filter(item => item.row.line_key && keyHash(item.row.line_key) === hash && keyIndex(item.row.line_key) <= at && !(used && used.has(item)));
+      const aimed = near.filter(item => item.row.current_cs === edit.base_cs);
+      const pool = aimed.length ? aimed : near;
+      const found = pool.reduce((best, item) => (!best || keyIndex(item.row.line_key) > keyIndex(best.row.line_key) ? item : best), null);
+      if (found && used) used.add(found);
+      return found;
     }
     return rows.find(item => item.row.entry === edit.entry) || null;
   }
@@ -591,11 +604,12 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   // `rebase` is the stale-file path: a nudge is re-applied as current + nudge, a pick only if it is still inside the row's span.
   function applyDraft(song, draft, rebase) {
     const result = {applied:0, snaps:new Map(), skipped:[], changed:0, keyless:[]};
+    const used = new Set();
     (draft.edits || []).forEach(edit => {
       if (!edit || typeof edit !== 'object') return;
       // A draft from an older file without a line_key cannot say which line it was for: never re-aim it by entry number.
       if (rebase && !edit.line_key) { result.skipped.push(edit); result.keyless.push(edit); result.changed++; return; }
-      const item = findRowFor(song.index, edit);
+      const item = findRowFor(song.index, edit, used);
       if (!item || !editable(item.song) || !Number.isFinite(edit.cs) || item.row.current_cs == null) { result.skipped.push(edit); if (!item && edit.line_key) result.changed++; return; }
       const key = keyFor(item), current = item.row.current_cs;
       if (state.edits.has(key)) return;
@@ -656,7 +670,8 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
           if (result.applied) { restored += result.applied; newest = Math.max(newest, draft.saved_at || 0); adopt(id, result.snaps, true); }
           if (result.skipped.length) draftRemnants.set(id, {sha:group.sha, list:result.skipped, changed:result.changed});
         } else {
-          const live = group.edits.filter(edit => { const item = findRowFor(song.index, edit); return !(item && item.row.current_cs === edit.cs); });
+          const used = new Set();
+          const live = group.edits.filter(edit => { const item = findRowFor(song.index, edit, used); return !(item && item.row.current_cs === edit.cs); });
           if (live.length) { staleEdits.push(...live.map(edit => ({...edit, _sha:group.sha}))); staleShas.push(group.sha); } else obsolete.push([id, group.sha]);
         }
       });
@@ -1343,8 +1358,8 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       '<div class="actions"><button type="button" class="play" data-kind="' + modeFor(song) + '"' + ((modeFor(song) === 'stem' ? song.has_stem : song.has_flac) ? '' : ' disabled') + '>▶ 播放 <span class="num">空白</span></button>' +
       '<button type="button" class="ab-play"' + (selectedCandidate && (modeFor(song) === 'stem' ? song.has_stem : song.has_flac) ? '' : ' disabled') + ' aria-label="alternate current and selected candidate">A/B</button>' +
       '<span class="nudge"><button type="button" class="nudge-button" data-delta="-10"' + (canEdit ? '' : ' disabled') + ' aria-label="move timestamp earlier by 0.1 seconds">−0.1</button>' + (visible()[state.selected] === item && canEdit ? '<input type="text" class="time-input num" inputmode="decimal" autocomplete="off" spellcheck="false" value="' + time(chosen) + '" aria-label="timestamp; type mm:ss.xx or +0.1 then Enter">' : '<span class="num">' + time(chosen) + '</span>') + '<button type="button" class="nudge-button" data-delta="10"' + (canEdit ? '' : ' disabled') + ' aria-label="move timestamp later by 0.1 seconds">+0.1</button></span><span class="time-hint" role="alert"></span>' +
-      '<button type="button" class="primary accept"' + (canEdit ? '' : ' disabled') + '>接受，下一筆 <span class="num">Enter</span></button>' +
-      '<button type="button" class="keep-next">維持 <span class="num">K</span></button>' +
+      '<button type="button" class="primary accept"' + (canEdit && !edit?.del ? '' : ' disabled') + '>接受，下一筆 <span class="num">Enter</span></button>' +
+      '<button type="button" class="keep-next"' + (edit?.del ? ' disabled' : '') + '>維持 <span class="num">K</span></button>' +
       '<button type="button" class="undo"' + (edit ? '' : ' disabled') + '>復原 <span class="num">U</span></button>' +
       '<button type="button" class="card-del"' + (canEdit ? '' : ' disabled') + '>' + (edit?.del ? '復原刪除' : '刪除') + '</button>' +
       '</div>' +
@@ -1384,14 +1399,52 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     if (!skipped.length) return '沒有歌曲：這次沒有找到對齊報告。';
     return '沒有可審的歌曲：' + skipped.length + ' 份報告被略過（放在 LRC bk 資料夾或報告損壞）：' + skipped.join('、');
   }
+  // A save with deletes returns old line_key -> new line_key (null = the deleted line). Done marks, staged edits, stored drafts and
+  // the settled records of that song are carried through it before reconcileCarried looks the rows up again.
+  function applyKeyMap(song, map, deletedEntries) {
+    const index = song.index, id = draftId(song), now = Date.now();
+    const lookup = key => (key && Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined);   // undefined: not in the map, leave as is
+    [...state.done].forEach(key => {
+      if (keyIndex(key) !== index) return;
+      const next = lookup(doneLine.get(key));
+      if (next === null) { state.done.delete(key); doneLine.delete(key); } else if (next) doneLine.set(key, next);
+    });
+    [...state.edits].forEach(([key, edit]) => {
+      if (keyIndex(key) !== index) return;
+      const next = lookup(edit.line_key);
+      if (next === null) { state.edits.delete(key); draftTimes.delete(key); } else if (next) edit.line_key = next;
+    });
+    const carry = list => (list || []).filter(edit => { const next = lookup(edit && edit.line_key); if (next === null) return false; if (next) edit.line_key = next; return true; });
+    const stale = staleDrafts.get(id);
+    if (stale) { stale.edits = carry(stale.edits); if (!stale.edits.length) staleDrafts.delete(id); }
+    const remnant = draftRemnants.get(id);
+    if (remnant) { remnant.list = carry(remnant.list); if (!remnant.list.length) draftRemnants.delete(id); }
+    const drafts = readDrafts(), groups = groupsOf(drafts[id]);
+    if (groups.length) {
+      groups.forEach(group => { group.edits = carry(group.edits); });
+      putGroups(drafts, id, groups, drafts[id], now);
+      writeDrafts(drafts);
+    }
+    // Settled entries are entry numbers of the file before this save: shift them past the deleted entries.
+    const gone = [...deletedEntries].sort((a, b) => a - b), shift = entry => entry - gone.filter(number => number < entry).length;
+    try {
+      const all = readSettled();
+      if (Array.isArray(all[id])) {
+        all[id].forEach(record => { if (record && Array.isArray(record.entries)) record.entries = record.entries.filter(entry => !gone.includes(entry)).map(shift); });
+        localStorage.setItem(SETTLED_KEY, JSON.stringify(all));
+      }
+    } catch (_) {}
+  }
   // Carried edits and done marks follow their line (line_key), not the entry number; an edit whose line changed is not staged.
   function reconcileCarried(onlySong) {
     let lost = 0;
     const moves = [], doneMoves = [];
+    const usedBySong = new Map();
     [...state.edits].forEach(([key, edit]) => {
       const index = Number(key.split(':')[0]);
       if (onlySong != null && index !== onlySong) return;
-      const item = findRowFor(index, edit);
+      if (!usedBySong.has(index)) usedBySong.set(index, new Set());
+      const item = findRowFor(index, edit, usedBySong.get(index));
       if (!item || !editable(item.song)) {
         state.edits.delete(key); draftTimes.delete(key); lost++;
         const song = state.songs.find(entry => entry.index === index);
@@ -1541,6 +1594,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
         ownGeneration = data.generation != null ? data.generation : null;
         (data.adjusted_cs || []).forEach(item => notes.push('第 ' + item.entry + ' 句已偏移 ' + (Math.abs(item.cs - item.requested_cs) / 100).toFixed(2) + ' 秒以免與相鄰句合併' + (item.crossed ? '（順序與相鄰句對調，請重聽）' : '')));
         dropSavedDraft(song, savedSha, sending);
+        if (data.line_key_map) applyKeyMap(song, data.line_key_map, sending.filter(edit => edit.del).map(edit => edit.entry));
       } catch (error) {
         failures.push('song ' + index + ': save failed: ' + error.message);
       }
@@ -1802,12 +1856,12 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       if (option && editable(item.song)) { stage(item, option.cs, 'option:' + sourceText(option), 0); accept(item); }
       return;
     }
-    if (event.key.toLowerCase() === 'k') { event.preventDefault(); keep(item); return; }
+    if (event.key.toLowerCase() === 'k') { event.preventDefault(); if (deleting(item)) nextRow(); else keep(item); return; }
     if (event.key.toLowerCase() === 'u') { event.preventDefault(); undoEdit(item); return; }
     if (event.key.toLowerCase() === 'v') { event.preventDefault(); stopPlayer(); state.mode = state.mode === 'flac' ? 'stem' : 'flac'; render(); return; }
     if (event.key.toLowerCase() === 'b') { event.preventDefault(); const chosen = working(item); if (chosen != null && chosen !== item.row.current_cs) playAB(item, {cs:chosen, diagnostic_only:false}); return; }
     if (event.key === 'Tab') { event.preventDefault(); state.details = !state.details; render(); return; }
-    if (event.key === 'Enter') { event.preventDefault(); accept(item); return; }
+    if (event.key === 'Enter') { event.preventDefault(); if (deleting(item)) nextRow(); else accept(item); return; }
     if (event.code === 'Space') { event.preventDefault(); playAround(item, working(item)); return; }
     if (event.key.toLowerCase() === 'p') { event.preventDefault(); if (item.row.previous) playAround(item, item.row.previous.cs); return; }
     if (event.key.toLowerCase() === 'n') { event.preventDefault(); if (item.row.next) playAround(item, item.row.next.cs); return; }

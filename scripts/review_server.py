@@ -1534,6 +1534,14 @@ def _save_song(song, body):
         final[entry] = cs
         edit["cs"] = cs
         edit.pop("asked", None)
+    if deleted:
+        # Two survivors that end up on neighbouring lines with one timestamp would be read back as a single entry.
+        survivors = [position for position in range(1, len(mapping) + 1) if position not in deleted]
+        for first, second in zip(survivors, survivors[1:]):
+            if second == first + 1:
+                continue
+            if all(index in removed_indexes for index in range(mapping[first - 1][-1] + 1, mapping[second - 1][0])) and final[first] == final[second]:
+                return 422, {"error": "刪除後前後兩句時間相同會被合併，請先調整其中一句時間", "entry": second}
     edits = [
         {**edit, "before_cs": before[edit["entry"]]}
         for edit in sorted(requested, key=lambda item: item["entry"]) if edit["cs"] != before[edit["entry"]]
@@ -1649,6 +1657,8 @@ def _save_song(song, body):
             return 500, {"error": "LRC saved, edit log not written", "lrc_saved": True}
         # A delete must leave the LRC and its record in one state: put the pre-save bytes back.
         if _restore_lrc(output, current):
+            if auto_published:
+                auto.unlink(missing_ok=True)   # the first save made this baseline; without the log it would flip the song's entry model
             return 500, {"error": "未儲存：刪除紀錄寫入失敗，LRC 已還原（nothing was saved；改動仍在草稿中，請再按儲存）", "lrc_saved": False}
         records = [{"entry": entry, "line_key": deleted[entry], "cs": before[entry],
                     "lines": [original_lines[index].decode("utf-8", "replace") for index in mapping[entry - 1]]}
@@ -1664,6 +1674,16 @@ def _save_song(song, body):
     result = _song_payload(pathlib.Path(song["report"]), song["report_data"])
     if adjusted:
         result["adjusted_cs"] = adjusted
+    if deleted:
+        # Every line below a deleted one moves up and the line_key carries the line index: old key -> new key (null = deleted),
+        # so the page can carry its 已確認 marks and drafts across the save.
+        removed_sorted = sorted(removed_indexes)
+        key_map = {}
+        for position, group in enumerate(mapping, start=1):
+            old_key = _line_key(original_lines, group)
+            shift = sum(1 for index in removed_sorted if index < group[0])
+            key_map[old_key] = None if position in deleted else f"{group[0] - shift}:{old_key.split(':', 1)[1]}"
+        result["line_key_map"] = key_map
     return 200, result
 
 
