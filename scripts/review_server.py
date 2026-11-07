@@ -1408,8 +1408,8 @@ def _free_slot(cs, prev, nxt, neighbours, limit):
 def _save_song(song, body):
     if song["read_only"]:
         return 403, {"error": song["read_only_reason"] or "read-only"}
-    if set(body) != {"base_sha256", "edits"} or not isinstance(body.get("edits"), list) or not isinstance(body.get("base_sha256"), str):
-        return 400, {"error": "body must contain base_sha256 and edits"}
+    if not {"base_sha256", "edits"} <= set(body) <= {"base_sha256", "edits", "deletes"} or not isinstance(body.get("edits"), list)             or not isinstance(body.get("base_sha256"), str) or not isinstance(body.get("deletes", []), list):
+        return 400, {"error": "body must contain base_sha256 and edits (and optionally deletes)"}
     output = song["output"]
     if output is None or not output.is_file():
         return 403, {"error": "lrc-missing"}
@@ -1441,6 +1441,24 @@ def _save_song(song, body):
             return 422, {"error": f"第 {entry} 句對應的句子已變動（檔案在別處被改過），未儲存", "entry": entry}
         seen.add(entry)
         requested.append({"entry": entry, "cs": cs, "source": edit["source"], "nudge_cs": nudge})
+    deleted = {}
+    for item in body.get("deletes", []):
+        if not isinstance(item, dict) or set(item) != {"entry", "line_key"} or not isinstance(item["line_key"], str):
+            return 400, {"error": "invalid delete"}
+        try:
+            entry = int(item["entry"])
+        except (TypeError, ValueError):
+            return 400, {"error": "invalid delete"}
+        if entry in deleted or entry < 1 or entry > len(mapping):
+            return 400, {"error": "invalid delete"}
+        if entry in seen:
+            return 400, {"error": f"第 {entry} 句同時要修改時間和刪除，未儲存"}
+        if item["line_key"] != _line_key(lines, mapping[entry - 1]):
+            return 422, {"error": f"第 {entry} 句對應的句子已變動（檔案在別處被改過），未刪除", "entry": entry}
+        deleted[entry] = item["line_key"]
+    removed_indexes = {index for entry in deleted for index in mapping[entry - 1]}
+    if deleted and len(deleted) >= len(mapping):   # the title card is not a sentence: at least one entry must stay
+        return 400, {"error": "不能刪光所有句子"}
     final = {}
     for position in range(len(mapping)):
         final[position + 1] = _line_tag(_strip_line_marks(lines[mapping[position][0]]))
@@ -1458,7 +1476,13 @@ def _save_song(song, body):
         entry = edit["entry"]
         cs = edit["cs"]
         if model == "lrc":
-            prev, nxt = final.get(entry - 1), final.get(entry + 1)
+            # A line being deleted in this save is not a neighbour.
+            prev_entry, next_entry = entry - 1, entry + 1
+            while prev_entry in deleted:
+                prev_entry -= 1
+            while next_entry in deleted:
+                next_entry += 1
+            prev, nxt = final.get(prev_entry), final.get(next_entry)
             neighbours = {value for value in (prev, nxt) if value is not None}
             if cs in neighbours:
                 found = _free_slot(cs, prev, nxt, neighbours, limit)
@@ -1479,7 +1503,7 @@ def _save_song(song, body):
         {**edit, "before_cs": before[edit["entry"]]}
         for edit in sorted(requested, key=lambda item: item["entry"]) if edit["cs"] != before[edit["entry"]]
     ]
-    if not edits:
+    if not edits and not deleted:
         unchanged = _song_payload(pathlib.Path(song["report"]), song["report_data"])
         if adjusted:
             unchanged["adjusted_cs"] = adjusted
@@ -1494,6 +1518,9 @@ def _save_song(song, body):
             # A line he fixes here is resolved, so its `*` mark goes; every untouched line keeps its bytes.
             clean = _strip_line_marks(lines[line_index])
             lines[line_index] = tag + clean[_TAG_RE.match(clean).end():]
+    original_lines = list(lines)
+    if removed_indexes:
+        lines = [line for index, line in enumerate(lines) if index not in removed_indexes]
     updated = _join_lrc(bom, trailing, lines)
     after_sha = _sha256_bytes(updated)
     payload = _read_log(edits_path) or {
@@ -1506,7 +1533,7 @@ def _save_song(song, body):
     payload["report"] = pathlib.Path(song["report"]).name
     payload["lrc_name"] = output.name
     auto_lines = _split_lrc(_strip_marks(auto_bytes)[0])[2]
-    if len(auto_lines) != len(lines):
+    if len(auto_lines) != len(original_lines):
         auto_lines = []
 
     def auto_time(entry):
@@ -1519,6 +1546,14 @@ def _save_song(song, body):
         "before_cs": item["before_cs"], "after_cs": item["cs"], "source": item["source"],
         "nudge_cs": item["nudge_cs"], "lrc_sha256_after": after_sha
     } for item in edits)
+    if deleted:
+        utc = datetime.now(timezone.utc).isoformat()
+        payload.setdefault("deleted_lines", [])
+        payload["deleted_lines"].extend({
+            "utc": utc, "entry": entry, "line_key": deleted[entry], "cs": before[entry],
+            "lines": [original_lines[index].decode("utf-8", "replace") for index in mapping[entry - 1]],
+            "source": "review-page-delete", "lrc_sha256_after": after_sha
+        } for entry in sorted(deleted))
     payload["last_lrc_sha256"] = after_sha
 
     output_stage = None

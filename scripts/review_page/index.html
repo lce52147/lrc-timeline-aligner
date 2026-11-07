@@ -60,9 +60,11 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
 .candidate.selected{color:var(--fg)}.candidate.rejected{text-decoration:line-through;color:var(--fg-3)}.candidate-action{padding:2px 7px;font-size:12px}
 .queue-list{padding:10px 8px}
 .queue-list h3{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-3);font-weight:500;margin:4px 10px 6px}
-.q{display:grid;grid-template-columns:36px 76px minmax(0,1fr) auto;gap:12px;align-items:center;padding:7px 12px;border-radius:10px;cursor:pointer;color:var(--fg-2)}
+.q{display:grid;grid-template-columns:36px 76px minmax(0,1fr) auto auto;gap:12px;align-items:center;padding:7px 12px;border-radius:10px;cursor:pointer;color:var(--fg-2)}
 .q:hover{background:var(--panel-2)}.q.cur{background:var(--panel-2);color:var(--fg);box-shadow:inset 3px 0 0 var(--accent-2)}
 .q .ly{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.q .st{font-size:12px;color:var(--fg-3)}.q.done .st{color:var(--ok)}.q.done .ly{opacity:.6}
+.q .q-del{font-size:11px;padding:1px 8px;line-height:1.5;background:transparent;color:var(--fg-3);border:1px solid transparent;border-radius:8px;cursor:pointer;opacity:0}.q:hover .q-del,.q.cur .q-del,.q.pending-del .q-del,.q .q-del:focus-visible{opacity:1}.q .q-del:hover{color:var(--fg);border-color:var(--fg-3)}
+.q.pending-del{opacity:.55}.q.pending-del .ly,.q.pending-del .num{text-decoration:line-through}.row.pending-del .lyric{text-decoration:line-through;opacity:.55}
 .playbar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);display:flex;gap:12px;align-items:center;padding:9px 16px;border-radius:999px;font-size:13px;z-index:3}
 .playbar[hidden]{display:none}.playbar .led{width:8px;height:8px;border-radius:50%;background:var(--accent-2);box-shadow:0 0 10px var(--accent-2)}
 .help[hidden]{display:none}.help{position:fixed;inset:0;background:rgba(0,0,0,.5);display:grid;place-items:center;padding:16px;z-index:5}
@@ -103,7 +105,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
 .queue-list .list{display:flex;flex-direction:column;gap:6px}
 .queue-list .q-sec{font-size:11px;color:var(--fg-3);margin:8px 6px 0;letter-spacing:.04em}
 .queue-list .q-fold{margin-top:8px;text-align:left;background:transparent;border:1px dashed var(--fg-3);color:var(--fg-2);border-radius:10px;padding:8px 10px;cursor:pointer;font:inherit;font-size:12px}
-.q{padding:10px 14px;border-radius:12px;background:rgba(0,0,0,.22);border:1px solid transparent;grid-template-columns:40px 84px minmax(0,1fr) auto}
+.q{padding:10px 14px;border-radius:12px;background:rgba(0,0,0,.22);border:1px solid transparent;grid-template-columns:40px 84px minmax(0,1fr) auto auto}
 .q:hover{background:rgba(0,0,0,.3)}.q.cur{background:rgba(109,124,255,.14);border-color:rgba(154,166,255,.35);box-shadow:none}
 .q.other{opacity:.62}
 .q .st{padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.06)}
@@ -279,6 +281,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   const minCsOf = item => item.song.detail?.entry_model === 'lrc' ? 1 : 0;
   const keyFor = item => String(item.song.index) + ':' + String(item.row.entry);
   const editFor = item => state.edits.get(keyFor(item));
+  const deleting = item => !!editFor(item)?.del;
   const conflicted = item => { const edit = editFor(item); return !!edit && edit.base_cs !== item.row.current_cs; };
   const working = item => editFor(item)?.cs ?? item.row.current_cs;
   const isDone = item => state.done.has(keyFor(item));
@@ -437,7 +440,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   const songSha = song => song.detail?.base_sha256 || '';
   const mineKey = (sha, entry) => sha + '|' + entry;
   // What this tab last wrote to (or took over from) the stored draft, per song+entry: a beat rewrites only what changed since.
-  const recordSig = record => JSON.stringify([record.entry, record.cs, record.source, record.nudge_cs, record.base_cs, record.edited_at]);
+  const recordSig = record => JSON.stringify([record.entry, record.cs, record.source, record.nudge_cs, record.base_cs, record.edited_at, record.del ? 1 : 0, record.prev || null]);
   const writtenKey = (id, item) => id + '#' + item;
   function readDrafts() { try { const saved = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {}; } catch (_) { return {}; } }
   function writeDrafts(drafts) {
@@ -506,7 +509,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
         if (Number(key.split(':')[0]) !== song.index) return;
         if (!draftTimes.has(key)) draftTimes.set(key, now);
         const bsha = edit.bsha != null ? edit.bsha : sha;
-        staged.set(mineKey(bsha, edit.entry), {bsha, record:{entry:edit.entry, cs:edit.cs, source:edit.source, nudge_cs:edit.nudge_cs, base_cs:edit.base_cs, line_key:edit.line_key, edited_at:draftTimes.get(key)}});
+        staged.set(mineKey(bsha, edit.entry), {bsha, record:{entry:edit.entry, cs:edit.cs, source:edit.source, nudge_cs:edit.nudge_cs, base_cs:edit.base_cs, line_key:edit.line_key, edited_at:draftTimes.get(key), ...(edit.del ? {del:true, prev:edit.prev || null} : {})}});
       });
       const mine = draftMine.get(id) || new Set(), canRemove = sha && editable(song);
       const undone = canRemove ? [...mine].filter(item => !staged.has(item)) : [];
@@ -596,6 +599,15 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       if (!item || !editable(item.song) || !Number.isFinite(edit.cs) || item.row.current_cs == null) { result.skipped.push(edit); if (!item && edit.line_key) result.changed++; return; }
       const key = keyFor(item), current = item.row.current_cs;
       if (state.edits.has(key)) return;
+      if (edit.del) {
+        if (!rebase && edit.base_cs !== current) { result.skipped.push(edit); return; }
+        const prev = edit.prev && Number.isFinite(edit.prev.cs) ? {cs:edit.prev.cs, source:String(edit.prev.source || 'draft').slice(0, 64), nudge_cs:edit.prev.nudge_cs || 0} : null;
+        const staged = {entry:item.row.entry, cs:current, source:'delete', nudge_cs:0, base_cs:current, bsha:songSha(song), line_key:item.row.line_key, del:true, prev};
+        state.edits.set(key, staged);
+        draftTimes.set(key, edit.edited_at || draft.saved_at || Date.now());
+        result.applied++; result.snaps.set(key, {cs:staged.cs, source:staged.source, base_cs:staged.base_cs, entry:staged.entry, sha:staged.bsha});
+        return;
+      }
       if (edit.cs === current) return;  // already what the file says (saved elsewhere): nothing to re-apply
       let cs = edit.cs;
       const nudge = edit.nudge_cs || 0;
@@ -621,7 +633,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     snaps.forEach((snap, key) => {
       mine.add(mineKey(snap.sha, snap.entry)); owned.set(key, snap);
       const edit = state.edits.get(key);
-      if (stored && edit) draftWritten.set(writtenKey(id, mineKey(snap.sha, snap.entry)), recordSig({entry:edit.entry, cs:edit.cs, source:edit.source, nudge_cs:edit.nudge_cs, base_cs:edit.base_cs, edited_at:draftTimes.get(key)}));
+      if (stored && edit) draftWritten.set(writtenKey(id, mineKey(snap.sha, snap.entry)), recordSig({entry:edit.entry, cs:edit.cs, source:edit.source, nudge_cs:edit.nudge_cs, base_cs:edit.base_cs, edited_at:draftTimes.get(key), del:edit.del, prev:edit.prev}));
     });
     draftMine.set(id, mine); draftOwned.set(id, owned);
   }
@@ -975,6 +987,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   function stage(item, cs, source, nudgeCs) {
     stopPlayer();
     if (!editable(item.song) || cs == null) return;
+    if (deleting(item)) return;   // a pending delete wins; 復原 first to retime the line
     if (state.exporting && state.exportIndex === item.song.index) { state.notice = '匯出中，請等匯出完成再修改'; render(); return; }
     const key = keyFor(item), current = item.row.current_cs;
     if (current != null && cs === current) {
@@ -986,6 +999,23 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     draftTimes.set(key, Date.now());
     state.error = ''; setDirty(); render();
   }
+  // Delete is staged like a time edit (same draft, same unsaved count) with del:true; `prev` keeps the time draft it replaced.
+  function toggleDelete(item) {
+    if (!editable(item.song)) return;
+    if (state.exporting && state.exportIndex === item.song.index) { state.notice = '匯出中，請等匯出完成再修改'; render(); return; }
+    stopPlayer();
+    const key = keyFor(item), existing = state.edits.get(key);
+    if (existing?.del) {
+      if (existing.prev) state.edits.set(key, {entry:existing.entry, cs:existing.prev.cs, source:existing.prev.source, nudge_cs:existing.prev.nudge_cs, base_cs:existing.base_cs, bsha:existing.bsha, line_key:existing.line_key});
+      else state.edits.delete(key);
+    } else {
+      const prev = existing ? {cs:existing.cs, source:existing.source, nudge_cs:existing.nudge_cs} : null;
+      state.edits.set(key, {entry:item.row.entry, cs:item.row.current_cs, source:'delete', nudge_cs:0, base_cs:item.row.current_cs, bsha:songSha(item.song), line_key:item.row.line_key, del:true, prev});
+      draftTimes.set(key, Date.now());
+    }
+    state.error = ''; setDirty(); render();
+  }
+  const undoEdit = item => { if (deleting(item)) toggleDelete(item); else { state.edits.delete(keyFor(item)); setDirty(); render(); } };
   function stageCandidate(item, candidate) {
     if (candidate?.diagnostic_only) return;
     select(item);
@@ -1000,6 +1030,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   function pickOption(item, option) {
     if (!option || !editable(item.song)) return;
     select(item);
+    if (deleting(item)) return;
     if (option.kind === 'keep') { state.edits.delete(keyFor(item)); setDirty(); render(); playAround(item, option.cs); return; }
     stage(item, option.cs, 'option:' + sourceText(option), 0);
     playAround(item, option.cs);
@@ -1102,6 +1133,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       .catch(error => console.warn('decision not recorded:', error.message));
   }
   function accept(item) {
+    if (deleting(item)) return;
     if (!editFor(item) && working(item) != null && working(item) !== item.row.current_cs) stage(item, working(item), 'accepted', 0);
     const edit = editFor(item);
     if (edit) recordDecision(item, 'change', edit.cs, edit.source); else recordDecision(item, 'keep', item.row.current_cs, 'keep');
@@ -1109,6 +1141,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     nextRow();
   }
   function keep(item) {
+    if (deleting(item)) return;
     state.edits.delete(keyFor(item)); setDirty();
     recordDecision(item, 'keep', item.row.current_cs, 'keep');
     markDone(item);
@@ -1222,11 +1255,12 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
         wrap.appendChild(head);
       }
       const line = document.createElement('div');
-      line.className = 'q' + (index === state.selected ? ' cur' : '') + (done ? ' done' : '') + (state.showAll && row.review !== 'REVIEW' && !sane(item) && !edit && !done ? ' other' : '');
+      line.className = 'q' + (edit?.del ? ' pending-del' : '') + (index === state.selected ? ' cur' : '') + (done ? ' done' : '') + (state.showAll && row.review !== 'REVIEW' && !sane(item) && !edit && !done ? ' other' : '');
       const options = optionsOf(row).filter(option => option.kind !== 'keep');
       const tier = state.showAll ? (row.review !== 'REVIEW' ? (sane(item) ? '待審 · ' : '') : ['高風險 · ', '待審 · ', '可略過 · '][riskRank(item)] || '') : '';
-      const hint = done ? (edit ? '已改 ' + deltaText(edit.cs - row.current_cs) : '已確認') : edit ? '暫存 ' + deltaText(edit.cs - row.current_cs) : row.review !== 'REVIEW' && !sane(item) ? '未標記' : tier + (options.length ? (options.every(o => o.kind === 'earlier') ? '提早?' : options.every(o => o.kind === 'later') ? '延後?' : '不一致') : '確認');
-      line.innerHTML = '<span class="num">' + row.entry + '</span><span class="num">' + time(working(item)) + '</span><span class="ly">' + esc((row.lyrics || [row.lyric || ''])[0]) + parenTag(row) + (sane(item) ? ' <span class="sanity-tag" title="' + esc(sanityText(row)) + '">間隔過短</span>' : '') + '</span><span class="st">' + hint + '</span>';
+      const hint = edit?.del ? '待刪除' : done ? (edit ? '已改 ' + deltaText(edit.cs - row.current_cs) : '已確認') : edit ? '暫存 ' + deltaText(edit.cs - row.current_cs) : row.review !== 'REVIEW' && !sane(item) ? '未標記' : tier + (options.length ? (options.every(o => o.kind === 'earlier') ? '提早?' : options.every(o => o.kind === 'later') ? '延後?' : '不一致') : '確認');
+      line.innerHTML = '<span class="num">' + row.entry + '</span><span class="num">' + time(working(item)) + '</span><span class="ly">' + esc((row.lyrics || [row.lyric || ''])[0]) + parenTag(row) + (sane(item) ? ' <span class="sanity-tag" title="' + esc(sanityText(row)) + '">間隔過短</span>' : '') + '</span><span class="st">' + hint + '</span>' + (editable(item.song) ? '<button type="button" class="q-del" aria-label="' + (edit?.del ? '復原這句' : '刪除這句') + '">' + (edit?.del ? '復原' : '刪除') + '</button>' : '');
+      line.querySelectorAll('.q-del').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); button.blur(); toggleDelete(item); }));
       line.addEventListener('click', () => { select(item); state.notice = ''; render(); });
       wrap.appendChild(line);
     });
@@ -1271,7 +1305,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     const selectedCandidate = chosen != null && chosen !== row.current_cs ? {cs:chosen, diagnostic_only:false} : null;
     const conflict = conflicted(item);
     const canEdit = editable(song);
-    div.className = 'row glass ' + String(row.review || 'UNTRUSTED').toLowerCase() + (conflict ? ' conflict' : '') + (visible()[state.selected] === item ? ' selected-row' : '');
+    div.className = 'row glass ' + String(row.review || 'UNTRUSTED').toLowerCase() + (conflict ? ' conflict' : '') + (edit?.del ? ' pending-del' : '') + (visible()[state.selected] === item ? ' selected-row' : '');
     div.dataset.key = key;
     const whyKind = row.reason_kind || (alternatives.length ? 'detected' : 'agree');
     const whyLabel = whyKind === 'detected' ? '偵測到問題' : whyKind === 'unconfirmed' ? '未自動確認' : '候選一致';
@@ -1298,7 +1332,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       candidates.map((c, i) => candidateMarkup(c, i, 'main')).join('') + extraCandidates.map((c, i) => candidateMarkup(c, i, 'extra')).join('') + '</details>';
     const showWave = song.has_stem || song.has_flac;
     div.innerHTML = '<div class="meta"><span class="num">#' + row.entry + '</span><span>·</span><span class="num">目前 ' + time(chosen) + '</span>' +
-      (edit ? '<span class="pill num">原 ' + time(row.current_cs) + '</span>' : '') + (isDone(item) ? '<span class="pill">已確認</span>' : '') + '</div>' +
+      (edit?.del ? '<span class="pill">待刪除</span>' : edit ? '<span class="pill num">原 ' + time(row.current_cs) + '</span>' : '') + (isDone(item) ? '<span class="pill">已確認</span>' : '') + '</div>' +
       '<div class="lyric">' + (lyrics || '<span class="muted">no lyric text</span>') + parenTag(row) + '</div>' +
       romajiMarkup(item) +
       '<div class="why' + (whyKind === 'detected' ? '' : whyKind === 'unconfirmed' ? ' unconfirmed' : ' ok') + '"><span class="ic">' + (whyKind === 'detected' ? '!' : whyKind === 'unconfirmed' ? '?' : '✓') + '</span><span><span class="kind">' + whyLabel + '</span>' + esc(sentence) + '</span></div>' +
@@ -1312,6 +1346,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       '<button type="button" class="primary accept"' + (canEdit ? '' : ' disabled') + '>接受，下一筆 <span class="num">Enter</span></button>' +
       '<button type="button" class="keep-next">維持 <span class="num">K</span></button>' +
       '<button type="button" class="undo"' + (edit ? '' : ' disabled') + '>復原 <span class="num">U</span></button>' +
+      '<button type="button" class="card-del"' + (canEdit ? '' : ' disabled') + '>' + (edit?.del ? '復原刪除' : '刪除') + '</button>' +
       '</div>' +
       '<div class="neighbors">' + [['上一句', previous], ['下一句', next]].map(([label, line]) =>
         '<div><span class="lab">' + label + '</span><span class="num">' + (line ? time(line.cs) : '—') + '</span><span class="ly">' + (line ? esc((line.lyrics || [line.lyric || '']).join(' / ')) : '') + '</span></div>').join('') + '</div>' +
@@ -1331,7 +1366,8 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     div.querySelectorAll('.nudge-button').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); button.blur(); nudge(item, Number(button.dataset.delta)); }));
     div.querySelectorAll('.accept').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); button.blur(); accept(item); }));
     div.querySelectorAll('.keep-next').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); button.blur(); keep(item); }));
-    div.querySelectorAll('.undo').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); button.blur(); state.edits.delete(key); setDirty(); render(); }));
+    div.querySelectorAll('.card-del').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); button.blur(); toggleDelete(item); }));
+    div.querySelectorAll('.undo').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); button.blur(); undoEdit(item); }));
     div.querySelectorAll('details').forEach(node => node.addEventListener('toggle', () => { state.details = !!node.open; }));
     if (visible()[state.selected] === item && showWave && chosen != null) {
       const canvas = document.createElement('canvas');
@@ -1446,6 +1482,13 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       catch (error) { if (attempt >= 4 || !(error instanceof TypeError)) throw error; await new Promise(resolve => setTimeout(resolve, 1500)); }
     }
   }
+  // Old body shape ({base_sha256, edits}) unless a delete is pending; then the deletes ride along in the same request.
+  function saveBody(song, sending) {
+    const body = {base_sha256:song.detail.base_sha256, edits:sending.filter(edit => !edit.del).map(({base_cs,bsha,del,prev,...edit}) => edit)};
+    const deletes = sending.filter(edit => edit.del).map(edit => ({entry:edit.entry, line_key:edit.line_key}));
+    if (deletes.length) body.deletes = deletes;
+    return body;
+  }
   async function save() {
     saving++;
     try { return await saveNow(); } finally { saving--; }
@@ -1484,7 +1527,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
         const response = await postWithRetry('/api/song/' + index + '/save', {
           method:'POST',
           headers:{'X-Review-Token':token, 'Origin':location.origin, 'Content-Type':'application/json'},
-          body:JSON.stringify({base_sha256:song.detail.base_sha256, edits:sending.map(({base_cs,bsha,...edit}) => edit)})
+          body:JSON.stringify(saveBody(song, sending))
         });
         const data = await response.json().catch(() => ({error:response.statusText}));
         if (response.status === 409) {
@@ -1760,7 +1803,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       return;
     }
     if (event.key.toLowerCase() === 'k') { event.preventDefault(); keep(item); return; }
-    if (event.key.toLowerCase() === 'u') { event.preventDefault(); state.edits.delete(keyFor(item)); setDirty(); render(); return; }
+    if (event.key.toLowerCase() === 'u') { event.preventDefault(); undoEdit(item); return; }
     if (event.key.toLowerCase() === 'v') { event.preventDefault(); stopPlayer(); state.mode = state.mode === 'flac' ? 'stem' : 'flac'; render(); return; }
     if (event.key.toLowerCase() === 'b') { event.preventDefault(); const chosen = working(item); if (chosen != null && chosen !== item.row.current_cs) playAB(item, {cs:chosen, diagnostic_only:false}); return; }
     if (event.key === 'Tab') { event.preventDefault(); state.details = !state.details; render(); return; }
