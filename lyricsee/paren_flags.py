@@ -33,7 +33,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - package import style
     from lyricsee.lyric_compare import canonical_text, is_filler
 
-VERSION = 1
+VERSION = 2
 OPEN = "(（"
 CLOSE = ")）"
 MAX_BLOCK_LINES = 8
@@ -52,7 +52,9 @@ def original_of(line: str) -> str:
 
 
 def text_sha256(raw: bytes) -> str:
-    """Hash of lyrics text bytes, line endings normalised so a CRLF copy matches."""
+    """Hash of lyrics text bytes, leading UTF-8 BOM dropped and line endings normalised so a BOM or CRLF copy matches."""
+    if raw.startswith(b"\xef\xbb\xbf"):
+        raw = raw[3:]
     return hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest()
 
 
@@ -261,7 +263,9 @@ def _atomic_write(path, text: str) -> None:
 
 
 def _check_stem(stem: str) -> None:
-    if not stem or "/" in stem or "\\" in stem or stem in {".", ".."}:
+    from pathlib import Path
+
+    if not stem or "/" in stem or "\\" in stem or ":" in stem or stem in {".", ".."} or Path(stem).is_absolute() or Path(stem).drive:
         raise ValueError(f"not a song stem: {stem!r}")
 
 
@@ -311,14 +315,138 @@ def find_audio(audio_dir, stem: str):
     return matches[0]
 
 
+LYRIC_SUFFIXES = (".lyrics.txt", ".txt", ".lyrics")  # auto_lrc text order; flags refer to text lyrics, never the timed .lyrics.lrc
+MAX_SONGS = 600
+
+
+def lyrics_beside(audio):
+    """The lyrics text file beside ``audio`` (first of LYRIC_SUFFIXES), or None."""
+    return next((audio.with_name(audio.stem + s) for s in LYRIC_SUFFIXES if audio.with_name(audio.stem + s).is_file()), None)
+
+
+def _hidden_runner(*args, **kwargs):
+    import subprocess
+
+    kwargs.setdefault("creationflags", getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    return subprocess.run(*args, **kwargs)
+
+
+def _probe(audio):
+    try:
+        from lyricsee_core import probe_audio
+    except ModuleNotFoundError:  # pragma: no cover - package import style
+        from lyricsee.lyricsee_core import probe_audio
+    return probe_audio(audio, runner=_hidden_runner)
+
+
+def flag_audio_dir(audio_dir, *, recursive=False, sidecar_dir=None, out_root=None, offline=False,
+                   dry_run=False, max_songs=MAX_SONGS, fetch=None, identity_of=None) -> dict:
+    """Flag songs straight from the lyrics text beside each audio file.
+
+    A song with no parenthesized block makes no LRCLIB request and writes nothing.
+    Results go to ``sidecar_dir`` (``<stem>.paren_flags.json``, sub-folders mirrored)
+    and/or ``out_root`` (``report/<stem>.sources.json``); nothing is written next to
+    the audio unless ``sidecar_dir`` is that folder.  ``dry_run`` writes no flag files.
+    Returns the summary (no lyric text in it).
+    """
+    import json
+    from pathlib import Path
+
+    root = Path(audio_dir)
+    fetch = fetch or _fetch_timed_lines
+    identity_of = identity_of or _probe
+    audios = sorted((p for p in (root.rglob("*") if recursive else root.iterdir()) if p.is_file() and p.suffix.casefold() in AUDIO_SUFFIXES),
+                    key=lambda p: str(p).casefold())
+    summary = {"scanned": 0, "with_blocks": 0, "lines_by_class": {}, "songs": [], "errors": [], "truncated": False}
+    seen_stems: set[str] = set()
+    for audio in audios:
+        lyrics = lyrics_beside(audio)
+        if lyrics is None:
+            continue
+        if summary["scanned"] >= max_songs:
+            summary["truncated"] = True
+            break
+        summary["scanned"] += 1
+        rel = audio.relative_to(root)
+        try:
+            raw = lyrics.read_bytes()
+            text = raw.decode("utf-8-sig")
+            if not detect_blocks([original_of(line) for line in text.splitlines()]):
+                continue
+            timed = None
+            if not offline:
+                try:
+                    timed = fetch(identity_of(audio))
+                except Exception:
+                    timed = None  # a failed fetch leaves the blocks unconfirmed
+            flags = flags_for_lyrics_text(text, timed_lines=timed)
+            flags["txt_sha256"] = text_sha256(raw)
+            body = json.dumps({"version": VERSION, "txt_sha256": flags["txt_sha256"], "paren_flags": flags}, ensure_ascii=False, indent=2) + "\n"
+            if not dry_run:
+                if sidecar_dir is not None:
+                    target = Path(sidecar_dir) / rel.parent / f"{audio.stem}.paren_flags.json"
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    _atomic_write(target, body)
+                if out_root is not None:
+                    if audio.stem in seen_stems:
+                        summary["errors"].append(f"{rel}: stem already written to out-root, skipped")
+                    else:
+                        (Path(out_root) / "report").mkdir(parents=True, exist_ok=True)
+                        _atomic_write(Path(out_root) / "report" / f"{audio.stem}.sources.json", body)
+            seen_stems.add(audio.stem)
+        except (OSError, ValueError) as exc:
+            summary["errors"].append(f"{rel}: {type(exc).__name__}")
+            continue
+        summary["with_blocks"] += 1
+        line_numbers = []
+        for block in flags["blocks"]:
+            summary["lines_by_class"][block["class"]] = summary["lines_by_class"].get(block["class"], 0) + len(block["lines"])
+            line_numbers += block["lines"]
+        if flags["blocks"]:
+            summary["songs"].append({"path": str(rel), "basis": flags["basis"], "lines": line_numbers,
+                                     "classes": sorted({b["class"] for b in flags["blocks"]})})
+    return summary
+
+
+def format_summary(summary: dict, *, dry_run: bool) -> str:
+    out = ["# paren_flags census" + (" (dry run)" if dry_run else ""), "",
+           f"- songs scanned (audio with lyrics beside it): {summary['scanned']}",
+           f"- songs with parenthesized blocks: {summary['with_blocks']}",
+           f"- songs flagged: {len(summary['songs'])}"]
+    if summary["truncated"]:
+        out.append(f"- STOPPED at the {summary['scanned']}-song limit; more songs exist")
+    out.append("- flagged lines by class: " + (", ".join(f"{k} {v}" for k, v in sorted(summary["lines_by_class"].items())) or "none"))
+    out.append(f"- errors: {len(summary['errors'])}")
+    out += ["", "## Flagged songs", ""]
+    for song in summary["songs"]:
+        out.append(f"- {song['path']} [{', '.join(song['classes'])}; {song['basis']}] lines {', '.join(map(str, song['lines']))}")
+    if summary["errors"]:
+        out += ["", "## Errors", ""] + [f"- {e}" for e in summary["errors"]]
+    return "\n".join(out) + "\n"
+
+
+def _lower_priority() -> None:
+    try:
+        import ctypes
+
+        ctypes.windll.kernel32.SetPriorityClass(ctypes.windll.kernel32.GetCurrentProcess(), 0x00004000)  # BELOW_NORMAL
+    except Exception:  # pragma: no cover - not Windows
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
     import json
     import sys
 
-    parser = argparse.ArgumentParser(description="Add paren_flags to existing lyricsee outputs.")
-    parser.add_argument("output_root")
-    parser.add_argument("stems", nargs="+")
+    parser = argparse.ArgumentParser(description="Add paren_flags to existing lyricsee outputs, or flag songs from the lyrics beside their audio (--from-audio-dir).")
+    parser.add_argument("output_root", nargs="?")
+    parser.add_argument("stems", nargs="*")
+    parser.add_argument("--from-audio-dir", help="flag each audio file here from the lyrics text beside it")
+    parser.add_argument("--recursive", action="store_true", help="with --from-audio-dir: include sub-folders")
+    parser.add_argument("--out-root", help="with --from-audio-dir: write report/<stem>.sources.json-style files here (and SUMMARY.md)")
+    parser.add_argument("--dry-run", action="store_true", help="with --from-audio-dir: write no flag files")
+    parser.add_argument("--max-songs", type=int, default=MAX_SONGS, help="with --from-audio-dir: stop after this many songs with lyrics")
     parser.add_argument("--audio-dir", help="read each song's tags from the audio file named exactly <stem> here (else title/artist from sources.json)")
     parser.add_argument("--sidecar-dir", help="also write <stem>.paren_flags.json here (beside the audio)")
     parser.add_argument("--offline", action="store_true", help="do not fetch LRCLIB; use the saved diff rows (most blocks stay unconfirmed)")
@@ -328,6 +456,23 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.reconfigure(errors="backslashreplace")
     except (AttributeError, OSError):
         pass
+    if args.from_audio_dir:
+        if not (args.sidecar_dir or args.out_root):
+            parser.error("--from-audio-dir needs --sidecar-dir or --out-root")
+        if not args.dry_run:
+            _lower_priority()
+        summary = flag_audio_dir(args.from_audio_dir, recursive=args.recursive, sidecar_dir=args.sidecar_dir, out_root=args.out_root,
+                                 offline=args.offline, dry_run=args.dry_run, max_songs=args.max_songs)
+        text = format_summary(summary, dry_run=args.dry_run)
+        if args.out_root:
+            from pathlib import Path
+
+            Path(args.out_root).mkdir(parents=True, exist_ok=True)
+            _atomic_write(Path(args.out_root) / "SUMMARY.md", text)
+        print(text)
+        return 1 if summary["errors"] else 0
+    if not args.output_root or not args.stems:
+        parser.error("output_root and stems are required without --from-audio-dir")
     failed = 0
     for stem in args.stems:
         try:

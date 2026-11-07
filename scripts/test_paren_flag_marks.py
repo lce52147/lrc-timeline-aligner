@@ -32,7 +32,7 @@ class RowMarkTests(unittest.TestCase):
 
     def sidecar(self, sha=None):
         (self.dir / "song.paren_flags.json").write_text(
-            json.dumps({"txt_sha256": sha or self.sha, "paren_flags": _flags(None)}), encoding="utf-8")
+            json.dumps({"txt_sha256": sha or self.sha, "paren_flags": dict(_flags(None), txt_sha256=sha or self.sha)}), encoding="utf-8")
 
     def test_marks_flagged_rows_only(self):
         self.sidecar()
@@ -60,7 +60,7 @@ class RowMarkTests(unittest.TestCase):
         (out / "report").mkdir()
         (out / "txt" / "song.lyrics.txt").write_bytes(LYRICS.encode("utf-8"))
         (out / "report" / "song.sources.json").write_text(
-            json.dumps({"txt_sha256": self.sha, "paren_flags": _flags(None)}), encoding="utf-8")
+            json.dumps({"txt_sha256": self.sha, "paren_flags": dict(_flags(None), txt_sha256=self.sha)}), encoding="utf-8")
         (self.dir / "song.lyrics.txt").unlink()
         audio = out / "txt" / "song.flac"
         self.assertEqual(marks.row_marks(audio, self.rows), {1: "official-only", 2: "official-only", 4: "unconfirmed"})
@@ -82,11 +82,9 @@ class LookupTests(RowMarkTests):
                          {1: "official-only", 2: "official-only", 4: "unconfirmed"})
         self.assertFalse((self.dir / "song.paren_flags.json").exists())
 
-    def test_env_root_and_top_level_hash_fallback(self):
+    def test_env_root(self):
         out = self.dir / "env_out"
-        self.source_json(out)
-        (out / "report" / "song.sources.json").write_text(
-            json.dumps({"txt_sha256": self.sha, "paren_flags": _flags(None)}), encoding="utf-8")
+        self.source_json(out, txt_sha256=self.sha)
         old = os.environ.get("LRC_PAREN_FLAG_ROOTS")
         os.environ["LRC_PAREN_FLAG_ROOTS"] = str(out)
         try:
@@ -96,6 +94,22 @@ class LookupTests(RowMarkTests):
                 os.environ.pop("LRC_PAREN_FLAG_ROOTS")
             else:
                 os.environ["LRC_PAREN_FLAG_ROOTS"] = old
+
+    def test_old_cli_payload_with_only_top_level_hash_gives_no_labels(self):
+        out = self.dir / "o"
+        (out / "report").mkdir(parents=True)
+        (out / "report" / "song.sources.json").write_text(
+            json.dumps({"txt_sha256": self.sha, "paren_flags": _flags(None)}), encoding="utf-8")
+        self.assertEqual(marks.row_marks(self.audio, self.rows, extra_roots=[out]), {})
+        (self.dir / "song.paren_flags.json").write_text(
+            json.dumps({"txt_sha256": self.sha, "paren_flags": _flags(None)}), encoding="utf-8")
+        self.assertEqual(marks.row_marks(self.audio, self.rows), {})
+
+    def test_bom_copy_beside_audio_still_matches(self):
+        out = self.dir / "o"
+        self.source_json(out, txt_sha256=self.sha)
+        (self.dir / "song.lyrics.txt").write_bytes(b"\xef\xbb\xbf" + LYRICS.encode("utf-8"))
+        self.assertEqual(set(marks.row_marks(self.audio, self.rows, extra_roots=[out])), {1, 2, 4})
 
     def test_matches_by_stem_then_hash_decides(self):
         out = self.dir / "o"

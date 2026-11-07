@@ -127,7 +127,7 @@ class ClassifyTests(unittest.TestCase):
             self.assertEqual(side["txt_sha256"], flags["txt_sha256"])
 
     def test_reflag_rejects_stems_with_path_separators(self):
-        for bad in ("..\\x", "a/b", ".."):
+        for bad in ("..\\x", "a/b", "..", "C:evil", "c:\\evil", "a:b", "\\\\host\\share", "/abs"):
             with self.assertRaises(ValueError):
                 pf.reflag_existing(".", bad)
 
@@ -178,6 +178,133 @@ class ClassifyTests(unittest.TestCase):
                 self.assertIsNone(json.loads(prov.read_text(encoding="utf-8"))["paren_flags"])
         finally:
             core.flags_for_lyrics_text = orig
+
+
+    def test_text_sha256_ignores_bom_and_crlf(self):
+        plain = hashlib.sha256(b"a b\n(c d)\n").hexdigest()
+        self.assertEqual(pf.text_sha256(b"\xef\xbb\xbfa b\r\n(c d)\r\n"), plain)
+        self.assertEqual(pf.VERSION, 2)
+
+    def test_reflag_hash_matches_for_a_bom_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for d in ("txt", "report"):
+                (root / d).mkdir()
+            (root / "txt" / "s.lyrics.txt").write_bytes(b"\xef\xbb\xbfa b\n(c d)\n")
+            (root / "report" / "s.sources.json").write_text("{}", encoding="utf-8")
+            flags = pf.reflag_existing(root, "s", lrclib=False)
+            self.assertEqual(flags["txt_sha256"], hashlib.sha256(b"a b\n(c d)\n").hexdigest())
+
+
+class AudioDirTests(unittest.TestCase):
+    PLAIN = "a b\nc d\n"
+    PAREN = "a b\n(c d)\ne f\n"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.music = self.root / "music"
+        (self.music / "sub").mkdir(parents=True)
+        self.calls = []
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def song(self, rel, body, suffix=".lyrics.txt", data=None):
+        audio = self.music / rel
+        audio.write_bytes(b"")
+        if body is not None:
+            audio.with_name(audio.stem + suffix).write_bytes(data if data is not None else body.encode("utf-8"))
+        return audio
+
+    def run_mode(self, **kwargs):
+        def fetch(identity):
+            self.calls.append(identity)
+            return ["a b", "e f"]
+        return pf.flag_audio_dir(self.music, fetch=fetch, identity_of=lambda audio: audio.stem, **kwargs)
+
+    def test_only_songs_with_blocks_fetch_and_write(self):
+        self.song("plain.flac", self.PLAIN)
+        self.song("paren.flac", self.PAREN)
+        self.song("nolyrics.flac", None)
+        side = self.root / "side"
+        side.mkdir()
+        out = self.run_mode(sidecar_dir=side)
+        self.assertEqual((out["scanned"], out["with_blocks"]), (2, 1))
+        self.assertEqual(self.calls, ["paren"])
+        self.assertEqual(out["lines_by_class"], {"official-only": 1})
+        self.assertEqual(sorted(p.name for p in side.iterdir()), ["paren.paren_flags.json"])
+        saved = json.loads((side / "paren.paren_flags.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["version"], 2)
+        self.assertEqual(saved["txt_sha256"], hashlib.sha256(self.PAREN.encode("utf-8")).hexdigest())
+        self.assertEqual(saved["paren_flags"]["txt_sha256"], saved["txt_sha256"])
+        self.assertEqual(out["songs"][0]["lines"], [2])
+
+    def test_flags_come_from_the_text_beside_the_audio_in_suffix_order(self):
+        self.song("s.flac", self.PAREN, suffix=".txt")
+        (self.music / "s.lyrics.lrc").write_text("[00:01.00](x)\n", encoding="utf-8")
+        out = self.run_mode(offline=True, out_root=self.root / "o")
+        self.assertEqual(out["with_blocks"], 1)
+        self.assertEqual(self.calls, [])
+        self.assertEqual(out["songs"][0]["classes"], ["unconfirmed"])
+        (self.music / "s.lyrics.txt").write_text("a b\n", encoding="utf-8")  # higher priority, no block
+        self.assertEqual(self.run_mode(offline=True)["with_blocks"], 0)
+
+    def test_dry_run_writes_nothing(self):
+        self.song("paren.flac", self.PAREN)
+        out = self.run_mode(dry_run=True, out_root=self.root / "o", sidecar_dir=self.root / "side")
+        self.assertEqual(out["with_blocks"], 1)
+        self.assertFalse((self.root / "o").exists())
+        self.assertFalse((self.root / "side").exists())
+        self.assertEqual(sorted(p.name for p in self.music.iterdir() if p.is_file()), ["paren.flac", "paren.lyrics.txt"])
+
+    def test_recursive_mirrors_sub_folders_and_non_recursive_skips_them(self):
+        self.song("sub/deep.flac", self.PAREN)
+        side = self.root / "side"
+        self.assertEqual(self.run_mode(sidecar_dir=side)["scanned"], 0)
+        self.assertEqual(self.run_mode(sidecar_dir=side, recursive=True)["with_blocks"], 1)
+        self.assertTrue((side / "sub" / "deep.paren_flags.json").is_file())
+
+    def test_out_root_file_is_reader_compatible_and_bom_hash_matches(self):
+        self.song("s.flac", None)
+        (self.music / "s.lyrics.txt").write_bytes(b"\xef\xbb\xbf" + self.PAREN.replace("\n", "\r\n").encode("utf-8"))
+        out = self.root / "o"
+        self.run_mode(out_root=out)
+        saved = json.loads((out / "report" / "s.sources.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["paren_flags"]["txt_sha256"], hashlib.sha256(self.PAREN.encode("utf-8")).hexdigest())
+        self.assertTrue((out / "SUMMARY.md").exists() is False)  # summary is written by main, not the function
+
+    def test_failed_fetch_is_unconfirmed(self):
+        self.song("s.flac", self.PAREN)
+
+        def boom(identity):
+            raise OSError("down")
+        out = pf.flag_audio_dir(self.music, fetch=boom, identity_of=lambda a: a, out_root=self.root / "o")
+        self.assertEqual(out["songs"][0]["classes"], ["unconfirmed"])
+
+    def test_song_limit_stops_and_says_so(self):
+        for n in range(3):
+            self.song(f"s{n}.flac", self.PAREN)
+        out = self.run_mode(offline=True, max_songs=2)
+        self.assertEqual((out["scanned"], out["truncated"]), (2, True))
+
+    def test_main_writes_summary_and_requires_a_target(self):
+        self.song("s.flac", self.PAREN)
+        out = self.root / "o"
+        orig = pf._fetch_timed_lines
+        pf._fetch_timed_lines = lambda identity: None
+        try:
+            import contextlib
+            import io
+            with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit):
+                pf.main(["--from-audio-dir", str(self.music)])
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(pf.main(["--from-audio-dir", str(self.music), "--out-root", str(out), "--dry-run", "--offline"]), 0)
+        finally:
+            pf._fetch_timed_lines = orig
+        summary = (out / "SUMMARY.md").read_text(encoding="utf-8")
+        self.assertIn("songs with parenthesized blocks: 1", summary)
+        self.assertEqual(sorted(p.name for p in out.iterdir()), ["SUMMARY.md"])
 
 
 if __name__ == "__main__":

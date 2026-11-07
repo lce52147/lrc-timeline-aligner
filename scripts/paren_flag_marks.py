@@ -38,6 +38,8 @@ def _original(line):
 
 
 def _text_hash(raw):
+    if raw.startswith(b"\xef\xbb\xbf"):
+        raw = raw[3:]
     return hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest()  # same as lyricsee/paren_flags.text_sha256
 
 
@@ -67,7 +69,7 @@ def _load_flags(audio, lyrics_path, lyrics_bytes, extra_roots=()):
         flags = payload.get("paren_flags") if isinstance(payload, dict) else None
         if not isinstance(flags, dict):
             continue
-        if (flags.get("txt_sha256") or payload.get("txt_sha256")) == sha:
+        if flags.get("txt_sha256") == sha:  # only the hash inside paren_flags (version 2+); no outer fallback
             return flags
     return None
 
