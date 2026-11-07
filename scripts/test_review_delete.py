@@ -1,6 +1,7 @@
 """Review page: delete a whole line (save body `deletes`). Uses the review-server fixture song (entries one / two a+two b / three / four / five)."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -153,6 +154,35 @@ class ReviewDeleteTests(unittest.TestCase):
         self.assertNotIn("deleted_lines", self._log())
         body = {"base_sha256": self._detail()["base_sha256"], "edits": [], "extra": 1}
         self.assertEqual(self._json_request("POST", "/api/song/0/save", body)[0], 400)
+
+    def _flag_fixture(self) -> None:
+        text = "\n".join(["one", "two a", "two b", "three", "four", "five", ""])
+        (self.root / "song.lyrics.txt").write_bytes(text.encode("utf-8"))
+        flags = {"version": 1, "blocks": [
+            {"start": 2, "end": 3, "lines": [2, 3], "class": "official-only", "unclosed": False},
+            {"start": 5, "end": 5, "lines": [5], "class": "unconfirmed", "unclosed": False}]}
+        (self.root / "song.paren_flags.json").write_text(json.dumps(
+            {"txt_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), "paren_flags": flags}), encoding="utf-8")
+
+    def _flags(self) -> dict:
+        # lyric line -> flag of its row (entry numbers are renumbered and same-time rows merge when the saved LRC is reloaded)
+        return {line: row.get("paren_flag") for row in self._detail()["rows"] for line in row["lyrics"]}
+
+    def test_paren_flags_follow_their_lines_after_deletes(self) -> None:
+        # flags are keyed to the lyrics .txt line numbers and matched to rows by text, so deleting rows
+        # (a flagged one and an unflagged one before it) never moves a flag onto another line
+        self._flag_fixture()
+        self.assertEqual(self._save(deletes=[])[0], 200)  # reload so the song picks up the sidecar
+        self.assertEqual(self._flags(), {"one": None, "two a": "official-only", "two b": "official-only", "three": None, "four": "unconfirmed", "five": None})
+        self.assertEqual(self._save(deletes=[1, 2])[0], 200)  # unflagged "one" and flagged "two a/two b"
+        self.assertEqual(self._flags(), {"three": "unconfirmed", "four": "unconfirmed", "five": None})  # same-time three+four reload as one row, flagged as a row
+        self.assertEqual(self._save(deletes=[1])[0], 200)  # the row holding the flagged "four" goes: the flag goes with it
+        self.assertEqual(self._flags(), {"five": None})
+
+    def test_deleting_an_unflagged_line_before_a_flagged_one_keeps_the_flag(self) -> None:
+        self._flag_fixture()
+        self.assertEqual(self._save(deletes=[1])[0], 200)
+        self.assertEqual(self._flags(), {"two a": "official-only", "two b": "official-only", "three": "unconfirmed", "four": "unconfirmed", "five": None})
 
     def test_empty_deletes_list_changes_nothing(self) -> None:
         before = self.output.read_bytes()

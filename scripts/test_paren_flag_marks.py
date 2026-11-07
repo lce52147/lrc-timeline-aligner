@@ -43,6 +43,14 @@ class RowMarkTests(unittest.TestCase):
         self.assertNotIn(0, marks.row_marks(self.audio, self.rows))
         self.assertNotIn(5, marks.row_marks(self.audio, self.rows))
 
+    def test_marks_survive_dropping_rows(self):
+        # deleting review rows (flagged or not) must not shift a flag onto another line, repeated text included
+        self.sidecar()
+        rows = [["alpha one"], ["back two)"], ["alpha two"], ["(solo)"], ["alpha one"]]  # row "(back one" deleted
+        self.assertEqual(marks.row_marks(self.audio, rows), {1: "official-only", 3: "unconfirmed"})
+        rows = [["(back one"], ["back two)"], ["alpha two"], ["alpha one"]]  # first "alpha one" and "(solo)" deleted
+        self.assertEqual(marks.row_marks(self.audio, rows), {0: "official-only", 1: "official-only"})
+
     def test_no_flag_data_means_no_marks(self):
         self.assertEqual(marks.row_marks(self.audio, self.rows), {})
 
