@@ -1261,6 +1261,41 @@ def _stage_bytes(path, data):
     return stage
 
 
+def _restore_lrc(output, original):
+    """Atomically put the pre-save LRC bytes back; True when the file is back to them."""
+    stage = None
+    try:
+        stage = _stage_bytes(output, original)
+        for attempt in range(3):
+            try:
+                os.replace(stage, output)
+                stage = None
+                return True
+            except PermissionError:
+                if attempt < 2:
+                    threading.Event().wait(0.2)
+    except Exception:
+        pass
+    if stage is not None:
+        stage.unlink(missing_ok=True)
+    return False
+
+
+def _write_deleted_fallback(edits_path, lrc_name, records):
+    """Best effort: append the deleted lines to <stem>.review-deleted-fallback.jsonl beside the edit log."""
+    path = edits_path.with_name(edits_path.name[:-len(".review-edits.json")] + ".review-deleted-fallback.jsonl")
+    try:
+        utc = datetime.now(timezone.utc).isoformat()
+        with path.open("ab") as handle:
+            for record in records:
+                handle.write((json.dumps({"utc": utc, "lrc_name": lrc_name, **record}, ensure_ascii=False) + "\n").encode("utf-8"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        return path
+    except Exception:
+        return None
+
+
 def _write_json_stage(path, payload):
     stage = _stage_bytes(path, (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
     try:
@@ -1610,7 +1645,22 @@ def _save_song(song, body):
         os.replace(log_stage, edits_path)
     except OSError:
         log_stage.unlink(missing_ok=True)
-        return 500, {"error": "LRC saved, edit log not written", "lrc_saved": True}
+        if not deleted:
+            return 500, {"error": "LRC saved, edit log not written", "lrc_saved": True}
+        # A delete must leave the LRC and its record in one state: put the pre-save bytes back.
+        if _restore_lrc(output, current):
+            return 500, {"error": "未儲存：刪除紀錄寫入失敗，LRC 已還原（nothing was saved；改動仍在草稿中，請再按儲存）", "lrc_saved": False}
+        records = [{"entry": entry, "line_key": deleted[entry], "cs": before[entry],
+                    "lines": [original_lines[index].decode("utf-8", "replace") for index in mapping[entry - 1]]}
+                   for entry in sorted(deleted)]
+        fallback = _write_deleted_fallback(edits_path, output.name, records)
+        where = fallback.name if fallback else "（備援檔也寫入失敗，請從此回應複製）"
+        return 500, {
+            "error": "LRC 已儲存但刪除紀錄與還原都失敗；被刪句子的文字見備援檔 " + where + (
+                "，內容：" + " / ".join(" | ".join(item["lines"]) for item in records)),
+            "lrc_saved": True, "deleted_lines": records,
+            "fallback_file": str(fallback) if fallback else None,
+        }
     result = _song_payload(pathlib.Path(song["report"]), song["report_data"])
     if adjusted:
         result["adjusted_cs"] = adjusted

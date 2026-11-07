@@ -160,6 +160,50 @@ class ReviewDeleteTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(self.output.read_bytes(), before)
 
+    def _direct_delete_save(self, fail_calls):
+        auto, edits_path = review_server.review_artifact_paths(self.report)
+        auto.write_bytes(self.output.read_bytes())
+        edits_path.write_text(json.dumps({"schema": 1, "auto_lrc_sha256": review_server._sha256_file(auto), "edits": []}), encoding="utf-8")
+        detail = self._detail()
+        row = next(item for item in detail["rows"] if item["entry"] == 1)
+        body = {"base_sha256": detail["base_sha256"], "edits": [], "deletes": [{"entry": 1, "line_key": row["line_key"]}]}
+        real_replace = review_server.os.replace
+        calls = 0
+
+        def replace(source, destination):
+            nonlocal calls
+            calls += 1
+            if calls in fail_calls:
+                raise OSError("injected")
+            return real_replace(source, destination)
+
+        with mock.patch.object(review_server.os, "replace", side_effect=replace):
+            return review_server._save_song(self.server.store.song(0), body), edits_path
+
+    def test_delete_log_failure_restores_the_lrc(self) -> None:
+        before_output, = (self.output.read_bytes(),)
+        (status, result), edits_path = self._direct_delete_save({2})
+        before_log = edits_path.read_bytes()
+        self.assertEqual(status, 500)
+        self.assertIs(result["lrc_saved"], False)
+        self.assertEqual(self.output.read_bytes(), before_output)
+        self.assertEqual(json.loads(before_log).get("deleted_lines"), None)
+        self.assertFalse(list(self.root.glob("*.stage")))
+
+    def test_delete_log_and_rollback_failure_returns_text_and_writes_fallback(self) -> None:
+        before_output = self.output.read_bytes()
+        (status, result), edits_path = self._direct_delete_save({2, 3, 4, 5})
+        self.assertEqual(status, 500)
+        self.assertIs(result["lrc_saved"], True)
+        self.assertNotEqual(self.output.read_bytes(), before_output)
+        self.assertEqual(result["deleted_lines"][0]["lines"], ["[00:01.00]one"])
+        fallback = edits_path.with_name(edits_path.name[:-len(".review-edits.json")] + ".review-deleted-fallback.jsonl")
+        self.assertTrue(fallback.is_file())
+        self.assertIn("one", json.loads(fallback.read_text(encoding="utf-8").splitlines()[0])["lines"][0])
+        self.assertIn(fallback.name, result["error"])
+        self.assertIn("deleted_lines", result)
+        self.assertNotIn("deleted_lines", json.loads(edits_path.read_text(encoding="utf-8")))
+
 
 if __name__ == "__main__":
     unittest.main()
