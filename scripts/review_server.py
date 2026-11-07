@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 
 import lrc_review_tsv
 import lyrics_tag_export
+import paren_flag_marks
 import review_hot_update
 import review_presentation
 import runtime_paths
@@ -994,6 +995,16 @@ def _save_romaji(song, body):
     return 200, {"entry": entry, "romaji": manual[line], "source": "manual"}
 
 
+def _apply_paren_marks(song):
+    """Information only: tag rows that sit in a parenthesized lyric block lyricsee flagged as possibly unsung."""
+    rows = song.get("rows") or []
+    if not rows or not song.get("audio_path"):
+        return
+    marks = paren_flag_marks.row_marks(song["audio_path"], [row.get("lyrics") or [] for row in rows])
+    for index, klass in marks.items():
+        rows[index]["paren_flag"] = klass
+
+
 def _apply_romaji(song):
     """Set each row's romaji and its source (手動 / 歌詞標音 / 字典 / 自動) from the per-song overrides, the source furigana and the shared dictionary.
 
@@ -1203,6 +1214,7 @@ def _song_payload(report_path, report, anchor=None):
         "edits": edits_path,
         "anchor": str(anchor) if anchor else None,
     }
+    _apply_paren_marks(payload)
     _apply_romaji(payload)
     return payload
 

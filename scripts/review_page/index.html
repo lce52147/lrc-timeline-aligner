@@ -14,7 +14,7 @@ button:hover:not(:disabled){background:var(--panel-3);border-color:var(--line-2)
 .num{font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-variant-numeric:tabular-nums}
 .glass{background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:0 12px 40px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.05);backdrop-filter:blur(18px) saturate(1.3);-webkit-backdrop-filter:blur(18px) saturate(1.3)}
 header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--line);background:rgba(12,15,26,.7);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);position:sticky;top:0;z-index:2}
-header .song-name{font-weight:600;font-size:15px;max-width:34vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}header .risk{padding:2px 8px;border-radius:999px;background:rgba(255,99,71,.22);color:#ffb4a2;font-size:12px;white-space:nowrap}header .spacer{flex:1}.sanity-tag{margin-left:6px;padding:0 6px;border-radius:999px;background:rgba(255,184,77,.2);color:#ffcf8a;font-size:11px;white-space:nowrap}.muted{color:var(--fg-3)}
+header .song-name{font-weight:600;font-size:15px;max-width:34vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}header .risk{padding:2px 8px;border-radius:999px;background:rgba(255,99,71,.22);color:#ffb4a2;font-size:12px;white-space:nowrap}header .spacer{flex:1}.sanity-tag{margin-left:6px;padding:0 6px;border-radius:999px;background:rgba(255,184,77,.2);color:#ffcf8a;font-size:11px;white-space:nowrap}.muted{color:var(--fg-3)}.paren-tag{margin-left:6px;padding:0 6px;border-radius:999px;border:1px solid rgba(255,255,255,.14);color:var(--fg-3);font-size:11px;font-weight:400;white-space:nowrap;vertical-align:middle}
 .vol{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--fg-2)}.vol button{padding:4px 8px;min-width:34px}.vol input{width:110px;accent-color:var(--accent-2);cursor:pointer}.vol .num{min-width:64px;text-align:right;font-family:ui-monospace,Consolas,monospace}
 .tile{display:flex;align-items:center;gap:8px;padding:4px 10px;border-radius:10px;background:var(--panel-2);border:1px solid var(--line)}
 .tile .lbl{font-size:11px;color:var(--fg-3);letter-spacing:.04em}.tile .val{font-size:16px;font-weight:600}
@@ -1226,7 +1226,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       const options = optionsOf(row).filter(option => option.kind !== 'keep');
       const tier = state.showAll ? (row.review !== 'REVIEW' ? (sane(item) ? '待審 · ' : '') : ['高風險 · ', '待審 · ', '可略過 · '][riskRank(item)] || '') : '';
       const hint = done ? (edit ? '已改 ' + deltaText(edit.cs - row.current_cs) : '已確認') : edit ? '暫存 ' + deltaText(edit.cs - row.current_cs) : row.review !== 'REVIEW' && !sane(item) ? '未標記' : tier + (options.length ? (options.every(o => o.kind === 'earlier') ? '提早?' : options.every(o => o.kind === 'later') ? '延後?' : '不一致') : '確認');
-      line.innerHTML = '<span class="num">' + row.entry + '</span><span class="num">' + time(working(item)) + '</span><span class="ly">' + esc((row.lyrics || [row.lyric || ''])[0]) + (sane(item) ? ' <span class="sanity-tag" title="' + esc(sanityText(row)) + '">間隔過短</span>' : '') + '</span><span class="st">' + hint + '</span>';
+      line.innerHTML = '<span class="num">' + row.entry + '</span><span class="num">' + time(working(item)) + '</span><span class="ly">' + esc((row.lyrics || [row.lyric || ''])[0]) + parenTag(row) + (sane(item) ? ' <span class="sanity-tag" title="' + esc(sanityText(row)) + '">間隔過短</span>' : '') + '</span><span class="st">' + hint + '</span>';
       line.addEventListener('click', () => { select(item); state.notice = ''; render(); });
       wrap.appendChild(line);
     });
@@ -1257,6 +1257,8 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     const shownSong = state.songs.find(song => song.index === state.activeSong) || null;
     document.getElementById('mode').textContent = '音源: ' + (modeFor(shownSong) === 'stem' ? (state.mode === 'flac' ? '人聲（找不到 FLAC）' : '人聲') : 'FLAC');
   }
+  const PAREN_TIPS = {'official-only':'official-only：官方歌詞網站有這段括號，聽得到的版本（LRCLIB）沒有', 'unconfirmed':'unconfirmed：官方歌詞的括號區塊，沒有可比對的來源'};
+  const parenTag = row => row.paren_flag ? ' <span class="paren-tag" title="' + esc(PAREN_TIPS[row.paren_flag] || row.paren_flag) + '">可能沒唱（括號）</span>' : '';
   function rowElement(item) {
     const song = item.song, row = item.row, edit = editFor(item), chosen = working(item), div = document.createElement('article');
     const key = keyFor(item), previous = row.previous, next = row.next, previousCs = previous?.cs, nextCs = next?.cs;
@@ -1297,7 +1299,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     const showWave = song.has_stem || song.has_flac;
     div.innerHTML = '<div class="meta"><span class="num">#' + row.entry + '</span><span>·</span><span class="num">目前 ' + time(chosen) + '</span>' +
       (edit ? '<span class="pill num">原 ' + time(row.current_cs) + '</span>' : '') + (isDone(item) ? '<span class="pill">已確認</span>' : '') + '</div>' +
-      '<div class="lyric">' + (lyrics || '<span class="muted">no lyric text</span>') + '</div>' +
+      '<div class="lyric">' + (lyrics || '<span class="muted">no lyric text</span>') + parenTag(row) + '</div>' +
       romajiMarkup(item) +
       '<div class="why' + (whyKind === 'detected' ? '' : whyKind === 'unconfirmed' ? ' unconfirmed' : ' ok') + '"><span class="ic">' + (whyKind === 'detected' ? '!' : whyKind === 'unconfirmed' ? '?' : '✓') + '</span><span><span class="kind">' + whyLabel + '</span>' + esc(sentence) + '</span></div>' +
       (ordering ? '<div class="order-warning">注意：目前時間超出前後句的順序。</div>' : '') +

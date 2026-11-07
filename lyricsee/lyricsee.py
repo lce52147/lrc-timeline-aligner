@@ -60,6 +60,7 @@ RUN_FIELDS = (
     "sources",
     "diff_lines",
     "notation_diffs",
+    "paren_blocks",
     "original_source_url",
     "search_engine",
     "search_url",
@@ -340,6 +341,7 @@ def _base_row(index: int, audio_path: Path, **updates: object) -> dict:
         "sources": "",
         "diff_lines": 0,
         "notation_diffs": 0,
+        "paren_blocks": 0,
         "original_source_url": "",
         "search_engine": "none",
         "search_url": "",
@@ -378,6 +380,7 @@ def _existing_row(index: int, audio_path: Path, output_root: Path, status: str, 
         translation_error=str(payload.get("translation_error") or ""),
         oogg_endpoint=str(payload.get("oogg_endpoint") or ""),
         line_count=int(payload.get("line_count") or 0),
+        paren_blocks=int((payload.get("paren_flags") or {}).get("block_count") or 0),
         **_verification_fields(verification),
         original_source_url=str(payload.get("source_url") or ""),
         search_engine=str(payload.get("search_engine") or "none"),
@@ -532,6 +535,7 @@ def _process_track(
             )
 
         original_url = original.url
+        timed_candidate = next((c for c in collected.candidates if c.source == "lrclib" and c.lines), None)
         verification_fields = _verification_fields({
             "verification_status": evidence.get("verification_status", "verified"),
             **{key: value for key, value in evidence.items() if key != "verification_status"},
@@ -690,10 +694,13 @@ def _process_track(
             translation_error=translation_error,
             human_approved=False,
             oogg_endpoint=oogg_endpoint,
+            timed_reference=[row.original for row in timed_candidate.lines if row.original.strip()] if timed_candidate else None,
         )
+        paren_blocks = int((json.loads(provenance.read_text(encoding="utf-8")).get("paren_flags") or {}).get("block_count") or 0)
         return _base_row(
             index,
             audio_path,
+            paren_blocks=paren_blocks,
             status=status,
             translation_method=translation_method,
             translation_error=translation_error,

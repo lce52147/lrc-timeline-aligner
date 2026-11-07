@@ -20,6 +20,11 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
+try:
+    from paren_flags import flags_for_lyrics_text
+except ModuleNotFoundError:  # pragma: no cover - package import style
+    from lyricsee.paren_flags import flags_for_lyrics_text
+
 
 SEARCH_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 
@@ -837,6 +842,7 @@ def write_result(
     translation_error: str = "",
     human_approved: bool = False,
     oogg_endpoint: str = "",
+    timed_reference: list[str] | None = None,
 ) -> tuple[Path, Path]:
     audio_path = audio_path.resolve()
     output_root = Path(output_root)
@@ -851,6 +857,11 @@ def write_result(
 
     lyrics_text = render_lyrics(candidate.lines)
     verification = getattr(candidate, "verification", None) or {}
+    paren_flags = flags_for_lyrics_text(
+        lyrics_text,
+        timed_lines=timed_reference,
+        cross_sources=verification.get("cross_sources"),
+    )
     payload = {
         "txt_sha256": hashlib.sha256(lyrics_text.encode("utf-8")).hexdigest(),
         "verification_status": verification.get("verification_status")
@@ -876,6 +887,7 @@ def write_result(
         "status": status,
         "translation_error": translation_error,
         "oogg_endpoint": oogg_endpoint,
+        "paren_flags": paren_flags,
     }
     provenance_text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
     _atomic_write_text(output, lyrics_text)
