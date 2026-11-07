@@ -307,5 +307,106 @@ class AudioDirTests(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in out.iterdir()), ["SUMMARY.md"])
 
 
+    def test_twins_are_handled_once_and_counted_once(self):
+        self.song("t.flac", self.PAREN)
+        (self.music / "t.mp3").write_bytes(b"")
+        side = self.root / "side"
+        out = self.run_mode(sidecar_dir=side, out_root=self.root / "o")
+        self.assertEqual(self.calls, ["t"])
+        self.assertEqual((out["scanned"], out["with_blocks"], out["errors"]), (1, 1, []))
+        saved = json.loads((side / "t.paren_flags.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["paren_flags"]["basis"], "timed-lines")
+
+    def test_failing_twin_cannot_downgrade_a_fetched_result(self):
+        self.song("t.flac", self.PAREN)
+        (self.music / "t.mp3").write_bytes(b"")
+        side = self.root / "side"
+        results = iter([["a b", "e f"]])
+
+        def fetch(identity):
+            nxt = next(results, None)
+            if nxt is None:
+                raise OSError("down")
+            return nxt
+        pf.flag_audio_dir(self.music, fetch=fetch, identity_of=lambda a: a, sidecar_dir=side)
+        saved = json.loads((side / "t.paren_flags.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["paren_flags"]["basis"], "timed-lines")
+
+    def test_same_stem_in_different_folders_is_two_songs(self):
+        self.song("a.flac", self.PAREN)
+        self.song("sub/a.flac", self.PAREN)
+        out = self.run_mode(sidecar_dir=self.root / "side", recursive=True)
+        self.assertEqual((out["scanned"], len(self.calls)), (2, 2))
+
+    def test_out_root_merges_into_an_existing_full_sources_json(self):
+        self.song("s.flac", self.PAREN)
+        out = self.root / "o"
+        (out / "report").mkdir(parents=True)
+        target = out / "report" / "s.sources.json"
+        target.write_text(json.dumps({"title": "T", "candidates": [1, 2], "paren_flags": {"old": True}}), encoding="utf-8")
+        self.run_mode(out_root=out)
+        saved = json.loads(target.read_text(encoding="utf-8"))
+        self.assertEqual((saved["title"], saved["candidates"]), ("T", [1, 2]))
+        self.assertEqual(saved["paren_flags"]["basis"], "timed-lines")
+        self.assertEqual(sorted(p.name for p in (out / "report").iterdir()), ["s.sources.json"])
+
+    def test_out_root_leaves_an_unreadable_existing_file_alone(self):
+        self.song("s.flac", self.PAREN)
+        out = self.root / "o"
+        (out / "report").mkdir(parents=True)
+        target = out / "report" / "s.sources.json"
+        target.write_text("not json", encoding="utf-8")
+        result = self.run_mode(out_root=out)
+        self.assertEqual(target.read_text(encoding="utf-8"), "not json")
+        self.assertEqual(len(result["errors"]), 1)
+
+    def test_atomic_write_removes_its_tmp_on_failure(self):
+        target = self.root / "x.json"
+        target.mkdir()  # os.replace onto a directory fails
+        with self.assertRaises(OSError):
+            pf._atomic_write(target, "{}")
+        self.assertEqual([p.name for p in self.root.iterdir() if p.name.endswith(".tmp")], [])
+
+    def test_summary_counts_fetch_failed_apart_from_no_match(self):
+        self.song("a.flac", self.PAREN)
+        self.song("b.flac", self.PAREN)
+        self.song("c.flac", self.PAREN)
+
+        def fetch(identity):
+            if identity == "a":
+                raise OSError("down")
+            return None if identity == "b" else ["a b"]
+        out = pf.flag_audio_dir(self.music, fetch=fetch, identity_of=lambda a: a.stem, offline=False, sidecar_dir=self.root / "side")
+        self.assertEqual((out["fetch_failed"], out["no_match"], out["fetched"]), (1, 1, 1))
+        self.assertIn("fetch failed 1", pf.format_summary(out, dry_run=False))
+
+    def test_strict_fetch_raises_on_failure_but_not_on_no_match(self):
+        import lyricsee_core as core
+        orig = core.fetch_lrclib_candidate
+        try:
+            def fail(identity, client):
+                raise OSError("down")
+
+            def none(identity, client):
+                raise LookupError("no")
+            pf._last_fetch[0] = 0.0
+            core.fetch_lrclib_candidate = fail
+            with self.assertRaises(OSError):
+                pf._fetch_timed_lines(object(), strict=True)
+            self.assertIsNone(pf._fetch_timed_lines(object()))
+            core.fetch_lrclib_candidate = none
+            self.assertIsNone(pf._fetch_timed_lines(object(), strict=True))
+        finally:
+            core.fetch_lrclib_candidate = orig
+
+    def test_main_twin_in_out_root_exits_zero(self):
+        self.song("s.flac", self.PAREN)
+        (self.music / "s.mp3").write_bytes(b"")
+        import contextlib
+        import io
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(pf.main(["--from-audio-dir", str(self.music), "--out-root", str(self.root / "o"), "--offline"]), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

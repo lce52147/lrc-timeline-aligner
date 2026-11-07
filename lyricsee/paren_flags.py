@@ -230,8 +230,10 @@ def _identity(audio, payload: dict):
     return TrackIdentity(title=title, artist=str(payload.get("artist") or "").strip()) if title else None
 
 
-def _fetch_timed_lines(identity) -> list[str] | None:
-    """Lyric lines of the LRCLIB match for ``identity`` (one request, at least FETCH_GAP_SECONDS after the last); None when there is none."""
+def _fetch_timed_lines(identity, *, strict: bool = False) -> list[str] | None:
+    """Lyric lines of the LRCLIB match for ``identity`` (one request, at least FETCH_GAP_SECONDS after the last); None when there is none.
+
+    A failed request (network, HTTP) also gives None, unless ``strict``: then it raises, so the caller can tell a failure from "no match"."""
     import time
 
     try:
@@ -246,7 +248,11 @@ def _fetch_timed_lines(identity) -> list[str] | None:
     _last_fetch[0] = time.monotonic()
     try:
         candidate = fetch_lrclib_candidate(identity, HttpClient())
+    except LookupError:
+        return None
     except Exception:
+        if strict:
+            raise
         return None
     return [row.original for row in candidate.lines if row.original.strip()]
 
@@ -257,9 +263,15 @@ def _atomic_write(path, text: str) -> None:
 
     path = Path(path)
     tmp = path.with_name(path.name + ".tmp")
-    with open(tmp, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(text)
-    os.replace(tmp, path)
+    try:
+        with open(tmp, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+        os.replace(tmp, path)
+    finally:
+        try:
+            tmp.unlink()  # still there only when the write or replace failed
+        except FileNotFoundError:
+            pass
 
 
 def _check_stem(stem: str) -> None:
@@ -339,6 +351,22 @@ def _probe(audio):
     return probe_audio(audio, runner=_hidden_runner)
 
 
+def _merge_out_root(target, flags: dict, body: str) -> None:
+    """Write ``flags`` into ``target``: merged into an existing lyricsee sources.json (its other keys kept), else the skeleton ``body``."""
+    import json
+
+    if target.exists():
+        try:
+            payload = json.loads(target.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            payload = None
+        if not isinstance(payload, dict):
+            raise ValueError("existing out-root file is not a JSON object; left untouched")
+        payload["paren_flags"] = flags
+        body = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    _atomic_write(target, body)
+
+
 def flag_audio_dir(audio_dir, *, recursive=False, sidecar_dir=None, out_root=None, offline=False,
                    dry_run=False, max_songs=MAX_SONGS, fetch=None, identity_of=None) -> dict:
     """Flag songs straight from the lyrics text beside each audio file.
@@ -353,19 +381,25 @@ def flag_audio_dir(audio_dir, *, recursive=False, sidecar_dir=None, out_root=Non
     from pathlib import Path
 
     root = Path(audio_dir)
-    fetch = fetch or _fetch_timed_lines
+    fetch = fetch or (lambda identity: _fetch_timed_lines(identity, strict=True))
     identity_of = identity_of or _probe
     audios = sorted((p for p in (root.rglob("*") if recursive else root.iterdir()) if p.is_file() and p.suffix.casefold() in AUDIO_SUFFIXES),
                     key=lambda p: str(p).casefold())
-    summary = {"scanned": 0, "with_blocks": 0, "lines_by_class": {}, "songs": [], "errors": [], "truncated": False}
+    summary = {"scanned": 0, "with_blocks": 0, "lines_by_class": {}, "songs": [], "errors": [], "truncated": False,
+               "fetched": 0, "no_match": 0, "fetch_failed": 0}
     seen_stems: set[str] = set()
+    seen_songs: set[tuple[Path, str]] = set()  # (folder, stem): FLAC/MP3 twins share lyrics and sidecar
     for audio in audios:
         lyrics = lyrics_beside(audio)
         if lyrics is None:
             continue
+        song_key = (audio.relative_to(root).parent, audio.stem)
+        if song_key in seen_songs:
+            continue  # twin of a song already handled this run
         if summary["scanned"] >= max_songs:
             summary["truncated"] = True
             break
+        seen_songs.add(song_key)
         summary["scanned"] += 1
         rel = audio.relative_to(root)
         try:
@@ -379,6 +413,9 @@ def flag_audio_dir(audio_dir, *, recursive=False, sidecar_dir=None, out_root=Non
                     timed = fetch(identity_of(audio))
                 except Exception:
                     timed = None  # a failed fetch leaves the blocks unconfirmed
+                    summary["fetch_failed"] += 1
+                else:
+                    summary["fetched" if timed else "no_match"] += 1
             flags = flags_for_lyrics_text(text, timed_lines=timed)
             flags["txt_sha256"] = text_sha256(raw)
             body = json.dumps({"version": VERSION, "txt_sha256": flags["txt_sha256"], "paren_flags": flags}, ensure_ascii=False, indent=2) + "\n"
@@ -392,7 +429,7 @@ def flag_audio_dir(audio_dir, *, recursive=False, sidecar_dir=None, out_root=Non
                         summary["errors"].append(f"{rel}: stem already written to out-root, skipped")
                     else:
                         (Path(out_root) / "report").mkdir(parents=True, exist_ok=True)
-                        _atomic_write(Path(out_root) / "report" / f"{audio.stem}.sources.json", body)
+                        _merge_out_root(Path(out_root) / "report" / f"{audio.stem}.sources.json", flags, body)
             seen_stems.add(audio.stem)
         except (OSError, ValueError) as exc:
             summary["errors"].append(f"{rel}: {type(exc).__name__}")
@@ -416,6 +453,7 @@ def format_summary(summary: dict, *, dry_run: bool) -> str:
     if summary["truncated"]:
         out.append(f"- STOPPED at the {summary['scanned']}-song limit; more songs exist")
     out.append("- flagged lines by class: " + (", ".join(f"{k} {v}" for k, v in sorted(summary["lines_by_class"].items())) or "none"))
+    out.append(f"- LRCLIB: matched {summary['fetched']}, no match {summary['no_match']}, fetch failed {summary['fetch_failed']}")
     out.append(f"- errors: {len(summary['errors'])}")
     out += ["", "## Flagged songs", ""]
     for song in summary["songs"]:
