@@ -158,11 +158,11 @@ class ReviewDeleteTests(unittest.TestCase):
     def _flag_fixture(self) -> None:
         text = "\n".join(["one", "two a", "two b", "three", "four", "five", ""])
         (self.root / "song.lyrics.txt").write_bytes(text.encode("utf-8"))
-        flags = {"version": 1, "blocks": [
+        flags = {"version": 2, "txt_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), "blocks": [
             {"start": 2, "end": 3, "lines": [2, 3], "class": "official-only", "unclosed": False},
             {"start": 5, "end": 5, "lines": [5], "class": "unconfirmed", "unclosed": False}]}
         (self.root / "song.paren_flags.json").write_text(json.dumps(
-            {"txt_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), "paren_flags": flags}), encoding="utf-8")
+            {"paren_flags": flags}), encoding="utf-8")
 
     def _flags(self) -> dict:
         # lyric line -> flag of its row (entry numbers are renumbered and same-time rows merge when the saved LRC is reloaded)
