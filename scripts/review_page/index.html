@@ -420,16 +420,16 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       const exact = rows.find(item => item.row.line_key === edit.line_key);
       if (exact) { if (used) used.add(exact); return exact; }
       const hash = keyHash(edit.line_key);
+      if (edit.del) return null;   // a delete is never re-aimed by text: exact line_key (or the server's key map) only
       const same = rows.find(item => item.row.entry === edit.entry && item.row.line_key && keyHash(item.row.line_key) === hash && item.row.current_cs === edit.base_cs);
       if (same) { if (used) used.add(same); return same; }
       // After a delete elsewhere (this or another tab) every line below it moved up: same text, nearest line at or above the old
-      // position, each row once. Never by entry number, and never onto a line with different text.
+      // position and still at the edit's base time, each row once. Never by entry number, never onto a line with different text,
+      // and never onto a twin line (same text) that does not sit at the base time.
       const at = keyIndex(edit.line_key);
       if (!Number.isFinite(at)) return null;
-      const near = rows.filter(item => item.row.line_key && keyHash(item.row.line_key) === hash && keyIndex(item.row.line_key) <= at && !(used && used.has(item)));
-      const aimed = near.filter(item => item.row.current_cs === edit.base_cs);
-      const pool = aimed.length ? aimed : near;
-      const found = pool.reduce((best, item) => (!best || keyIndex(item.row.line_key) > keyIndex(best.row.line_key) ? item : best), null);
+      const aimed = rows.filter(item => item.row.line_key && keyHash(item.row.line_key) === hash && keyIndex(item.row.line_key) <= at && item.row.current_cs === edit.base_cs && !(used && used.has(item)));
+      const found = aimed.reduce((best, item) => (!best || keyIndex(item.row.line_key) > keyIndex(best.row.line_key) ? item : best), null);
       if (found && used) used.add(found);
       return found;
     }
@@ -1406,7 +1406,9 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     const lookup = key => (key && Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined);   // undefined: not in the map, leave as is
     [...state.done].forEach(key => {
       if (keyIndex(key) !== index) return;
-      const next = lookup(doneLine.get(key));
+      const own = doneLine.get(key);
+      if (!own) { state.done.delete(key); doneLine.delete(key); return; }   // no line_key (old data): it would follow the entry number onto the wrong line
+      const next = lookup(own);
       if (next === null) { state.done.delete(key); doneLine.delete(key); } else if (next) doneLine.set(key, next);
     });
     [...state.edits].forEach(([key, edit]) => {

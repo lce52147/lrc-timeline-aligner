@@ -933,6 +933,51 @@ test('DEL: Enter and K on a pending-delete row move on without accepting or keep
   assert.equal(p.t.state.edits.get('0:2').del, true, 'the pending delete is still there');
 });
 
+// N1: a draft for a vanished line must never land on a twin line (same text) elsewhere
+const twinBefore = [1,2,3,4,5,6,7,8].map(n => lk(n + ':' + ((n === 2 || n === 6) ? 'hX' : 'h' + n), n, n * 1000));
+const twinAfterDel6 = twinBefore.filter(r => r.entry !== 6).map((r, at) => lk((at + 1) + ':' + r.line_key.split(':')[1], at + 1, r.current_cs));
+const twinAfterIns = [lk('1:h1', 1, 1000), lk('2:hX', 2, 2000), lk('3:hNEW', 3, 2500)].concat(twinBefore.slice(2).map((r, at) => lk((at + 4) + ':' + r.line_key.split(':')[1], at + 4, r.current_cs)));
+for (const [label, edit] of [
+  ['nudge', {entry: 6, cs: 6100, source: 'manual', nudge_cs: 100, base_cs: 6000, line_key: '6:hX', edited_at: 1}],
+  ['pick', {entry: 6, cs: 6150, source: 'option:ctc', base_cs: 6000, line_key: '6:hX', edited_at: 1}],
+]) test('twin ' + label + ': a draft for deleted row 6 (text = row 2) does not land on row 2', async () => {
+  const st = makeStorage();
+  st.map.set(KEY, JSON.stringify({[SONG]: {saved_at: Date.now(), tabs: {}, base_sha256: 's', edits: [edit]}}));
+  const r = await boot(st, [mk('S', SONG, 's2', twinAfterDel6.map(x => ({...x})))]);
+  r.el('draft-stale-apply').listeners.click(); await settle();
+  assert.deepEqual([...r.t.state.edits.values()].map(e => [e.entry, e.line_key, e.cs]), []);
+});
+test('twin carried: a staged nudge on row 6 does not move onto row 2 when another tab deleted row 6', async () => {
+  const st = makeStorage(), songs = [mk('S', SONG, 's', twinBefore.map(x => ({...x})))];
+  const p = await boot(st, songs);
+  p.edit(0, 6, 6100, 100);
+  songs[0].sha = 's2'; songs[0].rows = twinAfterDel6.map(x => ({...x}));
+  await p.t.refreshSong(0); await settle();
+  assert.deepEqual([...p.t.state.edits.values()].filter(e => e.line_key === '2:hX'), []);
+});
+for (const [label, rows] of [['row 6 already deleted elsewhere', twinAfterDel6], ['a line inserted above row 6', twinAfterIns]])
+test('twin delete: a pending-delete draft for row 6 stays unapplied, ' + label, async () => {
+  const st = makeStorage();
+  const delDraft = {entry: 6, cs: 6000, source: 'delete', nudge_cs: 0, base_cs: 6000, line_key: '6:hX', del: true, prev: null, edited_at: 1};
+  st.map.set(KEY, JSON.stringify({[SONG]: {saved_at: Date.now(), tabs: {}, base_sha256: 's', edits: [delDraft]}}));
+  const r = await boot(st, [mk('S', SONG, 's2', rows.map(x => ({...x})))]);
+  r.el('draft-stale-apply').listeners.click(); await settle();
+  assert.deepEqual([...r.t.state.edits.values()].filter(e => e.del), [], 'delete must not land on the earlier twin');
+  r.t.state.activeSong = 0;
+  r.el('save').listeners.click(); await settle();
+  assert.deepEqual(r.saves.map(s => s.body.deletes), [], 'no delete is sent');
+});
+test('a done mark without line_key is dropped by a save with deletes instead of following the entry number', async () => {
+  const st = makeStorage();
+  const songs = [mk('S', SONG, 's', [1, 2, 3, 4].map(n => lk(n + ':h' + n, n, n * 1000)))];
+  const p = await boot(st, songs);
+  const old = p.rowOf(0, 3); old.row.line_key = '';   // old data: this row came without a line_key
+  p.t.markDone(old);
+  deleteRow(p, 1);
+  p.t.state.activeSong = 0;
+  p.el('save').listeners.click(); await settle();
+  assert.equal(p.t.state.done.size, 0, 'the mark of old row 3 is not left on a neighbour');
+});
 (async () => {
   let failed = 0;
   for (const [name, fn] of tests) {
