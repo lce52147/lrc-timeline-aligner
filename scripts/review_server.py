@@ -1957,7 +1957,7 @@ def _folder_file_matters(name):
 _OWN_LOGS = {"export.log", "export-log.jsonl"}  # written by the server itself; never a reason to refresh
 # Sidecars the server writes beside a song (first save, every save, every decision): each belongs to its song (see _song_files),
 # so a folder listing must not count them as unknown files - that made the first save after a poll rescan every report.
-_SIDECAR_SUFFIXES = (".auto.lrc", ".review-edits.json", ".review-decisions.jsonl")
+_SIDECAR_SUFFIXES = (".auto.lrc", ".review-edits.json", ".review-decisions.jsonl", ".paren_flags.json")
 
 
 def _song_sidecars(song):
@@ -1966,6 +1966,9 @@ def _song_sidecars(song):
     edits = str(song.get("edits") or "")
     if edits.endswith(".review-edits.json"):
         keys.append(edits[:-len(".review-edits.json")] + ".review-decisions.jsonl")
+    if song.get("audio_path"):  # lyricsee's optional flag file beside the audio
+        audio = pathlib.Path(song["audio_path"])
+        keys.append(str(audio.with_name(audio.stem + ".paren_flags.json")))
     return keys
 
 

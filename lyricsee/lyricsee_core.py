@@ -857,11 +857,15 @@ def write_result(
 
     lyrics_text = render_lyrics(candidate.lines)
     verification = getattr(candidate, "verification", None) or {}
-    paren_flags = flags_for_lyrics_text(
-        lyrics_text,
-        timed_lines=timed_reference,
-        cross_sources=verification.get("cross_sources"),
-    )
+    try:
+        paren_flags = flags_for_lyrics_text(
+            lyrics_text,
+            timed_lines=timed_reference,
+            cross_sources=verification.get("cross_sources"),
+        )
+    except Exception:  # information only: a flag error never costs the song's lyrics
+        logging.getLogger(__name__).exception("paren flags failed for %s", audio_path.name)
+        paren_flags = None
     payload = {
         "txt_sha256": hashlib.sha256(lyrics_text.encode("utf-8")).hexdigest(),
         "verification_status": verification.get("verification_status")

@@ -8,17 +8,25 @@ sources.json so the Review page can mark them quietly.
 A block is a run of lines from an opening ``(`` / ``（`` at the start of a line
 to the closing ``)`` / ``）`` that ends a line (a single fully parenthesized
 line is a block of one).  Parentheses inside an otherwise normal line are not
-a block.  An opening paren that never closes within MAX_BLOCK_LINES lines is
+a block, and neither is a block whose opening line also carries text outside
+the parens.  An opening paren that never closes within MAX_BLOCK_LINES lines is
 reported as an ``unclosed`` block that ends at its own line.
 
 Classes:
   official-only  an independent timed source (LRCLIB) exists and lacks most of
                  the block's lines ("lacks": fewer than half of the block's
-                 countable lines are found in that source)
-  unconfirmed    no such source to compare
+                 countable lines are found in that source; a block of nothing
+                 but fillers such as "la la la" is judged on those lines)
+  unconfirmed    no such source to compare, or the saved comparison cannot decide
   (a block the timed source has is not flagged)
+
+``paren_flags["txt_sha256"]`` is the hash of the lyrics text the line numbers
+refer to; the Review page ignores the flags when the lyrics file it reads
+hashes differently.
 """
 from __future__ import annotations
+
+import hashlib
 
 try:
     from lyric_compare import canonical_text, is_filler
@@ -31,13 +39,21 @@ CLOSE = ")）"
 MAX_BLOCK_LINES = 8
 LACK_BELOW = 0.5
 MIN_CONTAINED = 6
+FETCH_GAP_SECONDS = 1.0
 TIMED_SOURCES = ("lrclib",)
+AUDIO_SUFFIXES = {".flac", ".mp3", ".m4a", ".wav", ".ogg", ".opus"}
 _FRAGMENT_KINDS = {"missing_in_b", "word"}
+_last_fetch = [0.0]
 
 
 def original_of(line: str) -> str:
     """The lyric part of a lyrics.txt line (translation follows two spaces)."""
     return line.split("  ", 1)[0]
+
+
+def text_sha256(raw: bytes) -> str:
+    """Hash of lyrics text bytes, line endings normalised so a CRLF copy matches."""
+    return hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest()
 
 
 def _scan(text: str, depth: int) -> tuple[int, str, int]:
@@ -52,6 +68,8 @@ def _scan(text: str, depth: int) -> tuple[int, str, int]:
                 depth -= 1
                 if depth == 0:
                     zero_closes += 1
+            else:
+                outside.append(ch)  # a stray close paren is ordinary text
         elif depth == 0:
             outside.append(ch)
     return depth, "".join(outside), zero_closes
@@ -72,9 +90,11 @@ def detect_blocks(originals: list[str]) -> list[dict]:
             i += 1
             continue
         depth, outside, _ = _scan(text, 0)
+        if not _blank(outside):
+            i += 1
+            continue
         if depth == 0:
-            if _blank(outside):
-                blocks.append({"start": i + 1, "end": i + 1, "unclosed": False})
+            blocks.append({"start": i + 1, "end": i + 1, "unclosed": False})
             i += 1
             continue
         end = None
@@ -96,11 +116,11 @@ def detect_blocks(originals: list[str]) -> list[dict]:
 
 def _lacks_by_text(block_lines: list[str], timed_lines: list[str]) -> bool:
     timed = [canonical_text(line, drop_parens=False) for line in timed_lines]
-    countable = [
-        canon
-        for canon in (canonical_text(line, drop_parens=False) for line in block_lines)
-        if not is_filler(canon, min_length=1)
-    ]
+    canons = [canonical_text(line, drop_parens=False) for line in block_lines]
+    countable = [canon for canon in canons if not is_filler(canon, min_length=1)]
+    if not countable:
+        # Backing fillers ("la la la", "oh oh") are exactly what a timed source may leave out.
+        countable = [canon for canon in canons if canon]
     if not countable:
         return False
     # A short line must equal a timed line (a bare "hey" sits inside many others);
@@ -110,10 +130,15 @@ def _lacks_by_text(block_lines: list[str], timed_lines: list[str]) -> bool:
 
 
 def _lacks_by_diff_rows(numbers: list[int], originals: list[str], rows: list[dict]) -> bool:
-    """Same test from a saved lrclib cross-source entry (its diff_lines)."""
+    """Same test from a saved lrclib cross-source entry (its diff_lines).
+
+    Only lines that appear as a diff row are known to be missing; a saved entry
+    never lists a whole parenthesized line as missing (the comparer files it
+    under notation), so "no row" cannot tell "present" from "not compared".
+    """
     absent: set[int] = set()
     for row in rows:
-        if row.get("kind") not in _FRAGMENT_KINDS:
+        if not isinstance(row, dict) or row.get("kind") not in _FRAGMENT_KINDS:
             continue
         number = row.get("line")
         if number not in numbers:
@@ -125,7 +150,7 @@ def _lacks_by_diff_rows(numbers: list[int], originals: list[str], rows: list[dic
     countable = [
         n for n in numbers
         if not is_filler(canonical_text(originals[n - 1], drop_parens=False), min_length=1)
-    ]
+    ] or [n for n in numbers if canonical_text(originals[n - 1], drop_parens=False)]
     if not countable:
         return False
     return 1 - len(absent & set(countable)) / len(countable) < LACK_BELOW
@@ -140,11 +165,13 @@ def compute_flags(
     """The ``paren_flags`` payload for a lyrics file.
 
     ``timed_lines`` are the lyric lines of an independent timed source (live
-    run).  Without them, a saved lrclib entry of ``cross_sources`` is used
-    (offline re-flagging); with neither, every block is ``unconfirmed``.
+    run, or fetched when re-flagging).  Without them, a saved lrclib entry of
+    ``cross_sources`` is used (offline re-flagging): a block it shows as lacking is
+    ``official-only``, any other block is ``unconfirmed`` because the saved diff
+    cannot say whether the source has it.  With neither, every block is ``unconfirmed``.
     """
     saved = next(
-        (c for c in (cross_sources or []) if c.get("source") in TIMED_SOURCES and c.get("independent", True)),
+        (c for c in (cross_sources or []) if isinstance(c, dict) and c.get("source") in TIMED_SOURCES and c.get("independent", True)),
         None,
     )
     basis = "none"
@@ -160,7 +187,7 @@ def compute_flags(
             klass = "official-only" if _lacks_by_text(texts, timed_lines or []) else None
         elif basis == "saved-diff":
             rows = saved.get("diff_lines") or []
-            klass = "official-only" if _lacks_by_diff_rows(numbers, originals, rows) else None
+            klass = "official-only" if _lacks_by_diff_rows(numbers, originals, rows) else "unconfirmed"
         else:
             klass = "unconfirmed"
         if klass:
@@ -182,72 +209,136 @@ def compute_flags(
 
 def flags_for_lyrics_text(lyrics_text: str, **kwargs) -> dict:
     originals = [original_of(line) for line in lyrics_text.splitlines()]
-    return compute_flags(originals, **kwargs)
+    flags = compute_flags(originals, **kwargs)
+    flags["txt_sha256"] = text_sha256(lyrics_text.encode("utf-8"))
+    return flags
 
 
-def _fetch_timed_lines(audio) -> list[str] | None:
-    """Lyric lines of the LRCLIB match for ``audio`` (one request); None when there is none."""
+def _identity(audio, payload: dict):
+    """What to search LRCLIB with: the audio's tags, else the title/artist lyricsee saved."""
     from pathlib import Path
 
     try:
-        from lyricsee_core import HttpClient, fetch_lrclib_candidate, probe_audio
+        from lyricsee_core import TrackIdentity, probe_audio
     except ModuleNotFoundError:  # pragma: no cover - package import style
-        from lyricsee.lyricsee_core import HttpClient, fetch_lrclib_candidate, probe_audio
+        from lyricsee.lyricsee_core import TrackIdentity, probe_audio
+    if audio:
+        return probe_audio(Path(audio))
+    title = str(payload.get("title") or "").strip()
+    return TrackIdentity(title=title, artist=str(payload.get("artist") or "").strip()) if title else None
+
+
+def _fetch_timed_lines(identity) -> list[str] | None:
+    """Lyric lines of the LRCLIB match for ``identity`` (one request, at least FETCH_GAP_SECONDS after the last); None when there is none."""
+    import time
+
     try:
-        candidate = fetch_lrclib_candidate(probe_audio(Path(audio)), HttpClient())
+        from lyricsee_core import HttpClient, fetch_lrclib_candidate
+    except ModuleNotFoundError:  # pragma: no cover - package import style
+        from lyricsee.lyricsee_core import HttpClient, fetch_lrclib_candidate
+    if identity is None:
+        return None
+    wait = _last_fetch[0] + FETCH_GAP_SECONDS - time.monotonic()
+    if wait > 0:
+        time.sleep(wait)
+    _last_fetch[0] = time.monotonic()
+    try:
+        candidate = fetch_lrclib_candidate(identity, HttpClient())
     except Exception:
         return None
     return [row.original for row in candidate.lines if row.original.strip()]
 
 
-def reflag_existing(output_root, stem: str, sidecar_dir=None, audio=None) -> dict:
+def _atomic_write(path, text: str) -> None:
+    import os
+    from pathlib import Path
+
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
+    os.replace(tmp, path)
+
+
+def _check_stem(stem: str) -> None:
+    if not stem or "/" in stem or "\\" in stem or stem in {".", ".."}:
+        raise ValueError(f"not a song stem: {stem!r}")
+
+
+def reflag_existing(output_root, stem: str, sidecar_dir=None, audio=None, *, lrclib: bool = True) -> dict:
     """Add paren_flags to an existing song output from its lyrics file and saved sources.json.
 
-    Saved diff rows only list real differences, so a block whose lines the timed
-    source lacks can read as a mere notation difference; give ``audio`` to compare
-    against the LRCLIB lines themselves (one request) as a new run does.  With
-    ``sidecar_dir`` also writes ``<audio stem>.paren_flags.json`` there, the file the
+    The flags are computed from the bytes of ``txt/<stem>.lyrics.txt`` read now and
+    carry the hash of exactly those bytes.  By default the song's LRCLIB lines are
+    fetched (one request, only when the lyrics contain a parenthesized block; the
+    audio's tags are used when ``audio`` is given, else the title/artist in
+    sources.json).  ``lrclib=False``, or a failed fetch, falls back to the saved diff
+    rows of sources.json, which cannot decide most blocks (they become ``unconfirmed``).
+    With ``sidecar_dir`` also writes ``<stem>.paren_flags.json`` there, a file the
     Review page reads when it sits beside the audio.
     """
     import json
     from pathlib import Path
 
+    _check_stem(stem)
     root = Path(output_root)
     txt = root / "txt" / f"{stem}.lyrics.txt"
     prov = root / "report" / f"{stem}.sources.json"
     payload = json.loads(prov.read_text(encoding="utf-8"))
     cross = (payload.get("verification") or {}).get("cross_sources") or []
-    timed = _fetch_timed_lines(audio) if audio else None
-    flags = flags_for_lyrics_text(txt.read_text(encoding="utf-8"), timed_lines=timed, cross_sources=cross)
+    raw = txt.read_bytes()
+    text = raw.decode("utf-8-sig")
+    timed = None
+    if lrclib and detect_blocks([original_of(line) for line in text.splitlines()]):
+        timed = _fetch_timed_lines(_identity(audio, payload))
+    flags = flags_for_lyrics_text(text, timed_lines=timed, cross_sources=cross)
+    flags["txt_sha256"] = text_sha256(raw)
     payload["paren_flags"] = flags
-    prov.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    _atomic_write(prov, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
     if sidecar_dir is not None:
-        side = {"txt_sha256": payload.get("txt_sha256", ""), "paren_flags": flags}
-        name = Path(audio).stem if audio else stem
-        (Path(sidecar_dir) / f"{name}.paren_flags.json").write_text(
-            json.dumps(side, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        side = {"txt_sha256": flags["txt_sha256"], "paren_flags": flags}
+        _atomic_write(Path(sidecar_dir) / f"{stem}.paren_flags.json", json.dumps(side, ensure_ascii=False, indent=2) + "\n")
     return flags
+
+
+def find_audio(audio_dir, stem: str):
+    """The one audio file in ``audio_dir`` whose stem is exactly ``stem``; ValueError for none or several."""
+    from pathlib import Path
+
+    matches = [p for p in sorted(Path(audio_dir).iterdir()) if p.stem == stem and p.suffix.casefold() in AUDIO_SUFFIXES]
+    if len(matches) != 1:
+        raise ValueError(f"{len(matches)} audio files named {stem!r} in {audio_dir}")
+    return matches[0]
 
 
 def main(argv: list[str] | None = None) -> int:
     import argparse
     import json
-    from pathlib import Path
+    import sys
 
     parser = argparse.ArgumentParser(description="Add paren_flags to existing lyricsee outputs.")
     parser.add_argument("output_root")
     parser.add_argument("stems", nargs="+")
-    parser.add_argument("--audio-dir", help="fetch each song's LRCLIB lines (audio whose name ends with the stem) instead of using saved diffs")
-    parser.add_argument("--sidecar-dir", help="also write <audio stem>.paren_flags.json here (beside the audio)")
+    parser.add_argument("--audio-dir", help="read each song's tags from the audio file named exactly <stem> here (else title/artist from sources.json)")
+    parser.add_argument("--sidecar-dir", help="also write <stem>.paren_flags.json here (beside the audio)")
+    parser.add_argument("--offline", action="store_true", help="do not fetch LRCLIB; use the saved diff rows (most blocks stay unconfirmed)")
     args = parser.parse_args(argv)
+    try:
+        sys.stdout.reconfigure(errors="backslashreplace")
+        sys.stderr.reconfigure(errors="backslashreplace")
+    except (AttributeError, OSError):
+        pass
+    failed = 0
     for stem in args.stems:
-        audio = None
-        if args.audio_dir:
-            audio = next((p for p in sorted(Path(args.audio_dir).iterdir())
-                          if p.stem.endswith(stem) and p.suffix.casefold() in {".flac", ".mp3", ".m4a", ".wav", ".ogg", ".opus"}), None)
-        flags = reflag_existing(args.output_root, stem, args.sidecar_dir, audio)
+        try:
+            audio = find_audio(args.audio_dir, stem) if args.audio_dir else None
+            flags = reflag_existing(args.output_root, stem, args.sidecar_dir, audio, lrclib=not args.offline)
+        except (ValueError, OSError) as exc:
+            failed += 1
+            print(json.dumps({"stem": stem, "error": str(exc)}, ensure_ascii=False))
+            continue
         print(json.dumps({"stem": stem, **{k: flags[k] for k in ("basis", "block_count", "line_count")}}, ensure_ascii=False))
-    return 0
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
