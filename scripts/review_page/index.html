@@ -14,7 +14,7 @@ button:hover:not(:disabled){background:var(--panel-3);border-color:var(--line-2)
 .num{font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-variant-numeric:tabular-nums}
 .glass{background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:0 12px 40px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.05);backdrop-filter:blur(18px) saturate(1.3);-webkit-backdrop-filter:blur(18px) saturate(1.3)}
 header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--line);background:rgba(12,15,26,.7);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);position:sticky;top:0;z-index:2}
-header .song-name{font-weight:600;font-size:15px;max-width:34vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}header .risk{padding:2px 8px;border-radius:999px;background:rgba(255,99,71,.22);color:#ffb4a2;font-size:12px;white-space:nowrap}header .spacer{flex:1}.sanity-tag{margin-left:6px;padding:0 6px;border-radius:999px;background:rgba(255,184,77,.2);color:#ffcf8a;font-size:11px;white-space:nowrap}.muted{color:var(--fg-3)}.paren-tag{margin-left:6px;padding:0 6px;border-radius:999px;border:1px solid rgba(255,255,255,.14);color:var(--fg-3);font-size:11px;font-weight:400;white-space:nowrap;vertical-align:middle}
+header .song-name{font-weight:600;font-size:15px;max-width:34vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}header .risk{padding:2px 8px;border-radius:999px;background:rgba(255,99,71,.22);color:#ffb4a2;font-size:12px;white-space:nowrap}header .spacer{flex:1}.sanity-tag{margin-left:6px;padding:0 6px;border-radius:999px;background:rgba(255,184,77,.2);color:#ffcf8a;font-size:11px;white-space:nowrap}.muted{color:var(--fg-3)}.harm-chip{margin-left:6px;padding:0 6px;border-radius:999px;border:1px solid rgba(255,255,255,.14);background:transparent;color:var(--fg-3);font:inherit;font-size:11px;font-weight:400;line-height:1.5;white-space:nowrap;vertical-align:middle;cursor:pointer}.harm-chip:hover{color:var(--fg-2);border-color:rgba(255,255,255,.3)}#harm-toggle[aria-pressed="true"]{background:rgba(120,170,255,.22);color:#cfe0ff}.paren-tag{margin-left:6px;padding:0 6px;border-radius:999px;border:1px solid rgba(255,255,255,.14);color:var(--fg-3);font-size:11px;font-weight:400;white-space:nowrap;vertical-align:middle}
 .vol{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--fg-2)}.vol button{padding:4px 8px;min-width:34px}.vol input{width:110px;accent-color:var(--accent-2);cursor:pointer}.vol .num{min-width:64px;text-align:right;font-family:ui-monospace,Consolas,monospace}
 .tile{display:flex;align-items:center;gap:8px;padding:4px 10px;border-radius:10px;background:var(--panel-2);border:1px solid var(--line)}
 .tile .lbl{font-size:11px;color:var(--fg-3);letter-spacing:.04em}.tile .val{font-size:16px;font-weight:600}
@@ -124,6 +124,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   <span id="server-mode" class="muted"></span>
   <span class="vol" id="vol-box" title="音量 0 ～ −100 dB（滾輪 ±1 dB，M 靜音）"><button id="vol-mute" title="靜音">🔊</button><input id="vol" type="range" min="0" max="1000" step="1" value="1000" aria-label="音量（dB）"><span class="num" id="vol-text">0.0 dB</span></span>
   <button id="mode">音源: FLAC</button>
+  <button id="harm-toggle" type="button" hidden aria-pressed="false" title="只播放和聲軌（同一條時間軸，位置不變）">只聽和聲軌</button>
   <button id="save">儲存 <span class="num">Ctrl+S</span></button>
   <span class="export-wrap"><button id="export" title="把目前的 LRC 寫進音檔的歌詞標籤">匯出到音檔 <span class="num">Ctrl+Shift+S</span></button>
     <span id="export-badge" class="export-badge" role="status" aria-live="polite" hidden><span id="export-badge-text"></span><button type="button" id="export-badge-close" aria-label="關閉" hidden>✕</button></span></span>
@@ -212,7 +213,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   const token = new URLSearchParams(location.search).get('t') || new URLSearchParams(location.hash.slice(1)).get('t');
   const queue = document.getElementById('queue');
   const status = document.getElementById('status');
-  const state = {songs:[], rows:[], edits:new Map(), peaks:new Map(), decoded:new Map(), done:new Set(), dirty:false, selected:0, activeSong:null, showUnreachable:false, showDone:true, showLow:false, showAll:true, autoplay:true, batchSkip:true, mode:'flac', details:false, importEnabled:false, imports:[], jobs:[], jobsSeen:new Set(), player:{audio:new Map(), handlers:new Map(), seq:0, timer:null, active:null, ab:null}, error:'', notice:'', portNotice:'', exporting:false, exportIndex:null};
+  const state = {songs:[], rows:[], edits:new Map(), peaks:new Map(), decoded:new Map(), done:new Set(), dirty:false, selected:0, activeSong:null, showUnreachable:false, showDone:true, showLow:false, showAll:true, autoplay:true, batchSkip:true, mode:'flac', harmony:false, details:false, importEnabled:false, imports:[], jobs:[], jobsSeen:new Set(), player:{audio:new Map(), handlers:new Map(), seq:0, timer:null, active:null, ab:null}, error:'', notice:'', portNotice:'', exporting:false, exportIndex:null};
   const api = async (path, options={}) => {
     const headers = Object.assign({'X-Review-Token':token}, options.body ? {'Content-Type':'application/json'} : {}, options.headers || {});
     // A read that nobody answers must not hang the page: give up after a minute (a rescan on the server holds /api/version that long at most).
@@ -806,11 +807,13 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     playbar('');
   }
   // No FLAC beside this song: play the vocal stem instead of refusing.
-  const modeFor = song => (state.mode === 'flac' && song && !song.has_flac && song.has_stem) ? 'stem' : state.mode;
+  const modeFor = song => (state.harmony && song && song.has_harmony) ? 'harm' : (state.mode === 'flac' && song && !song.has_flac && song.has_stem) ? 'stem' : state.mode;
+  const kindAvailable = (song, kind) => kind === 'harm' ? !!song.has_harmony : kind === 'stem' ? song.has_stem : song.has_flac;
+  const kindName = kind => kind === 'harm' ? '和聲' : kind === 'stem' ? '人聲' : 'FLAC';
   async function playAround(item, targetCs, kind=null) {
     if (!item || targetCs == null) return;
     kind = kind || modeFor(item.song);
-    const available = kind === 'stem' ? item.song.has_stem : item.song.has_flac;
+    const available = kindAvailable(item.song, kind);
     if (!available) { state.error = kind.toUpperCase() + ' audio is unavailable for this song'; render(); return; }
     stopPlayer();
     const seq = state.player.seq;
@@ -828,7 +831,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       if (!active()) return;
       bindAudio(audio, [{type:'timeupdate', fn:check}, {type:'ended', fn:() => finishClip(audio, seq)}, {type:'error', fn:fail}]);
       state.player.active = audio;
-      playbar('播放 ' + (kind === 'stem' ? '人聲' : 'FLAC') + ' · ' + time(targetCs) + ' 起 2 秒');
+      playbar('播放 ' + kindName(kind) + ' · ' + time(targetCs) + ' 起 2 秒');
       Promise.resolve(audio.play()).catch(() => { if (active()) playbackFailure('audio playback was blocked'); });
       state.player.timer = setTimeout(check, 2250);
     };
@@ -838,7 +841,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   function playAB(item, candidate) {
     if (!item || !candidate || candidate.cs == null || candidate.diagnostic_only || item.row.current_cs == null) return;
     const kind = modeFor(item.song);
-    const available = kind === 'stem' ? item.song.has_stem : item.song.has_flac;
+    const available = kindAvailable(item.song, kind);
     if (!available) { state.error = kind.toUpperCase() + ' audio is unavailable for this song'; render(); return; }
     stopPlayer();
     const seq = state.player.seq;
@@ -1304,9 +1307,13 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     document.getElementById('save').title = state.dirty ? '' : '沒有改動，不需要儲存';
     document.getElementById('server-mode').textContent = globalReadOnly ? 'server read-only' : '';
     const shownSong = state.songs.find(song => song.index === state.activeSong) || null;
-    document.getElementById('mode').textContent = '音源: ' + (modeFor(shownSong) === 'stem' ? (state.mode === 'flac' ? '人聲（找不到 FLAC）' : '人聲') : 'FLAC');
+    document.getElementById('mode').textContent = '音源: ' + (modeFor(shownSong) === 'harm' ? '和聲軌' : modeFor(shownSong) === 'stem' ? (state.mode === 'flac' ? '人聲（找不到 FLAC）' : '人聲') : 'FLAC');
+    const harmToggle = document.getElementById('harm-toggle');
+    harmToggle.hidden = !(shownSong && shownSong.has_harmony);
+    harmToggle.setAttribute?.('aria-pressed', String(!!state.harmony && !harmToggle.hidden));
   }
   const PAREN_TIPS = {'official-only':'official-only：官方歌詞網站有這段括號，聽得到的版本（LRCLIB）沒有', 'unconfirmed':'unconfirmed：官方歌詞的括號區塊，沒有可比對的來源'};
+  const harmChip = row => row.harmony_cand_cs != null ? ' <button type="button" class="harm-chip" title="跳到和聲軌上找到的起點並試聽；不會改這句的時間">和聲候選 ' + time(row.harmony_cand_cs) + '</button>' : '';
   const parenTag = row => row.paren_flag ? ' <span class="paren-tag" title="' + esc(PAREN_TIPS[row.paren_flag] || row.paren_flag) + '">可能沒唱（括號）</span>' : '';
   function rowElement(item) {
     const song = item.song, row = item.row, edit = editFor(item), chosen = working(item), div = document.createElement('article');
@@ -1348,15 +1355,15 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     const showWave = song.has_stem || song.has_flac;
     div.innerHTML = '<div class="meta"><span class="num">#' + row.entry + '</span><span>·</span><span class="num">目前 ' + time(chosen) + '</span>' +
       (edit?.del ? '<span class="pill">待刪除</span>' : edit ? '<span class="pill num">原 ' + time(row.current_cs) + '</span>' : '') + (isDone(item) ? '<span class="pill">已確認</span>' : '') + '</div>' +
-      '<div class="lyric">' + (lyrics || '<span class="muted">no lyric text</span>') + parenTag(row) + '</div>' +
+      '<div class="lyric">' + (lyrics || '<span class="muted">no lyric text</span>') + parenTag(row) + (song.has_harmony ? harmChip(row) : '') + '</div>' +
       romajiMarkup(item) +
       '<div class="why' + (whyKind === 'detected' ? '' : whyKind === 'unconfirmed' ? ' unconfirmed' : ' ok') + '"><span class="ic">' + (whyKind === 'detected' ? '!' : whyKind === 'unconfirmed' ? '?' : '✓') + '</span><span><span class="kind">' + whyLabel + '</span>' + esc(sentence) + '</span></div>' +
       (ordering ? '<div class="order-warning">注意：目前時間超出前後句的順序。</div>' : '') +
       (conflict ? '<div class="order-warning">conflict: 這筆時間在暫存後被改過，請重新選一個選項或按 U。</div>' : '') +
       (showWave ? '<div class="wavebox"><span class="wavenote">' + (song.has_stem ? '人聲 stem' : 'FLAC') + ' · ±3 秒 · 拖曳可微調</span></div>' : '') +
       '<div class="options">' + (optionMarkup || '<span class="muted">no candidates</span>') + '</div>' +
-      '<div class="actions"><button type="button" class="play" data-kind="' + modeFor(song) + '"' + ((modeFor(song) === 'stem' ? song.has_stem : song.has_flac) ? '' : ' disabled') + '>▶ 播放 <span class="num">空白</span></button>' +
-      '<button type="button" class="ab-play"' + (selectedCandidate && (modeFor(song) === 'stem' ? song.has_stem : song.has_flac) ? '' : ' disabled') + ' aria-label="alternate current and selected candidate">A/B</button>' +
+      '<div class="actions"><button type="button" class="play" data-kind="' + modeFor(song) + '"' + (kindAvailable(song, modeFor(song)) ? '' : ' disabled') + '>▶ 播放 <span class="num">空白</span></button>' +
+      '<button type="button" class="ab-play"' + (selectedCandidate && kindAvailable(song, modeFor(song)) ? '' : ' disabled') + ' aria-label="alternate current and selected candidate">A/B</button>' +
       '<span class="nudge"><button type="button" class="nudge-button" data-delta="-10"' + (canEdit ? '' : ' disabled') + ' aria-label="move timestamp earlier by 0.1 seconds">−0.1</button>' + (visible()[state.selected] === item && canEdit ? '<input type="text" class="time-input num" inputmode="decimal" autocomplete="off" spellcheck="false" value="' + time(chosen) + '" aria-label="timestamp; type mm:ss.xx or +0.1 then Enter">' : '<span class="num">' + time(chosen) + '</span>') + '<button type="button" class="nudge-button" data-delta="10"' + (canEdit ? '' : ' disabled') + ' aria-label="move timestamp later by 0.1 seconds">+0.1</button></span><span class="time-hint" role="alert"></span>' +
       '<button type="button" class="primary accept"' + (canEdit && !edit?.del ? '' : ' disabled') + '>接受，下一筆 <span class="num">Enter</span></button>' +
       '<button type="button" class="keep-next"' + (edit?.del ? ' disabled' : '') + '>維持 <span class="num">K</span></button>' +
@@ -1368,6 +1375,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       details;
     div.addEventListener('click', () => { select(item); render(); });
     div.querySelectorAll('.option').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); button.blur(); pickOption(item, options[Number(button.dataset.option)]); }));
+    div.querySelectorAll('.harm-chip').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); button.blur(); playAround(item, row.harmony_cand_cs, 'harm'); }));
     div.querySelectorAll('.play').forEach(button => button.addEventListener('click', event => { event.stopPropagation(); button.blur(); playAround(item, working(item), button.dataset.kind); }));
     div.querySelectorAll('.candidate-play').forEach(button => button.addEventListener('click', event => {
       event.stopPropagation(); button.blur(); const list = button.dataset.candidateList === 'extra' ? extraCandidates : candidates; const candidate = list[Number(button.dataset.candidate)]; if (candidate) playAround(item, candidate.cs);
@@ -1513,7 +1521,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
         finally { fetched++; busy.update('load', '載入中… ' + fetched + '/' + list.length + ' 首'); }
       }));
       if (list.length && failedDetails === list.length) throw Error('伺服器沒有回應');
-      state.songs = list.map((song,i) => Object.assign({}, song, {has_flac:details[i].has_flac, has_stem:details[i].has_stem, detail:details[i]}));
+      state.songs = list.map((song,i) => Object.assign({}, song, {has_flac:details[i].has_flac, has_stem:details[i].has_stem, has_harmony:!!details[i].has_harmony, detail:details[i]}));
       state.rows = [];
       state.songs.forEach(song => (song.detail.rows || []).forEach(row => state.rows.push({song,row})));
       state.rows.sort((a,b) => a.song.index - b.song.index || a.row.entry - b.row.entry);
@@ -1753,7 +1761,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     const at = state.songs.findIndex(item => item.index === index);
     if (at < 0) return load();
     flushDraft();  // whatever is staged reaches the drafts before anything can drop it
-    state.songs[at] = Object.assign({}, state.songs[at], meta, {has_flac:detail.has_flac, has_stem:detail.has_stem, detail});
+    state.songs[at] = Object.assign({}, state.songs[at], meta, {has_flac:detail.has_flac, has_stem:detail.has_stem, has_harmony:!!detail.has_harmony, detail});
     const song = state.songs[at];
     state.rows = state.rows.filter(item => item.song.index !== index);
     (detail.rows || []).forEach(row => state.rows.push({song, row}));
@@ -1831,6 +1839,14 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   document.getElementById('show-low').addEventListener('change', event => { state.showLow = event.target.checked; saveSettings(); state.selected = 0; render(); });
   document.getElementById('batch-skip').checked = state.batchSkip;
   document.getElementById('batch-skip').addEventListener('change', event => { state.batchSkip = event.target.checked; saveSettings(); render(); });
+  document.getElementById('harm-toggle').addEventListener('click', event => {
+    event.currentTarget.blur();
+    const playing = state.player.active && !state.player.active.paused ? state.player.active.currentTime : null;
+    const item = visible()[state.selected] || null;
+    state.harmony = !state.harmony;
+    if (playing != null && item) { render(); playAround(item, playing * 100); return; }   // same position on the other track
+    stopPlayer(); render();
+  });
   document.getElementById('mode').addEventListener('click', event => { event.currentTarget.blur(); stopPlayer(); state.mode = state.mode === 'flac' ? 'stem' : 'flac'; render(); });
   document.getElementById('help-button').addEventListener('click', () => { document.getElementById('help').hidden = false; });
   document.getElementById('help-close').addEventListener('click', () => { document.getElementById('help').hidden = true; });
@@ -2081,7 +2097,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       const old = new Map(state.songs.map(song => [song.index, song]));
       state.songs = list.map(song => {
         const at = touched.indexOf(song.index), detail = at >= 0 ? details[at] : old.get(song.index).detail;
-        return Object.assign({}, song, {has_flac:detail.has_flac, has_stem:detail.has_stem, detail});
+        return Object.assign({}, song, {has_flac:detail.has_flac, has_stem:detail.has_stem, has_harmony:!!detail.has_harmony, detail});
       });
       state.rows = [];
       state.songs.forEach(song => (song.detail.rows || []).forEach(row => state.rows.push({song,row})));

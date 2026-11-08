@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 
 import lrc_review_tsv
 import lyrics_tag_export
+import harmony_candidates
 import paren_flag_marks
 import review_hot_update
 import review_presentation
@@ -1005,6 +1006,20 @@ def _apply_paren_marks(song):
         rows[index]["paren_flag"] = klass
 
 
+def _apply_harmony(song, hashes):
+    """Information only: add the harmony-stem start of paren lyric lines (sidecar from scripts/harmony_candidates.py) and the stem's path."""
+    rows = song.get("rows") or []
+    if not rows or not song.get("audio_path"):
+        return
+    found = harmony_candidates.load(song["audio_path"], hashes, len(rows), [pathlib.Path(song["report"]).parent])
+    if not found:
+        return
+    song["harmony_audio_path"] = found["harmony_audio"]
+    song["has_harmony"] = True
+    for entry, cs in found["lines"].items():
+        rows[entry - 1]["harmony_cand_cs"] = cs
+
+
 def _apply_romaji(song):
     """Set each row's romaji and its source (手動 / 歌詞標音 / 字典 / 自動) from the per-song overrides, the source furigana and the shared dictionary.
 
@@ -1203,6 +1218,8 @@ def _song_payload(report_path, report, anchor=None):
         "ctc_audio_path": str(report.get("ctc_audio_path", "")),
         "has_flac": _path_is_file(report.get("audio_path")),
         "has_stem": _path_is_file(report.get("ctc_audio_path")),
+        "has_harmony": False,
+        "harmony_audio_path": "",
         "output_path": str(output_path) if output_path else "",
         "base_sha256": _sha256_bytes(current_raw),
         "duration_seconds": _number(report.get("duration_seconds")) or 0.0,
@@ -1215,6 +1232,7 @@ def _song_payload(report_path, report, anchor=None):
         "anchor": str(anchor) if anchor else None,
     }
     _apply_paren_marks(payload)
+    _apply_harmony(payload, {_sha256_bytes(current_raw), _sha256_bytes(reference_raw)} if current_raw else ())
     _apply_romaji(payload)
     return payload
 
@@ -2062,7 +2080,7 @@ def _folder_file_matters(name):
 _OWN_LOGS = {"export.log", "export-log.jsonl"}  # written by the server itself; never a reason to refresh
 # Sidecars the server writes beside a song (first save, every save, every decision): each belongs to its song (see _song_files),
 # so a folder listing must not count them as unknown files - that made the first save after a poll rescan every report.
-_SIDECAR_SUFFIXES = (".auto.lrc", ".review-edits.json", ".review-decisions.jsonl", ".paren_flags.json")
+_SIDECAR_SUFFIXES = (".auto.lrc", ".review-edits.json", ".review-decisions.jsonl", ".paren_flags.json", ".harmony_cands.json")
 
 
 def _song_sidecars(song):
@@ -2074,6 +2092,7 @@ def _song_sidecars(song):
     if song.get("audio_path"):  # lyricsee's optional flag file beside the audio
         audio = pathlib.Path(song["audio_path"])
         keys.append(str(audio.with_name(audio.stem + ".paren_flags.json")))
+        keys.append(str(audio.with_name(audio.stem + ".harmony_cands.json")))
     return keys
 
 
@@ -2581,7 +2600,7 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
         if match:
             self._serve_peaks(int(match.group(1)), parsed.query)
             return
-        match = re.fullmatch(r"/audio/(\d+)/(flac|stem)", parsed.path)
+        match = re.fullmatch(r"/audio/(\d+)/(flac|stem|harm)", parsed.path)
         if match:
             self._serve_audio(int(match.group(1)), match.group(2), parsed.query, False)
             return
@@ -2591,7 +2610,7 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
         if not self._check_host():
             return
         parsed = urllib.parse.urlsplit(self.path)
-        match = re.fullmatch(r"/audio/(\d+)/(flac|stem)", parsed.path)
+        match = re.fullmatch(r"/audio/(\d+)/(flac|stem|harm)", parsed.path)
         if match:
             self._serve_audio(int(match.group(1)), match.group(2), parsed.query, True)
             return
@@ -2712,7 +2731,10 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
         if song is None:
             self._send(404, b"not found\n", "text/plain; charset=utf-8", head=head)
             return
-        raw = pathlib.Path(song["audio_path"] if kind == "flac" else song["ctc_audio_path"])
+        raw = pathlib.Path({"flac": song["audio_path"], "stem": song["ctc_audio_path"], "harm": song.get("harmony_audio_path") or ""}[kind])
+        if kind == "harm" and not song.get("has_harmony"):
+            self._send(404, b"not found\n", "text/plain; charset=utf-8", head=head)
+            return
         if not raw.is_file():
             self._send(404, b"not found\n", "text/plain; charset=utf-8", head=head)
             return
