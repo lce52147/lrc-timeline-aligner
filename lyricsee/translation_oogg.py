@@ -18,6 +18,56 @@ def _validate_texts(original: list[str], translated: list[str]) -> list[str]:
         valid.append(out)
     return valid
 
+def translate_oogg_line(source: str, *, title: str, endpoint: str, model: str, post_json=None) -> str:
+    """One lyric line, minimal prompt, no neighbouring lines: the repair path for a context-bleed translation."""
+    from lyricsee_core import HttpClient, _parse_model_json
+    if post_json is None:
+        post_json = HttpClient().post_json
+    request = {
+        "model": model, "temperature": 0, "max_tokens": 300,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": (
+                '只翻譯這一句日文或英文為繁體中文。'
+                '只輸出JSON：{"text":"翻譯"}。'
+                '不得輸出其他行、解釋、行號或原文。')},
+            {"role": "user", "content": json.dumps({"translate_this_line_only": source}, ensure_ascii=False)},
+        ],
+    }
+    for _ in range(3):
+        for attempt in range(4):
+            try:
+                response = post_json(endpoint.rstrip("/") + "/v1/chat/completions", request, 300)
+                break
+            except HTTPError as exc:
+                if exc.code != 503 or attempt == 3:
+                    raise
+                import time
+                time.sleep((2, 3, 5)[attempt])
+        try:
+            parsed = _parse_model_json(response)
+            if set(parsed) != {"text"} or not isinstance(parsed["text"], str):
+                continue
+            value = _validate_texts([source], [parsed["text"]])[0]
+        except ValueError:
+            continue
+        if "__UNSURE__" not in value.upper():
+            return value
+    raise ValueError("no valid one-line translation")
+
+
+def _repair_bleed(original: list[str], translated: list[str], line_fn) -> list[str]:
+    """Re-translate every line whose translation repeats a neighbour's, one line at a time, then keep the result."""
+    from lyrics_qa import find_bleed
+    translated = list(translated)
+    for issue in find_bleed(list(zip(original, translated))):
+        try:
+            translated[issue.line - 1] = line_fn(original[issue.line - 1])
+        except Exception:
+            pass
+    return translated
+
+
 def translate_oogg(original: list[str], *,
                    title: str,
                    endpoint: str="http://127.0.0.1:6969",
@@ -160,6 +210,13 @@ def translate_oogg(original: list[str], *,
             ) from exc
     if [r.original for r in pairs]!=original:
         raise RuntimeError("LLM unexpectedly changed original lyric rows")
+    # The batch prompt carries neighbouring lines as context and a small model sometimes translates them too.
+    from lyricsee_core import LyricPair as _Pair
+    repaired=_repair_bleed(
+        original,[r.translation or "" for r in pairs],
+        lambda line: translate_oogg_line(line,title=title,endpoint=endpoint,model=model,post_json=post_with_wake_retry),
+    )
+    pairs=[_Pair(r.original,t) for r,t in zip(pairs,repaired)]
     if not review:
         return _validate_texts(original,[r.translation or "" for r in pairs])
     reviewed=review_translations_with_local_llm(

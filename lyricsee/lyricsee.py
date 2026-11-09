@@ -461,6 +461,20 @@ def _maybe_reprobe_oogg(
         print(f"OOGG back online: {target.endpoint}", file=sys.stderr)
 
 
+def _line_retranslator(client: HttpClient, endpoints: tuple[str, ...], endpoint: str, title: str):
+    """original line -> translation through whichever OOGG host is up (the one used for the song first), no context."""
+    def retranslate(line: str) -> str:
+        from translation_oogg import translate_oogg_line
+        target = _select_oogg_endpoint(client, endpoints)
+        host = target.endpoint if target else endpoint
+        model = target.model if target else None
+        if model is None:
+            payload = client.get_json(host.rstrip("/") + "/v1/models")
+            model = str(payload["data"][0]["id"])
+        return translate_oogg_line(line, title=title, endpoint=host, model=model)
+    return retranslate
+
+
 def _process_track(
     index: int,
     audio_path: Path,
@@ -681,6 +695,9 @@ def _process_track(
             validate_output(original, selected, require_translation=False)
             attach_verification(selected, evidence, translation_method="none")
 
+        qa_retranslate = None
+        if oogg_endpoint and translation_method != "none":
+            qa_retranslate = _line_retranslator(client, config.oogg_endpoints, oogg_endpoint, identity.title)
         selected.discovered_urls = list(collected.google_urls)
         selected.search_engine = search_engine
         selected.search_url = search_url
@@ -695,8 +712,11 @@ def _process_track(
             human_approved=False,
             oogg_endpoint=oogg_endpoint,
             timed_reference=[row.original for row in timed_candidate.lines if row.original.strip()] if timed_candidate else None,
+            qa_retranslate=qa_retranslate,
         )
-        paren_blocks = int((json.loads(provenance.read_text(encoding="utf-8")).get("paren_flags") or {}).get("block_count") or 0)
+        written = json.loads(provenance.read_text(encoding="utf-8"))
+        status = written.get("status") or status
+        paren_blocks = int((written.get("paren_flags") or {}).get("block_count") or 0)
         return _base_row(
             index,
             audio_path,

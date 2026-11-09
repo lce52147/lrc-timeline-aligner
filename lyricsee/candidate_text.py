@@ -57,6 +57,12 @@ def detect_language(lines: list[str]) -> str:
     return "en" if counts["latin"] >= counts["cjk"] else "zh"
 
 
+def _is_translator_note(line: str, lang: str) -> bool:
+    """A track-list row ('2.春を待つ') or a Chinese commentary line that quotes a few kana words."""
+    from lyrics_qa import is_note_line, is_track_row
+    return is_track_row(line) or is_note_line(line, lang)
+
+
 def clean_lyric_lines(lines: list[str], lang: str | None = None) -> list[str]:
     """Keep only the original-language lyric lines.
 
@@ -73,6 +79,8 @@ def clean_lyric_lines(lines: list[str], lang: str | None = None) -> list[str]:
         if _CREDIT_RE.match(line) or _HEADER_WORD_RE.search(line):
             continue
         if _SECTION_RE.match(line) and _SECTION_WORD_RE.search(line):
+            continue
+        if _is_translator_note(line, lang):
             continue
         kind = _line_kind(line)
         if lang == "ja" and kind != "kana":
@@ -169,7 +177,7 @@ def clean_original_lines(lines: list[str], lang: str | None = None) -> list[str]
             if kept and kept[-1]:
                 kept.append("")
             continue
-        if _FOOTNOTE_RE.match(line) or _is_page_noise(line):
+        if _FOOTNOTE_RE.match(line) or _is_page_noise(line) or _is_translator_note(line, lang):
             continue
         line = strip_annotations(line)
         if not line:

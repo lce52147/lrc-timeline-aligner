@@ -843,6 +843,7 @@ def write_result(
     human_approved: bool = False,
     oogg_endpoint: str = "",
     timed_reference: list[str] | None = None,
+    qa_retranslate=None,
 ) -> tuple[Path, Path]:
     audio_path = audio_path.resolve()
     output_root = Path(output_root)
@@ -855,7 +856,20 @@ def write_result(
     if provenance.exists() and not overwrite:
         raise FileExistsError(f"Refusing to overwrite existing provenance: {provenance}")
 
-    lyrics_text = render_lyrics(candidate.lines)
+    # QA gate: a translator's note / track-list row is never written, a bleed line is re-translated alone,
+    # and whatever still fails marks the song needs_review (never silently shipped).
+    from lyrics_qa import gate
+
+    kept_lines, qa_issues, qa_dropped = gate(
+        candidate.lines, reference_original=timed_reference, retranslate=qa_retranslate,
+        repair_weak=translation_method != "web", translated=translation_method not in ("", "none"),
+    )
+    if not kept_lines:
+        raise ValueError("No lyric lines left after the QA gate")
+    status_before_qa = status
+    if qa_issues or qa_dropped:
+        status = "needs_review"
+    lyrics_text = render_lyrics(kept_lines)
     verification = getattr(candidate, "verification", None) or {}
     try:
         paren_flags = flags_for_lyrics_text(
@@ -880,9 +894,9 @@ def write_result(
         "title": candidate.title,
         "artist": candidate.artist,
         "translator": candidate.translator,
-        "line_count": len(candidate.lines),
-        "translated_line_count": sum(bool(row.translation) for row in candidate.lines),
-        "translation_coverage": translation_coverage(candidate.lines),
+        "line_count": len(kept_lines),
+        "translated_line_count": sum(bool(row.translation) for row in kept_lines),
+        "translation_coverage": translation_coverage(kept_lines),
         "search_url": candidate.search_url,
         "search_engine": candidate.search_engine,
         "google_candidates": candidate.discovered_urls,
@@ -893,6 +907,10 @@ def write_result(
         "oogg_endpoint": oogg_endpoint,
         "paren_flags": paren_flags,
     }
+    if qa_issues or qa_dropped:
+        payload["status_before_qa"] = status_before_qa
+        payload["qa_issues"] = [issue.as_dict() for issue in qa_issues]
+        payload["qa_dropped_note_lines"] = [issue.as_dict() for issue in qa_dropped]
     provenance_text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
     _atomic_write_text(output, lyrics_text)
     _atomic_write_text(provenance, provenance_text)

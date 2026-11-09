@@ -16,6 +16,7 @@ from pathlib import Path
 
 from candidate_review import load_candidates_metadata
 from candidate_text import AGREE_SIM, char_similarity, fold
+from lyrics_qa import is_note_line, is_track_row
 
 MIN_POST_LINES = 6          # a dedicated post shorter than this is not trusted as a whole song
 MIN_POST_TRANSLATED = 0.7   # share of the post's rows that carry a translation
@@ -94,6 +95,8 @@ def extract_post_rows(document: str) -> list:
             continue
         if _looks_like_non_lyric_web_text(line) or _POST_CREDIT_RE.match(line):
             kinds.append(("X", line))
+        elif is_track_row(line) or is_note_line(line):
+            continue    # a translator's commentary or a track-list row: never a lyric row, and it breaks no run
         elif _KANA.search(line) and (
             len(line) <= 40 or len(_KANA.findall(line)) >= 0.2 * (len(_KANA.findall(line)) + len(_HAN.findall(line)))
         ):
@@ -280,13 +283,15 @@ def original_column(line: str) -> str:
     return line.split("  ", 1)[0].strip()
 
 
-def apply_post_translation(out: Path, stem: str, *, oogg_fill=None) -> dict:
+def apply_post_translation(out: Path, stem: str, *, oogg_fill=None, retranslate=None) -> dict:
     """Rewrite txt/<stem>.lyrics.txt with the human translation of a matching post.
 
-    oogg_fill(lines) -> list[str] translates the lines the post did not cover. Returns a status dict;
-    status 'no_post' leaves the file untouched.
+    oogg_fill(lines) -> list[str] translates the lines the post did not cover. retranslate(line) -> str repairs a
+    bleed line alone, without context. The QA gate drops note / track-list rows and records what still fails as
+    qa_issues with status needs_review. Returns a status dict; status 'no_post' leaves the file untouched.
     """
     from lyricsee_core import LyricPair, render_lyrics
+    from lyrics_qa import gate
 
     txt = out / "txt" / f"{stem}.lyrics.txt"
     if not txt.exists():
@@ -305,7 +310,11 @@ def apply_post_translation(out: Path, stem: str, *, oogg_fill=None) -> dict:
         for i, value in zip(missing, filled):
             translations[i] = value
         method = "page_human+oogg_fill"
-    text = render_lyrics([LyricPair(o, t) for o, t in zip(lines, translations)])
+    kept, qa_issues, qa_dropped = gate(
+        [LyricPair(o, t) for o, t in zip(lines, translations)],
+        retranslate=retranslate, repair_weak=False,
+    )
+    text = render_lyrics(kept)
     txt.write_text(text, encoding="utf-8", newline="\n")
     sources = out / "report" / f"{stem}.sources.json"
     payload = json.loads(sources.read_text(encoding="utf-8")) if sources.exists() else {}
@@ -318,11 +327,18 @@ def apply_post_translation(out: Path, stem: str, *, oogg_fill=None) -> dict:
         "translation_lines_from_page": post["covered"],
         "translation_lines_oogg": len(missing),
     })
+    if qa_issues or qa_dropped:
+        payload["status"] = "needs_review"
+        payload["qa_issues"] = [issue.as_dict() for issue in qa_issues]
+        payload["qa_dropped_note_lines"] = [issue.as_dict() for issue in qa_dropped]
+    else:
+        payload.pop("qa_issues", None)
     sources.parent.mkdir(parents=True, exist_ok=True)
     sources.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return {
         "stem": stem, "status": "applied", "translation_method": method, "url": post["url"],
-        "author": post["author"], "lines": len(lines), "from_page": post["covered"], "oogg": len(missing),
+        "author": post["author"], "lines": len(kept), "from_page": post["covered"], "oogg": len(missing),
+        "qa_issues": len(qa_issues), "qa_dropped": len(qa_dropped),
     }
 
 
@@ -330,6 +346,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
     out = Path(args.out)
     stems = args.stem or sorted(p.name[: -len(".lyrics.txt")] for p in (out / "txt").glob("*.lyrics.txt"))
     oogg_fill = None
+    retranslate = None
     if args.oogg:
         from lyricsee import DEFAULT_OOGG_ENDPOINTS, _select_oogg_endpoint
         from lyricsee_core import HttpClient
@@ -339,7 +356,11 @@ def cmd_apply(args: argparse.Namespace) -> int:
         if target:
             def oogg_fill(rows, _t=target):  # noqa: E306
                 return translate_oogg(rows, title="", endpoint=_t.endpoint, model=_t.model, review=False)
-    results = [apply_post_translation(out, stem, oogg_fill=oogg_fill) for stem in stems]
+
+            def retranslate(line, _t=target):  # noqa: E306
+                from translation_oogg import translate_oogg_line
+                return translate_oogg_line(line, title="", endpoint=_t.endpoint, model=_t.model)
+    results = [apply_post_translation(out, stem, oogg_fill=oogg_fill, retranslate=retranslate) for stem in stems]
     for result in results:
         print(json.dumps(result, ensure_ascii=False), flush=True)
     return 0
