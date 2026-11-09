@@ -28,14 +28,17 @@ EXPECTED_SOURCE_FILES = (
     "ctc_refinement.py",
     "ctc_whisperx_refinement.py",
     "ctc_window_realign.py",
+    "hypothesis_provenance.py",
     "local_whisper_retry.py",
     "lyrics_io.py",
     "neutral_arbitration.py",
     "postcentral_recovery.py",
+    "recurrence_hypotheses.py",
     "report_trust.py",
     "runtime_base.py",
     "runtime_evidence_binding.py",
     "timing_core.py",
+    "vocal_onset_hypotheses.py",
 )
 
 
