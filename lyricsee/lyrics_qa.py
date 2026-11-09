@@ -38,7 +38,7 @@ _WEAK_MARKERS = ("個人", "个人", "意象", "註解", "注解", "補充", "�
 _CHINESE_FUNCTION = frozenset("的是也了在這这個个為为對对與与們们說说會会從从過过讓让還还沒没把被就都很")
 _HAN_RUN_RE = re.compile(r"[㐀-鿿]{8,}")
 _DICTIONARY_FRAME_RE = re.compile(
-    r"(?:ことをいいます|のことです|を指します|を意味|という意味|の意味|と表し|漢字で|を表す|状態のこと|ことを指す)")
+    r"(?:ことをいいます|のことです|を指します|を意味|という意味|の意味|と表し|漢字で|を表す|状態のこと|ことを指す|「[^」]*―[^」]*」)")
 _BRACKET_PAIR_RE = re.compile(r"【[^】]*】")
 _PAREN_RE = re.compile(r"[（(][^）)]*[）)]")
 _PUNCT_RE = re.compile(r"[\s\W_]+", re.UNICODE)
@@ -373,8 +373,8 @@ def _is_real_translation(original: str, translation: str) -> bool:
     """The translation column of a row whose original is a note still holds a lyric translation."""
     translation = (translation or "").strip()
     po, pt = _plain(original), _plain(translation)
-    if not pt or pt in po or po in pt or char_similarity(fold(original), fold(translation)) >= 0.8:
-        return False
+    if not pt or po in pt or (pt in po and len(pt) >= 0.6 * len(po)) or char_similarity(fold(original), fold(translation)) >= 0.8:
+        return False       # empty, or a copy of the note (a lyric the note merely quotes is still a lyric)
     return not (is_translation_note(translation) or has_commentary_frame(translation) or is_note_line(translation))
 
 

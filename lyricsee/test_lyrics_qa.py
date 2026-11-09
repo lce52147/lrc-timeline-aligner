@@ -34,7 +34,7 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(qa.check(rows()), [])
 
     def test_note_leak_chinese_commentary_in_original_column(self):
-        found = qa.check(rows(ORIG[:3] + [NOTE] + ORIG[3:], TRANS[:3] + ["說明"] + TRANS[3:]))
+        found = qa.check(rows(ORIG[:3] + [NOTE] + ORIG[3:], TRANS[:3] + [""] + TRANS[3:]))
         self.assertEqual(found_at(found, "note_leak"), [4])
 
     def test_note_leak_track_list_row(self):
@@ -114,7 +114,7 @@ class CheckTests(unittest.TestCase):
 
 class GateTests(unittest.TestCase):
     def test_gate_drops_note_rows_and_never_keeps_them(self):
-        pairs = [LyricPair(o, t) for o, t in rows(ORIG + [NOTE, "5.あるきょく", "6.べつのきょく"], TRANS + ["說明", "5.某曲", "6.另一曲"])]
+        pairs = [LyricPair(o, t) for o, t in rows(ORIG + [NOTE, "5.あるきょく", "6.べつのきょく"], TRANS + ["", "5.某曲", "6.另一曲"])]
         kept, issues, dropped = qa.gate(pairs)
         self.assertEqual([p.original for p in kept], ORIG)
         self.assertEqual(sorted(i.line for i in dropped), [9, 10, 11])
@@ -171,7 +171,7 @@ class WriteResultGateTests(unittest.TestCase):
         self.assertNotIn("qa_issues", payload)
 
     def test_note_row_is_not_written_and_song_needs_review(self):
-        lines = [LyricPair(o, t) for o, t in rows(ORIG + [NOTE], TRANS + ["說明"])]
+        lines = [LyricPair(o, t) for o, t in rows(ORIG + [NOTE], TRANS + [""])]
         text, payload = self.write(lines)
         self.assertNotIn("我認為", text)
         self.assertEqual(payload["status"], "needs_review")
@@ -328,6 +328,17 @@ class Fix1Tests(unittest.TestCase):
         kept, _, dropped = qa.gate([LyricPair(o, t) for o, t in rows(originals, translations)])
         self.assertEqual(len(kept), len(originals))
         self.assertEqual(dropped, [])
+
+    def test_original_note_quoting_the_lyric_translation_keeps_the_row(self):
+        note = "【憑弔】，指對著遺跡追思故人。我認為它與【辿る】都是相當契合的，相較於直譯的【如回憶般，追尋著流逝的日子】更有意象與文學性的展現。"
+        originals = ORIG[:3] + [note] + ORIG[3:]
+        translations = TRANS[:3] + ["如回憶般，追尋著流逝的日子"] + TRANS[3:]
+        found = qa.check(rows(originals, translations))
+        self.assertEqual(found_at(found, "note_in_original_keep_translation"), [4])
+        self.assertEqual(found_at(found, "note_leak"), [])
+
+    def test_dictionary_entry_with_a_usage_example_is_a_note(self):
+        self.assertTrue(qa.is_note_line("絶頂（ぜっちょう）上りつめた一番高い所。「山の―」。最高の程度。「人気の―」"))
 
     def test_english_hook_kept_elsewhere_is_not_untranslated(self):
         originals = ORIG[:2] + ["Hold me close tonight", "Never let me go away"] + ORIG[2:]
