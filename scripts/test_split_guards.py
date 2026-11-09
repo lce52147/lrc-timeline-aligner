@@ -201,17 +201,36 @@ class SplitPatchAssignRestoreTests(unittest.TestCase):
         self.assertEqual(self._bindings(), before)
         split_patch.assert_clean()
 
+    @staticmethod
+    def _assigns(tree):
+        return any(isinstance(n, ast.Call) and ast.unparse(n.func) == "split_patch.assign" for n in ast.walk(tree))
+
+    def _assert_tear_down_module(self, path, tree):
+        hooks = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "tearDownModule"]
+        self.assertEqual(len(hooks), 1, f"{path.name} needs tearDownModule calling split_patch.assert_clean()")
+        self.assertIn("split_patch.assert_clean", ast.unparse(hooks[0]), path.name)
+
     def test_modules_that_assign_clean_up_in_tear_down_module(self):
         for path in sorted(SCRIPTS.glob("test_*.py")):
-            source = path.read_text(encoding="utf-8")
-            tree = ast.parse(source)
-            if not any(
-                isinstance(n, ast.Call) and ast.unparse(n.func) == "split_patch.assign" for n in ast.walk(tree)
-            ):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            if self._assigns(tree):
+                self._assert_tear_down_module(path, tree)
+        # _core_* helper modules assign on behalf of the test_* modules that import them.
+        tests = {p: ast.parse(p.read_text(encoding="utf-8")) for p in sorted(SCRIPTS.glob("test_*.py"))}
+        for path in sorted(SCRIPTS.glob("_core_*.py")):
+            if not self._assigns(ast.parse(path.read_text(encoding="utf-8"))):
                 continue
-            hooks = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "tearDownModule"]
-            self.assertEqual(len(hooks), 1, f"{path.name} needs tearDownModule calling split_patch.assert_clean()")
-            self.assertIn("split_patch.assert_clean", ast.unparse(hooks[0]), path.name)
+            importers = [
+                (p, t) for p, t in tests.items()
+                if any(
+                    (isinstance(n, ast.ImportFrom) and n.module == path.stem)
+                    or (isinstance(n, ast.Import) and any(a.name == path.stem for a in n.names))
+                    for n in ast.walk(t)
+                )
+            ]
+            self.assertTrue(importers, f"{path.name} assigns but no test_* module imports it")
+            for test_path, tree in importers:
+                self._assert_tear_down_module(test_path, tree)
 
 
 class KnownLyricHubertHelperSourceTests(unittest.TestCase):
