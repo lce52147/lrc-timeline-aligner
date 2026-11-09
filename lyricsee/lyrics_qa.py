@@ -3,7 +3,7 @@
 Pure functions, no I/O. ``check`` returns Issue rows; the pipeline refuses to write a ``note_leak`` line and
 re-translates a ``bleed`` line on its own, and every remaining issue turns the song into ``needs_review``.
 
-Kinds: note_leak, bleed, order, jp_variant, untranslated, ratio.
+Kinds: note_leak, note_in_original_keep_translation, bleed, order, jp_variant, untranslated, ratio.
 """
 
 from __future__ import annotations
@@ -15,17 +15,30 @@ from typing import Iterable, Sequence
 
 from candidate_text import char_similarity, detect_language, fold
 
-KINDS = ("note_leak", "bleed", "order", "jp_variant", "untranslated", "ratio")
+KINDS = ("note_leak", "note_in_original_keep_translation", "bleed", "order", "jp_variant", "untranslated", "ratio")
 
 _KANA = re.compile(r"[぀-ゟ゠-ヿㇰ-ㇿ]")
 _HAN = re.compile(r"[㐀-鿿]")
 _LATIN = re.compile(r"[A-Za-z]")
 _TRACK_ROW_RE = re.compile(r"^\s*\d{1,2}\s*[.．、]\s*[^\d\s]")
+_NUMBER_PREFIX_RE = re.compile(r"^\s*\d{1,2}\s*[.．、]\s*")
+# Phrases that only a commentator writes. One of them in a long line is a note.
 _NOTE_MARKERS = (
-    "我認為", "我认为", "譯註", "译注", "譯者", "译者", "翻譯", "翻译", "此外", "原因是", "神來之筆", "神来之笔",
-    "個人", "个人", "意象", "文學性", "文学性", "整張專輯", "整张专辑", "直譯", "直译", "意譯", "意译", "註解", "注解",
-    "補充", "补充", "聽起來", "考量", "選用", "选用",
+    "我認為", "我认为", "譯註", "译注", "譯者", "译者", "直譯", "直译", "意譯", "意译", "神來之筆", "神来之笔",
+    "文學性", "文学性", "整張專輯", "整张专辑",
 )
+# Commentary frames: a translator talking about the translation or the word.
+_NOTE_FRAMES = (
+    "翻成", "翻譯成", "翻译成", "去查", "查了", "不採用", "不采用", "不刻意", "決定維持", "决定维持",
+    "這是描述", "这是描述", "是描述", "這個詞", "这个词", "這個字", "这个字", "此處", "此处",
+)
+# Ordinary words of lyrics and translations: they count only next to a marker or a frame, never alone.
+_WEAK_MARKERS = ("個人", "个人", "意象", "註解", "注解", "補充", "补充", "聽起來", "考量", "選用", "选用", "此外", "原因是")
+# Function words of Chinese: a long kanji run that carries two of them is Chinese prose, not Japanese.
+_CHINESE_FUNCTION = frozenset("的是也了在這这個个為为對对與与們们說说會会從从過过讓让還还沒没把被就都很")
+_HAN_RUN_RE = re.compile(r"[㐀-鿿]{8,}")
+_DICTIONARY_FRAME_RE = re.compile(
+    r"(?:ことをいいます|のことです|を指します|を意味|という意味|の意味|と表し|漢字で|を表す|状態のこと|ことを指す)")
 _BRACKET_PAIR_RE = re.compile(r"【[^】]*】")
 _PAREN_RE = re.compile(r"[（(][^）)]*[）)]")
 _PUNCT_RE = re.compile(r"[\s\W_]+", re.UNICODE)
@@ -34,8 +47,14 @@ _INTERJECTION_RE = re.compile(r"^[\s\W]*(?:(?:la|na|oh|ooh|woah|whoa|yeah|ah|hey
                               re.IGNORECASE)
 
 # Chinese forms of kanji that Japanese writes differently (cp932 cannot encode them or they are the wrong form).
-_VARIANT_TO_JP = {"繫": "繋", "淚": "涙", "說": "説", "歎": "嘆", "裏": "裏", "迴": "廻", "眞": "真", "兇": "凶",
-                  "衝": "衝", "着": "着", "僞": "偽", "纔": "才", "痺": "痺"}
+# Only forms a Japanese site does not use: standard JIS X 0213 forms (頰 剝 塡 𠮟 …) are not in the table.
+_VARIANT_TO_JP = {
+    "繫": "繋", "淚": "涙", "戀": "恋", "說": "説", "眞": "真", "僞": "偽", "迴": "廻", "纔": "才", "與": "与",
+    "這": "この", "個": "個", "們": "達", "為": "為", "爲": "為", "麼": "么", "嗎": "か", "讓": "譲", "從": "従",
+    "對": "対", "會": "会", "點": "点", "來": "来", "聲": "声", "讀": "読", "寫": "写", "關": "関", "當": "当",
+    "學": "学", "歸": "帰", "傳": "伝", "體": "体", "觀": "観", "歷": "歴", "戲": "戯", "響": "響", "憶": "憶",
+}
+_VARIANT_TO_JP = {k: v for k, v in _VARIANT_TO_JP.items() if k != v}
 
 
 @dataclass(frozen=True)
@@ -55,35 +74,106 @@ def _kana_share(text: str) -> float:
 
 
 def is_track_row(text: str) -> bool:
-    """'2.春を待つ': a track-list row, not a lyric line."""
+    """Shape only: '2.春を待つ' looks like a numbered row. Whether it IS a track-list row depends on where it sits
+    (see ``track_row_indices``): a numbered line inside the song body is a lyric."""
     return bool(_TRACK_ROW_RE.match(text or ""))
 
 
+def _strip_number(text: str) -> str:
+    return _NUMBER_PREFIX_RE.sub("", text or "", count=1)
+
+
+def track_row_indices(texts: Sequence[str], reference: Sequence[str] | None = None, *, is_lyric=None,
+                      head: bool = False) -> set[int]:
+    """Indices of the track-list rows among ``texts``.
+
+    A numbered row is a track-list row only when it sits in a run of at least 2 consecutive numbered rows, the run
+    is after the last lyric line (the tail; ``head`` also accepts a run before the first lyric line), and the row has
+    no match in ``reference``. ``is_lyric(text)`` says which non-numbered lines count as lyric lines (default: any
+    non-empty line); other lines neither break a run nor count as lyric. A numbered line inside the body is kept.
+    """
+    texts = [t or "" for t in texts]
+    numbered = [is_track_row(t) for t in texts]
+    is_lyric = is_lyric or (lambda t: bool(t.strip()))
+    relevant = [i for i, t in enumerate(texts) if numbered[i] or is_lyric(t)]
+    runs: list[list[int]] = []
+    current: list[int] = []
+    for i in relevant:
+        if numbered[i]:
+            current.append(i)
+        elif current:
+            runs.append(current)
+            current = []
+    if current:
+        runs.append(current)
+    reference_fold = [fold(line) for line in reference or []]
+    result: set[int] = set()
+    for run in runs:
+        if len(run) < 2:
+            continue
+        lyric_after = any(not numbered[i] for i in relevant if i > run[-1])
+        lyric_before = any(not numbered[i] for i in relevant if i < run[0])
+        if lyric_after and not (head and not lyric_before):
+            continue
+        for i in run:
+            if reference_fold and _match_reference(_strip_number(texts[i]), reference_fold):
+                continue
+            result.add(i)
+    return result
+
+
+def _marker_counts(text: str) -> tuple[int, int, int]:
+    """(commentator phrases, commentary frames, ordinary words) found in the text."""
+    return (sum(m in text for m in _NOTE_MARKERS), sum(f in text for f in _NOTE_FRAMES),
+            sum(w in text for w in _WEAK_MARKERS))
+
+
+def has_commentary_frame(text: str) -> bool:
+    strong, frames, _ = _marker_counts(text or "")
+    return bool(strong or frames)
+
+
+def _is_chinese_prose(text: str) -> bool:
+    """A run of 8+ kanji carrying 2+ Chinese function words ('同時也是日本古搖籃曲的句子')."""
+    return any(sum(ch in _CHINESE_FUNCTION for ch in run.group()) >= 2 for run in _HAN_RUN_RE.finditer(text))
+
+
 def is_note_line(text: str, song_lang: str = "ja") -> bool:
-    """Chinese commentary in an original column (a translator's note), as opposed to a lyric line."""
+    """A translator's note in the original column of a Japanese song, as opposed to a lyric line.
+
+    Shapes: Chinese prose (a long kanji run with Chinese function words), a Japanese dictionary explanation
+    (full stop plus a definition frame), or commentary phrases in a line that is not kana-rich.
+    """
     text = (text or "").strip()
     if song_lang != "ja" or len(text) < 20 or not _HAN.search(text):
         return False
-    if _kana_share(text) >= 0.2 and not _has_marker(text):
-        return False        # a Japanese line (kana carries the grammar)
-    brackets = len(_BRACKET_PAIR_RE.findall(text))
-    markers = sum(marker in text for marker in _NOTE_MARKERS)
-    if markers >= 2 or (markers >= 1 and len(text) >= 30):
+    if _is_chinese_prose(text):
         return True
-    return len(text) >= 80 and _kana_share(text) < 0.12 and ("，" in text or "。" in text or brackets >= 2)
-
-
-def _has_marker(text: str) -> bool:
-    return any(marker in text for marker in _NOTE_MARKERS)
+    share = _kana_share(text)
+    if _KANA.search(text) and share >= 0.2:
+        # a Japanese line (kana carries the grammar), unless it is a dictionary explanation
+        return len(text) >= 25 and "。" in text and bool(_DICTIONARY_FRAME_RE.search(text))
+    strong, frames, weak = _marker_counts(text)
+    score = 2 * (strong + frames) + weak
+    if score >= 3 or (strong + frames >= 1 and len(text) >= 30):
+        return True
+    return len(text) >= 80 and share < 0.12 and ("，" in text or "。" in text)
 
 
 def is_translation_note(text: str) -> bool:
-    """Commentary in the translation column: a long line carrying note markers or bracketed quotations."""
+    """Commentary in the translation column: a numbered or long line that talks about the translation."""
     text = (text or "").strip()
+    if len(text) < 20:
+        return False
+    strong, frames, weak = _marker_counts(text)
+    talk = strong + frames
+    if is_track_row(text) and len(text) >= 30 and talk >= 1:
+        return True       # '2. レガシー看到大家都翻譯成遺產…'
     if len(text) < 40:
         return False
-    markers = sum(marker in text for marker in _NOTE_MARKERS)
-    return markers >= 2 or len(_BRACKET_PAIR_RE.findall(text)) >= 2 or (markers >= 1 and len(text) >= 60)
+    if talk >= 2 or (talk >= 1 and (len(text) >= 60 or weak >= 1)):
+        return True
+    return talk >= 1 and len(_BRACKET_PAIR_RE.findall(text)) >= 2
 
 
 def _longest_common_substring(a: str, b: str) -> int:
@@ -176,10 +266,10 @@ def _find_order(originals: Sequence[str], reference: Sequence[str]) -> list[Issu
         if not candidates:
             seen.add(key)
             continue
+        last_matched_line = n       # a line the reference explains is never "appended", repeated chorus included
         forward = [i for i in candidates if i >= last]
         if forward:
             last = min(forward)
-            last_matched_line = n
         elif key in seen:
             pass                 # a chorus the reference writes once and the song repeats
         elif max(candidates) < last - 2:
@@ -197,14 +287,7 @@ def _find_variants(originals: Sequence[str], reference: Sequence[str] | None) ->
     for n, line in enumerate(originals, 1):
         if not _KANA.search(line):
             continue
-        bad = []
-        for ch in line:
-            if not _HAN.search(ch):
-                continue
-            try:
-                ch.encode("cp932")
-            except UnicodeEncodeError:
-                bad.append(ch)
+        bad = [ch for ch in line if ch in _VARIANT_TO_JP]
         if not bad:
             continue
         reference_form = ""
@@ -216,7 +299,7 @@ def _find_variants(originals: Sequence[str], reference: Sequence[str] | None) ->
             if all(ch not in reference_form for ch in bad):
                 issues.append(Issue("jp_variant", n, f"{len(bad)} Chinese-variant kanji; the reference has the Japanese form"))
         else:
-            issues.append(Issue("jp_variant", n, f"{len(bad)} kanji outside cp932 (Chinese variant form)"))
+            issues.append(Issue("jp_variant", n, f"{len(bad)} Chinese-variant kanji ({''.join(dict.fromkeys(bad))} for {''.join(_VARIANT_TO_JP[c] for c in dict.fromkeys(bad))})"))
     return issues
 
 
@@ -224,18 +307,29 @@ def _is_interjection(text: str) -> bool:
     return bool(_INTERJECTION_RE.match(text or "")) or len(_plain(text)) <= 2
 
 
+def _is_pure_latin(text: str) -> bool:
+    return len(_LATIN.findall(text)) >= 4 and not _KANA.search(text) and not _HAN.search(text)
+
+
 def _find_untranslated(lines: Sequence[tuple[str, str]], song_lang: str) -> list[Issue]:
     issues: list[Issue] = []
     if lines and sum(bool((t or "").strip()) for _, t in lines) <= 0.1 * len(lines):
         return [Issue("untranslated", 1, "the song has no translation column")]
+    # An English hook / scat line the song keeps in English on another row is on purpose, not untranslated.
+    kept_latin = [n for n, (o, t) in enumerate(lines, 1)
+                  if _is_pure_latin(o) and _is_pure_latin(t or "") and not _HAN.search(t or "")]
     for n, (original, translation) in enumerate(lines, 1):
         if not original.strip() or _is_interjection(original):
             continue
         translation = (translation or "").strip()
+        pure_latin = _is_pure_latin(original)
+        elsewhere = any(other != n for other in kept_latin)
+        suffix = " (pure Latin line: report only)" if pure_latin else ""
         if not translation:
             issues.append(Issue("untranslated", n, "empty translation"))
         elif _plain(translation) == _plain(original) and (_KANA.search(original) or len(_LATIN.findall(original)) >= 4):
-            issues.append(Issue("untranslated", n, "translation equals the original"))
+            if not (pure_latin and elsewhere):
+                issues.append(Issue("untranslated", n, "translation equals the original" + suffix))
         else:
             for chunk in _PAREN_RE.findall(translation):
                 if chunk in original:
@@ -246,7 +340,8 @@ def _find_untranslated(lines: Sequence[tuple[str, str]], song_lang: str) -> list
             if kana >= 3 and kana >= 0.3 * (kana + han):
                 issues.append(Issue("untranslated", n, "kana left in the translation"))
             elif letters >= 8 and han == 0 and not _is_interjection(translation):
-                issues.append(Issue("untranslated", n, "Latin text left in the translation"))
+                if not (pure_latin and elsewhere):
+                    issues.append(Issue("untranslated", n, "Latin text left in the translation" + suffix))
     return issues
 
 
@@ -274,6 +369,15 @@ def _find_ratio(lines: Sequence[tuple[str, str]]) -> list[Issue]:
     return issues
 
 
+def _is_real_translation(original: str, translation: str) -> bool:
+    """The translation column of a row whose original is a note still holds a lyric translation."""
+    translation = (translation or "").strip()
+    po, pt = _plain(original), _plain(translation)
+    if not pt or pt in po or po in pt or char_similarity(fold(original), fold(translation)) >= 0.8:
+        return False
+    return not (is_translation_note(translation) or has_commentary_frame(translation) or is_note_line(translation))
+
+
 def check(lines: Sequence[tuple[str, str]], *, reference_original: Sequence[str] | None = None,
           song_lang: str | None = None, translated: bool = True) -> list[Issue]:
     """Issues of one lyric given as (original, translation) rows, sorted by line number."""
@@ -281,11 +385,17 @@ def check(lines: Sequence[tuple[str, str]], *, reference_original: Sequence[str]
     originals = [o for o, _ in lines]
     song_lang = song_lang or detect_language(originals)
     issues: list[Issue] = []
+    track_rows = track_row_indices(originals, reference_original)
     for n, (original, translation) in enumerate(lines, 1):
-        if is_track_row(original):
+        if n - 1 in track_rows:
             issues.append(Issue("note_leak", n, "track-list row"))
         elif is_note_line(original, song_lang):
-            issues.append(Issue("note_leak", n, "Chinese commentary in the original column"))
+            if _is_real_translation(original, translation):
+                issues.append(Issue("note_in_original_keep_translation", n,
+                                    "commentary in the original column but the translation column is a lyric: "
+                                    "a human restores the original"))
+            else:
+                issues.append(Issue("note_leak", n, "Chinese commentary in the original column"))
         elif is_translation_note(translation):
             issues.append(Issue("note_leak", n, "commentary in the translation column"))
     leaked = {issue.line for issue in issues}
@@ -327,7 +437,8 @@ def gate(pairs: Sequence, *, reference_original: Sequence[str] | None = None, so
 
     Returns (kept pairs, issues left on the kept pairs, dropped note rows). Note / track-list rows are removed
     and never written. A bleed line is re-translated alone through ``retranslate(original) -> str`` (no
-    neighbours in the prompt) and re-checked; a line that still fails keeps its text and stays in the issues.
+    neighbours in the prompt) and re-checked; the new text is kept even when the re-check still fails, and the line stays in the issues.
+    A row whose original is a note but whose translation is a lyric is flagged, never dropped.
     ``repair_weak`` False repairs only strong bleeds (use it when the translation is a human one).
     """
     pairs = list(pairs)

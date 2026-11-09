@@ -58,9 +58,20 @@ def detect_language(lines: list[str]) -> str:
 
 
 def _is_translator_note(line: str, lang: str) -> bool:
-    """A track-list row ('2.春を待つ') or a Chinese commentary line that quotes a few kana words."""
-    from lyrics_qa import is_note_line, is_track_row
-    return is_track_row(line) or is_note_line(line, lang)
+    """A Chinese commentary line that quotes a few kana words."""
+    from lyrics_qa import is_note_line
+    return is_note_line(line, lang)
+
+
+_SCRIPT_KIND = {"ja": "kana", "en": "latin", "zh": "cjk"}
+
+
+def _track_row_lines(lines: list[str], lang: str, *, normalize: bool) -> set[int]:
+    """Indices of the track-list rows (a tail run of numbered rows) among the raw lines."""
+    from lyrics_qa import track_row_indices
+    texts = [unicodedata.normalize("NFKC", raw).strip() if normalize else raw.strip() for raw in lines]
+    wanted = _SCRIPT_KIND.get(lang, "kana")
+    return track_row_indices(texts, is_lyric=lambda text: bool(text) and _line_kind(unicodedata.normalize("NFKC", text)) == wanted)
 
 
 def clean_lyric_lines(lines: list[str], lang: str | None = None) -> list[str]:
@@ -72,9 +83,10 @@ def clean_lyric_lines(lines: list[str], lang: str | None = None) -> list[str]:
     """
     lang = lang or detect_language(lines)
     kept: list[str] = []
-    for raw in lines:
+    track_rows = _track_row_lines(lines, lang, normalize=True)
+    for index, raw in enumerate(lines):
         line = unicodedata.normalize("NFKC", raw).strip()
-        if not line:
+        if not line or index in track_rows:
             continue
         if _CREDIT_RE.match(line) or _HEADER_WORD_RE.search(line):
             continue
@@ -171,13 +183,14 @@ def clean_original_lines(lines: list[str], lang: str | None = None) -> list[str]
     """
     lang = lang or detect_language(lines)
     kept: list[str] = []
-    for raw in lines:
+    track_rows = _track_row_lines(lines, lang, normalize=False)
+    for index, raw in enumerate(lines):
         line = raw.strip()
         if not line:
             if kept and kept[-1]:
                 kept.append("")
             continue
-        if _FOOTNOTE_RE.match(line) or _is_page_noise(line) or _is_translator_note(line, lang):
+        if index in track_rows or _FOOTNOTE_RE.match(line) or _is_page_noise(line) or _is_translator_note(line, lang):
             continue
         line = strip_annotations(line)
         if not line:

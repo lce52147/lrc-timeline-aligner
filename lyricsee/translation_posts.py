@@ -16,7 +16,8 @@ from pathlib import Path
 
 from candidate_review import load_candidates_metadata
 from candidate_text import AGREE_SIM, char_similarity, fold
-from lyrics_qa import is_note_line, is_track_row
+from candidate_text import detect_language
+from lyrics_qa import is_note_line, track_row_indices
 
 MIN_POST_LINES = 6          # a dedicated post shorter than this is not trusted as a whole song
 MIN_POST_TRANSLATED = 0.7   # share of the post's rows that carry a translation
@@ -89,13 +90,21 @@ def extract_post_rows(document: str) -> list:
     parser = _VisibleTextParser()
     parser.feed(document)
     kinds: list[tuple[str, str]] = []   # (kind, text) with kind J original / C translation / X break
+    lines: list[str] = []
     for raw in "".join(parser.parts).splitlines():
         line = re.sub(r"\s+", " ", html_module.unescape(raw)).strip()
-        if not line or len(line) > 300:
-            continue
-        if _looks_like_non_lyric_web_text(line) or _POST_CREDIT_RE.match(line):
+        if line and len(line) <= 300:
+            lines.append(line)
+    breaks = [bool(_looks_like_non_lyric_web_text(line) or _POST_CREDIT_RE.match(line)) for line in lines]
+    # a numbered run of 2+ outside the post body (before the first / after the last lyric line) is a track list;
+    # a numbered line inside the body is a lyric
+    track_rows = track_row_indices(["" if brk else line for line, brk in zip(lines, breaks)],
+                                   is_lyric=lambda text: bool(_KANA.search(text) or _HAN.search(text)), head=True)
+    song_lang = detect_language(lines) if lines else "ja"
+    for index, line in enumerate(lines):
+        if breaks[index]:
             kinds.append(("X", line))
-        elif is_track_row(line) or is_note_line(line):
+        elif index in track_rows or (_KANA.search(line) and is_note_line(line, song_lang)):
             continue    # a translator's commentary or a track-list row: never a lyric row, and it breaks no run
         elif _KANA.search(line) and (
             len(line) <= 40 or len(_KANA.findall(line)) >= 0.2 * (len(_KANA.findall(line)) + len(_HAN.findall(line)))
@@ -328,11 +337,17 @@ def apply_post_translation(out: Path, stem: str, *, oogg_fill=None, retranslate=
         "translation_lines_oogg": len(missing),
     })
     if qa_issues or qa_dropped:
+        if payload.get("status") != "needs_review":
+            payload["status_before_qa"] = payload.get("status", "")
         payload["status"] = "needs_review"
         payload["qa_issues"] = [issue.as_dict() for issue in qa_issues]
         payload["qa_dropped_note_lines"] = [issue.as_dict() for issue in qa_dropped]
     else:
-        payload.pop("qa_issues", None)
+        payload.pop("qa_issues", None)       # a clean file carries no stale QA state from an earlier run
+        payload.pop("qa_dropped_note_lines", None)
+        restored = payload.pop("status_before_qa", None)
+        if payload.get("status") == "needs_review" and restored:
+            payload["status"] = restored
     sources.parent.mkdir(parents=True, exist_ok=True)
     sources.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return {

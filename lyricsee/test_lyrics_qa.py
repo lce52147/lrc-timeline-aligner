@@ -38,8 +38,8 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(found_at(found, "note_leak"), [4])
 
     def test_note_leak_track_list_row(self):
-        found = qa.check(rows(ORIG + ["2.あるきょく"], TRANS + ["2.某曲"]))
-        self.assertEqual(found_at(found, "note_leak"), [9])
+        found = qa.check(rows(ORIG + ["2.あるきょく", "3.べつのきょく"], TRANS + ["2.某曲", "3.另一曲"]))
+        self.assertEqual(found_at(found, "note_leak"), [9, 10])
 
     def test_note_leak_commentary_in_translation_column(self):
         found = qa.check(rows(ORIG[:2] + ["ふつうのいちぎょう"] + ORIG[2:], TRANS[:2] + [NOTE] + TRANS[2:]))
@@ -114,10 +114,10 @@ class CheckTests(unittest.TestCase):
 
 class GateTests(unittest.TestCase):
     def test_gate_drops_note_rows_and_never_keeps_them(self):
-        pairs = [LyricPair(o, t) for o, t in rows(ORIG + [NOTE, "5.あるきょく"], TRANS + ["說明", "5.某曲"])]
+        pairs = [LyricPair(o, t) for o, t in rows(ORIG + [NOTE, "5.あるきょく", "6.べつのきょく"], TRANS + ["說明", "5.某曲", "6.另一曲"])]
         kept, issues, dropped = qa.gate(pairs)
         self.assertEqual([p.original for p in kept], ORIG)
-        self.assertEqual(sorted(i.line for i in dropped), [9, 10])
+        self.assertEqual(sorted(i.line for i in dropped), [9, 10, 11])
         self.assertEqual(issues, [])
 
     def test_gate_retranslates_a_bleed_line_alone_and_rechecks(self):
@@ -207,7 +207,7 @@ class ExtractionTests(unittest.TestCase):
 
     def test_extract_post_rows_ignores_notes_and_track_lists(self):
         body = "".join(f"<p>{o}</p><p>{t}</p>" for o, t in zip(ORIG, TRANS))
-        html = f"<html><body>{body}<p>{NOTE}</p><p>2.あるきょく</p><p>2.某曲</p></body></html>"
+        html = f"<html><body>{body}<p>{NOTE}</p><p>2.あるきょく</p><p>3.べつのきょく</p><p>2.某曲</p></body></html>"
         found = tp.extract_post_rows(html)
         self.assertEqual([(row.original, row.translation) for row in found], list(zip(ORIG, TRANS)))
 
@@ -216,6 +216,142 @@ class ExtractionTests(unittest.TestCase):
         html = f"<html><body>{body}<p>{NOTE}</p></body></html>"
         found = tp.extract_post_rows(html)
         self.assertEqual([(row.original, row.translation) for row in found], list(zip(ORIG, TRANS)))
+
+
+class Fix1Tests(unittest.TestCase):
+    """TQ2-FIX1: the filters must not drop real lyric lines."""
+
+    NUMBERED = ["1.こどもあつかいしないでください", "2.やさしくしてごまかすのはもっとだめ"]
+    NUMBERED_TRANS = ["1.請不要把我當成小孩對待", "2.用溫柔來敷衍更是不行"]
+
+    def body_with_numbered(self):
+        return ORIG[:4] + self.NUMBERED + ORIG[4:], TRANS[:4] + self.NUMBERED_TRANS + TRANS[4:]
+
+    def test_numbered_lyric_lines_inside_the_song_body_are_kept(self):
+        originals, translations = self.body_with_numbered()
+        self.assertEqual(found_at(qa.check(rows(originals, translations)), "note_leak"), [])
+        kept, issues, dropped = qa.gate([LyricPair(o, t) for o, t in rows(originals, translations)])
+        self.assertEqual([p.original for p in kept], originals)
+        self.assertEqual(dropped, [])
+        self.assertEqual(clean_original_lines(originals), originals)
+        self.assertEqual(clean_lyric_lines(originals, "ja"), originals)
+
+    def test_numbered_lines_in_a_post_body_stay_rows(self):
+        originals, translations = self.body_with_numbered()
+        body = "".join(f"<p>{o}</p><p>{t}</p>" for o, t in zip(originals, translations))
+        found = tp.extract_post_rows(f"<html><body>{body}</body></html>")
+        self.assertEqual([row.original for row in found], originals)
+
+    def test_a_real_tail_track_list_is_dropped_everywhere(self):
+        tail = ["1.あるきょく", "2.べつのきょく", "3.さいごのきょく"]
+        found = qa.check(rows(ORIG + tail, TRANS + ["1.甲", "2.乙", "3.丙"]))
+        self.assertEqual(found_at(found, "note_leak"), [9, 10, 11])
+        self.assertEqual(clean_original_lines(ORIG + tail), ORIG)
+        self.assertEqual(clean_lyric_lines(ORIG + tail, "ja"), ORIG)
+        body = "".join(f"<p>{o}</p><p>{t}</p>" for o, t in zip(ORIG, TRANS)) + "".join(f"<p>{t}</p>" for t in tail)
+        self.assertEqual(len(tp.extract_post_rows(f"<html><body>{body}</body></html>")), len(ORIG))
+
+    def test_a_tail_run_that_the_reference_explains_is_kept(self):
+        tail = ["1.こどもあつかいしないでください", "2.やさしくしてごまかすのはもっとだめ"]
+        reference = ORIG + [t[2:] for t in tail]
+        found = qa.check(rows(ORIG + tail, TRANS + self.NUMBERED_TRANS), reference_original=reference)
+        self.assertEqual(found_at(found, "note_leak"), [])
+
+    def test_a_lone_numbered_row_is_not_a_track_row(self):
+        self.assertEqual(found_at(qa.check(rows(ORIG + ["2.あるきょく"], TRANS + ["2.某曲"])), "note_leak"), [])
+
+    def test_japanese_lyric_with_a_weak_marker_is_kept(self):
+        line31 = "補充したいこころのすきまをあなたでうめてほしいのいまもずっとね"
+        self.assertEqual(len(line31), 31)
+        self.assertFalse(qa.is_note_line(line31))
+        self.assertEqual(clean_lyric_lines([line31] + ORIG, "ja")[0], line31)
+        kept, _, dropped = qa.gate([LyricPair(o, "譯") for o in [line31] + ORIG])
+        self.assertEqual(dropped, [])
+
+    def test_chinese_translation_with_yi_ge_ren_keeps_its_stanza_aligned(self):
+        trans = list(TRANS[:4])
+        trans[1] = "一個人在這裡等著你回來的那一天一個人看著星空慢慢地想起你的樣子"
+        self.assertEqual(len(trans[1]), 31)
+        self.assertFalse(qa.is_translation_note(trans[1]))
+        body = "".join(f"<p>{o}</p>" for o in ORIG[:4]) + "".join(f"<p>{t}</p>" for t in trans)
+        found = tp.extract_post_rows(f"<html><body>{body}</body></html>")
+        self.assertEqual([(r.original, r.translation) for r in found], list(zip(ORIG[:4], trans)))
+
+    def test_note_markers_need_a_commentary_frame(self):
+        self.assertFalse(qa.is_translation_note("每個人都在補充著各自的聽起來很遙遠的考量與意象，直到天亮為止才停下腳步來"))
+        self.assertTrue(qa.is_translation_note("2. レガシー看到大家都翻譯成遺產，也許是動畫翻譯就說遺產，但我還是去查了這個詞有何意義。"))
+
+    def test_two_bracket_pairs_alone_are_not_a_note(self):
+        self.assertFalse(qa.is_translation_note("【甲】說了一些話，而【乙】只是靜靜地聽著，夜風吹過了整個冷清的街道盡頭"))
+
+    def test_chinese_song_is_never_judged_by_note_rules(self):
+        long_zh = "我們一起走過的那些年，" * 9
+        self.assertFalse(qa.is_note_line(long_zh, "zh"))
+
+    def test_repeated_tail_chorus_is_not_an_order_issue(self):
+        reference = ORIG[:5]
+        originals = ORIG[:5] + ORIG[2:4]
+        found = qa.check(rows(originals, TRANS[:5] + TRANS[2:4]), reference_original=reference)
+        self.assertEqual(found_at(found, "order"), [])
+        unknown = qa.check(rows(ORIG[:5] + ["まったくべつのさいごのいちぎょう"], TRANS[:6]), reference_original=reference)
+        self.assertEqual(found_at(unknown, "order"), [6])
+
+    def test_standard_jis_kanji_in_a_kana_line_is_not_a_variant(self):
+        originals = list(ORIG)
+        originals[1] = "頰をつたうなみだ"
+        self.assertEqual(found_at(qa.check(rows(originals)), "jp_variant"), [])
+
+    def test_chinese_only_kanji_in_a_kana_line_is_a_variant(self):
+        originals = list(ORIG)
+        originals[1] = "ひとつに繫ごう"
+        self.assertEqual(found_at(qa.check(rows(originals)), "jp_variant"), [2])
+        self.assertTrue(all(k != v for k, v in qa._VARIANT_TO_JP.items()))
+
+    def test_chinese_prose_in_the_original_column_by_shape(self):
+        note = "但是ねんねんころり 同時也是日本古搖籃曲的句子"
+        found = qa.check(rows(ORIG[:3] + [note] + ORIG[3:], TRANS[:3] + [note.replace(" ", "")] + TRANS[3:]))
+        self.assertEqual(found_at(found, "note_leak"), [4])
+
+    def test_japanese_dictionary_explanation_and_numbered_note(self):
+        original = "えぐみは漢字で「蘞味」と表し、苦味に近い舌触りがざらざらする状態のことをいいます。"
+        translation = "2. レガシー看到大家都翻譯成遺產，也許是動畫翻譯就說遺產，但我還是去查了這個詞有何意義。"
+        found = qa.check(rows(ORIG[:3] + [original] + ORIG[3:], TRANS[:3] + [translation] + TRANS[3:]))
+        self.assertEqual(found_at(found, "note_leak"), [4])
+
+    def test_original_note_with_a_real_translation_is_flagged_not_dropped(self):
+        note = "但是ねんねんころり 同時也是日本古搖籃曲的句子，這裡是補充說明"
+        originals = ORIG[:3] + [note] + ORIG[3:]
+        translations = TRANS[:3] + ["如回憶般，追尋著遠方的光"] + TRANS[3:]
+        found = qa.check(rows(originals, translations))
+        self.assertEqual(found_at(found, "note_in_original_keep_translation"), [4])
+        self.assertEqual(found_at(found, "note_leak"), [])
+        kept, _, dropped = qa.gate([LyricPair(o, t) for o, t in rows(originals, translations)])
+        self.assertEqual(len(kept), len(originals))
+        self.assertEqual(dropped, [])
+
+    def test_english_hook_kept_elsewhere_is_not_untranslated(self):
+        originals = ORIG[:2] + ["Hold me close tonight", "Never let me go away"] + ORIG[2:]
+        translations = TRANS[:2] + ["Hold me close tonight", "Never let me go away"] + TRANS[2:]
+        self.assertEqual(found_at(qa.check(rows(originals, translations)), "untranslated"), [])
+
+    def test_stale_qa_state_is_cleared_when_the_file_is_clean(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            (out / "txt").mkdir()
+            (out / "report").mkdir()
+            (out / "txt" / "s.lyrics.txt").write_text("\n".join(f"{o}  {t}" for o, t in rows()), encoding="utf-8")
+            sources = out / "report" / "s.sources.json"
+            sources.write_text(json.dumps({"status": "needs_review", "status_before_qa": "page_human",
+                                           "qa_issues": [{"kind": "bleed", "line": 2}],
+                                           "qa_dropped_note_lines": [{"kind": "note_leak", "line": 9}]}), encoding="utf-8")
+            post = {"aligned": list(TRANS), "url": "u", "author": "a", "title": "t", "sim": 1.0, "covered": len(ORIG)}
+            with patch.object(tp, "find_translation_post", return_value=post):
+                result = tp.apply_post_translation(out, "s")
+            payload = json.loads(sources.read_text(encoding="utf-8"))
+        self.assertEqual(result["status"], "applied")
+        self.assertEqual(payload["status"], "page_human")
+        for key in ("qa_issues", "qa_dropped_note_lines", "status_before_qa"):
+            self.assertNotIn(key, payload)
 
 
 class OoggLineTests(unittest.TestCase):
