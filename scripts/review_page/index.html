@@ -348,7 +348,8 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     return sentences.join('；');
   };
   const optionsOf = row => {
-    if (Array.isArray(row.options) && row.options.length) return row.options;
+    // Buttons read in key order 1, 2, 3: the alternatives (A, B) first, 維持 last, whatever the times are.
+    if (Array.isArray(row.options) && row.options.length) return [...row.options.filter(o => o.kind !== 'keep'), ...row.options.filter(o => o.kind === 'keep')];
     // Older servers: fold the raw candidate list into at most two alternatives plus keep.
     const alternatives = (row.candidates || []).filter(c => !c.rejected && !c.diagnostic_only && row.current_cs != null && Math.abs(c.cs - row.current_cs) > 15)
       .sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 2).sort((a, b) => a.cs - b.cs)

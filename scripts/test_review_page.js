@@ -197,6 +197,10 @@ vm.runInNewContext(script, context, {filename:'review_page/index.html'});
     assert.equal(keyOrder(test.rowElement({...item, row:mkRow([500])}).innerHTML), '13', 'TQ1: one alternative shows 1 then 3');
     assert.equal(keyOrder(test.rowElement({...item, row:mkRow([100, 200])}).innerHTML), '123', 'TQ1: two earlier candidates still 1 2 3');
     assert.equal(JSON.stringify(test.optionsOf(mkRow([100, 200])).map(o => o.cs)), '[100,200,300]', 'TQ1: A/B stay in time order, keep last');
+    // server-built row.options arrive sorted by time (keep in the middle); the page still shows 1 2 3
+    const serverRow = {...both, options:[{cs:100, kind:'earlier', label:'A', delta_s:-2, support:1, sources:['x']}, {cs:300, kind:'keep', label:'維持', delta_s:0, support:0, sources:['current']}, {cs:500, kind:'later', label:'B', delta_s:2, support:1, sources:['x']}]};
+    assert.equal(keyOrder(test.rowElement({...item, row:serverRow}).innerHTML), '123', 'TQ1: server-sorted options render 1 2 3');
+    assert.equal(JSON.stringify(test.optionsOf(serverRow).map(o => o.label)), JSON.stringify(['A', 'B', '維持']), 'TQ1: server options reordered, keep last');
     // key mapping: 1 -> A, 2 -> B, 3 -> keep (unchanged)
     const opts = test.optionsOf(both);
     const byKey = k => k === '3' ? opts.find(o => o.kind === 'keep') : opts.filter(o => o.kind !== 'keep')[Number(k) - 1];
