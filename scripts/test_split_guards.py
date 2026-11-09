@@ -21,6 +21,7 @@ EXPECTED_SOURCE_FILES = (
     "audio_features.py",
     "auto_lrc.py",
     "backend_bundle.py",
+    "candidate_regions.py",
     "central_commit.py",
     "central_commit_tail.py",
     "crossline_retry_execution.py",
@@ -43,7 +44,9 @@ EXPECTED_SOURCE_FILES = (
     "report_trust.py",
     "runtime_base.py",
     "runtime_evidence_binding.py",
+    "tail_occurrence_evidence.py",
     "timing_core.py",
+    "timing_evidence_types.py",
     "vocal_onset_hypotheses.py",
 )
 
