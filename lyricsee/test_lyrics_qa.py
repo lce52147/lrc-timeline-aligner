@@ -155,6 +155,69 @@ class GateTests(unittest.TestCase):
         self.assertEqual(kept[3].translation, "遠方城鎮的")
 
 
+class BleedRepairKeepsOldTests(unittest.TestCase):
+    def pairs(self):
+        translations = list(TRANS)
+        translations[2] = TRANS[1]
+        return [LyricPair(o, t) for o, t in rows(translations=translations)]
+
+    def test_new_text_that_still_bleeds_is_dropped_and_the_old_text_stays(self):
+        kept, issues, _ = qa.gate(self.pairs(), retranslate=lambda line: TRANS[1])
+        self.assertEqual(kept[2].translation, TRANS[1])
+        self.assertEqual([(i.kind, i.line) for i in issues], [("bleed", 3)])
+
+    def test_a_fragment_much_shorter_than_expected_is_not_clearly_better(self):
+        kept, _, _ = qa.gate(self.pairs(), retranslate=lambda line: "燈")
+        self.assertEqual(kept[2].translation, TRANS[1])
+
+    def test_latin_or_cyrillic_garbage_is_not_clearly_better(self):
+        kept, _, _ = qa.gate(self.pairs(), retranslate=lambda line: "遠方тюmin的燈火")
+        self.assertEqual(kept[2].translation, TRANS[1])
+        kept, _, _ = qa.gate(self.pairs(), retranslate=lambda line: "遠方城鎮 the lights")
+        self.assertEqual(kept[2].translation, TRANS[1])
+
+    def test_a_weak_bleed_is_report_only_even_with_repair_weak(self):
+        translations = list(TRANS)
+        translations[3] = "遠方城鎮的呢呢呢呢呢呢呢呢呢"
+        pairs = [LyricPair(o, t) for o, t in rows(translations=translations)]
+        asked = []
+        kept, _, _ = qa.gate(pairs, retranslate=lambda line: asked.append(line) or "在窗邊搖曳著", repair_weak=True)
+        self.assertEqual(asked, [])
+        self.assertEqual(kept[3].translation, translations[3])
+
+    def test_context_retranslator_gets_neighbours(self):
+        seen = {}
+
+        def retranslate(line, context=((), ())):
+            seen["context"] = context
+            return TRANS[2]
+        retranslate.accepts_context = True
+        kept, issues, _ = qa.gate(self.pairs(), retranslate=retranslate)
+        self.assertEqual(seen["context"], (ORIG[0:2], ORIG[3:5]))
+        self.assertEqual(kept[2].translation, TRANS[2])
+        self.assertEqual(issues, [])
+
+
+class ScriptGarbageTests(unittest.TestCase):
+    def test_cyrillic_hangul_and_mixed_tokens_fail(self):
+        for bad in ("我тюmin你的名字", "한글混入", "我呼喚了ты", "mix안ed"):
+            translations = list(TRANS)
+            translations[4] = bad
+            self.assertEqual(found_at(qa.check(rows(translations=translations)), "script_garbage"), [5], bad)
+
+    def test_clean_chinese_and_a_latin_name_pass(self):
+        translations = list(TRANS)
+        translations[4] = "我呼喚了 Mujica 的名字"
+        self.assertEqual(found_at(qa.check(rows(translations=translations)), "script_garbage"), [])
+
+    def test_a_script_the_original_itself_carries_is_not_garbage(self):
+        originals = list(ORIG)
+        originals[4] = "きみのなまえтест"
+        translations = list(TRANS)
+        translations[4] = "你的名字тест"
+        self.assertEqual(found_at(qa.check(rows(originals, translations)), "script_garbage"), [])
+
+
 class WriteResultGateTests(unittest.TestCase):
     def write(self, lines, method="oogg_draft", status="oogg_draft", **kwargs):
         candidate = LyricCandidate(source="s", url="u", title="t", artist="a", lines=lines)

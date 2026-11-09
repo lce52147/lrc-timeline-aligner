@@ -15,7 +15,7 @@ from typing import Iterable, Sequence
 
 from candidate_text import char_similarity, detect_language, fold
 
-KINDS = ("note_leak", "note_in_original_keep_translation", "bleed", "order", "jp_variant", "untranslated", "ratio")
+KINDS = ("note_leak", "note_in_original_keep_translation", "bleed", "order", "jp_variant", "untranslated", "ratio", "script_garbage")
 
 _KANA = re.compile(r"[぀-ゟ゠-ヿㇰ-ㇿ]")
 _HAN = re.compile(r"[㐀-鿿]")
@@ -345,6 +345,23 @@ def _find_untranslated(lines: Sequence[tuple[str, str]], song_lang: str) -> list
     return issues
 
 
+_FOREIGN_SCRIPT = re.compile("[\u0370-\u03ff\u0400-\u052f\u0530-\u058f\u0590-\u06ff\u0900-\u0dff\u0e00-\u0fff\u1100-\u11ff\uac00-\ud7af\u3130-\u318f]")
+_MIXED_TOKEN = re.compile("[A-Za-z]+[\u0370-\u052f\uac00-\ud7af]|[\u0370-\u052f\uac00-\ud7af]+[A-Za-z]")
+
+
+def _find_script_garbage(lines: Sequence[tuple[str, str]]) -> list[Issue]:
+    """A translation holding Cyrillic, Hangul or another foreign script (the original has none of it), or one
+    token that mixes Latin with such letters ('тюmin'): a model slip, never a translation."""
+    issues: list[Issue] = []
+    for n, (original, translation) in enumerate(lines, 1):
+        foreign = [ch for ch in _FOREIGN_SCRIPT.findall(translation or "") if ch not in (original or "")]
+        if foreign:
+            issues.append(Issue("script_garbage", n, f"foreign script in the translation ({''.join(dict.fromkeys(foreign))[:6]})", True))
+        elif _MIXED_TOKEN.search(translation or ""):
+            issues.append(Issue("script_garbage", n, "mixed-script token in the translation", True))
+    return issues
+
+
 def _find_ratio(lines: Sequence[tuple[str, str]]) -> list[Issue]:
     ratios = []
     for original, translation in lines:
@@ -406,6 +423,7 @@ def check(lines: Sequence[tuple[str, str]], *, reference_original: Sequence[str]
     if translated:   # an original-only lyric has no translation column to judge
         issues += [issue for issue in _find_untranslated(lines, song_lang) if issue.line not in leaked]
         issues += [issue for issue in _find_ratio(lines) if issue.line not in leaked]
+        issues += [issue for issue in _find_script_garbage(lines) if issue.line not in leaked]
     return sorted(issues, key=lambda issue: (issue.line, issue.kind))
 
 
@@ -431,15 +449,34 @@ def find_bleed(lines: Sequence[tuple[str, str]]) -> list[Issue]:
     return _find_bleed([(o or "", t or "") for o, t in lines])
 
 
+def _clearly_better(original: str, old: str, new: str, rows: list, at: int) -> bool:
+    """The re-translation of a bleed line replaces the old text only when it passes the checks on its own row and is
+    not a fragment: at least half of the length the song's own ratio expects, no Latin the original lacks."""
+    if not new or _plain(new) == _plain(old):
+        return False
+    trial = list(rows)
+    trial[at] = (original, new)
+    if any(i.line == at + 1 and i.kind in ("bleed", "untranslated", "script_garbage") for i in check(trial, translated=True)):
+        return False
+    expected = _median_ratio(rows) * len(_plain(original))
+    if len(_plain(new)) < max(2, 0.5 * expected):
+        return False
+    if len(_LATIN.findall(new)) >= 4 and not _LATIN.search(original):
+        return False
+    return True
+
+
 def gate(pairs: Sequence, *, reference_original: Sequence[str] | None = None, song_lang: str | None = None,
-         retranslate=None, repair_weak: bool = True, translated: bool = True) -> tuple[list, list[Issue], list[Issue]]:
+         retranslate=None, repair_weak: bool = False, translated: bool = True) -> tuple[list, list[Issue], list[Issue]]:
     """The write-time gate. ``pairs``: objects with ``original`` / ``translation`` (LyricPair).
 
     Returns (kept pairs, issues left on the kept pairs, dropped note rows). Note / track-list rows are removed
-    and never written. A bleed line is re-translated alone through ``retranslate(original) -> str`` (no
-    neighbours in the prompt) and re-checked; the new text is kept even when the re-check still fails, and the line stays in the issues.
-    A row whose original is a note but whose translation is a lyric is flagged, never dropped.
-    ``repair_weak`` False repairs only strong bleeds (use it when the translation is a human one).
+    and never written. A STRONG bleed (or a foreign-script slip) is re-translated alone through
+    ``retranslate(original, context=(before, after)) -> str``; a retranslator that does not accept context gets only
+    the line. The new text replaces the old one only when it passes the checks and is not a fragment
+    (``_clearly_better``); otherwise the old text stays and the line stays in the issues. Weak bleeds are report-only
+    (``repair_weak`` is kept for old callers and has no effect). A row whose original is a note but whose translation
+    is a lyric is flagged, never dropped.
     """
     pairs = list(pairs)
     rows = [(p.original, p.translation or "") for p in pairs]
@@ -449,9 +486,9 @@ def gate(pairs: Sequence, *, reference_original: Sequence[str] | None = None, so
     kept = [p for n, p in enumerate(pairs, 1) if n not in drop]
     if retranslate is not None and kept:
         kept_rows = [(p.original, p.translation or "") for p in kept]
-        for issue in find_bleed(kept_rows):
-            if not (issue.strong or repair_weak):
-                continue
+        repairs = [i for i in find_bleed(kept_rows) if i.strong]
+        repairs += [i for i in _find_script_garbage(kept_rows)]
+        for issue in repairs:
             try:
                 at = issue.line - 1
                 if getattr(retranslate, "accepts_context", False):
@@ -461,8 +498,9 @@ def gate(pairs: Sequence, *, reference_original: Sequence[str] | None = None, so
                     new = (retranslate(kept[at].original) or "").strip()
             except Exception:
                 continue        # the line keeps its text and stays flagged
-            if new:
-                kept[issue.line - 1] = type(kept[issue.line - 1])(kept[issue.line - 1].original, new)
+            current = [(p.original, p.translation or "") for p in kept]
+            if _clearly_better(kept[at].original, kept[at].translation or "", new, current, at):
+                kept[at] = type(kept[at])(kept[at].original, new)
     issues = check([(p.original, p.translation or "") for p in kept], reference_original=reference_original,
                    song_lang=song_lang, translated=translated)
     return kept, issues, dropped
