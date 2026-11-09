@@ -453,7 +453,12 @@ def gate(pairs: Sequence, *, reference_original: Sequence[str] | None = None, so
             if not (issue.strong or repair_weak):
                 continue
             try:
-                new = (retranslate(kept[issue.line - 1].original) or "").strip()
+                at = issue.line - 1
+                if getattr(retranslate, "accepts_context", False):
+                    context = ([p.original for p in kept[max(0, at - 2):at]], [p.original for p in kept[at + 1:at + 3]])
+                    new = (retranslate(kept[at].original, context=context) or "").strip()
+                else:
+                    new = (retranslate(kept[at].original) or "").strip()
             except Exception:
                 continue        # the line keeps its text and stays flagged
             if new:

@@ -32,6 +32,7 @@ from source_policy import (
     verified_provenance_is_current,
 )
 from translation_oogg import translate_oogg
+from translation_gemini import GeminiClient, line_retranslator, mask, translate_gemini
 from candidate_review import (
     save_candidates,
     load_candidates_metadata,
@@ -83,6 +84,7 @@ class Config(NamedTuple):
     bk_dir: Path
     output_root: Path
     oogg_endpoints: tuple[str, ...]
+    translator: str = "auto"
 
 
 class OoggTarget(NamedTuple):
@@ -123,9 +125,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--translator",
+        choices=("gemini", "oogg", "auto"),
+        default="auto",
+        help="Machine-translation backend when no human translation exists: auto = Gemini, then OOGG",
+    )
+    parser.add_argument(
         "--no-translate",
         action="store_true",
-        help="Write verified original lyrics only; do not call OOGG",
+        help="Write verified original lyrics only; do not call Gemini or OOGG",
     )
     parser.add_argument("--overwrite", action="store_true", help="Redo existing and legacy outputs")
     parser.add_argument(
@@ -174,6 +182,7 @@ def resolve_config(args: argparse.Namespace) -> Config:
         bk_dir=Path(bk_value).expanduser() if bk_value else DEFAULT_BK_DIR,
         output_root=Path(output_value).expanduser() if output_value else HERE,
         oogg_endpoints=oogg_endpoints,
+        translator=getattr(args, "translator", "auto") or "auto",
     )
 
 
@@ -461,6 +470,25 @@ def _maybe_reprobe_oogg(
         print(f"OOGG back online: {target.endpoint}", file=sys.stderr)
 
 
+_GEMINI_FALLBACK: dict = {}
+
+
+def _gemini_client(client: HttpClient) -> GeminiClient:
+    """One Gemini client (key list, rotation state, counters) per run, shared by all tracks."""
+    cached = getattr(client, "_lyricsee_gemini", None) or _GEMINI_FALLBACK.get("client")
+    if cached is None:
+        cached = GeminiClient()
+        try:
+            setattr(client, "_lyricsee_gemini", cached)
+        except AttributeError:
+            _GEMINI_FALLBACK["client"] = cached
+    return cached
+
+
+def mask_secret(exc: Exception, gemini_client: GeminiClient | None) -> str:
+    return mask(exc, gemini_client._secrets() if gemini_client else ())
+
+
 def _line_retranslator(client: HttpClient, endpoints: tuple[str, ...], endpoint: str, title: str):
     """original line -> translation through whichever OOGG host is up (the one used for the song first), no context."""
     def retranslate(line: str) -> str:
@@ -557,6 +585,10 @@ def _process_track(
         translation_method = "none"
         translation_error = ""
         oogg_endpoint = ""
+        backend_used = ""
+        model_used = ""
+        gemini_error = ""
+        gemini_client = None
         status = "original_only"
         selected: LyricCandidate | None = None
 
@@ -584,7 +616,35 @@ def _process_track(
                 attach_verification(selected, evidence, translation_method="web")
                 oogg_state["consecutive_failures"] = 0
             except Exception:
-                if oogg_state.get("disabled"):
+                if config.translator in ("auto", "gemini"):
+                    try:
+                        gemini_client = _gemini_client(client)
+                        translated = translate_gemini(
+                            [row.original for row in original.lines],
+                            title=identity.title, artist=identity.artist, client=gemini_client,
+                        )
+                        selected = LyricCandidate(
+                            source=f"gemini:{gemini_client.model}",
+                            url=original.url,
+                            title=identity.title,
+                            artist=identity.artist,
+                            lines=[LyricPair(row.original, translated[i]) for i, row in enumerate(original.lines)],
+                            discovered_urls=list(collected.google_urls),
+                            search_engine=search_engine,
+                            search_url=search_url,
+                            translator="Gemini",
+                        )
+                        validate_output(original, selected, require_translation=True)
+                        translation_method = "gemini_draft"
+                        status = "oogg_draft"
+                        backend_used, model_used = "gemini", gemini_client.model
+                        attach_verification(selected, evidence, translation_method="gemini_draft")
+                    except Exception as exc:
+                        selected = None
+                        gemini_error = "gemini: " + mask_secret(exc, gemini_client)[:200]
+                if backend_used == "gemini" or config.translator == "gemini":
+                    translation_error = gemini_error
+                elif oogg_state.get("disabled"):
                     translation_error = "oogg_unreachable"
                 else:
                     oogg_target = _select_oogg_endpoint(client, config.oogg_endpoints)
@@ -617,6 +677,7 @@ def _process_track(
                         translation_method = "oogg_draft"
                         status = "oogg_draft"
                         attach_verification(selected, evidence, translation_method="oogg_draft")
+                        backend_used, model_used = "oogg", oogg_target.model
                         oogg_state["consecutive_failures"] = 0
                     except Exception as exc:
                         translation_error = _oogg_error(exc)
@@ -649,6 +710,7 @@ def _process_track(
                                         )
                                         validate_output(original, selected, require_translation=True)
                                         oogg_endpoint = switched.endpoint
+                                        backend_used, model_used = "oogg", switched.model
                                         translation_method = "oogg_draft"
                                         status = "oogg_draft"
                                         translation_error = ""
@@ -696,7 +758,9 @@ def _process_track(
             attach_verification(selected, evidence, translation_method="none")
 
         qa_retranslate = None
-        if oogg_endpoint and translation_method != "none":
+        if backend_used == "gemini" and gemini_client is not None:
+            qa_retranslate = line_retranslator(gemini_client, identity.title)
+        elif oogg_endpoint and translation_method != "none":
             qa_retranslate = _line_retranslator(client, config.oogg_endpoints, oogg_endpoint, identity.title)
         selected.discovered_urls = list(collected.google_urls)
         selected.search_engine = search_engine
@@ -713,6 +777,8 @@ def _process_track(
             oogg_endpoint=oogg_endpoint,
             timed_reference=[row.original for row in timed_candidate.lines if row.original.strip()] if timed_candidate else None,
             qa_retranslate=qa_retranslate,
+            translation_backend=backend_used,
+            translation_model=model_used,
         )
         written = json.loads(provenance.read_text(encoding="utf-8"))
         status = written.get("status") or status

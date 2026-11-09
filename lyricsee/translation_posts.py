@@ -319,6 +319,7 @@ def apply_post_translation(out: Path, stem: str, *, oogg_fill=None, retranslate=
         for i, value in zip(missing, filled):
             translations[i] = value
         method = "page_human+oogg_fill"
+        fill_backend, fill_model = getattr(oogg_fill, "last", ("oogg", ""))
     kept, qa_issues, qa_dropped = gate(
         [LyricPair(o, t) for o, t in zip(lines, translations)],
         retranslate=retranslate, repair_weak=False,
@@ -336,6 +337,13 @@ def apply_post_translation(out: Path, stem: str, *, oogg_fill=None, retranslate=
         "translation_lines_from_page": post["covered"],
         "translation_lines_oogg": len(missing),
     })
+    if missing:
+        payload["translation_groups"] = [
+            {"lines": "page", "backend": "page_human", "model": "", "count": post["covered"]},
+            {"lines": "fill", "backend": fill_backend, "model": fill_model, "count": len(missing)},
+        ]
+        payload["translation_backend"] = fill_backend
+        payload["translation_model"] = fill_model
     if qa_issues or qa_dropped:
         if payload.get("status") != "needs_review":
             payload["status_before_qa"] = payload.get("status", "")
@@ -362,19 +370,40 @@ def cmd_apply(args: argparse.Namespace) -> int:
     stems = args.stem or sorted(p.name[: -len(".lyrics.txt")] for p in (out / "txt").glob("*.lyrics.txt"))
     oogg_fill = None
     retranslate = None
-    if args.oogg:
+    translator = getattr(args, "translator", "auto")
+    if args.oogg or translator != "auto":
         from lyricsee import DEFAULT_OOGG_ENDPOINTS, _select_oogg_endpoint
         from lyricsee_core import HttpClient
+        from translation_gemini import GeminiClient, line_retranslator, translate_auto
         from translation_oogg import translate_oogg
 
-        target = _select_oogg_endpoint(HttpClient(), DEFAULT_OOGG_ENDPOINTS)
-        if target:
-            def oogg_fill(rows, _t=target):  # noqa: E306
-                return translate_oogg(rows, title="", endpoint=_t.endpoint, model=_t.model, review=False)
+        http = HttpClient()
+        gemini = GeminiClient() if translator in ("auto", "gemini") else None
 
-            def retranslate(line, _t=target):  # noqa: E306
-                from translation_oogg import translate_oogg_line
-                return translate_oogg_line(line, title="", endpoint=_t.endpoint, model=_t.model)
+        def oogg_batch(rows):
+            target = _select_oogg_endpoint(http, DEFAULT_OOGG_ENDPOINTS)
+            if not target:
+                raise ConnectionError("no configured OOGG endpoint is online")
+            return translate_oogg(rows, title="", endpoint=target.endpoint, model=target.model, review=False), target.model
+
+        def oogg_fill(rows):  # noqa: E306
+            result = translate_auto(rows, translator=translator, gemini=gemini, oogg=oogg_batch)
+            oogg_fill.last = (result.backend, result.model)
+            return result.lines
+
+        def retranslate(line, context=((), ())):  # noqa: E306
+            if gemini is not None:
+                try:
+                    return line_retranslator(gemini)(line, context)
+                except Exception:
+                    if translator == "gemini":
+                        raise
+            from translation_oogg import translate_oogg_line
+            target = _select_oogg_endpoint(http, DEFAULT_OOGG_ENDPOINTS)
+            if not target:
+                raise ConnectionError("no configured OOGG endpoint is online")
+            return translate_oogg_line(line, title="", endpoint=target.endpoint, model=target.model)
+        retranslate.accepts_context = True
     results = [apply_post_translation(out, stem, oogg_fill=oogg_fill, retranslate=retranslate) for stem in stems]
     for result in results:
         print(json.dumps(result, ensure_ascii=False), flush=True)
@@ -387,7 +416,8 @@ def main(argv: list[str] | None = None) -> int:
     apply = sub.add_parser("apply")
     apply.add_argument("--out", required=True)
     apply.add_argument("--stem", action="append")
-    apply.add_argument("--oogg", action="store_true")
+    apply.add_argument("--oogg", action="store_true", help="fill uncovered lines with the machine translator (see --translator)")
+    apply.add_argument("--translator", choices=("gemini", "oogg", "auto"), default="auto")
     apply.set_defaults(func=cmd_apply)
     args = parser.parse_args(argv)
     return args.func(args)

@@ -844,6 +844,8 @@ def write_result(
     oogg_endpoint: str = "",
     timed_reference: list[str] | None = None,
     qa_retranslate=None,
+    translation_backend: str = "",
+    translation_model: str = "",
 ) -> tuple[Path, Path]:
     audio_path = audio_path.resolve()
     output_root = Path(output_root)
@@ -907,6 +909,11 @@ def write_result(
         "oogg_endpoint": oogg_endpoint,
         "paren_flags": paren_flags,
     }
+    if translation_backend:
+        payload["translation_backend"] = translation_backend
+        payload["translation_model"] = translation_model
+        payload["translation_groups"] = [{"lines": f"1-{len(kept_lines)}", "backend": translation_backend,
+                                          "model": translation_model}]
     if qa_issues or qa_dropped:
         payload["status_before_qa"] = status_before_qa
         payload["qa_issues"] = [issue.as_dict() for issue in qa_issues]
