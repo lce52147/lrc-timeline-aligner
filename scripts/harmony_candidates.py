@@ -30,6 +30,7 @@ SCHEMA = 1
 PAD = 0.5
 OPEN, CLOSE = "(（", ")）"
 SUFFIX = ".harmony_cands.json"
+AUDIO_SUFFIXES = {".flac", ".wav", ".m4a", ".mp3", ".ogg", ".opus"}
 
 # ---- cue classifier: same rules as HARM2-CUES (h2_cues.py) ----
 KW = r"(間奏|前奏|後奏|間奏中|イントロ|アウトロ|インスト(ゥルメンタル)?|インタールード|Interlude|Instrumental|Inst\.?|Intro|Outro|Music|BGM|Repeat|リピート|繰り返し|くりかえし|Chorus|コーラス|Solo|ソロ|Rap|ラップ|台詞|セリフ|語り|ナレーション|Narration|Spoken|Dialogue|Bridge|ブリッジ|SE|効果音|Guitar|ギター|Piano|ピアノ|Drum|ドラム|Verse|Hook|Fade\s*out|Fade\s*in|Silence|無音|休止|Pause)"
@@ -243,7 +244,7 @@ def load(audio, lrc_hashes, rows_total, extra_roots=()):
             harmony_path = pathlib.Path(harmony)
             if not harmony_path.is_absolute():
                 harmony_path = path.parent / harmony_path
-            if not harmony_path.is_file():
+            if not harmony_path.is_file() or harmony_path.suffix.lower() not in AUDIO_SUFFIXES:
                 continue
             lines = {}
             for item in payload.get("lines") or []:

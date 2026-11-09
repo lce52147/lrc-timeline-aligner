@@ -186,6 +186,33 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.output.read_bytes(), before)        # showing / playing a candidate never edits the LRC
         self.assertEqual([row["current_cs"] for row in detail["rows"]][2], 300)
 
+    def test_non_audio_harmony_file_is_rejected(self):
+        outside = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(outside, ignore_errors=True))
+        secret = outside / "secret.txt"
+        secret.write_text("not audio", encoding="utf-8")
+        self._sidecar()
+        path = self.root / "song.harmony_cands.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["harmony_audio"] = str(secret)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        detail = self._reload()
+        self.assertFalse(detail["has_harmony"])
+        self.assertEqual(self._request("GET", f"/audio/0/harm?t={self.server.token}")[0], 404)
+
+    def test_delete_save_drops_the_chip(self):
+        self._sidecar()
+        detail = self._reload()
+        self.assertTrue(detail["has_harmony"])
+        row = detail["rows"][0]
+        status, _h, _d = self._json_request("POST", "/api/song/0/save", {
+            "base_sha256": detail["base_sha256"], "edits": [],
+            "deletes": [{"entry": row["entry"], "line_key": row["line_key"]}]})
+        self.assertEqual(status, 200)
+        after = self._detail()
+        self.assertFalse(after["has_harmony"])
+        self.assertTrue(all("harmony_cand_cs" not in r for r in after["rows"]))
+
     def test_hash_mismatch_gives_no_candidates(self):
         self._sidecar(sha="0" * 64)
         detail = self._reload()
