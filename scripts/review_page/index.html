@@ -353,7 +353,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     const alternatives = (row.candidates || []).filter(c => !c.rejected && !c.diagnostic_only && row.current_cs != null && Math.abs(c.cs - row.current_cs) > 15)
       .sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 2).sort((a, b) => a.cs - b.cs)
       .map((c, i) => ({cs:c.cs, kind:c.cs < row.current_cs ? 'earlier' : 'later', label:'AB'[i], delta_s:(c.cs - row.current_cs) / 100, support:1 + (c.agree_count || 0), sources:c.sources || [c.label]}));
-    return row.current_cs == null ? alternatives : [...alternatives, {cs:row.current_cs, kind:'keep', label:'維持', delta_s:0, support:0, sources:['current']}].sort((a, b) => a.cs - b.cs);
+    return row.current_cs == null ? alternatives : [...alternatives, {cs:row.current_cs, kind:'keep', label:'維持', delta_s:0, support:0, sources:['current']}];
   };
   function setDirty() { state.dirty = state.edits.size > 0; scheduleDraft(); }
   const serverReadOnly = () => state.songs.some(song => song.detail?.server_read_only);

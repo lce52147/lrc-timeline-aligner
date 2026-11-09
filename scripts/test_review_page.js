@@ -88,7 +88,7 @@ async function fetchMock(url, options={}) {
 let source = fs.readFileSync('scripts/review_page/index.html','utf8');
 const match = source.match(/<script>\r?\n([\s\S]*?)\r?\n<\/script>/);
 assert.ok(match, 'page script missing');
-const script = match[1].replace(/  load\(\)\.then\(\(\) => \{ refreshJobs\(\); watchFiles\(\); \}\);\r?\n\}\)\(\);/, '  globalThis.__reviewTest = {state, render, playAround, playAB, stopPlayer, select, stage, save, rowElement, attachPeaks, accept, keep, openImport, inspectImports, startImport, refreshJobs, renderImport, volume, volumeGain, sliderToDb, dbToSlider, setVolumeDb, toggleMute, setShowAll, load, busy, parseTimeInput, applyTypedTime, nudge};\n  load().then(() => { refreshJobs(); watchFiles(); });\n})();');
+const script = match[1].replace(/  load\(\)\.then\(\(\) => \{ refreshJobs\(\); watchFiles\(\); \}\);\r?\n\}\)\(\);/, '  globalThis.__reviewTest = {state, render, playAround, playAB, stopPlayer, select, stage, save, rowElement, attachPeaks, accept, keep, openImport, inspectImports, startImport, refreshJobs, renderImport, volume, volumeGain, sliderToDb, dbToSlider, setVolumeDb, toggleMute, setShowAll, load, busy, parseTimeInput, applyTypedTime, nudge, optionsOf};\n  load().then(() => { refreshJobs(); watchFiles(); });\n})();');
 const storage = new Map();
 const localStorageMock = {getItem(key) { return storage.has(key) ? storage.get(key) : null; }, setItem(key, value) { storage.set(key, String(value)); }, removeItem(key) { storage.delete(key); }};
 const context = {Date: FakeDate, AbortController: class { constructor() { this.signal = {}; } abort() {} }, console, document:documentMock, localStorage:localStorageMock, addEventListener(){}, URLSearchParams: class { constructor(){ } get(){return 'token';} }, location:{search:'',hash:''}, fetch:fetchMock, Audio:AudioMock, setTimeout:fakeSetTimeout, clearTimeout:fakeClearTimeout, setInterval:fakeSetInterval, clearInterval:fakeClearInterval, alert(){}, Promise, encodeURIComponent, Map, Set, Number, String, Math, JSON, Object, Error, RegExp};
@@ -186,6 +186,22 @@ vm.runInNewContext(script, context, {filename:'review_page/index.html'});
   assert.deepEqual(decisionPosts.at(-1), {entry:item.row.entry, decision:'keep', cs:item.row.current_cs, source:'keep'}, 'keep logs a keep');
   test.state.edits.set(String(item.song.index) + ':' + item.row.entry, dragEdit); test.state.selected = 0;
   assert.ok(!/class="ab-play"[^>]*disabled/.test(rendered), 'A/B enables after selecting a candidate');
+
+  // TQ1: candidate buttons are always shown in key order 1, 2, 3 (keep last) whatever the times are.
+  {
+    const keyOrder = html => [...html.matchAll(/<span class="k">(\d)<\/span>/g)].map(m => m[1]).join('');
+    const mkRow = (cands) => ({...item.row, current_cs:300, candidates:cands.map(cs => ({cs, sources:['ctc-current'], diagnostic_only:false, rejected:false, score:1}))});
+    const both = mkRow([100, 500]);
+    assert.equal(JSON.stringify(test.optionsOf(both).map(o => o.kind + ':' + o.label)), JSON.stringify(['earlier:A', 'later:B', 'keep:維持']), 'TQ1: earlier, later, then keep');
+    assert.equal(keyOrder(test.rowElement({...item, row:both}).innerHTML), '123', 'TQ1: rendered key order is 1 2 3');
+    assert.equal(keyOrder(test.rowElement({...item, row:mkRow([500])}).innerHTML), '13', 'TQ1: one alternative shows 1 then 3');
+    assert.equal(keyOrder(test.rowElement({...item, row:mkRow([100, 200])}).innerHTML), '123', 'TQ1: two earlier candidates still 1 2 3');
+    assert.equal(JSON.stringify(test.optionsOf(mkRow([100, 200])).map(o => o.cs)), '[100,200,300]', 'TQ1: A/B stay in time order, keep last');
+    // key mapping: 1 -> A, 2 -> B, 3 -> keep (unchanged)
+    const opts = test.optionsOf(both);
+    const byKey = k => k === '3' ? opts.find(o => o.kind === 'keep') : opts.filter(o => o.kind !== 'keep')[Number(k) - 1];
+    assert.equal(byKey('1').label, 'A'); assert.equal(byKey('2').label, 'B'); assert.equal(byKey('3').kind, 'keep');
+  }
 
   // ---- BP: typed timestamps ----
   {
