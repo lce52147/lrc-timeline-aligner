@@ -16,6 +16,8 @@ from pathlib import Path
 
 from candidate_review import load_candidates_metadata
 from candidate_text import AGREE_SIM, char_similarity, fold
+from candidate_text import detect_language
+from lyrics_qa import is_note_line, track_row_indices
 
 MIN_POST_LINES = 6          # a dedicated post shorter than this is not trusted as a whole song
 MIN_POST_TRANSLATED = 0.7   # share of the post's rows that carry a translation
@@ -88,12 +90,22 @@ def extract_post_rows(document: str) -> list:
     parser = _VisibleTextParser()
     parser.feed(document)
     kinds: list[tuple[str, str]] = []   # (kind, text) with kind J original / C translation / X break
+    lines: list[str] = []
     for raw in "".join(parser.parts).splitlines():
         line = re.sub(r"\s+", " ", html_module.unescape(raw)).strip()
-        if not line or len(line) > 300:
-            continue
-        if _looks_like_non_lyric_web_text(line) or _POST_CREDIT_RE.match(line):
+        if line and len(line) <= 300:
+            lines.append(line)
+    breaks = [bool(_looks_like_non_lyric_web_text(line) or _POST_CREDIT_RE.match(line)) for line in lines]
+    # a numbered run of 2+ outside the post body (before the first / after the last lyric line) is a track list;
+    # a numbered line inside the body is a lyric
+    track_rows = track_row_indices(["" if brk else line for line, brk in zip(lines, breaks)],
+                                   is_lyric=lambda text: bool(_KANA.search(text) or _HAN.search(text)), head=True)
+    song_lang = detect_language(lines) if lines else "ja"
+    for index, line in enumerate(lines):
+        if breaks[index]:
             kinds.append(("X", line))
+        elif index in track_rows or (_KANA.search(line) and is_note_line(line, song_lang)):
+            continue    # a translator's commentary or a track-list row: never a lyric row, and it breaks no run
         elif _KANA.search(line) and (
             len(line) <= 40 or len(_KANA.findall(line)) >= 0.2 * (len(_KANA.findall(line)) + len(_HAN.findall(line)))
         ):
@@ -280,13 +292,15 @@ def original_column(line: str) -> str:
     return line.split("  ", 1)[0].strip()
 
 
-def apply_post_translation(out: Path, stem: str, *, oogg_fill=None) -> dict:
+def apply_post_translation(out: Path, stem: str, *, oogg_fill=None, retranslate=None) -> dict:
     """Rewrite txt/<stem>.lyrics.txt with the human translation of a matching post.
 
-    oogg_fill(lines) -> list[str] translates the lines the post did not cover. Returns a status dict;
-    status 'no_post' leaves the file untouched.
+    oogg_fill(lines) -> list[str] translates the lines the post did not cover. retranslate(line) -> str repairs a
+    bleed line alone, without context. The QA gate drops note / track-list rows and records what still fails as
+    qa_issues with status needs_review. Returns a status dict; status 'no_post' leaves the file untouched.
     """
     from lyricsee_core import LyricPair, render_lyrics
+    from lyrics_qa import gate
 
     txt = out / "txt" / f"{stem}.lyrics.txt"
     if not txt.exists():
@@ -305,7 +319,12 @@ def apply_post_translation(out: Path, stem: str, *, oogg_fill=None) -> dict:
         for i, value in zip(missing, filled):
             translations[i] = value
         method = "page_human+oogg_fill"
-    text = render_lyrics([LyricPair(o, t) for o, t in zip(lines, translations)])
+        fill_backend, fill_model = getattr(oogg_fill, "last", ("oogg", ""))
+    kept, qa_issues, qa_dropped = gate(
+        [LyricPair(o, t) for o, t in zip(lines, translations)],
+        retranslate=retranslate, repair_weak=False,
+    )
+    text = render_lyrics(kept)
     txt.write_text(text, encoding="utf-8", newline="\n")
     sources = out / "report" / f"{stem}.sources.json"
     payload = json.loads(sources.read_text(encoding="utf-8")) if sources.exists() else {}
@@ -318,11 +337,31 @@ def apply_post_translation(out: Path, stem: str, *, oogg_fill=None) -> dict:
         "translation_lines_from_page": post["covered"],
         "translation_lines_oogg": len(missing),
     })
+    if missing:
+        payload["translation_groups"] = [
+            {"lines": "page", "backend": "page_human", "model": "", "count": post["covered"]},
+            {"lines": "fill", "backend": fill_backend, "model": fill_model, "count": len(missing)},
+        ]
+        payload["translation_backend"] = fill_backend
+        payload["translation_model"] = fill_model
+    if qa_issues or qa_dropped:
+        if payload.get("status") != "needs_review":
+            payload["status_before_qa"] = payload.get("status", "")
+        payload["status"] = "needs_review"
+        payload["qa_issues"] = [issue.as_dict() for issue in qa_issues]
+        payload["qa_dropped_note_lines"] = [issue.as_dict() for issue in qa_dropped]
+    else:
+        payload.pop("qa_issues", None)       # a clean file carries no stale QA state from an earlier run
+        payload.pop("qa_dropped_note_lines", None)
+        restored = payload.pop("status_before_qa", None)
+        if payload.get("status") == "needs_review" and restored:
+            payload["status"] = restored
     sources.parent.mkdir(parents=True, exist_ok=True)
     sources.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return {
         "stem": stem, "status": "applied", "translation_method": method, "url": post["url"],
-        "author": post["author"], "lines": len(lines), "from_page": post["covered"], "oogg": len(missing),
+        "author": post["author"], "lines": len(kept), "from_page": post["covered"], "oogg": len(missing),
+        "qa_issues": len(qa_issues), "qa_dropped": len(qa_dropped),
     }
 
 
@@ -330,16 +369,43 @@ def cmd_apply(args: argparse.Namespace) -> int:
     out = Path(args.out)
     stems = args.stem or sorted(p.name[: -len(".lyrics.txt")] for p in (out / "txt").glob("*.lyrics.txt"))
     oogg_fill = None
-    if args.oogg:
+    retranslate = None
+    translator = getattr(args, "translator", "auto")
+    if args.oogg or translator != "auto":
         from lyricsee import DEFAULT_OOGG_ENDPOINTS, _select_oogg_endpoint
         from lyricsee_core import HttpClient
+        from translation_gemini import GeminiClient, line_retranslator, translate_auto
         from translation_oogg import translate_oogg
 
-        target = _select_oogg_endpoint(HttpClient(), DEFAULT_OOGG_ENDPOINTS)
-        if target:
-            def oogg_fill(rows, _t=target):  # noqa: E306
-                return translate_oogg(rows, title="", endpoint=_t.endpoint, model=_t.model, review=False)
-    results = [apply_post_translation(out, stem, oogg_fill=oogg_fill) for stem in stems]
+        http = HttpClient()
+        gemini = GeminiClient() if translator in ("auto", "gemini") else None
+
+        def oogg_batch(rows):
+            target = _select_oogg_endpoint(http, DEFAULT_OOGG_ENDPOINTS)
+            if not target:
+                raise ConnectionError("no configured OOGG endpoint is online")
+            return translate_oogg(rows, title="", endpoint=target.endpoint, model=target.model, review=False), target.model
+
+        def oogg_fill(rows):  # noqa: E306
+            result = translate_auto(rows, translator=translator, gemini=gemini, oogg=oogg_batch)
+            oogg_fill.last = (result.backend, result.model)
+            return result.lines
+
+        def retranslate(line, context=((), ())):  # noqa: E306
+            if gemini is not None:
+                try:
+                    return line_retranslator(gemini)(line, context)
+                except Exception:
+                    if translator == "gemini":
+                        raise
+            from translation_oogg import translate_oogg_line
+            target = _select_oogg_endpoint(http, DEFAULT_OOGG_ENDPOINTS)
+            if not target:
+                raise ConnectionError("no configured OOGG endpoint is online")
+            return translate_oogg_line(line, title="", endpoint=target.endpoint, model=target.model,
+                                       before=list(context[0]), after=list(context[1]))
+        retranslate.accepts_context = True
+    results = [apply_post_translation(out, stem, oogg_fill=oogg_fill, retranslate=retranslate) for stem in stems]
     for result in results:
         print(json.dumps(result, ensure_ascii=False), flush=True)
     return 0
@@ -351,7 +417,8 @@ def main(argv: list[str] | None = None) -> int:
     apply = sub.add_parser("apply")
     apply.add_argument("--out", required=True)
     apply.add_argument("--stem", action="append")
-    apply.add_argument("--oogg", action="store_true")
+    apply.add_argument("--oogg", action="store_true", help="fill uncovered lines with the machine translator (see --translator)")
+    apply.add_argument("--translator", choices=("gemini", "oogg", "auto"), default="auto")
     apply.set_defaults(func=cmd_apply)
     args = parser.parse_args(argv)
     return args.func(args)

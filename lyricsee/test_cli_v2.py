@@ -17,6 +17,19 @@ import lyricsee_core as core
 import source_policy
 
 
+_NO_KEYS = mock.patch("translation_gemini.load_keys", return_value=[])
+
+
+def setUpModule():
+    # these tests exercise the OOGG path; Gemini must never read a real key or reach the network from a test
+    _NO_KEYS.start()
+
+
+def tearDownModule():
+    _NO_KEYS.stop()
+    cli._GEMINI_FALLBACK.clear()
+
+
 class _EndpointClient:
     def __init__(self, online: set[str]):
         self.online = {item.rstrip("/") for item in online}
@@ -217,6 +230,31 @@ class LyricseeV2CliTests(unittest.TestCase):
             rows, reports = cli.run(args)
             self.assertEqual([row["status"] for row in rows], ["pending", "duplicate"])
             self.assertIsNone(reports)
+
+    def test_gemini_first_records_backend_and_model_and_skips_oogg(self):
+        import translation_gemini as tg
+        keyless = tg.GeminiClient(keys=[("google:a", "k")], model="gemini-test")
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(cli, "_gemini_client", return_value=keyless), \
+                mock.patch.object(cli, "translate_gemini", return_value=[f"譯文{i}" for i in range(8)]):
+            row, web, select, translate = self._process_with_patches(
+                Path(tmp), endpoint="http://127.0.0.1:6969", no_translate=False)
+            self.assertEqual(row["translation_method"], "gemini_draft")
+            translate.assert_not_called()
+            payload = json.loads(Path(row["output_json"]).read_text(encoding="utf-8"))
+            self.assertEqual((payload["translation_backend"], payload["translation_model"]), ("gemini", "gemini-test"))
+            self.assertEqual(payload["translator"], "Gemini")
+
+    def test_gemini_failure_falls_back_to_oogg_and_records_oogg(self):
+        import translation_gemini as tg
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(cli, "translate_gemini", side_effect=tg.GeminiError("down")):
+            row, web, select, translate = self._process_with_patches(
+                Path(tmp), endpoint="http://127.0.0.1:6969", no_translate=False)
+            self.assertEqual(row["translation_method"], "oogg_draft")
+            translate.assert_called_once()
+            payload = json.loads(Path(row["output_json"]).read_text(encoding="utf-8"))
+            self.assertEqual((payload["translation_backend"], payload["translation_model"]), ("oogg", "selected-model"))
 
     def test_web_unavailable_uses_selected_oogg_and_persists_endpoint(self):
         with tempfile.TemporaryDirectory() as tmp:
