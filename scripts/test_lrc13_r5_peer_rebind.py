@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 import auto_lrc
-from test_core_logic import BackendPeerSimulationTests
+from test_core_backend_peer import BackendPeerSimulationTests
 
 
 class PeerRebindMaterialityTests(unittest.TestCase):

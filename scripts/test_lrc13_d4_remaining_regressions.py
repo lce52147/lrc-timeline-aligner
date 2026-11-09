@@ -9,7 +9,7 @@ from unittest import mock
 import auto_lrc
 import split_patch
 import asr_backends
-from test_core_logic import V144JointBoundaryGraphRegressionTests
+from test_core_v14_consensus import V144JointBoundaryGraphRegressionTests
 
 
 class HybridWindowBoundaryRegressionTests(unittest.TestCase):

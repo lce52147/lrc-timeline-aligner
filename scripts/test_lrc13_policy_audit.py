@@ -118,7 +118,7 @@ class TimingPolicyRegressionTests(unittest.TestCase):
         self.assertEqual(candidate_sets, ((ctc, whisper, raw),))
 
     def test_ctc_first_keeps_whisper_diagnostics_outside_material_decision_graph(self) -> None:
-        from test_core_logic import CentralTimingStateTests
+        from test_core_central_timing import CentralTimingStateTests
         fixture = CentralTimingStateTests()
         ctc = fixture.candidate(
             3.0, fixture.coherent_spans(3.0), source="ctc-full",
@@ -159,7 +159,7 @@ class TimingPolicyRegressionTests(unittest.TestCase):
         ))
 
     def test_ctc_first_evaluator_retains_diagnostics_but_filters_central_graph(self) -> None:
-        from test_core_logic import CentralTimingStateTests
+        from test_core_central_timing import CentralTimingStateTests
         fixture = CentralTimingStateTests()
         ctc = fixture.candidate(
             3.0, fixture.coherent_spans(3.0), source="ctc-full", current=True

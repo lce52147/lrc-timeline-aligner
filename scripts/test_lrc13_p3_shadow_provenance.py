@@ -5,12 +5,12 @@ from unittest import TestCase, mock
 import auto_lrc
 import split_patch
 import neutral_arbitration
-import test_core_logic
+import test_core_central_timing
 
 
 class PrivateShadowProvenanceTests(TestCase):
     def test_neutral_shadow_trust_refresh_rebinds_immutable_provenance(self):
-        fixture = test_core_logic.CentralTimingStateTests()
+        fixture = test_core_central_timing.CentralTimingStateTests()
         candidate = fixture.candidate(12.0, fixture.coherent_spans(12.0), current=True)
         report = fixture.report(1)
         evaluated = auto_lrc.evaluate_backend_timing("synthetic", ((candidate,),), report, {})

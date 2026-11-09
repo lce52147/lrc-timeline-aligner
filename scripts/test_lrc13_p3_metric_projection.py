@@ -6,7 +6,7 @@ from unittest import mock
 
 import auto_lrc
 import split_patch
-import test_core_logic
+import test_core_central_timing
 
 
 class PostCommitSummaryContractTests(unittest.TestCase):
@@ -33,7 +33,7 @@ class PostCommitSummaryContractTests(unittest.TestCase):
         auto_lrc.assert_report_review_contract(report)
 
     def test_selected_central_summary_cannot_override_final_row_review_contract(self):
-        fixture = test_core_logic.CentralTimingStateTests()
+        fixture = test_core_central_timing.CentralTimingStateTests()
         candidate = fixture.candidate(12.0, fixture.coherent_spans(12.0), current=True)
         report = fixture.report(1)
         evaluated = auto_lrc.evaluate_backend_timing(
@@ -63,7 +63,7 @@ class PostCommitSummaryContractTests(unittest.TestCase):
         auto_lrc.assert_report_review_contract(report)
 
     def test_final_trusted_and_unverified_counts_follow_committed_row_statuses(self):
-        fixture = test_core_logic.CentralTimingStateTests()
+        fixture = test_core_central_timing.CentralTimingStateTests()
         candidate = fixture.candidate(12.0, fixture.coherent_spans(12.0), current=True)
         report = fixture.report(1)
         evaluated = auto_lrc.evaluate_backend_timing(

@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 import auto_lrc
-from test_core_logic import V142CentralConsensusRegressionTests
+from test_core_v14_consensus import V142CentralConsensusRegressionTests
 
 
 class ConsensusFamilyDedupTests(unittest.TestCase):

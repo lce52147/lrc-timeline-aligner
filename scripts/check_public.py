@@ -28,7 +28,7 @@ FORBIDDEN_SUFFIXES = {
     ".wav",
 }
 # Test files that pass on a clean checkout with only requirements.txt installed.
-# The full suite (test_core_logic, test_align_lrc_wrapper, ...) needs the Windows
+# The full suite (test_core_*, test_align_lrc_wrapper, ...) needs the Windows
 # runtime (PowerShell wrapper, whisper.cpp, model caches) and runs on the release PC.
 PUBLIC_SAFE_TESTS = [
     "scripts/test_installation.py",
