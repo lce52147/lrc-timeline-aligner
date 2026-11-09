@@ -1,6 +1,6 @@
 # Lyricsee — verified sources with OOGG fallback
 
-Drag supported audio files onto `Lyricsee.cmd` / `Lyricsee.bat`, or pass audio and `.m3u8` paths to `lyricsee.py`. Lyricsee takes the original lyrics from uta-net first (then UtaTen and J-Lyric) and cross-checks them against each other, LRCLIB and lyric pages (see Source rules); it prefers a verified published translation, and when none is available it probes OOGG at `127.0.0.1:6969` and then Sister at `100.87.97.121:6969`. If neither endpoint is online, it writes the verified original only.
+Drag supported audio files onto `Lyricsee.cmd` / `Lyricsee.bat`, or pass audio and `.m3u8` paths to `lyricsee.py`. Lyricsee takes the original lyrics from uta-net first (then UtaTen and J-Lyric) and cross-checks them against each other, LRCLIB and lyric pages (see Source rules); it prefers a verified published translation, and when none is available it translates with Gemini first (OpenClaw's `google` profiles; key read at run time from `GEMINI_API_KEY` or the OpenClaw auth store, never written anywhere; `--translator gemini|oogg|auto`, default `auto`) and falls back to OOGG: it probes OOGG at `127.0.0.1:6969` and then Sister at `100.87.97.121:6969`. If neither endpoint is online, it writes the verified original only.
 
 ## Source rules
 
