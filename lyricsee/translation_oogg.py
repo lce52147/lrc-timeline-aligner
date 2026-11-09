@@ -18,11 +18,17 @@ def _validate_texts(original: list[str], translated: list[str]) -> list[str]:
         valid.append(out)
     return valid
 
-def translate_oogg_line(source: str, *, title: str, endpoint: str, model: str, post_json=None) -> str:
-    """One lyric line, minimal prompt, no neighbouring lines: the repair path for a context-bleed translation."""
+def translate_oogg_line(source: str, *, title: str, endpoint: str, model: str, post_json=None,
+                        before: list[str] = (), after: list[str] = ()) -> str:
+    """One lyric line, minimal prompt: the repair path for a context-bleed translation.
+
+    Neighbouring lines, when given, are read-only context and are never translated."""
     from lyricsee_core import HttpClient, _parse_model_json
     if post_json is None:
         post_json = HttpClient().post_json
+    payload = {"translate_this_line_only": source}
+    if before or after:
+        payload = {"context_before": list(before), "context_after": list(after), **payload}
     request = {
         "model": model, "temperature": 0, "max_tokens": 300,
         "response_format": {"type": "json_object"},
@@ -30,8 +36,9 @@ def translate_oogg_line(source: str, *, title: str, endpoint: str, model: str, p
             {"role": "system", "content": (
                 '只翻譯這一句日文或英文為繁體中文。'
                 '只輸出JSON：{"text":"翻譯"}。'
-                '不得輸出其他行、解釋、行號或原文。')},
-            {"role": "user", "content": json.dumps({"translate_this_line_only": source}, ensure_ascii=False)},
+                '不得輸出其他行、解釋、行號或原文。'
+                'context_before 與 context_after 只是唯讀上下文，不得翻譯或重複。')},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
         ],
     }
     for _ in range(3):
@@ -54,18 +61,6 @@ def translate_oogg_line(source: str, *, title: str, endpoint: str, model: str, p
         if "__UNSURE__" not in value.upper():
             return value
     raise ValueError("no valid one-line translation")
-
-
-def _repair_bleed(original: list[str], translated: list[str], line_fn) -> list[str]:
-    """Re-translate every line whose translation repeats a neighbour's, one line at a time, then keep the result."""
-    from lyrics_qa import find_bleed
-    translated = list(translated)
-    for issue in find_bleed(list(zip(original, translated))):
-        try:
-            translated[issue.line - 1] = line_fn(original[issue.line - 1])
-        except Exception:
-            pass
-    return translated
 
 
 def translate_oogg(original: list[str], *,
@@ -210,13 +205,7 @@ def translate_oogg(original: list[str], *,
             ) from exc
     if [r.original for r in pairs]!=original:
         raise RuntimeError("LLM unexpectedly changed original lyric rows")
-    # The batch prompt carries neighbouring lines as context and a small model sometimes translates them too.
-    from lyricsee_core import LyricPair as _Pair
-    repaired=_repair_bleed(
-        original,[r.translation or "" for r in pairs],
-        lambda line: translate_oogg_line(line,title=title,endpoint=endpoint,model=model,post_json=post_with_wake_retry),
-    )
-    pairs=[_Pair(r.original,t) for r,t in zip(pairs,repaired)]
+    # No bleed repair here: lyrics_qa.gate() re-asks a strong bleed with read-only neighbour context and keeps the old text unless the new one is clearly better.
     if not review:
         return _validate_texts(original,[r.translation or "" for r in pairs])
     reviewed=review_translations_with_local_llm(

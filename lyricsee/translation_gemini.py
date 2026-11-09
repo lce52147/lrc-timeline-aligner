@@ -57,7 +57,7 @@ def mask(text: object, keys: tuple[str, ...] | list[str] = ()) -> str:
 def _store_tokens(path: Path) -> list[tuple[str, str]]:
     found: list[tuple[str, str]] = []
     try:
-        conn = sqlite3.connect("file:" + path.as_posix() + "?mode=ro", uri=True)
+        conn = sqlite3.connect("file:" + path.as_posix() + "?mode=ro&immutable=1", uri=True)
     except sqlite3.Error:
         return found
     try:

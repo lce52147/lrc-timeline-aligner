@@ -402,7 +402,8 @@ def cmd_apply(args: argparse.Namespace) -> int:
             target = _select_oogg_endpoint(http, DEFAULT_OOGG_ENDPOINTS)
             if not target:
                 raise ConnectionError("no configured OOGG endpoint is online")
-            return translate_oogg_line(line, title="", endpoint=target.endpoint, model=target.model)
+            return translate_oogg_line(line, title="", endpoint=target.endpoint, model=target.model,
+                                       before=list(context[0]), after=list(context[1]))
         retranslate.accepts_context = True
     results = [apply_post_translation(out, stem, oogg_fill=oogg_fill, retranslate=retranslate) for stem in stems]
     for result in results:

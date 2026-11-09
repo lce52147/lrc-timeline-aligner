@@ -166,6 +166,11 @@ class BleedRepairKeepsOldTests(unittest.TestCase):
         self.assertEqual(kept[2].translation, TRANS[1])
         self.assertEqual([(i.kind, i.line) for i in issues], [("bleed", 3)])
 
+    def test_new_text_that_bleeds_into_the_next_row_is_not_clearly_better(self):
+        kept, issues, _ = qa.gate(self.pairs(), retranslate=lambda line: TRANS[3])
+        self.assertEqual(kept[2].translation, TRANS[1])
+        self.assertEqual([(i.kind, i.line) for i in issues], [("bleed", 3)])
+
     def test_a_fragment_much_shorter_than_expected_is_not_clearly_better(self):
         kept, _, _ = qa.gate(self.pairs(), retranslate=lambda line: "燈")
         self.assertEqual(kept[2].translation, TRANS[1])
@@ -331,6 +336,17 @@ class Fix1Tests(unittest.TestCase):
         kept, _, dropped = qa.gate([LyricPair(o, "譯") for o in [line31] + ORIG])
         self.assertEqual(dropped, [])
 
+    def test_japanese_kanji_chain_with_ja_common_function_kanji_is_not_a_note(self):
+        for line in ("過去現在未来永劫の果てに咲く花を見つけた", "完全無欠過去現在未来永劫輪廻転生の果て"):
+            self.assertFalse(qa.is_note_line(line), line)
+            self.assertEqual(clean_lyric_lines([line] + ORIG, "ja")[0], line)
+            kept, issues, dropped = qa.gate([LyricPair(o, "譯") for o in [line] + ORIG])
+            self.assertEqual(dropped, [])
+            self.assertNotIn("note_in_original_keep_translation", [i.kind for i in issues])
+
+    def test_chinese_prose_in_a_japanese_song_is_still_a_note(self):
+        self.assertTrue(qa.is_note_line("但是同時也是日本古搖籃曲的句子是這樣的說明"))
+
     def test_chinese_translation_with_yi_ge_ren_keeps_its_stanza_aligned(self):
         trans = list(TRANS[:4])
         trans[1] = "一個人在這裡等著你回來的那一天一個人看著星空慢慢地想起你的樣子"
@@ -440,14 +456,14 @@ class OoggLineTests(unittest.TestCase):
         user = json.loads(sent[0]["messages"][1]["content"])
         self.assertEqual(list(user), ["translate_this_line_only"])
 
-    def test_translate_oogg_repairs_a_bleed_row_without_context(self):
+    def test_translate_oogg_leaves_bleed_repair_to_the_gate(self):
         batch = [LyricPair(o, t) for o, t in rows()]
         batch[2] = LyricPair(ORIG[2], TRANS[1])    # the model translated the previous line again
         with patch("lyricsee_core.translate_with_local_llm", return_value=batch), \
                 patch("translation_oogg.translate_oogg_line", return_value=TRANS[2]) as single:
             result = translate_oogg(ORIG, title="t", model="m", endpoint="http://x", review=False)
-        single.assert_called_once()
-        self.assertEqual(result[2], TRANS[2])
+        single.assert_not_called()
+        self.assertEqual(result[2], TRANS[1])
 
 
 if __name__ == "__main__":

@@ -133,9 +133,20 @@ def has_commentary_frame(text: str) -> bool:
     return bool(strong or frames)
 
 
+# Function characters that Japanese also writes (過去 在 会 為 也 是 的 …): they never count alone.
+_JA_COMMON_FUNCTION = frozenset("的是也了在這过過會会為为對对與与從从都就被把")
+_CHINESE_ONLY_FUNCTION = _CHINESE_FUNCTION - _JA_COMMON_FUNCTION | frozenset("這")
+
+
 def _is_chinese_prose(text: str) -> bool:
-    """A run of 8+ kanji carrying 2+ Chinese function words ('同時也是日本古搖籃曲的句子')."""
-    return any(sum(ch in _CHINESE_FUNCTION for ch in run.group()) >= 2 for run in _HAN_RUN_RE.finditer(text))
+    """A run of 8+ kanji with 2+ Chinese-only function words, or 3+ function words in all ('同時也是日本古搖籃曲的句子').
+
+    A kanji chain of Japanese ('過去現在未来永劫') carries 過/在/会/為, which are not enough."""
+    for run in _HAN_RUN_RE.finditer(text):
+        chars = run.group()
+        if sum(ch in _CHINESE_ONLY_FUNCTION for ch in chars) >= 2 or sum(ch in _CHINESE_FUNCTION for ch in chars) >= 3:
+            return True
+    return False
 
 
 def is_note_line(text: str, song_lang: str = "ja") -> bool:
@@ -456,8 +467,11 @@ def _clearly_better(original: str, old: str, new: str, rows: list, at: int) -> b
         return False
     trial = list(rows)
     trial[at] = (original, new)
-    if any(i.line == at + 1 and i.kind in ("bleed", "untranslated", "script_garbage") for i in check(trial, translated=True)):
-        return False
+    for i in check(trial, translated=True):
+        if i.line == at + 1 and i.kind in ("bleed", "untranslated", "script_garbage"):
+            return False
+        if i.line == at + 2 and i.kind == "bleed":      # a new bleed into the next row (reported on its later line)
+            return False
     expected = _median_ratio(rows) * len(_plain(original))
     if len(_plain(new)) < max(2, 0.5 * expected):
         return False

@@ -490,8 +490,8 @@ def mask_secret(exc: Exception, gemini_client: GeminiClient | None) -> str:
 
 
 def _line_retranslator(client: HttpClient, endpoints: tuple[str, ...], endpoint: str, title: str):
-    """original line -> translation through whichever OOGG host is up (the one used for the song first), no context."""
-    def retranslate(line: str) -> str:
+    """original line -> translation through whichever OOGG host is up (the one used for the song first); neighbours go in as read-only context."""
+    def retranslate(line: str, context: tuple[list[str], list[str]] = ((), ())) -> str:
         from translation_oogg import translate_oogg_line
         target = _select_oogg_endpoint(client, endpoints)
         host = target.endpoint if target else endpoint
@@ -499,7 +499,8 @@ def _line_retranslator(client: HttpClient, endpoints: tuple[str, ...], endpoint:
         if model is None:
             payload = client.get_json(host.rstrip("/") + "/v1/models")
             model = str(payload["data"][0]["id"])
-        return translate_oogg_line(line, title=title, endpoint=host, model=model)
+        return translate_oogg_line(line, title=title, endpoint=host, model=model, before=list(context[0]), after=list(context[1]))
+    retranslate.accepts_context = True
     return retranslate
 
 
