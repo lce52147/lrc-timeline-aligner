@@ -53,6 +53,9 @@ _ALGORITHM_SOURCE_MODULES = (
     "backend_bundle",
     "central_commit_tail",
     "neutral_arbitration",
+    "known_lyric_hubert_planning",
+    "postcentral_tail_acquisition",
+    "hubert_existing_candidate_recovery",
     "postcentral_recovery",
 )
 
