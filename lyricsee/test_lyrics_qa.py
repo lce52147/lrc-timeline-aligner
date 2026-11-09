@@ -344,6 +344,12 @@ class Fix1Tests(unittest.TestCase):
             self.assertEqual(dropped, [])
             self.assertNotIn("note_in_original_keep_translation", [i.kind for i in issues])
 
+    def test_kana_rich_japanese_kanji_chains_are_not_notes(self):
+        for line in ("永劫回帰過去現在未来在りし日の夢を見ていた僕らは", "過去現在未来在処不明為す術もない世界の果てで",
+                     "一期一会過去現在都会の片隅で君を待っている", "個人情報漏洩還元不能の世界で君は笑っていた"):
+            self.assertFalse(qa.is_note_line(line), line)
+            self.assertEqual(clean_lyric_lines([line] + ORIG, "ja")[0], line)
+
     def test_chinese_prose_in_a_japanese_song_is_still_a_note(self):
         self.assertTrue(qa.is_note_line("但是同時也是日本古搖籃曲的句子是這樣的說明"))
 

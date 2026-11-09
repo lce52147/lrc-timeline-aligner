@@ -135,15 +135,17 @@ def has_commentary_frame(text: str) -> bool:
 
 # Function characters that Japanese also writes (過去 在 会 為 也 是 的 …): they never count alone.
 _JA_COMMON_FUNCTION = frozenset("的是也了在這过過會会為为對对與与從从都就被把")
-_CHINESE_ONLY_FUNCTION = _CHINESE_FUNCTION - _JA_COMMON_FUNCTION | frozenset("這")
+_CHINESE_ONLY_FUNCTION = _CHINESE_FUNCTION - _JA_COMMON_FUNCTION - frozenset("個還")
 
 
-def _is_chinese_prose(text: str) -> bool:
+def _is_chinese_prose(text: str, min_run: int = 8) -> bool:
     """A run of 8+ kanji with 2+ Chinese-only function words, or 3+ function words in all ('同時也是日本古搖籃曲的句子').
 
     A kanji chain of Japanese ('過去現在未来永劫') carries 過/在/会/為, which are not enough."""
     for run in _HAN_RUN_RE.finditer(text):
         chars = run.group()
+        if len(chars) < min_run:
+            continue
         if sum(ch in _CHINESE_ONLY_FUNCTION for ch in chars) >= 2 or sum(ch in _CHINESE_FUNCTION for ch in chars) >= 3:
             return True
     return False
@@ -158,9 +160,10 @@ def is_note_line(text: str, song_lang: str = "ja") -> bool:
     text = (text or "").strip()
     if song_lang != "ja" or len(text) < 20 or not _HAN.search(text):
         return False
-    if _is_chinese_prose(text):
-        return True
     share = _kana_share(text)
+    # a kana-rich line is Japanese unless a 12+ kanji run (a Chinese clause after a kana snippet) reads as prose
+    if _is_chinese_prose(text, 8 if share < 0.2 else 12):
+        return True
     if _KANA.search(text) and share >= 0.2:
         # a Japanese line (kana carries the grammar), unless it is a dictionary explanation
         return len(text) >= 25 and "。" in text and bool(_DICTIONARY_FRAME_RE.search(text))
