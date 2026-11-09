@@ -27,6 +27,7 @@ _NOTE_MARKERS = (
     "補充", "补充", "聽起來", "考量", "選用", "选用",
 )
 _BRACKET_PAIR_RE = re.compile(r"【[^】]*】")
+_PAREN_RE = re.compile(r"[（(][^）)]*[）)]")
 _PUNCT_RE = re.compile(r"[\s\W_]+", re.UNICODE)
 STRONG_BLEED_CHARS = 6
 _INTERJECTION_RE = re.compile(r"^[\s\W]*(?:(?:la|na|oh|ooh|woah|whoa|yeah|ah|hey|uh|mm|hmm|da|ha|yo|ba|doo|wow)[\s\W]*)+$",
@@ -110,7 +111,7 @@ def _is_bleed_pair(orig_a: str, trans_a: str, orig_b: str, trans_b: str) -> str:
     pa, pb = _plain(trans_a), _plain(trans_b)
     if not pa or not pb:
         return ""
-    fa, fb = fold(orig_a), fold(orig_b)
+    fa, fb = fold(_PAREN_RE.sub("", orig_a)), fold(_PAREN_RE.sub("", orig_b))   # ruby in brackets is not text
     if fa == fb or (fa and fb and char_similarity(fa, fb) >= 0.6):
         return ""
     if pa == pb and len(pa) >= 4:
@@ -126,8 +127,14 @@ def _is_bleed_pair(orig_a: str, trans_a: str, orig_b: str, trans_b: str) -> str:
     return ""
 
 
+def _median_ratio(lines: Sequence[tuple[str, str]]) -> float:
+    ratios = [len(_plain(t)) / len(_plain(o)) for o, t in lines if len(_plain(o)) >= 4 and _plain(t)]
+    return statistics.median(ratios) if ratios else 1.0
+
+
 def _find_bleed(lines: Sequence[tuple[str, str]]) -> list[Issue]:
     issues: list[Issue] = []
+    median = _median_ratio(lines)
     for i in range(1, len(lines)):
         orig_a, trans_a = lines[i - 1]
         orig_b, trans_b = lines[i]
@@ -136,7 +143,9 @@ def _find_bleed(lines: Sequence[tuple[str, str]]) -> list[Issue]:
         reason = _is_bleed_pair(orig_a, trans_a, orig_b, trans_b)
         if reason:
             strong = reason.startswith("identical") or int(re.search(r"\d+", reason).group()) >= STRONG_BLEED_CHARS
-            issues.append(Issue("bleed", i + 1, reason, strong))     # the later line is the one that repeats the earlier
+            longer = len(_plain(trans_b)) > 1.3 * median * max(1, len(_plain(orig_b)))
+            if strong or longer:      # a weak overlap counts only when the line carries more text than its own original
+                issues.append(Issue("bleed", i + 1, reason, strong))     # the later line is the one that repeats the earlier
     return issues
 
 
@@ -228,12 +237,15 @@ def _find_untranslated(lines: Sequence[tuple[str, str]], song_lang: str) -> list
         elif _plain(translation) == _plain(original) and (_KANA.search(original) or len(_LATIN.findall(original)) >= 4):
             issues.append(Issue("untranslated", n, "translation equals the original"))
         else:
+            for chunk in _PAREN_RE.findall(translation):
+                if chunk in original:
+                    translation = translation.replace(chunk, "")     # a chant kept in brackets on purpose
             kana = len(_KANA.findall(translation))
             letters = len(_LATIN.findall(translation))
             han = len(_HAN.findall(translation))
             if kana >= 3 and kana >= 0.3 * (kana + han):
                 issues.append(Issue("untranslated", n, "kana left in the translation"))
-            elif letters >= 8 and letters >= 3 * max(han, 1) and not _is_interjection(translation):
+            elif letters >= 8 and han == 0 and not _is_interjection(translation):
                 issues.append(Issue("untranslated", n, "Latin text left in the translation"))
     return issues
 
@@ -280,7 +292,7 @@ def check(lines: Sequence[tuple[str, str]], *, reference_original: Sequence[str]
     issues += [issue for issue in _find_bleed(lines) if issue.line not in leaked]
     if reference_original:
         issues += _find_order(originals, reference_original)
-    issues += _find_variants(originals, reference_original)
+    issues += [issue for issue in _find_variants(originals, reference_original) if issue.line not in leaked]
     if translated:   # an original-only lyric has no translation column to judge
         issues += [issue for issue in _find_untranslated(lines, song_lang) if issue.line not in leaked]
         issues += [issue for issue in _find_ratio(lines) if issue.line not in leaked]
