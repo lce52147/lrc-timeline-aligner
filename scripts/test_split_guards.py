@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ast
 import shutil
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -238,6 +239,171 @@ class KnownLyricHubertHelperSourceTests(unittest.TestCase):
             postcentral_recovery._known_lyric_hubert_helper_revision(),
             self.DEV_6D153C7C_REVISION,
         )
+
+
+class Split2ModuleGuards(unittest.TestCase):
+    """Guards for the split2 submodules (ctc_refinement, timing_core, postcentral_recovery, local_whisper_retry, acoustic_hypotheses)."""
+
+    SURFACES = {
+        "ctc_refinement": ("ctc_boundary_evidence", "ctc_window_realign", "ctc_prefix_recovery", "ctc_whisperx_refinement"),
+        "timing_core": ("timing_evidence_types", "tail_occurrence_evidence", "candidate_regions"),
+        "postcentral_recovery": ("known_lyric_hubert_planning", "postcentral_tail_acquisition", "hubert_existing_candidate_recovery"),
+        "local_whisper_retry": ("crossline_retry_planning", "crossline_retry_execution", "local_whisper_requests"),
+        "acoustic_hypotheses": ("vocal_onset_hypotheses", "recurrence_hypotheses", "hypothesis_provenance"),
+    }
+    # (name count, sha256 of the sorted names) of each surface at dev 6a7b31e2, before the split.
+    DEV_6A7B31E2_NAMES = {
+        "ctc_refinement": (58, "4f92d10b5bad58281d062c3286e1b0fea5fdbc6f4f98d89bf873ef2a5dad5bdd"),
+        "timing_core": (171, "2b5de4681a3ed89d9d9c24d8deabb34c0d16686959d6a230667ab56583eb90d8"),
+        "postcentral_recovery": (53, "020fbfbb45bc33fc4e90efabd1d2008264156ccaaea477f83d60f85526d0e17e"),
+        "local_whisper_retry": (36, "c4ad02e34abdd23dc9f8da12da91c590fa414161df884c0525cdcf32057a41c3"),
+        "acoustic_hypotheses": (73, "c19ba3747627fb24fa9ad64431ca34d21e3560ef349770b03c8a27ae77d236ed"),
+    }
+
+    @staticmethod
+    def _tree(module_name):
+        return ast.parse((SCRIPTS / f"{module_name}.py").read_text(encoding="utf-8"))
+
+    @classmethod
+    def _defined_names(cls, module_name):
+        names = []
+        for node in cls._tree(module_name).body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.append(node.name)
+            elif isinstance(node, ast.Assign):
+                names.extend(n.id for t in node.targets for n in ast.walk(t) if isinstance(n, ast.Name))
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                names.append(node.target.id)
+        return names
+
+    def test_every_new_module_is_in_the_hash_list(self):
+        listed = set(runtime_base._ALGORITHM_SOURCE_MODULES)
+        for surface, subs in self.SURFACES.items():
+            self.assertIn(surface, listed)
+            for sub in subs:
+                self.assertIn(sub, listed, sub)
+
+    def test_surface_name_set_matches_dev(self):
+        import hashlib
+        for surface, subs in self.SURFACES.items():
+            names = set(self._defined_names(surface))
+            for sub in subs:
+                self.assertFalse(names & set(self._defined_names(sub)), f"{sub} redefines a name of {surface}")
+                names |= set(self._defined_names(sub))
+            count, digest = self.DEV_6A7B31E2_NAMES[surface]
+            self.assertEqual(len(names), count, surface)
+            self.assertEqual(hashlib.sha256("\n".join(sorted(names)).encode()).hexdigest(), digest, surface)
+
+    def test_surface_reexports_every_submodule_name_by_identity(self):
+        import importlib
+        for surface, subs in self.SURFACES.items():
+            surface_module = importlib.import_module(surface)
+            for sub in subs:
+                owner = importlib.import_module(sub)
+                for name in self._defined_names(sub):
+                    self.assertIs(getattr(surface_module, name), getattr(owner, name), f"{surface}.{name}")
+                    self.assertIs(getattr(auto_lrc, name, getattr(owner, name)), getattr(owner, name), f"auto_lrc.{name}")
+
+    def test_no_module_binds_a_different_object_under_an_owned_name(self):
+        import importlib
+        for surface, subs in self.SURFACES.items():
+            for module_name in (surface,) + subs:
+                owner = importlib.import_module(module_name)
+                for name in self._defined_names(module_name):
+                    for other in split_patch.SPLIT_MODULES:
+                        other_module = sys.modules.get(other)
+                        if other_module is not None and hasattr(other_module, name):
+                            self.assertIs(getattr(other_module, name), getattr(owner, name), f"{other}.{name} vs {module_name}")
+
+    def test_submodules_never_import_their_surface_or_auto_lrc(self):
+        forbidden_for = {"auto_lrc"}
+        for surface, subs in self.SURFACES.items():
+            for sub in subs:
+                imported = set()
+                for node in ast.walk(self._tree(sub)):
+                    if isinstance(node, ast.ImportFrom):
+                        imported.add((node.module or "").split(".")[0])
+                    elif isinstance(node, ast.Import):
+                        imported.update(a.name.split(".")[0] for a in node.names)
+                self.assertFalse(imported & (forbidden_for | {surface}), f"{sub} imports {imported & (forbidden_for | {surface})}")
+
+    def test_import_graph_of_split_modules_is_acyclic(self):
+        modules = set(runtime_base._ALGORITHM_SOURCE_MODULES) | {"auto_lrc"}
+        graph = {}
+        for module_name in modules:
+            edges = set()
+            for node in self._tree(module_name).body:
+                if isinstance(node, ast.ImportFrom) and node.module in modules:
+                    edges.add(node.module)
+                elif isinstance(node, ast.Import):
+                    edges.update(a.name for a in node.names if a.name in modules)
+            graph[module_name] = edges
+        state = {}
+
+        def visit(name, path):
+            self.assertNotEqual(state.get(name), 1, f"import cycle: {' -> '.join(path + [name])}")
+            if state.get(name) == 2:
+                return
+            state[name] = 1
+            for dep in sorted(graph[name]):
+                visit(dep, path + [name])
+            state[name] = 2
+
+        for name in sorted(graph):
+            visit(name, [])
+
+    def test_every_new_file_is_at_most_2500_lines(self):
+        for surface, subs in self.SURFACES.items():
+            for module_name in (surface,) + subs:
+                lines = (SCRIPTS / f"{module_name}.py").read_text(encoding="utf-8").count("\n") + 1
+                self.assertLessEqual(lines, 2500, module_name)
+
+    def test_stage_timing_wrappers_live_in_the_owner_of_the_function(self):
+        import importlib
+        import lrc_stage_timings
+        owners = {}
+        for surface, subs in self.SURFACES.items():
+            for module_name in (surface,) + subs:
+                for name in self._defined_names(module_name):
+                    owners[name] = module_name
+        seen = 0
+        for name, _label, _role in lrc_stage_timings.STAGE_TIMING_SPEC:
+            if name not in owners:
+                continue
+            seen += 1
+            owner = importlib.import_module(owners[name])
+            function = getattr(owner, name)
+            self.assertTrue(getattr(function, "__stage_timing_wrapper__", False), f"{owners[name]}.{name} not wrapped in its owner")
+            for surface in self.SURFACES:
+                self.assertIs(getattr(importlib.import_module(surface), name, function), function, f"{surface}.{name}")
+        self.assertEqual(seen, 7)
+
+    def test_known_lyric_hubert_helper_source_is_substituted_in_its_owner(self):
+        import known_lyric_hubert_planning
+        import postcentral_recovery
+        self.assertNotIn("__LRC_KNOWN_LYRIC_HUBERT_", known_lyric_hubert_planning._KNOWN_LYRIC_HUBERT_HELPER_SOURCE)
+        self.assertIs(
+            postcentral_recovery._KNOWN_LYRIC_HUBERT_HELPER_SOURCE,
+            known_lyric_hubert_planning._KNOWN_LYRIC_HUBERT_HELPER_SOURCE,
+        )
+        self.assertFalse(hasattr(known_lyric_hubert_planning, "_known_lyric_hubert_contract_token"))
+
+    def test_patched_name_readers_stay_in_the_surface_module(self):
+        # tests assign/patch these names on the surface module; their readers must read the surface binding.
+        expected = {
+            "ctc_refinement": ("apply_vocal_onset_tiebreak", "run_ctc_prefix_probe", "apply_final_ctc_timing_guard"),
+            "local_whisper_retry": (
+                "execute_local_whisper_request",
+                "_prepare_local_whisper_batch",
+                "_local_whisper_vocal_fusion_candidate",
+                "collect_central_timing_candidates",
+            ),
+        }
+        for surface, names in expected.items():
+            defined = set(self._defined_names(surface))
+            for name in names:
+                self.assertIn(name, defined, f"{name} must be defined in {surface}")
+            self.assertIs(getattr(sys.modules[surface], names[0]).__module__, surface)
 
 
 def tearDownModule() -> None:
