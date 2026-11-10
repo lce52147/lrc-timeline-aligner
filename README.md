@@ -156,31 +156,40 @@ powershell -ExecutionPolicy Bypass -File .\align-lrc.ps1 "D:\Music\Song.flac"
 
 ## 演算流程
 
-下圖是 v1.8.0 預設設定下，一首歌從輸入到寫出 LRC 的順序（對照 `scripts/auto_lrc.py` 的 `process_audio()`）。實線是每首歌都會走的路，虛線是預設關閉或只在特定情況才走的分支。
+下圖是 v1.8.0 預設設定下，一首歌從輸入到寫出 LRC 的順序（對照 `scripts/auto_lrc.py` 的 `process_audio()`）。方框裡標了該步驟用的模型；實線是每首歌都會走的路，虛線是預設關閉的分支。
 
 ```mermaid
 flowchart TD
-    A["FLAC 音檔 + 歌詞"] --> B["讀歌詞、預檢、轉羅馬拼音"]
-    B --> C["whisper.cpp 原始辨識<br/>（只當證據，不直接給時間）"]
-    B --> D["Demucs 分出人聲軌"]
-    D --> E["全曲 CTC 強制對齊<br/>每句取第一個字母的開始當候選"]
+    A["FLAC 音檔 + 歌詞"] --> B["讀歌詞、預檢、轉羅馬拼音<br/>UniDic／pykakasi"]
+    B --> C["原始語音辨識<br/>whisper.cpp large-v3"]
+    B --> D["分出人聲軌<br/>Demucs htdemucs"]
+    D --> E["全曲 CTC 強制對齊<br/>torchaudio MMS_FA"]
     C --> G{"段落骨架成立？"}
     E --> G
-    G -- "否" --> H["CTC 局部視窗重對齊"]
-    H -. "預設關閉（2.0 草稿）" .-> S["段落級重對齊"]
+    G -- "否" --> H["CTC 局部視窗重對齊<br/>MMS_FA"]
+    H -. "預設關閉（2.0 草稿）" .-> S["段落級重對齊<br/>MMS_FA"]
     G -- "是" --> W
-    H --> W["WhisperX 候選"]
+    H --> W["WhisperX 強制對齊<br/>日文 wav2vec2 XLSR-53"]
     S -.-> W
-    W --> X["Central 仲裁<br/>看順序、是不是這一句、人聲支持、上一句尾音<br/>決定每句唯一的時間"]
-    X --> Y["寫定前補證據<br/>中立仲裁、CTC／HuBERT 句尾、既有候選回收"]
-    Y --> Z["多模型共識<br/>≥3 個模型家族在 0.1 秒內一致才改還沒定案的句子"]
-    Z --> F["自我檢查 F1–F4<br/>只會降低可信度，不改時間"]
+    W --> X["Central 仲裁<br/>規則判斷，不是模型"]
+    X --> Y["寫定前補證據<br/>中立仲裁：whisper.cpp 局部重聽<br/>句尾與既有候選回收：HuBERT 日文 ASR"]
+    Y --> Z["多模型共識<br/>MMS 1B、wav2vec2 英／日、MMS_FA 等 7 組 CTC"]
+    Z --> F["自我檢查 F1–F4<br/>用 Demucs 人聲軌的音量"]
     F --> O["寫出 .lrc、對齊報告、審核清單"]
     O --> R["審核頁：人工確認沒把握的句子"]
 ```
 
-- 時間只由 Central 決定。辨識結果（whisper.cpp、WhisperX）預設只用來證明「是這一句」或提出候選，不會直接寫進 LRC。
-- Central 之後的步驟只能在既有候選裡選、或把句子標成需審；自我檢查和審核分級只改可信度標記，不動時間。
+| 模型 | 在哪一步 | 用來做什麼 |
+|---|---|---|
+| Demucs `htdemucs` | 分出人聲軌 | 把伴奏拿掉，後面的 CTC 和自我檢查都用人聲軌 |
+| torchaudio `MMS_FA` | 全曲 CTC、局部視窗、段落級重對齊 | 主要的時間來源：把羅馬拼音歌詞對到人聲上，每句取第一個字母的開始當候選 |
+| whisper.cpp `ggml-large-v3` | 原始語音辨識、中立仲裁 | 聽出實際唱了什麼，證明候選「是這一句」、判斷順序，以及判斷段落骨架；預設不直接給時間 |
+| WhisperX 對齊模型（日文歌是 `wav2vec2-large-xlsr-53-japanese`） | WhisperX 強制對齊 | 用不同模型再對一次，當第二個候選和佐證 |
+| HuBERT `TKU410410103/hubert-base-japanese-asr` | 寫定前補證據 | 只在 Central 有衝突的句子上，確認句尾和既有候選的開頭；不產生新時間 |
+| MMS 1B、wav2vec2 英文／日文等 7 組 CTC | 多模型共識 | ≥3 個模型家族在 0.1 秒內一致時，才改 Central 還沒定案的句子，不一致就標需審 |
+
+- 時間只由 Central 決定。Central 本身是規則，不是模型；辨識結果（whisper.cpp、WhisperX、HuBERT）只當證據或候選。
+- Central 之後的步驟只能在既有候選裡選、或把句子標成需審；自我檢查只降可信度，不改時間。
 - 段落骨架成立時跳過局部視窗重對齊。骨架判斷剛好落在門檻邊緣時，兩條路都會跑，交給 Central 比較。
 
 ## 核心設計想法
