@@ -1,4 +1,4 @@
-## LRC Timeline Aligner v1.9.0（草稿）
+## LRC Timeline Aligner v1.9.0
 
 v1.9.0 是審核頁、lyricsee 與內部整理的版本，對齊準確度與 v1.8.0 相同；段落級重對齊以關閉的診斷功能隨附。
 
