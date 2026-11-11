@@ -147,7 +147,10 @@ class FuriganaTests(unittest.TestCase):
         self.assertIsNone(audit.asr_check("", heard_other, 50.0, 60.0, reading), "no ASR text in the window means no check")
 
     def test_ruby_parser_reads_utaten_markup(self):
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lyricsee"))
+        lyricsee = Path(__file__).resolve().parent.parent / "lyricsee"
+        if not (lyricsee / "utaten_source.py").is_file():
+            self.skipTest("lyricsee folder not present (kept local only)")
+        sys.path.insert(0, str(lyricsee))
         from utaten_source import parse_utaten_ruby
         page = ('<div class="hiragana">\n <span class="ruby"><span class="rb">時間</span><span class="rt">とき</span></span>の'
                 '<span class="ruby"><span class="rb">流</span><span class="rt">なが</span></span>れ<br />\n</div>')

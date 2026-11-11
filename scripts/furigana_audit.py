@@ -153,7 +153,10 @@ def match_page(rows, page_lines):
 
 
 def fetch_song(path: pathlib.Path, cache: pathlib.Path, delay: float, force: bool = False):
-    from utaten_source import parse_utaten_ruby, parse_utaten_search, utaten_search_url
+    try:
+        from utaten_source import parse_utaten_ruby, parse_utaten_search, utaten_search_url
+    except ImportError:
+        raise SystemExit("furigana_audit: the lyricsee folder (utaten_source) is not present; it is kept local only.")
 
     report = json.loads(path.read_text(encoding="utf-8"))
     stem = report_stem(path)
