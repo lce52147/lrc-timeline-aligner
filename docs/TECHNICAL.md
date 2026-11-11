@@ -18,11 +18,13 @@ Checked reference timestamps are never part of normal automatic inference. Expli
 
 The `reviewer-validity` selector now compares reviewer support before a reviewer-endorsed current timestamp can yield to a distant independent-consensus candidate. Candidate seed ranking also uses acoustic score and producer semantics before provenance identity. The R2 reviewer payload now applies the same generated-title-card filtering as the timing backend. On the 27-song development split, PCO@0.2 improved from 87.24% to 91.49%, rows over 500 ms fell from 69 to 49, and rows over 1 s fell from 36 to 30, with no newly created rows over either threshold. A descriptive evaluation of the full 37-song pool improved PCO@0.2 from 82.89% to 86.92%, reduced rows over 500 ms from 141 to 115 and rows over 1 s from 95 to 87, and created no new rows over either threshold. These are dev27 validation plus a full-pool descriptive evaluation; the former acceptance set is part of that pool, so the results have not been independently validated.
 
-## Segment realign (LRC 2.0)
+## Segment realign (v1.9.0, diagnostic)
 
-`scripts/segment_realign.py` + `auto_lrc.apply_segment_realign`, run after the CTC
+`scripts/segment_realign.py` + `ctc_window_realign.apply_segment_realign` (`auto_lrc` still re-exports it), run after the CTC
 local-window stage and before Central (same branch as the local window: raw ASR
-available, skeleton not SEGMENT_CURRENT).
+available, skeleton not SEGMENT_CURRENT). When the skeleton is SEGMENT_CURRENT the whole
+branch (local window, shadows, segment realign) is skipped and the report has no `segment_realign`
+block, not even `{status: off}` (3 of 39 songs in replay round 2: 影色舞, 遠雷, 远航星).
 
 - **Structural row map** (`structural_row_map`): a Viterbi path over a 0.1 s grid.
   Rows with independent corroboration are anchors (raw ASR within 0.45 s of the CTC
@@ -58,13 +60,14 @@ available, skeleton not SEGMENT_CURRENT).
   Central's own choice 79.61) claimed identity, was certified into a `ctc-joint-boundary-consensus`
   candidate, flipped e21 to selected, shrank the multi-model consensus window of e20 from 32 s to
   10 s, and the consensus moved e20 1.03 s off its reference. Nothing writes a timestamp; a song
-  without a run makes no helper call and its LRC is byte-identical to the pre-2.0 output.
+  without a run makes no helper call and its LRC is byte-identical to the v1.8.0 output.
 - **Central hooks**: the source joins the local-CTC Raw/WhisperX corroboration set and
   the ≥ 3 s displaced-row local Whisper probe (only when no `segment-constrained-ctc`
   proposal exists). `CORROBORATED_REALIGNMENT_SOURCES` is untouched.
-- **Switches / diagnostics**: `--segment-realign {auto,off}` (default `off` until the 2.0
-  replay is accepted; `auto` or `LRC_SEGMENT_REALIGN=auto` turns it on, the environment
-  variable wins);
+- **Switches / diagnostics**: `--segment-realign {auto,off}` (default `off`; the five PC replays,
+  completed 2026-10-28, fixed no row, so it stays off and `auto` is for diagnostics only;
+  `auto` or `LRC_SEGMENT_REALIGN=auto` turns it on, the environment variable wins; the revision
+  string `2026-10-25-lrc-v2.0-segment-realign` is a development code name, not a version number);
   report key `segment_realign` (status, row_status, structure, flagged_entries, runs,
   generated, errors, revision `SEGMENT_REALIGN_REVISION`).
 - **Output stage**: `review_presentation.song_risk` marks the Choir class
@@ -87,7 +90,9 @@ available, skeleton not SEGMENT_CURRENT).
   rows independent 2 (1 true / 1 false), derived without Choir 7 (6 / 1), Choir 7
   (4 / 3); run windows contain the BK onset in 15/16 flagged true errors; 6 of the 23
   ≥ 1 s errors are caught (My Dearest ×5, 影色舞 e2). Sub-second line errors and 2–5 s
-  block shifts are out of scope.
+  block shifts are out of scope. Alignment accuracy in v1.9.0 is the same as v1.8.0: the 6 caught
+  errors are an offline structure-map result and are not reachable in the production path today
+  (My Dearest is skipped as `weak-anchors`, 影色舞 takes the SEGMENT_CURRENT branch).
 
 ## Final timing self-check (F1–F4, post-Central)
 
