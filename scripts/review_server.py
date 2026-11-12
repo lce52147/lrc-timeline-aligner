@@ -177,15 +177,37 @@ def _legacy_score(text):
                                         or "\uff00" <= ch <= "\uffef" or "\u2000" <= ch <= "\u206f"))
 
 
-def _decode_lrc(raw):
-    """(text, encoding) for LRC bytes: UTF-8 (BOM optional), UTF-16 with BOM, then Big5 / GB18030 (the better fit)."""
+def _region_shares(raw):
+    """(GB2312 level-1 share, Big5 frequent-char share) over the double-byte pairs in ``raw``, and the pair count."""
+    gb = big5 = pairs = 0
+    i, n = 0, len(raw)
+    while i < n - 1:
+        lead, trail = raw[i], raw[i + 1]
+        if lead < 0x81:
+            i += 1
+            continue
+        pairs += 1
+        gb += 0xB0 <= lead <= 0xD7 and 0xA1 <= trail <= 0xFE
+        big5 += 0xA4 <= lead <= 0xC6 and (0x40 <= trail <= 0x7E or 0xA1 <= trail <= 0xFE)
+        i += 2
+    if not pairs:
+        return 0.0, 0.0, 0
+    return gb / pairs, big5 / pairs, pairs
+
+
+_UNCERTAIN_MARGIN = 0.25
+_UNCERTAIN_MIN_PAIRS = 4
+
+
+def _decode_lrc_checked(raw):
+    """(text, encoding, uncertain): ``uncertain`` when Big5 and GB18030 both fit and the byte regions barely tell them apart."""
     if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
         try:
-            return raw.decode("utf-16"), "utf-16"
+            return raw.decode("utf-16"), "utf-16", False
         except UnicodeDecodeError:
             raise LrcDecodeError("utf-16 BOM but the bytes are not valid UTF-16") from None
     try:
-        return raw.decode("utf-8-sig"), "utf-8"
+        return raw.decode("utf-8-sig"), "utf-8", False
     except UnicodeDecodeError:
         pass
     found = []
@@ -196,8 +218,28 @@ def _decode_lrc(raw):
             continue
     if not found:
         raise LrcDecodeError("not UTF-8, UTF-16, Big5 or GB18030")
-    _score, _order, codec, text = min(found)
+    best = min(found)
+    uncertain = False
+    if len(found) == 2 and found[0][0] == found[1][0]:
+        gb_share, big5_share, pairs = _region_shares(raw)
+        if gb_share > big5_share:
+            best = found[1]
+        uncertain = pairs < _UNCERTAIN_MIN_PAIRS or abs(gb_share - big5_share) < _UNCERTAIN_MARGIN
+    _score, _order, codec, text = best
+    return text, codec, uncertain
+
+
+def _decode_lrc(raw):
+    """(text, encoding) for LRC bytes: UTF-8 (BOM optional), UTF-16 with BOM, then Big5 / GB18030 (the better fit)."""
+    text, codec, _uncertain = _decode_lrc_checked(raw)
     return text, codec
+
+
+def lrc_encoding_uncertain(raw):
+    try:
+        return _decode_lrc_checked(raw)[2]
+    except LrcDecodeError:
+        return False
 
 
 def _millisecond_tags_to_centiseconds(data):
@@ -1151,8 +1193,14 @@ def _song_payload(report_path, report, anchor=None):
     output_value = report.get("output_path")
     output_path = pathlib.Path(output_value).expanduser() if isinstance(output_value, str) and output_value else None
     auto_path, edits_path = review_artifact_paths(report_path)
+    encoding_uncertain = False
     try:
-        current_raw = _read_lrc(output_path) if output_path and output_path.is_file() else b""
+        if output_path and output_path.is_file():
+            file_bytes = output_path.read_bytes()
+            current_raw = _canonical_lrc(file_bytes)
+            encoding_uncertain = lrc_encoding_uncertain(file_bytes)
+        else:
+            current_raw = b""
     except LrcDecodeError:
         current_raw = b""
         undecodable = True
@@ -1300,6 +1348,7 @@ def _song_payload(report_path, report, anchor=None):
         "review_rows": sum(row.get("review") == "REVIEW" for row in rows),
         "read_only": bool(readonly),
         "read_only_reason": reason,
+        "encoding_uncertain": encoding_uncertain,
         "entry_model": entry_model,
         "manual_edited": bool(manual_edited),
         "manual_edit_reason": manual_reason,

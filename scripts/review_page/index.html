@@ -118,6 +118,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
 <header>
   <span class="song-name" id="song-name">LRC review</span>
   <span class="risk" id="song-risk" hidden title="整首高風險：合唱／疊聲類，請整首聽過">整首高風險</span>
+  <span class="muted" id="enc-uncertain" hidden title="這個 LRC 不是 UTF-8，簡體／繁體舊編碼無法確定；若字變亂碼請改存 UTF-8">編碼不確定</span>
   <span class="spacer"></span>
   <span id="port-notice" class="port-notice" role="status" hidden><span id="port-notice-text"></span><button type="button" id="port-notice-close" aria-label="關閉">✕</button></span>
   <span id="status" class="status">loading</span>
@@ -1186,6 +1187,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     const risk = song?.detail?.song_risk || song?.song_risk;
     const riskBadge = document.getElementById('song-risk');
     riskBadge.hidden = !(risk && risk.class === 'choir');
+    document.getElementById('enc-uncertain').hidden = !song?.detail?.encoding_uncertain;
     if (risk && risk.class === 'choir') riskBadge.textContent = '整首高風險 ' + (risk.review_rows ?? '?') + '/' + (risk.rows ?? '?') + ' 句需審';
     const doneHere = rows.filter(isDone).length;
     document.getElementById('pos').textContent = doneHere;
