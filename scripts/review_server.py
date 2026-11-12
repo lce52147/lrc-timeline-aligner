@@ -164,6 +164,88 @@ def _split_lrc(data):
     return bom, trailing, lines
 
 
+class LrcDecodeError(ValueError):
+    """The LRC bytes are not text in any encoding this tool reads (UTF-8, UTF-16 with BOM, GB18030, Big5)."""
+
+
+_LEGACY_TAG_RE = re.compile(rb"(?m)^((?:\*+[ \t]*)?)\[(\d{2,}):(\d{2})\.(\d{3})\]")
+
+
+def _legacy_score(text):
+    """Characters outside ASCII, CJK, kana, fullwidth forms and common punctuation: a wrong legacy codec produces many."""
+    return sum(1 for ch in text if not (ch < "\x80" or "\u3000" <= ch <= "\u30ff" or "\u3400" <= ch <= "\u9fff"
+                                        or "\uff00" <= ch <= "\uffef" or "\u2000" <= ch <= "\u206f"))
+
+
+def _decode_lrc(raw):
+    """(text, encoding) for LRC bytes: UTF-8 (BOM optional), UTF-16 with BOM, then Big5 / GB18030 (the better fit)."""
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        try:
+            return raw.decode("utf-16"), "utf-16"
+        except UnicodeDecodeError:
+            raise LrcDecodeError("utf-16 BOM but the bytes are not valid UTF-16") from None
+    try:
+        return raw.decode("utf-8-sig"), "utf-8"
+    except UnicodeDecodeError:
+        pass
+    found = []
+    for codec in ("cp950", "gb18030"):
+        try:
+            found.append((_legacy_score(raw.decode(codec)), len(found), codec, raw.decode(codec)))
+        except UnicodeDecodeError:
+            continue
+    if not found:
+        raise LrcDecodeError("not UTF-8, UTF-16, Big5 or GB18030")
+    _score, _order, codec, text = min(found)
+    return text, codec
+
+
+def _millisecond_tags_to_centiseconds(data):
+    def replace(match):
+        cs = (int(match.group(2)) * 60 + int(match.group(3))) * 100 + (int(match.group(4)) + 5) // 10
+        return match.group(1) + _format_tag(cs)
+    return _LEGACY_TAG_RE.sub(replace, data)
+
+
+def _canonical_lrc(raw):
+    """The LRC as the review reads and writes it: UTF-8 (a UTF-8 BOM is kept) with ``[mm:ss.xx]`` tags.
+
+    Raises LrcDecodeError instead of guessing when the bytes are not text in a known encoding.
+    """
+    if not raw:
+        return raw
+    text, encoding = _decode_lrc(raw)
+    data = text.encode("utf-8")
+    if encoding == "utf-8" and raw.startswith(b"\xef\xbb\xbf"):
+        data = b"\xef\xbb\xbf" + data
+    return _millisecond_tags_to_centiseconds(data)
+
+
+def _read_lrc(path):
+    return _canonical_lrc(pathlib.Path(path).read_bytes())
+
+
+def _read_lrc_or(path, fallback):
+    """A sidecar LRC (the .auto.lrc baseline) in canonical form; ``fallback`` when it is missing or undecodable."""
+    try:
+        return _read_lrc(path) if path.is_file() else fallback
+    except LrcDecodeError:
+        return fallback
+
+
+def _backup_original_lrc(output):
+    """Keep the bytes the file had before this tool converted it; True when a backup exists (never overwrites one)."""
+    original = output.read_bytes()
+    if original == _canonical_lrc(original):
+        return None
+    sha = hashlib.sha256(original).hexdigest()[:8]
+    backup = output.with_name(output.name + ".orig-" + sha + ".bak")
+    if not backup.exists():
+        stage = _stage_bytes(backup, original)
+        os.replace(stage, backup)
+    return backup
+
+
 def _join_lrc(bom, trailing, lines):
     body = b"\n".join(lines) + (b"\n" if trailing else b"")
     return (b"\xef\xbb\xbf" if bom else b"") + body
@@ -786,7 +868,7 @@ def _resolve_entries(report_path, report, output_path, current_raw):
     assignments = report.get("assignments") if isinstance(report.get("assignments"), list) else []
     auto_path, edits_path = review_artifact_paths(report_path)
     current_data, marked_lines = _strip_marks(current_raw)
-    reference_raw = auto_path.read_bytes() if auto_path.is_file() else current_raw
+    reference_raw = _read_lrc_or(auto_path, current_raw)
     reference_data = _strip_marks(reference_raw)[0]
     mapping, _reason = _song_mapping(report, assignments, reference_raw)
     if mapping is not None:
@@ -1069,9 +1151,15 @@ def _song_payload(report_path, report, anchor=None):
     output_value = report.get("output_path")
     output_path = pathlib.Path(output_value).expanduser() if isinstance(output_value, str) and output_value else None
     auto_path, edits_path = review_artifact_paths(report_path)
-    current_raw = output_path.read_bytes() if output_path and output_path.is_file() else b""
+    try:
+        current_raw = _read_lrc(output_path) if output_path and output_path.is_file() else b""
+    except LrcDecodeError:
+        current_raw = b""
+        undecodable = True
+    else:
+        undecodable = False
     current_data, marked_lines = _strip_marks(current_raw)
-    reference_raw = auto_path.read_bytes() if auto_path.is_file() else current_raw
+    reference_raw = _read_lrc_or(auto_path, current_raw)
     reference_data = _strip_marks(reference_raw)[0]
     mapping = None
     links = []
@@ -1079,7 +1167,9 @@ def _song_payload(report_path, report, anchor=None):
     mapping_reason = None
     manual_edited = False
     manual_reason = None
-    if output_path is None or not output_path.is_file():
+    if undecodable:
+        mapping_reason = "lrc-undecodable"
+    elif output_path is None or not output_path.is_file():
         mapping_reason = "lrc-exported" if _lyrics_embedded(report.get("audio_path")) else "lrc-missing"
     else:
         mapping, links, entry_model, mapping_reason, manual_edited, manual_reason = _resolve_entries(
@@ -1387,7 +1477,7 @@ def _export_song(song, body, report_dir, store=None):
     targets = lyrics_tag_export.candidates(pathlib.Path(audio_value))
     try:
         if body.get("check"):
-            lrc_lines = lyrics_tag_export._line_count(lyrics_tag_export.lrc_text(output.read_bytes()))
+            lrc_lines = lyrics_tag_export._line_count(lyrics_tag_export.lrc_text(_read_lrc(output)))
             return 200, {"targets": [lyrics_tag_export.info(item) for item in targets], "lrc_lines": lrc_lines}
         chosen = next((item for item in targets if item.name == body.get("audio")), None)
         if chosen is None:
@@ -1401,7 +1491,7 @@ def _export_song(song, body, report_dir, store=None):
         publish(song=song.get("song"), step="snapshot_before", started=started, active=True)
         archive = {}
         try:
-            result = lyrics_tag_export.export(chosen, output.read_bytes(), work_dir, timings=timings,
+            result = lyrics_tag_export.export(chosen, _read_lrc(output), work_dir, timings=timings,
                                               on_step=lambda name: publish(step=name or "archive"))
             result["seconds"] = round(time.monotonic() - started, 1)
             step = time.perf_counter()
@@ -1466,7 +1556,10 @@ def _save_song(song, body):
     output = song["output"]
     if output is None or not output.is_file():
         return 403, {"error": "lrc-missing"}
-    current = output.read_bytes()
+    try:
+        current = _read_lrc(output)
+    except LrcDecodeError:
+        return 403, {"error": "lrc-undecodable"}
     if _sha256_bytes(current) != body["base_sha256"]:
         return 409, {"error": "stale base_sha256"}
     mapping, _links, model, mapping_reason, _manual, _manual_reason = _resolve_entries(
@@ -1571,7 +1664,7 @@ def _save_song(song, body):
         return 200, unchanged
     auto = song["auto"]
     edits_path = song["edits"]
-    auto_bytes = auto.read_bytes() if auto.is_file() else current
+    auto_bytes = _read_lrc_or(auto, current)
     bom, trailing, lines = _split_lrc(current)
     for edit in edits:
         tag = _format_tag(edit["cs"])
@@ -1646,6 +1739,14 @@ def _save_song(song, body):
             output_stage.unlink(missing_ok=True)
             return 500, {"error": "cannot create review baseline"}
 
+    try:
+        _backup_original_lrc(output)
+    except OSError:
+        output_stage.unlink(missing_ok=True)
+        log_stage.unlink(missing_ok=True)
+        if auto_published:
+            auto.unlink(missing_ok=True)
+        return 500, {"error": "cannot back up the original LRC"}
     replaced = False
     for attempt in range(3):
         try:
