@@ -1082,12 +1082,33 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         self.assertEqual(status, 200)
         self.assertEqual({key: result[key] for key in ("name", "tag", "lines", "archive")},
                          {"name": "song.flac", "tag": "LYRICS", "lines": 9, "archive": {"mode": "off"}})
+        self.assertNotIn("marks_removed", result)
         self.assertIsInstance(result["seconds"], float)
         import mutagen.flac
         text = mutagen.flac.FLAC(str(self.audio))["LYRICS"][0]
         self.assertEqual(text, __import__("lyrics_tag_export").lrc_text(lrc_before))
         self.assertEqual(self.output.read_bytes(), lrc_before, "export leaves the .lrc as saved")
         self.assertTrue((self.root / "export-log.jsonl").is_file())
+
+    def test_export_strips_review_marks_from_the_tag_but_not_from_the_lrc(self) -> None:
+        self._real_flac()
+        lines = self.output.read_bytes().split(bytes([10]))
+        at = next(i for i, line in enumerate(lines) if line.startswith(b"[00:"))
+        first = lines[at].rstrip(bytes([13]))
+        lines[at] = b"*" + first + b"*" + lines[at][len(first):]
+        self.output.write_bytes(bytes([10]).join(lines))
+        self.store.refresh_if_changed()
+        marked = self.output.read_bytes()
+        status, _headers, data = self._json_request("POST", "/api/song/0/export", {"audio": "", "check": True})
+        self.assertEqual((status, json.loads(data)["lrc_lines"]), (200, 9))
+        status, _headers, data = self._json_request("POST", "/api/song/0/export", {"audio": "song.flac"})
+        result = json.loads(data)
+        self.assertEqual((status, result["lines"], result["marks_removed"]), (200, 9, 1))
+        import mutagen.flac
+        text = mutagen.flac.FLAC(str(self.audio))["LYRICS"][0]
+        self.assertNotIn("*", text)
+        self.assertIn(first.decode("utf-8"), text.split(chr(13) + chr(10)))
+        self.assertEqual(self.output.read_bytes(), marked, "the .lrc keeps the reviewer's marks")
 
     def test_export_archives_the_lrc_and_the_song_then_shows_as_exported(self) -> None:
         self._real_flac()

@@ -1554,7 +1554,7 @@ def _export_song(song, body, report_dir, store=None):
     targets = lyrics_tag_export.candidates(pathlib.Path(audio_value))
     try:
         if body.get("check"):
-            lrc_lines = lyrics_tag_export._line_count(lyrics_tag_export.lrc_text(_read_lrc(output)))
+            lrc_lines = lyrics_tag_export._line_count(lyrics_tag_export.lrc_text(_strip_marks(_read_lrc(output))[0]))
             return 200, {"targets": [lyrics_tag_export.info(item) for item in targets], "lrc_lines": lrc_lines}
         chosen = next((item for item in targets if item.name == body.get("audio")), None)
         if chosen is None:
@@ -1568,8 +1568,12 @@ def _export_song(song, body, report_dir, store=None):
         publish(song=song.get("song"), step="snapshot_before", started=started, active=True)
         archive = {}
         try:
-            result = lyrics_tag_export.export(chosen, _read_lrc(output), work_dir, timings=timings,
+            # The reviewer's * marks are review state: the audio tag gets the clean lines (the LRC file itself is archived as it is).
+            clean_lrc, marked = _strip_marks(_read_lrc(output))
+            result = lyrics_tag_export.export(chosen, clean_lrc, work_dir, timings=timings,
                                               on_step=lambda name: publish(step=name or "archive"))
+            if marked:
+                result["marks_removed"] = len(marked)
             result["seconds"] = round(time.monotonic() - started, 1)
             step = time.perf_counter()
             publish(step="archive")

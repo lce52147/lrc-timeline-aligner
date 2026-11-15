@@ -1857,10 +1857,11 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       const seconds = ((Date.now() - started) / 1000).toFixed(1);
       settleExportGeneration(data.generation, data.other_changes === true);  // our own bump must not trigger a full load(); any other one does
       try { await refreshSong(song.index); } catch (error) { console.error(error); }
+      const marksText = data.marks_removed ? '；已移除 ' + data.marks_removed + ' 個 * 標記' : '';
       if (data.archive && !['off', 'move', 'delete'].includes(data.archive.mode)) {
-        exportBadgeOk('已寫入並驗證 ' + data.name + '（' + data.lines + ' 行，' + seconds + ' 秒）；LRC 沒有歸檔（' + (data.archive.error || '未知原因') + '），仍留在原處');
+        exportBadgeOk('已寫入並驗證 ' + data.name + '（' + data.lines + ' 行，' + seconds + ' 秒）' + marksText + '；LRC 沒有歸檔（' + (data.archive.error || '未知原因') + '），仍留在原處');
       } else {
-        exportBadgeOk('已寫入並驗證 ' + data.name + '（' + data.lines + ' 行，' + seconds + ' 秒）' + exportArchiveText(data.archive));
+        exportBadgeOk('已寫入並驗證 ' + data.name + '（' + data.lines + ' 行，' + seconds + ' 秒）' + marksText + exportArchiveText(data.archive));
       }
     } catch (error) { exportBadgeFail(error && error.message ? error.message : String(error)); }
     finally { state.exporting = false; state.exportIndex = null; settleExportGeneration(null); try { render(); } catch (error) { console.error(error); } }
