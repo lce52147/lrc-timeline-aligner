@@ -2241,8 +2241,9 @@ def _jobs_dir(report_dir):
 def _kill_process_tree(proc):
     """Stop the alignment powershell and everything under it (venv stub, real python)."""
     if os.name == "nt" and proc.poll() is None:
+        taskkill = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "taskkill.exe")
         try:
-            result = subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True,
+            result = subprocess.run([taskkill, "/PID", str(proc.pid), "/T", "/F"], capture_output=True,
                                     timeout=15, creationflags=0x08000000)
             if result.returncode == 0:
                 return
@@ -2381,6 +2382,8 @@ class JobRunner:
         log_path = log_dir / (audio.stem + ".log")
         started = time.time()
         with self.lock:
+            if item["status"] != "queued" or job["id"] in self.cancelled:
+                return   # cancelled between _next_item and here: never start it
             item.update({"status": "running", "stage": "對齊中", "log": str(log_path),
                          "started": datetime.now(timezone.utc).isoformat(timespec="seconds")})
             self._save(job)
@@ -2393,14 +2396,20 @@ class JobRunner:
                                         encoding="utf-8", errors="replace", env=env, cwd=str(runtime_paths.project_root()))
                 with self.lock:
                     self.current = (job["id"], index, proc)
-                for line in proc.stdout:
-                    log.write(line)
-                    log.flush()
-                    stage = _stage_of(line)
-                    if stage:
-                        with self.lock:
-                            item["stage"] = stage
-                exit_code = proc.wait()
+                    cancelled_early = job["id"] in self.cancelled   # cancel() ran before this process was registered
+                if cancelled_early:
+                    _kill_process_tree(proc)
+                try:
+                    for line in proc.stdout:
+                        log.write(line)
+                        log.flush()
+                        stage = _stage_of(line)
+                        if stage:
+                            with self.lock:
+                                item["stage"] = stage
+                    exit_code = proc.wait()
+                finally:
+                    proc.stdout.close()
         except OSError as exc:
             exit_code = -1
             try:
