@@ -1217,6 +1217,11 @@ def main(argv: list[str] | None = None) -> int:
     final_output = Path(parsed.output).expanduser().resolve() if parsed.output else audio_path.with_suffix(".lrc")
     final_report_dir = Path(parsed.report_dir).expanduser().resolve() if parsed.report_dir else runtime_paths.reports_dir()
     final_report_path, _audit_path, _template_path = auto_lrc.report_artifact_paths(audio_path, final_output, final_report_dir)
+    # auto_lrc refuses this before inference, but R2's baseline goes to run_dir with --overwrite, so without this the
+    # refusal would only come at Stage 3 after the GPU minutes of Stages 1 and 2.
+    if final_output.exists() and not parsed.overwrite:
+        print(f"ERROR: Output already exists: {final_output}. Use --overwrite to replace it.", file=sys.stderr)
+        return 2
     if parsed.overwrite and final_output.exists():
         edit_reason = manual_edit_reason(final_output, final_report_path)
         if edit_reason and not getattr(parsed, "discard_manual_edits", False) and not journal_path(final_report_path).exists():

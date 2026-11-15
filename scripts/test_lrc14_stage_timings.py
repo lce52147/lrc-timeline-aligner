@@ -501,6 +501,26 @@ class R2TimingTests(unittest.TestCase):
             self.assertEqual(result, 2)
             self.assertFalse((run_dir / "r2-timings.json").exists())
 
+    def test_r2_existing_output_without_overwrite_is_refused_before_any_stage(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            audio = root / "song.flac"
+            output = root / "song.lrc"
+            audio.write_bytes(b"audio"); output.write_text("old", encoding="utf-8")
+            errors = io.StringIO()
+            with mock.patch.object(r2_pipeline, "_run_backend", side_effect=AssertionError("backend ran")) as backend,                  contextlib.redirect_stderr(errors):
+                result = r2_pipeline.main(["--work-dir", str(root / "work"), "--", str(audio), "--output", str(output)])
+            self.assertEqual(result, 2)
+            backend.assert_not_called()
+            self.assertIn("Output already exists: " + str(output.resolve()) + ". Use --overwrite to replace it.", errors.getvalue())
+            self.assertFalse((root / "work").exists())
+            self.assertEqual(output.read_text(encoding="utf-8"), "old")
+            # With --overwrite the guard does not fire: the backend is reached (and here stops the run).
+            with mock.patch.object(r2_pipeline, "manual_edit_reason", return_value=None),                  mock.patch.object(r2_pipeline, "_run_backend", return_value=7) as backend:
+                result = r2_pipeline.main(["--work-dir", str(root / "work"), "--", str(audio), "--output", str(output), "--overwrite"])
+            self.assertEqual(result, 7)
+            self.assertEqual(backend.call_count, 1)
+
     def test_r2_parser_error_writes_no_timing_file(self):
         with tempfile.TemporaryDirectory() as folder:
             work_dir = Path(folder) / "work"
