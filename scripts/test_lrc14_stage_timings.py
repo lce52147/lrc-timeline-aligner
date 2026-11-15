@@ -521,6 +521,21 @@ class R2TimingTests(unittest.TestCase):
             self.assertEqual(result, 7)
             self.assertEqual(backend.call_count, 1)
 
+    def test_r2_existing_output_with_a_publication_journal_is_left_to_recovery(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            audio = root / "song.flac"
+            output = root / "song.lrc"
+            reports = root / "reports"
+            reports.mkdir()
+            audio.write_bytes(b"audio"); output.write_text("half-published", encoding="utf-8")
+            report, _audit, _template = auto_lrc.report_artifact_paths(audio.resolve(), output.resolve(), reports.resolve())
+            r2_pipeline.journal_path(report).write_text("{}", encoding="utf-8")
+            with mock.patch.object(r2_pipeline, "_run_backend", return_value=7) as backend:
+                result = r2_pipeline.main(["--work-dir", str(root / "work"), "--", str(audio), "--output", str(output), "--report-dir", str(reports)])
+            self.assertEqual(result, 7)
+            self.assertEqual(backend.call_count, 1)
+
     def test_r2_parser_error_writes_no_timing_file(self):
         with tempfile.TemporaryDirectory() as folder:
             work_dir = Path(folder) / "work"

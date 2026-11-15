@@ -1218,8 +1218,9 @@ def main(argv: list[str] | None = None) -> int:
     final_report_dir = Path(parsed.report_dir).expanduser().resolve() if parsed.report_dir else runtime_paths.reports_dir()
     final_report_path, _audit_path, _template_path = auto_lrc.report_artifact_paths(audio_path, final_output, final_report_dir)
     # auto_lrc refuses this before inference, but R2's baseline goes to run_dir with --overwrite, so without this the
-    # refusal would only come at Stage 3 after the GPU minutes of Stages 1 and 2.
-    if final_output.exists() and not parsed.overwrite:
+    # refusal would only come at Stage 3 after the GPU minutes of Stages 1 and 2. A publication journal means the output may
+    # be half published: Stage 3 recovers it first, so the refusal waits for that, like the overwrite branch below.
+    if final_output.exists() and not parsed.overwrite and not journal_path(final_report_path).exists():
         print(f"ERROR: Output already exists: {final_output}. Use --overwrite to replace it.", file=sys.stderr)
         return 2
     if parsed.overwrite and final_output.exists():
