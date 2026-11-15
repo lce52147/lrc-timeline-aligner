@@ -78,6 +78,16 @@ class DecodeTests(unittest.TestCase):
         with self.assertRaises(review_server.LrcDecodeError):
             review_server._canonical_lrc(b"\xff\xfe\x00")  # UTF-16 BOM, odd byte count
 
+    def test_shift_jis_kana_is_read_as_cp932(self) -> None:
+        text = "[00:01.00]これはテストです\n"
+        self.assertEqual(review_server._decode_lrc_checked(text.encode("cp932")), (text, "cp932", False))
+        mixed = "[00:01.00]ひらがなとカタカナ、漢字\n"
+        self.assertEqual(review_server._decode_lrc_checked(mixed.encode("cp932")), (mixed, "cp932", False))
+
+    def test_shift_jis_does_not_steal_chinese(self) -> None:
+        self.assertEqual(review_server._decode_lrc(GBK_TEXT.encode("gb18030"))[1], "gb18030")
+        self.assertEqual(review_server._decode_lrc("[00:01.00]我愛你，這是歌詞，請你相信我\n".encode("cp950"))[1], "cp950")
+
     def test_millisecond_tags_become_centiseconds(self) -> None:
         raw = b"[00:01.543]a\n*[10:00.004]b*\n[00:59.996]c\n[00:01.50]kept\n"
         self.assertEqual(review_server._canonical_lrc(raw), b"[00:01.54]a\n*[10:00.00]b*\n[01:00.00]c\n[00:01.50]kept\n")
@@ -124,6 +134,23 @@ class ReviewReadsLegacyLrcTests(unittest.TestCase):
             {"base_sha256": again["base_sha256"], "edits": [{"entry": 3, "cs": 700, "source": "ear", "nudge_cs": 0}]})
         self.assertEqual(status, 200)
         self.assertEqual(len(list(self.root.glob("song.lrc.orig-*.bak"))), 1)  # a UTF-8 file is not backed up again
+
+    def test_shift_jis_lrc_shows_rows_and_saves_utf8_with_backup(self) -> None:
+        text = "[ti:テストのうた]\r\n[00:01.543]これはテストです\r\n[00:03.210]もういちどテスト\r\n[00:05.000]third\r\n"
+        original = text.encode("cp932")
+        self.output.write_bytes(original)
+        self.store.refresh_if_changed()
+        detail = self._detail()
+        self.assertFalse(detail["read_only"], detail["read_only_reason"])
+        self.assertEqual([row["lyric"] for row in detail["rows"]], ["これはテストです", "もういちどテスト", "third"])
+        self.assertIs(detail["encoding_uncertain"], False)
+        body = {"base_sha256": detail["base_sha256"], "edits": [{"entry": 1, "cs": 160, "source": "ear", "nudge_cs": 6}]}
+        status, _headers, data = self._json_request("POST", "/api/song/0/save", body)
+        self.assertEqual(status, 200, data)
+        saved = self.output.read_bytes().decode("utf-8")
+        self.assertIn("[ti:テストのうた]", saved)
+        self.assertIn("[00:01.60]これはテストです", saved)
+        self.assertEqual([path.read_bytes() for path in self.root.glob("song.lrc.orig-*.bak")], [original])
 
     def test_two_char_ambiguous_lrc_sets_the_payload_flag(self) -> None:
         self.output.write_bytes("[00:01.00]爱你\n[00:02.00]x\n".encode("gb18030"))

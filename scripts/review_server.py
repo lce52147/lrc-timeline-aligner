@@ -166,7 +166,7 @@ def _split_lrc(data):
 
 
 class LrcDecodeError(ValueError):
-    """The LRC bytes are not text in any encoding this tool reads (UTF-8, UTF-16 with BOM, GB18030, Big5)."""
+    """The LRC bytes are not text in any encoding this tool reads (UTF-8, UTF-16 with BOM, Shift-JIS, GB18030, Big5)."""
 
 
 _LEGACY_TAG_RE = re.compile(rb"(?m)^((?:\*+[ \t]*)?)\[(\d{2,}):(\d{2})\.(\d{3})\]")
@@ -196,6 +196,14 @@ def _region_shares(raw):
     return gb / pairs, big5 / pairs, pairs
 
 
+def _fullwidth_kana(text):
+    return sum(1 for ch in text if "ぁ" <= ch <= "ゖ" or "ァ" <= ch <= "ヺ")
+
+
+def _halfwidth_kana(text):
+    return sum(1 for ch in text if "｡" <= ch <= "ﾟ")
+
+
 _UNCERTAIN_MARGIN = 0.25
 _UNCERTAIN_MIN_PAIRS = 4
 
@@ -218,7 +226,7 @@ def _decode_lrc_checked(raw):
         except UnicodeDecodeError:
             continue
     if not found:
-        raise LrcDecodeError("not UTF-8, UTF-16, Big5 or GB18030")
+        raise LrcDecodeError("not UTF-8, UTF-16, Shift-JIS, Big5 or GB18030")
     best = min(found)
     uncertain = False
     if len(found) == 2 and found[0][0] == found[1][0]:
@@ -227,6 +235,12 @@ def _decode_lrc_checked(raw):
             best = found[1]
         uncertain = pairs < _UNCERTAIN_MIN_PAIRS or abs(gb_share - big5_share) < _UNCERTAIN_MARGIN
     _score, _order, codec, text = best
+    try:
+        jis = raw.decode("cp932")
+    except UnicodeDecodeError:
+        jis = None
+    if jis is not None and _fullwidth_kana(jis) >= 2 and not _halfwidth_kana(jis) and not _fullwidth_kana(text):
+        return jis, "cp932", False
     return text, codec, uncertain
 
 
