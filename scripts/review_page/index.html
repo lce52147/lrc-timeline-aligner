@@ -26,6 +26,10 @@ header .song-name{font-weight:600;font-size:15px;max-width:34vw;overflow:hidden;
 .export-badge::before{content:"";width:10px;height:10px;border-radius:50%;background:var(--tone);flex:none}.export-badge.run::before{animation:export-pulse 1s ease-in-out infinite}
 .draft-banner{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 10px;padding:8px 12px;border-radius:10px;border:1px solid var(--warn);background:color-mix(in srgb,var(--warn) 18%,var(--bg));color:var(--fg);font-size:13px}.port-notice{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:999px;border:1px solid var(--warn);background:color-mix(in srgb,var(--warn) 18%,var(--bg));color:var(--fg);font-size:12px;max-width:40vw}.port-notice[hidden]{display:none}.port-notice button{padding:0 4px;background:transparent;border:0;color:var(--fg)}
 .draft-banner[hidden]{display:none}.draft-banner button{padding:2px 10px}
+.s2tw-panel{margin:0 0 10px;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:rgba(0,0,0,.22);font-size:13px}.s2tw-panel[hidden]{display:none}
+.s2tw-row{display:flex;align-items:baseline;gap:8px;padding:3px 0}.s2tw-row .num{flex:none;min-width:34px;color:var(--fg-3)}.s2tw-row .arrow{flex:none;color:var(--fg-3)}.s2tw-row .txt{min-width:0;overflow-wrap:anywhere}
+.s2tw-row mark{background:color-mix(in srgb,var(--warn) 35%,transparent);color:var(--fg);border-radius:3px}
+.s2tw-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px}.s2tw-actions .warning{font-size:12px}
 .export-badge button{padding:0 6px;line-height:1.4;background:transparent;border:0;color:var(--fg);flex:none}.export-badge button[hidden]{display:none}
 @keyframes export-pulse{50%{opacity:.35}}
 .pill{font-size:12px;padding:2px 9px;border-radius:999px;background:var(--panel-3);color:var(--fg-2)}
@@ -137,6 +141,8 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   <main class="work"><div class="column">
     <div id="draft-restored" class="draft-banner" role="status" hidden><span id="draft-restored-text"></span><button type="button" id="draft-restored-discard">捨棄</button></div>
     <div id="draft-stale" class="draft-banner" role="status" hidden><span id="draft-stale-text"></span><button type="button" id="draft-stale-discard-legacy" hidden>捨棄舊版草稿</button><button type="button" id="draft-stale-discard">捨棄</button><button type="button" id="draft-stale-apply">仍然套用</button></div>
+    <div id="s2tw" class="draft-banner" role="status" hidden><span id="s2tw-text"></span><button type="button" id="s2tw-open">轉成繁體</button></div>
+    <div id="s2tw-panel" class="s2tw-panel" hidden><div id="s2tw-list"></div><div class="s2tw-actions"><button type="button" id="s2tw-apply">全部套用勾選行</button><button type="button" id="s2tw-cancel">取消</button><span id="s2tw-note" class="warning"></span></div></div>
     <section class="tiles" id="tiles">
       <div class="tile glass"><span class="ico">▶</span><div><div class="lbl">這首已審</div><div class="val num"><span id="pos">0</span><span class="muted"> / </span><span id="pos-total">0</span></div><div class="bar"><i id="pos-bar" style="width:0%"></i></div></div></div>
       <div class="tile glass"><span class="ico">♪</span><div><div class="lbl">本首剩餘</div><div class="val num" id="left-song">0</div></div></div>
@@ -1188,6 +1194,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     const riskBadge = document.getElementById('song-risk');
     riskBadge.hidden = !(risk && risk.class === 'choir');
     document.getElementById('enc-uncertain').hidden = !song?.detail?.encoding_uncertain;
+    renderS2tw(song);
     if (risk && risk.class === 'choir') riskBadge.textContent = '整首高風險 ' + (risk.review_rows ?? '?') + '/' + (risk.rows ?? '?') + ' 句需審';
     const doneHere = rows.filter(isDone).length;
     document.getElementById('pos').textContent = doneHere;
@@ -1746,6 +1753,59 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       if (event.key === 'Escape') { event.preventDefault(); state.romajiEdit = null; render(); }
     });
   }
+  // Simplified-Chinese lines: the server lists them (s2tw, kana lines never); the page previews and sends the checked entries.
+  const s2tw = {open:false, song:null, unchecked:new Set(), busy:false, note:''};
+  const s2twDiff = (before, after) => {
+    if (before.length !== after.length) return '<mark>' + esc(after) + '</mark>';
+    let html = '';
+    [...after].forEach((ch, i) => { html += ch === before[i] ? esc(ch) : '<mark>' + esc(ch) + '</mark>'; });
+    return html;
+  };
+  function renderS2tw(song) {
+    const info = song && !serverReadOnly() ? song.detail?.simplified : null;
+    const lines = info && info.count ? info.lines : [];
+    if (!song || s2tw.song !== song.index) { s2tw.song = song ? song.index : null; s2tw.open = false; s2tw.unchecked = new Set(); s2tw.note = ''; }
+    document.getElementById('s2tw').hidden = !lines.length;
+    const panel = document.getElementById('s2tw-panel');
+    panel.hidden = !lines.length || !s2tw.open;
+    if (!lines.length) return;
+    document.getElementById('s2tw-text').textContent = '這首有 ' + info.count + ' 行簡體中文' + (info.japanese ? '（整首含日文，請自行勾選要轉的行）' : '');
+    if (panel.hidden) return;
+    document.getElementById('s2tw-list').innerHTML = lines.map(line => {
+      const on = s2tw.touched ? !s2tw.unchecked.has(line.entry) : line.default_checked;
+      const flat = text => text.split(String.fromCharCode(10)).join(' / ');
+      return '<label class="s2tw-row"><input type="checkbox" data-entry="' + line.entry + '"' + (on ? ' checked' : '') + '><span class="num">' + line.entry + '</span><span class="txt">' + esc(flat(line.before)) + '</span><span class="arrow">→</span><span class="txt">' + s2twDiff(flat(line.before), flat(line.after)) + '</span></label>';
+    }).join('');
+    document.getElementById('s2tw-apply').disabled = s2tw.busy;
+    document.getElementById('s2tw-note').textContent = s2tw.note;
+  }
+  async function s2twApply() {
+    const song = state.songs.find(item => item.index === state.activeSong);
+    if (!song || s2tw.busy) return;
+    if ([...state.edits.keys()].some(key => key.split(':')[0] === String(song.index))) { s2tw.note = '有尚未儲存的時間修改，請先儲存（Ctrl+S）再轉換'; renderS2tw(song); return; }
+    const entries = [...document.querySelectorAll('#s2tw-list input[type=checkbox]')].filter(box => box.checked).map(box => Number(box.dataset.entry));
+    if (!entries.length) { s2tw.note = '沒有勾選任何行'; renderS2tw(song); return; }
+    s2tw.busy = true; s2tw.note = ''; renderS2tw(song);
+    const generationBefore = seenGeneration;
+    try {
+      const data = await api('/api/song/' + song.index + '/convert', {method:'POST', body:JSON.stringify({base_sha256:song.detail.base_sha256, entries})});
+      if (data.generation != null && generationBefore !== null && data.generation === generationBefore + 1) seenGeneration = data.generation;
+      s2tw.open = false; s2tw.touched = false; s2tw.busy = false;
+      await refreshSong(song.index);
+      state.notice = '已把 ' + entries.length + ' 行轉成繁體（原檔已備份 .bak）'; render();
+    } catch (error) {
+      s2tw.busy = false; s2tw.note = '轉換失敗：' + error.message; renderS2tw(song);
+    }
+  }
+  document.getElementById('s2tw-open').addEventListener('click', () => { s2tw.open = !s2tw.open; s2tw.touched = false; s2tw.note = ''; render(); });
+  document.getElementById('s2tw-cancel').addEventListener('click', () => { s2tw.open = false; render(); });
+  document.getElementById('s2tw-apply').addEventListener('click', s2twApply);
+  document.getElementById('s2tw-list').addEventListener('change', event => {
+    const box = event.target; if (!box || !box.dataset || !box.dataset.entry) return;
+    if (!s2tw.touched) { s2tw.touched = true; const song = state.songs.find(item => item.index === state.activeSong); s2tw.unchecked = new Set((song?.detail?.simplified?.lines || []).filter(line => line.default_checked === false).map(line => line.entry)); }
+    const entry = Number(box.dataset.entry);
+    if (box.checked) s2tw.unchecked.delete(entry); else s2tw.unchecked.add(entry);
+  });
   async function refreshSong(index) {
     busy.begin('song', '重新整理中…');
     try { return await refreshSongNow(index); }

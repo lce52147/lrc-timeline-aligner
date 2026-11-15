@@ -29,6 +29,7 @@ import harmony_candidates
 import paren_flag_marks
 import review_hot_update
 import review_presentation
+import zh_traditional
 import runtime_paths
 from lrc_manual_edits import review_artifact_paths
 
@@ -1349,6 +1350,7 @@ def _song_payload(report_path, report, anchor=None):
         "read_only": bool(readonly),
         "read_only_reason": reason,
         "encoding_uncertain": encoding_uncertain,
+        "simplified": None if readonly or not rows else zh_traditional.song_candidates(rows),
         "entry_model": entry_model,
         "manual_edited": bool(manual_edited),
         "manual_edit_reason": manual_reason,
@@ -1853,6 +1855,131 @@ def _save_song(song, body):
             key_map[old_key] = None if position in deleted else f"{group[0] - shift}:{old_key.split(':', 1)[1]}"
         result["line_key_map"] = key_map
     return 200, result
+
+
+_MARKED_LINE_RE = re.compile(r"^(\*+[ \t]*)?(\[\d{2,}:\d{2}\.\d{2}\])(.*)$", re.S)
+
+
+def _convert_lines(lines, indexes):
+    """Replace only the lyric text of ``lines[i]`` for each index with its s2tw form; tags, marks and every other line keep their bytes."""
+    changed = 0
+    for index in indexes:
+        try:
+            text = lines[index].decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        match = _MARKED_LINE_RE.match(text)
+        after = zh_traditional.convert_line(match.group(3)) if match else None
+        if after is not None:
+            lines[index] = ((match.group(1) or "") + match.group(2) + after).encode("utf-8")
+            changed += 1
+    return changed
+
+
+def _convert_song(song, body):
+    """POST /api/song/N/convert: s2tw the lyric text of the listed entries, nothing else.
+
+    Shares the save path's guards (read-only, base_sha256, entry mapping) and its publish pattern. Under a review
+    log the 自動 baseline gets the same text so the song is not seen as hand-edited, and the log hash follows.
+    """
+    if song["read_only"]:
+        return 403, {"error": song["read_only_reason"] or "read-only"}
+    if set(body) != {"base_sha256", "entries"} or not isinstance(body["base_sha256"], str) or not isinstance(body["entries"], list):
+        return 400, {"error": "body must contain base_sha256 and entries"}
+    if zh_traditional.converter() is None:
+        return 503, {"error": "OpenCC 不可用，無法轉換"}
+    output = song["output"]
+    if output is None or not output.is_file():
+        return 403, {"error": "lrc-missing"}
+    try:
+        current = _read_lrc(output)
+    except LrcDecodeError:
+        return 403, {"error": "lrc-undecodable"}
+    if _sha256_bytes(current) != body["base_sha256"]:
+        return 409, {"error": "stale base_sha256"}
+    mapping, _links, _model, mapping_reason, _manual, _manual_reason = _resolve_entries(
+        pathlib.Path(song["report"]), song["report_data"], output, current
+    )
+    if mapping_reason:
+        return 403, {"error": mapping_reason}
+    entries = []
+    for item in body["entries"]:
+        if isinstance(item, bool) or not isinstance(item, int) or item < 1 or item > len(mapping) or item in entries:
+            return 400, {"error": "invalid entries"}
+        entries.append(item)
+    indexes = [index for entry in entries for index in mapping[entry - 1]]
+    bom, trailing, lines = _split_lrc(current)
+    if not _convert_lines(lines, indexes):
+        return 200, _song_payload(pathlib.Path(song["report"]), song["report_data"])
+    updated = _join_lrc(bom, trailing, lines)
+    auto, edits_path = song["auto"], song["edits"]
+    auto_updated = log_updated = None
+    if auto.is_file() and edits_path.is_file():
+        auto_raw = _read_lrc_or(auto, current)
+        a_bom, a_trailing, auto_lines = _split_lrc(auto_raw)
+        if len(auto_lines) == len(lines):
+            _convert_lines(auto_lines, indexes)
+            auto_updated = _join_lrc(a_bom, a_trailing, auto_lines)
+            log = _read_log(edits_path)
+            if log is not None:
+                log["auto_lrc_sha256"] = _sha256_bytes(auto_updated)
+                log["last_lrc_sha256"] = _sha256_bytes(updated)
+                log.setdefault("text_conversions", []).append({
+                    "utc": datetime.now(timezone.utc).isoformat(), "kind": "s2tw", "entries": entries,
+                    "lrc_sha256_after": _sha256_bytes(updated),
+                })
+                log_updated = (json.dumps(log, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    stages = []
+    try:
+        _backup_original_lrc(output)   # a legacy-encoded original keeps its own bytes
+        backup = output.with_name(output.name + ".pre-s2tw-" + _sha256_bytes(current)[:8] + ".bak")
+        if not backup.exists():
+            stage = _stage_bytes(backup, current)
+            stages.append(stage)
+            os.replace(stage, backup)
+        output_stage = _stage_bytes(output, updated)
+        stages.append(output_stage)
+        auto_stage = _stage_bytes(auto, auto_updated) if auto_updated is not None else None
+        stages.append(auto_stage)
+        log_stage = _stage_bytes(edits_path, log_updated) if log_updated is not None else None
+        stages.append(log_stage)
+    except OSError:
+        for stage in stages:
+            if stage is not None:
+                stage.unlink(missing_ok=True)
+        return 500, {"error": "cannot prepare the conversion"}
+    replaced = False
+    for attempt in range(3):
+        try:
+            os.replace(output_stage, output)
+            replaced = True
+            break
+        except PermissionError:
+            if attempt < 2:
+                threading.Event().wait(0.2)
+        except OSError:
+            break
+    if not replaced:
+        for stage in (output_stage, auto_stage, log_stage):
+            if stage is not None:
+                stage.unlink(missing_ok=True)
+        return 423, {"error": "LRC 檔案被其他程式鎖住或無法寫入，未轉換 (LRC file is locked; nothing was converted)"}
+    try:
+        if auto_stage is not None:
+            os.replace(auto_stage, auto)
+            auto_stage = None
+        if log_stage is not None:
+            os.replace(log_stage, edits_path)
+            log_stage = None
+    except OSError:
+        for stage in (auto_stage, log_stage):
+            if stage is not None:
+                stage.unlink(missing_ok=True)
+        _restore_lrc(output, current)
+        if auto_updated is not None:
+            _restore_lrc(auto, auto_raw)
+        return 500, {"error": "未轉換：審查紀錄寫入失敗，LRC 已還原 (nothing was converted)"}
+    return 200, _song_payload(pathlib.Path(song["report"]), song["report_data"])
 
 
 # ---------------------------------------------------------------------------
@@ -2779,7 +2906,7 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
         if parsed.path == "/api/admin/shutdown":
             self._shutdown()
             return
-        match = re.fullmatch(r"/api/song/(\d+)/(save|decision|export|romaji)", parsed.path)
+        match = re.fullmatch(r"/api/song/(\d+)/(save|decision|export|romaji|convert)", parsed.path)
         cancel = re.fullmatch(r"/api/jobs/([A-Za-z0-9_]+)/cancel", parsed.path)
         if not match and not cancel and parsed.path not in self._IMPORT_POSTS:
             self._send(404, b"not found\n", "text/plain; charset=utf-8")
@@ -2848,7 +2975,7 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
                     store.update_export_status(active=False)
                 self._json(status, result)
                 return
-            status, result = _save_song(song, body)
+            status, result = (_convert_song if match.group(2) == "convert" else _save_song)(song, body)
             if status != 200:
                 self._json(status, result)
                 return
