@@ -44,15 +44,20 @@ def _encodes(char, codec):
 
 
 def looks_simplified(text, japanese=False):
-    """True when ``text`` has a Han character that Big5 (cp950) cannot encode, so it is a simplified form rather than a
-    Traditional character s2tw would only rewrite to a Taiwan variant (範, 臺, 裡). In a song with kana the character must
-    also be missing from cp932, which keeps Japanese kanji such as 気 国 独."""
+    """True when ``text`` has a character that is certainly simplified: a Han character Big5 (cp950) cannot encode and
+    that s2tw rewrites. A Traditional character s2tw only turns into a Taiwan variant (範, 臺, 裡) is in Big5, and a
+    Hong Kong character (哋 嘅 喺) is missing from Big5 but has no s2tw rewrite. In a song with kana the character
+    must also be missing from cp932, which keeps Japanese kanji such as 気 国 独."""
+    cc = converter()
+    if cc is None:
+        return False
     for char in _HAN_RE.findall(text):
         if char == _TAIWAN_CHURCH_CHAR or _encodes(char, "cp950"):
             continue
         if japanese and _encodes(char, "cp932"):
             continue
-        return True
+        if cc.convert(char) != char:
+            return True
     return False
 
 
@@ -80,10 +85,11 @@ def song_candidates(rows, headers=(), uncertain=False):
     """``{count, japanese, uncertain, lines, headers}`` for the payload rows, or None when OpenCC is missing.
 
     ``headers`` are ``(line_index, text)`` of the ID tag lines. A song with no kana line at all is Chinese: its
-    candidates (lyric and header lines alike) start checked when they look simplified (a Han character Big5 cannot encode). A song
-    with no such line lists nothing: s2tw would only rewrite Traditional characters to Taiwan variants. In a song with
-    kana the candidates may be Japanese kanji lines, so they start unchecked; so do all of them when the encoding guess
-    is uncertain (the text may be mojibake). ``count`` is the number of lines that look simplified.
+    candidates (lyric and header lines alike) all start checked once at least one of them has a certainly simplified
+    character (see ``looks_simplified``): a simplified song also has lines made only of characters Big5 has, and they
+    must convert with the rest. A song with no such line lists nothing: s2tw would only rewrite Traditional characters
+    to Taiwan variants. In a song with kana the candidates may be Japanese kanji lines, so they start unchecked; so do
+    all of them when the encoding guess is uncertain (the text may be mojibake). ``count`` is the number of candidates.
     """
     if converter() is None:
         return None
@@ -106,6 +112,6 @@ def song_candidates(rows, headers=(), uncertain=False):
     if not any(item["simplified"] for item in lines + found):
         return {"count": 0, "japanese": japanese, "uncertain": bool(uncertain), "lines": [], "headers": []}
     for item in lines + found:
-        item["default_checked"] = item["simplified"] and not japanese and not uncertain
-    count = sum(1 for item in lines + found if item["simplified"])
+        item["default_checked"] = not japanese and not uncertain
+    count = len(lines) + len(found)
     return {"count": count, "japanese": japanese, "uncertain": bool(uncertain), "lines": lines, "headers": found}

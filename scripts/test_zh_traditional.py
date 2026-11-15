@@ -180,16 +180,24 @@ class ConvertTests(unittest.TestCase):
         self.assertEqual((count, lines), (6, [(text, True) for text in texts]))
         self.assertEqual(self._songs(texts, True), (6, [(text, False) for text in texts]))
 
-    def test_variant_line_in_a_simplified_song_is_listed_but_not_checked(self) -> None:
-        self.assertEqual(self._songs(["后面", "我们"]), (1, [("后面", False), ("我们", True)]))
+    def test_line_made_of_big5_characters_in_a_simplified_song_is_listed_and_checked(self) -> None:
+        self.assertEqual(self._songs(["后面", "我们"]), (2, [("后面", True), ("我们", True)]))
+        texts = ["你在哪里", "怎么了", "我们的爱", "一起干杯", "与你同行"]
+        self.assertEqual(self._songs(texts), (5, [(text, True) for text in texts]))
+
+    def test_hong_kong_characters_do_not_open_the_song_gate(self) -> None:
+        self.assertEqual(self._songs(["我哋嘅愛喺心裏", "冇咗你點算"]), (0, []))
+
+    def test_simplified_line_in_a_japanese_song_is_listed_unchecked_with_its_big5_neighbours(self) -> None:
+        self.assertEqual(self._songs(["きみ", "我们一起走", "后面"]), (2, [("我们一起走", False), ("后面", False)]))
 
     def test_japanese_kanji_are_not_simplified_but_simplified_hanzi_in_a_japanese_song_is_unchecked(self) -> None:
         self.assertEqual(self._songs(["国境", "独奏", "きみ"]), (0, []))
-        self.assertEqual(self._songs(["国境", "独奏", "きみ", "我们一起走"]), (1, [("国境", False), ("独奏", False), ("我们一起走", False)]))
+        self.assertEqual(self._songs(["国境", "独奏", "きみ", "我们一起走"]), (3, [("国境", False), ("独奏", False), ("我们一起走", False)]))
 
-    def test_header_only_simplified_is_a_candidate_and_count_counts_simplified_items(self) -> None:
+    def test_header_only_simplified_is_a_candidate_and_count_counts_candidates(self) -> None:
         info = zh_traditional.song_candidates([{"entry": 1, "lyrics": ["后面"]}], [(0, "[ti:爱你]")])
-        self.assertEqual((info["count"], [i["default_checked"] for i in info["lines"]], [i["default_checked"] for i in info["headers"]]), (1, [False], [True]))
+        self.assertEqual((info["count"], [i["default_checked"] for i in info["lines"]], [i["default_checked"] for i in info["headers"]]), (2, [True], [True]))
         self.assertEqual(zh_traditional.song_candidates([{"entry": 1, "lyrics": ["后面"]}], [(0, "[ti:范瑋琪]")])["lines"], [])
 
 
