@@ -84,6 +84,24 @@ class DecodeTests(unittest.TestCase):
         mixed = "[00:01.00]ひらがなとカタカナ、漢字\n"
         self.assertEqual(review_server._decode_lrc_checked(mixed.encode("cp932")), (mixed, "cp932", False))
 
+    def test_long_vowel_mark_counts_as_kana(self) -> None:
+        text = "[00:01.00]ラーメン\n"
+        self.assertEqual(review_server._decode_lrc_checked(text.encode("cp932")), (text, "cp932", False))
+        self.assertEqual(review_server._fullwidth_kana("ー"), 1)
+
+    def test_shift_jis_with_almost_no_kana_is_flagged_uncertain_but_not_re_decoded(self) -> None:
+        raw = "[00:01.00]東京の夜\n".encode("cp932")
+        text, encoding, uncertain = review_server._decode_lrc_checked(raw)
+        self.assertEqual((encoding in ("gb18030", "cp950"), uncertain), (True, True))
+        self.assertEqual(text, raw.decode(encoding))
+
+    def test_existing_gbk_and_big5_samples_stay_certain(self) -> None:
+        for text, codec in ((GBK_TEXT, "gb18030"), ("[00:01.00]我愛你，這是歌詞，請你相信我\n", "cp950"), (TRADITIONAL[:60], "cp950"), (SIMPLIFIED[:60], "gb18030")):
+            self.assertFalse(review_server.lrc_encoding_uncertain(("[00:01.00]" + text if not text.startswith("[") else text).encode(codec)), codec)
+
+    def test_one_digit_seconds_at_line_start_are_not_a_tag(self) -> None:
+        self.assertEqual(review_server._canonical_lrc(b"[1:2]verse\n[1:02]x\n"), b"[1:2]verse\n[01:02.00]x\n")
+
     def test_shift_jis_does_not_steal_chinese(self) -> None:
         self.assertEqual(review_server._decode_lrc(GBK_TEXT.encode("gb18030"))[1], "gb18030")
         self.assertEqual(review_server._decode_lrc("[00:01.00]我愛你，這是歌詞，請你相信我\n".encode("cp950"))[1], "cp950")

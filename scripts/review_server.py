@@ -169,7 +169,7 @@ class LrcDecodeError(ValueError):
     """The LRC bytes are not text in any encoding this tool reads (UTF-8, UTF-16 with BOM, Shift-JIS, GB18030, Big5)."""
 
 
-_LEGACY_TAG_RE = re.compile(rb"(?m)^((?:\*+[ \t]*)?)\[(\d{1,3}):(\d{1,2})(?:\.(\d{1,3}))?\]")
+_LEGACY_TAG_RE = re.compile(rb"(?m)^((?:\*+[ \t]*)?)\[(\d{1,3}):(\d{2})(?:\.(\d{1,3}))?\]")
 
 
 def _legacy_score(text):
@@ -197,7 +197,7 @@ def _region_shares(raw):
 
 
 def _fullwidth_kana(text):
-    return sum(1 for ch in text if "ぁ" <= ch <= "ゖ" or "ァ" <= ch <= "ヺ")
+    return sum(1 for ch in text if "ぁ" <= ch <= "ゖ" or "ァ" <= ch <= "ヺ" or ch == "ー")
 
 
 def _halfwidth_kana(text):
@@ -241,6 +241,9 @@ def _decode_lrc_checked(raw):
         jis = None
     if jis is not None and _fullwidth_kana(jis) >= 2 and not _halfwidth_kana(jis) and not _fullwidth_kana(text):
         return jis, "cp932", False
+    if jis is not None and not _halfwidth_kana(jis) and _fullwidth_kana(jis) < 2 and any(
+            "぀" <= ch <= "ヿ" or "一" <= ch <= "鿿" for ch in jis):
+        uncertain = True   # a Shift-JIS file with almost no kana also reads cleanly as cp932: the guess may be mojibake
     return text, codec, uncertain
 
 
@@ -1632,7 +1635,7 @@ def _free_slot(cs, prev, nxt, neighbours, limit):
 def _cs_limit(report_data, lines):
     """Latest time a save may set: the audio length plus one second (100 minutes without one), never below the file's own last tag plus one second."""
     duration = _number(report_data.get("duration_seconds")) or 0
-    limit = int(duration * 100 + 100) if duration > 0 else 360000
+    limit = int(duration * 100 + 100) if duration > 0 else 600000
     tags = [_line_tag(_strip_line_marks(line)) for line in lines]
     return max([limit] + [tag + 100 for tag in tags if tag is not None])
 

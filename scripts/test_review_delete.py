@@ -108,8 +108,10 @@ class ReviewDeleteTests(unittest.TestCase):
         status, result = self._save(edits=[(1, 2100)])
         self.assertEqual(status, 200, result)
         self.assertIn(b"[00:21.00]one\n", self.output.read_bytes())
-        status, result = self._save(edits=[(1, 360001)])
+        status, result = self._save(edits=[(1, 600001)])
         self.assertEqual(status, 400, result)
+        status, result = self._save(edits=[(1, 600000)])
+        self.assertEqual(status, 200, result)
 
     def test_last_line_past_the_audio_end_can_still_be_moved_earlier(self) -> None:
         report = json.loads(self.report.read_text(encoding="utf-8"))
