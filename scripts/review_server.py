@@ -2235,6 +2235,22 @@ def _jobs_dir(report_dir):
     return report_dir / "_jobs"
 
 
+def _kill_process_tree(proc):
+    """Stop the alignment powershell and everything under it (venv stub, real python)."""
+    if os.name == "nt" and proc.poll() is None:
+        try:
+            result = subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True,
+                                    timeout=15, creationflags=0x08000000)
+            if result.returncode == 0:
+                return
+        except (OSError, subprocess.SubprocessError):
+            pass
+    try:
+        proc.terminate()
+    except OSError:
+        pass
+
+
 class JobRunner:
     """Runs alignment jobs one song at a time and remembers their state on disk."""
 
@@ -2330,10 +2346,7 @@ class JobRunner:
             proc = self.current[2] if self.current and self.current[0] == job_id else None
             self._save(job)
         if proc is not None:
-            try:
-                proc.terminate()
-            except OSError:
-                pass
+            _kill_process_tree(proc)
         return 200, {"job": job_id}
 
     # -- worker ------------------------------------------------------------
