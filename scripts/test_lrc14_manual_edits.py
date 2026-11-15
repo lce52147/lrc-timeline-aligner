@@ -118,6 +118,46 @@ class ManualEditTests(unittest.TestCase):
             payload = json.loads(report.read_text(encoding="utf-8"))
             self.assertEqual(payload["published_lrc_sha256"], hashlib.sha256(output.read_bytes()).hexdigest())
 
+    def test_sidecars_of_an_exported_lrc_are_retired_so_the_next_rerun_is_not_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            output, report, _ = self._run_lyrics(root)
+            original = output.read_bytes()
+            auto_path, edits_path = lrc_manual_edits.review_artifact_paths(report)
+            auto_path.write_bytes(original)
+            edits_json = json.dumps({"schema": 1, "auto_lrc_sha256": hashlib.sha256(original).hexdigest(), "edits": [{"entry": 1}]})
+            edits_path.write_text(edits_json, encoding="utf-8")
+            # LRC still in place: nothing is touched.
+            self.assertEqual(lrc_manual_edits.retire_orphaned_review_artifacts(output, report), [])
+            self.assertTrue(auto_path.is_file() and edits_path.is_file())
+            # Exported and archived: the LRC is gone, the sidecars stay behind.
+            output.unlink()
+            self._run_lyrics(root, overwrite=False)
+            self.assertFalse(auto_path.exists() or edits_path.exists())
+            stem = report.name[:-len(".align-report.json")]
+            self.assertEqual([path.read_bytes() for path in report.parent.glob(stem + ".orphaned-*.auto.lrc")], [original])
+            self.assertEqual([path.read_text(encoding="utf-8") for path in report.parent.glob(stem + ".orphaned-*.review-edits.json")], [edits_json])
+            self.assertIsNone(lrc_manual_edits.manual_edit_reason(output, report))
+            self._run_lyrics(root, overwrite=True)   # the next --overwrite rerun is not refused
+            self.assertTrue(output.is_file())
+
+    def test_probe_run_leaves_orphaned_sidecars_alone(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            output, report, _ = self._run_lyrics(root)
+            auto_path, _edits = lrc_manual_edits.review_artifact_paths(report)
+            auto_path.write_bytes(output.read_bytes())
+            output.unlink()
+            args = auto_lrc.build_parser().parse_args([
+                str(root / "song.flac"), "--lyrics", str(root / "song.lyrics.txt"),
+                "--output", str(output), "--report-dir", str(root / "reports"),
+                "--timing-source", "lyrics", "--probe",
+            ])
+            with split_patch.patch("probe_duration", return_value=2.0),                     mock.patch.object(lyrics_io, "audio_track_labels", return_value=("", "Song")):
+                auto_lrc.process_audio(root / "song.flac", args)
+            self.assertTrue(auto_path.is_file())
+            self.assertEqual(list(report.parent.glob("*.orphaned-*")), [])
+
     def test_empty_skeleton_and_legacy_report_without_hash_are_not_manual_edits(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

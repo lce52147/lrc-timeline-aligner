@@ -1796,7 +1796,7 @@ _KNOWN_LYRIC_HUBERT_WHISPERX_VERSION = "3.8.6"
 
 
 from lrc_review_tsv import format_top_review, write_review_tsv
-from lrc_manual_edits import archive_manual_edits, manual_edit_reason
+from lrc_manual_edits import archive_manual_edits, manual_edit_reason, retire_orphaned_review_artifacts
 from lrc_publication import publish_pair, recover_pair
 import lrc_stage_timings
 
@@ -1873,6 +1873,9 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
     if edit_reason:
         for archived in archive_manual_edits(output_path, recovery_report):
             progress_log(f"archived manual review artifact: {archived}")
+    if not args.probe:
+        for retired in retire_orphaned_review_artifacts(output_path, recovery_report):
+            progress_log(f"retired orphaned review artifact (the LRC is gone): {retired}")
     requested_whisper_language = args.whisper_language
     if args.whisper_language == "auto":
         args = copy.copy(args)

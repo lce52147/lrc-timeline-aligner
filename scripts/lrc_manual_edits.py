@@ -56,6 +56,31 @@ def manual_edit_reason(output_path: Path, report_path: Path) -> str | None:
         pass
     return None
 
+def retire_orphaned_review_artifacts(output_path: Path, report_path: Path) -> list[Path]:
+    """Rename the review sidecars of an LRC that is no longer there (exported and archived, or deleted).
+
+    Without this the next run's fresh LRC looks hand-edited ("review-edits-present") and the review page's
+    "auto" column shows the previous run. Nothing is deleted: ``<stem>.auto.lrc`` and ``<stem>.review-edits.json``
+    become ``<stem>.orphaned-<UTC stamp>.auto.lrc`` / ``.review-edits.json`` beside the report. Returns the new paths.
+    """
+    if output_path.exists():
+        return []
+    auto_path, edits_path = review_artifact_paths(report_path)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stem = report_path.name[:-len(_REPORT_SUFFIX)]
+    retired: list[Path] = []
+    for source, suffix in ((auto_path, ".auto.lrc"), (edits_path, ".review-edits.json")):
+        if not source.exists():
+            continue
+        destination = report_path.with_name(stem + f".orphaned-{stamp}" + suffix)
+        number = 1
+        while destination.exists():
+            number += 1
+            destination = report_path.with_name(stem + f".orphaned-{stamp}-{number}" + suffix)
+        os.replace(source, destination)
+        retired.append(destination)
+    return retired
+
 def archive_manual_edits(output_path: Path, report_path: Path) -> list[Path]:
     auto_path, edits_path = review_artifact_paths(report_path)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
