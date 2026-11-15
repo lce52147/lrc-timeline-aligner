@@ -1625,6 +1625,14 @@ def _free_slot(cs, prev, nxt, neighbours, limit):
     return cs
 
 
+def _cs_limit(report_data, lines):
+    """Latest time a save may set: the audio length plus one second (100 minutes without one), never below the file's own last tag plus one second."""
+    duration = _number(report_data.get("duration_seconds")) or 0
+    limit = int(duration * 100 + 100) if duration > 0 else 360000
+    tags = [_line_tag(_strip_line_marks(line)) for line in lines]
+    return max([limit] + [tag + 100 for tag in tags if tag is not None])
+
+
 def _save_song(song, body):
     if song["read_only"]:
         return 403, {"error": song["read_only_reason"] or "read-only"}
@@ -1645,6 +1653,7 @@ def _save_song(song, body):
     _bom, _trailing, lines = _split_lrc(current)
     if mapping_reason:
         return 403, {"error": mapping_reason}
+    limit = _cs_limit(song["report_data"], lines)
     requested = []
     seen = set()
     for edit in body["edits"]:
@@ -1658,7 +1667,7 @@ def _save_song(song, body):
             return 400, {"error": "invalid edit"}
         if "line_key" in edit and not isinstance(edit["line_key"], str):
             return 400, {"error": "invalid edit"}
-        if cs < 0 or cs > int((_number(song["report_data"].get("duration_seconds")) or 0) * 100 + 100):
+        if cs < 0 or cs > limit:
             return 400, {"error": "timestamp out of range"}
         if "line_key" in edit and edit["line_key"] != _line_key(lines, mapping[entry - 1]):
             return 422, {"error": f"第 {entry} 句對應的句子已變動（檔案在別處被改過），未儲存", "entry": entry}
@@ -1687,38 +1696,36 @@ def _save_song(song, body):
         final[position + 1] = _line_tag(_strip_line_marks(lines[mapping[position][0]]))
     before = dict(final)
     adjusted = []
-    limit = int((_number(song["report_data"].get("duration_seconds")) or 0) * 100 + 100)
-    if model == "lrc":
-        # Entries are tag groups here: a save must never give a line the neighbour's time (the groups would merge).
-        # Every requested value is applied first, so a neighbour in the same save counts at its new time.
-        for edit in requested:
-            edit["asked"] = edit["cs"]
-            edit["cs"] = max(edit["cs"], 1)
-            final[edit["entry"]] = edit["cs"]
+    # A save must never give a line the neighbour's time: in LRC mode the groups would merge, in report mode a later delete
+    # drops the song back to LRC mode and merges them. Every requested value is applied first, so a neighbour in the same
+    # save counts at its new time.
+    for edit in requested:
+        edit["asked"] = edit["cs"]
+        edit["cs"] = max(edit["cs"], 1)
+        final[edit["entry"]] = edit["cs"]
     for edit in sorted(requested, key=lambda item: item["entry"]):
         entry = edit["entry"]
         cs = edit["cs"]
-        if model == "lrc":
-            # A line being deleted in this save is not a neighbour.
-            prev_entry, next_entry = entry - 1, entry + 1
-            while prev_entry in deleted:
-                prev_entry -= 1
-            while next_entry in deleted:
-                next_entry += 1
-            prev, nxt = final.get(prev_entry), final.get(next_entry)
-            neighbours = {value for value in (prev, nxt) if value is not None}
-            if cs in neighbours:
-                found = _free_slot(cs, prev, nxt, neighbours, limit)
-                item = {"entry": entry, "requested_cs": edit["asked"], "cs": found}
-                cs = found
-                adjusted.append(item)
-            elif cs != edit["asked"]:
-                item = {"entry": entry, "requested_cs": edit["asked"], "cs": cs}
-                adjusted.append(item)
-            else:
-                item = None
-            if item is not None and ((prev is not None and cs < prev) or (nxt is not None and cs > nxt)):
-                item["crossed"] = True
+        # A line being deleted in this save is not a neighbour.
+        prev_entry, next_entry = entry - 1, entry + 1
+        while prev_entry in deleted:
+            prev_entry -= 1
+        while next_entry in deleted:
+            next_entry += 1
+        prev, nxt = final.get(prev_entry), final.get(next_entry)
+        neighbours = {value for value in (prev, nxt) if value is not None}
+        if cs in neighbours and not (model != "lrc" and cs == before[entry]):   # report mode keeps the aligner's own shared times
+            found = _free_slot(cs, prev, nxt, neighbours, limit)
+            item = {"entry": entry, "requested_cs": edit["asked"], "cs": found}
+            cs = found
+            adjusted.append(item)
+        elif cs != edit["asked"]:
+            item = {"entry": entry, "requested_cs": edit["asked"], "cs": cs}
+            adjusted.append(item)
+        else:
+            item = None
+        if item is not None and ((prev is not None and cs < prev) or (nxt is not None and cs > nxt)):
+            item["crossed"] = True
         final[entry] = cs
         edit["cs"] = cs
         edit.pop("asked", None)

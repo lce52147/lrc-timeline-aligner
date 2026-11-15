@@ -79,6 +79,48 @@ class ReviewDeleteTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertNotIn("adjusted_cs", result)
 
+    def test_report_mode_save_onto_a_neighbour_is_moved_aside_and_survives_a_delete(self) -> None:
+        status, result = self._save(edits=[(1, 200)])  # entry 2 is at 200
+        self.assertEqual(status, 200, result)
+        self.assertEqual([item["entry"] for item in result["adjusted_cs"]], [1])
+        self.assertEqual(result["adjusted_cs"][0]["requested_cs"], 200)
+        self.assertEqual(result["adjusted_cs"][0]["cs"], 199)
+        self.assertIn(b"[00:01.99]one\n", self.output.read_bytes())
+        status, result = self._save(deletes=[5])
+        self.assertEqual(status, 200, result)
+        rows = result["rows"]
+        self.assertEqual([row["lyric"] for row in rows[:2]], ["one", "two a\ntwo b"])
+        self.assertEqual([row["current_cs"] for row in rows[:2]], [199, 200])
+
+    def test_report_mode_keeps_the_aligners_own_shared_time_on_an_unchanged_save(self) -> None:
+        status, result = self._save(edits=[(3, 300)])  # three and four already share 300 from the aligner
+        self.assertEqual(status, 200, result)
+        self.assertNotIn("adjusted_cs", result)
+
+    def _drop_duration(self):
+        report = json.loads(self.report.read_text(encoding="utf-8"))
+        report.pop("duration_seconds")
+        self.report.write_text(json.dumps(report), encoding="utf-8")
+        self.store.refresh_if_changed()
+
+    def test_report_without_duration_still_accepts_a_later_time(self) -> None:
+        self._drop_duration()
+        status, result = self._save(edits=[(1, 2100)])
+        self.assertEqual(status, 200, result)
+        self.assertIn(b"[00:21.00]one\n", self.output.read_bytes())
+        status, result = self._save(edits=[(1, 360001)])
+        self.assertEqual(status, 400, result)
+
+    def test_last_line_past_the_audio_end_can_still_be_moved_earlier(self) -> None:
+        report = json.loads(self.report.read_text(encoding="utf-8"))
+        report["duration_seconds"] = 30.0  # entry 5 sits at 62 s
+        self.report.write_text(json.dumps(report), encoding="utf-8")
+        self.store.refresh_if_changed()
+        status, result = self._save(edits=[(5, 6100)])
+        self.assertEqual(status, 200, result)
+        status, result = self._save(edits=[(1, 9999)])
+        self.assertEqual(status, 400, result)
+
     def test_edit_and_delete_of_the_same_entry_is_400(self) -> None:
         before = self.output.read_bytes()
         status, result = self._save(edits=[(2, 250)], deletes=[2])
@@ -250,7 +292,18 @@ class ReviewDeleteTests(unittest.TestCase):
 
     def test_delete_that_would_merge_the_two_neighbours_is_422_and_writes_nothing(self) -> None:
         before = self.output.read_bytes()
-        status, result = self._save(edits=[(3, 100)], deletes=[2])   # entries 1 and 3 would both sit at 00:01.00, next to each other
+        # Report mode now moves a save that lands on a neighbour's time aside, so the merge cannot be asked for through an edit:
+        # entry 3 wants 00:01.00 (entry 1's time) and gets 00:01.01 instead.
+        status, result = self._save(edits=[(3, 100)], deletes=[2])
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["adjusted_cs"], [{"entry": 3, "requested_cs": 100, "cs": 101}])
+
+    def test_delete_that_would_merge_two_untouched_neighbours_is_422_and_writes_nothing(self) -> None:
+        raw = self.output.read_bytes().replace(b"[00:01.00]one", b"[00:03.00]one")   # entries one and three/four already share a time
+        self.output.write_bytes(raw)
+        self.store.refresh_if_changed()
+        before = self.output.read_bytes()
+        status, result = self._save(deletes=[2])
         self.assertEqual(status, 422, result)
         self.assertEqual(result["error"], "刪除後前後兩句時間相同會被合併，請先調整其中一句時間")
         self.assertEqual(self.output.read_bytes(), before)
