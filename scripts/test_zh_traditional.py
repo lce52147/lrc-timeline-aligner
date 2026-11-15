@@ -1,6 +1,7 @@
 """Review page: simplified-Chinese detection and the one-click s2tw conversion (POST /api/song/N/convert)."""
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -137,6 +138,88 @@ class ConvertTests(unittest.TestCase):
             "POST", "/api/song/0/save",
             {"base_sha256": after["base_sha256"], "edits": [{"entry": 3, "cs": 700, "source": "ear", "nudge_cs": 0}]})
         self.assertEqual(status, 200, data)
+
+
+    def test_convert_response_maps_old_line_keys_to_new_ones(self) -> None:
+        detail = self._load(CHINESE.encode("utf-8"))
+        old = {row["entry"]: row["line_key"] for row in detail["rows"]}
+        status, _headers, data = self._convert(detail, [1])
+        self.assertEqual(status, 200, data)
+        new = {row["entry"]: row["line_key"] for row in self._detail()["rows"]}
+        self.assertEqual(json.loads(data)["line_key_map"], {old[1]: new[1]})   # entry 2 was not converted and keeps its key
+        self.assertNotEqual(old[1], new[1])
+        self.assertEqual(old[2], new[2])
+
+    def test_nothing_converted_reports_zero_and_writes_nothing(self) -> None:
+        detail = self._load(JAPANESE.encode("utf-8"))
+        generation = self.store.generation
+        status, _headers, data = self._convert(detail, [1, 3])   # both kana lines
+        self.assertEqual(status, 200, data)
+        self.assertEqual(json.loads(data)["converted"], 0)
+        self.assertEqual(json.loads(data)["generation"], generation)
+        self.assertEqual(self.output.read_bytes(), JAPANESE.encode("utf-8"))
+        self.assertEqual(list(self.root.glob("*.bak")), [])
+        status, _headers, data = self._convert(self._detail(), [2])
+        self.assertEqual((status, json.loads(data)["converted"]), (200, 1))
+
+    def test_halfwidth_katakana_and_katakana_extensions_are_kana(self) -> None:
+        for text in ("ｱｲ爱你", "ｶﾞ爱", "ㇰ爱", "ｦ爱"):
+            self.assertTrue(zh_traditional.has_kana(text), text)
+            self.assertIsNone(zh_traditional.convert_line(text), text)
+        info = zh_traditional.song_candidates([{"entry": 1, "lyrics": ["ｱｲ爱你"]}, {"entry": 2, "lyrics": ["爱你"]}])
+        self.assertEqual(([line["entry"] for line in info["lines"]], info["japanese"]), ([2], True))
+        self.assertEqual([line["default_checked"] for line in info["lines"]], [False])
+
+    def test_middle_dot_and_long_vowel_mark_are_not_kana(self) -> None:
+        for text in ("哈利・波特", "爱ー你", "・", "ー"):
+            self.assertFalse(zh_traditional.has_kana(text), text)
+        self.assertEqual(zh_traditional.convert_line("哈利・波特 爱你一万年"), "哈利・波特 愛你一萬年")
+        info = zh_traditional.song_candidates([{"entry": 1, "lyrics": ["哈利・波特"]}, {"entry": 2, "lyrics": ["爱你一万年"]}])
+        self.assertEqual((info["japanese"], [line["default_checked"] for line in info["lines"]]), (False, [True]))
+        for kana in ("か", "カ", "ヽ"):
+            self.assertTrue(zh_traditional.has_kana(kana), kana)
+
+    def test_uncertain_encoding_leaves_every_candidate_unchecked(self) -> None:
+        rows = [{"entry": 1, "lyrics": ["爱你"]}]
+        headers = [(0, "[ti:爱你]")]
+        sure = zh_traditional.song_candidates(rows, headers)
+        self.assertEqual((sure["uncertain"], sure["lines"][0]["default_checked"], sure["headers"][0]["default_checked"]), (False, True, True))
+        unsure = zh_traditional.song_candidates(rows, headers, True)
+        self.assertEqual((unsure["uncertain"], unsure["lines"][0]["default_checked"], unsure["headers"][0]["default_checked"]), (True, False, False))
+        self.assertIs(self._load(CHINESE.encode("utf-8"))["simplified"]["uncertain"], False)
+
+    def test_header_tags_are_candidates_and_only_their_text_changes(self) -> None:
+        original = ("[ti:爱你一万年]\r\n[ar:歌手]\r\n[al:Album]\r\n[by:tool]\r\n[offset:0]\r\n" + CHINESE).encode("utf-8")
+        detail = self._load(original)
+        info = detail["simplified"]
+        self.assertEqual(info["count"], 3)   # 2 lyric lines + [ti:]; [ar:] is already Traditional
+        self.assertEqual([(item["line"], item["tag"], item["before"], item["after"], item["default_checked"]) for item in info["headers"]],
+                         [(0, "ti", "爱你一万年", "愛你一萬年", True)])
+        status, _headers, data = self._json_request(
+            "POST", "/api/song/0/convert", {"base_sha256": detail["base_sha256"], "entries": [], "headers": [0]})
+        self.assertEqual(status, 200, data)
+        self.assertEqual(json.loads(data)["converted"], 1)
+        before, after = original.split(b"\n"), self.output.read_bytes().split(b"\n")
+        self.assertEqual(after[0], "[ti:愛你一萬年]\r".encode("utf-8"))
+        self.assertEqual(after[1:], before[1:])   # lyric lines were not listed
+        self.assertEqual([p.read_bytes() for p in self.root.glob("*.bak")], [original])
+        self.assertEqual(self._detail()["simplified"]["headers"], [])
+
+    def test_header_rules_match_lyric_lines(self) -> None:
+        self.assertIsNone(zh_traditional.convert_header("[ti:君の声]"))   # kana: skipped like a lyric line
+        self.assertIsNone(zh_traditional.convert_header("[ar:歌手]"))   # nothing to change
+        self.assertIsNone(zh_traditional.convert_header("[00:01.00]爱你"))   # not an ID tag
+        self.assertEqual(zh_traditional.convert_header("[al:爱你]  "), ("爱你", "愛你"))
+        detail = self._load(("[ti:爱你]\r\n" + JAPANESE).encode("utf-8"))
+        info = detail["simplified"]
+        self.assertEqual((info["japanese"], info["headers"][0]["default_checked"], info["lines"][0]["default_checked"]), (True, False, False))
+
+    def test_invalid_header_indexes_are_rejected(self) -> None:
+        detail = self._load(("[ti:爱你]\r\n" + CHINESE).encode("utf-8"))
+        for headers in ([5], [-1], [0, 0], [1], ["0"], [True], "0"):   # line 1 is a lyric line, not an ID tag
+            status, _headers, data = self._json_request(
+                "POST", "/api/song/0/convert", {"base_sha256": detail["base_sha256"], "entries": [], "headers": headers})
+            self.assertEqual(status, 400, (headers, data))
 
 
 if __name__ == "__main__":

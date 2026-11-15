@@ -1763,18 +1763,18 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   };
   function renderS2tw(song) {
     const info = song && !serverReadOnly() ? song.detail?.simplified : null;
-    const lines = info && info.count ? info.lines : [];
+    const lines = info && info.count ? [...(info.headers || []).map(item => Object.assign({key:'h' + item.line}, item)), ...info.lines.map(item => Object.assign({key:'e' + item.entry}, item))] : [];
     if (!song || s2tw.song !== song.index) { s2tw.song = song ? song.index : null; s2tw.open = false; s2tw.unchecked = new Set(); s2tw.note = ''; }
     document.getElementById('s2tw').hidden = !lines.length;
     const panel = document.getElementById('s2tw-panel');
     panel.hidden = !lines.length || !s2tw.open;
     if (!lines.length) return;
-    document.getElementById('s2tw-text').textContent = '這首有 ' + info.count + ' 行簡體中文' + (info.japanese ? '（整首含日文，請自行勾選要轉的行）' : '');
+    document.getElementById('s2tw-text').textContent = '這首有 ' + info.count + ' 行簡體中文' + (info.japanese ? '（整首含日文，請自行勾選要轉的行）' : '') + (info.uncertain ? '（編碼不確定，請先確認文字正確再轉）' : '');
     if (panel.hidden) return;
     document.getElementById('s2tw-list').innerHTML = lines.map(line => {
-      const on = s2tw.touched ? !s2tw.unchecked.has(line.entry) : line.default_checked;
+      const on = s2tw.touched ? !s2tw.unchecked.has(line.key) : line.default_checked;
       const flat = text => text.split(String.fromCharCode(10)).join(' / ');
-      return '<label class="s2tw-row"><input type="checkbox" data-entry="' + line.entry + '"' + (on ? ' checked' : '') + '><span class="num">' + line.entry + '</span><span class="txt">' + esc(flat(line.before)) + '</span><span class="arrow">→</span><span class="txt">' + s2twDiff(flat(line.before), flat(line.after)) + '</span></label>';
+      return '<label class="s2tw-row"><input type="checkbox" data-key="' + line.key + '"' + (on ? ' checked' : '') + '><span class="num">' + (line.line != null ? '標頭' : line.entry) + '</span><span class="txt">' + esc(flat(line.before)) + '</span><span class="arrow">→</span><span class="txt">' + s2twDiff(flat(line.before), flat(line.after)) + '</span></label>';
     }).join('');
     document.getElementById('s2tw-apply').disabled = s2tw.busy;
     document.getElementById('s2tw-note').textContent = s2tw.note;
@@ -1783,16 +1783,18 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     const song = state.songs.find(item => item.index === state.activeSong);
     if (!song || s2tw.busy) return;
     if ([...state.edits.keys()].some(key => key.split(':')[0] === String(song.index))) { s2tw.note = '有尚未儲存的時間修改，請先儲存（Ctrl+S）再轉換'; renderS2tw(song); return; }
-    const entries = [...document.querySelectorAll('#s2tw-list input[type=checkbox]')].filter(box => box.checked).map(box => Number(box.dataset.entry));
-    if (!entries.length) { s2tw.note = '沒有勾選任何行'; renderS2tw(song); return; }
+    const keys = [...document.querySelectorAll('#s2tw-list input[type=checkbox]')].filter(box => box.checked).map(box => box.dataset.key);
+    const entries = keys.filter(key => key[0] === 'e').map(key => Number(key.slice(1))), headers = keys.filter(key => key[0] === 'h').map(key => Number(key.slice(1)));
+    if (!keys.length) { s2tw.note = '沒有勾選任何行'; renderS2tw(song); return; }
     s2tw.busy = true; s2tw.note = ''; renderS2tw(song);
     const generationBefore = seenGeneration;
     try {
-      const data = await api('/api/song/' + song.index + '/convert', {method:'POST', body:JSON.stringify({base_sha256:song.detail.base_sha256, entries})});
+      const data = await api('/api/song/' + song.index + '/convert', {method:'POST', body:JSON.stringify({base_sha256:song.detail.base_sha256, entries, headers})});
       if (data.generation != null && generationBefore !== null && data.generation === generationBefore + 1) seenGeneration = data.generation;
       s2tw.open = false; s2tw.touched = false; s2tw.busy = false;
+      if (data.line_key_map) applyKeyMap(song, data.line_key_map, []);   // a converted row's line_key follows its new text: keep its 已確認 mark
       await refreshSong(song.index);
-      state.notice = '已把 ' + entries.length + ' 行轉成繁體（原檔已備份 .bak）'; render();
+      state.notice = data.converted ? '已把 ' + data.converted + ' 行轉成繁體（原檔已備份 .bak）' : '沒有行被轉換'; render();
     } catch (error) {
       s2tw.busy = false; s2tw.note = '轉換失敗：' + error.message; renderS2tw(song);
     }
@@ -1801,10 +1803,9 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   document.getElementById('s2tw-cancel').addEventListener('click', () => { s2tw.open = false; render(); });
   document.getElementById('s2tw-apply').addEventListener('click', s2twApply);
   document.getElementById('s2tw-list').addEventListener('change', event => {
-    const box = event.target; if (!box || !box.dataset || !box.dataset.entry) return;
-    if (!s2tw.touched) { s2tw.touched = true; const song = state.songs.find(item => item.index === state.activeSong); s2tw.unchecked = new Set((song?.detail?.simplified?.lines || []).filter(line => line.default_checked === false).map(line => line.entry)); }
-    const entry = Number(box.dataset.entry);
-    if (box.checked) s2tw.unchecked.delete(entry); else s2tw.unchecked.add(entry);
+    const box = event.target; if (!box || !box.dataset || !box.dataset.key) return;
+    if (!s2tw.touched) { s2tw.touched = true; const song = state.songs.find(item => item.index === state.activeSong); const info = song?.detail?.simplified || {}; s2tw.unchecked = new Set([...(info.headers || []).map(item => ['h' + item.line, item.default_checked]), ...(info.lines || []).map(item => ['e' + item.entry, item.default_checked])].filter(pair => pair[1] === false).map(pair => pair[0])); }
+    if (box.checked) s2tw.unchecked.delete(box.dataset.key); else s2tw.unchecked.add(box.dataset.key);
   });
   async function refreshSong(index) {
     busy.begin('song', '重新整理中…');

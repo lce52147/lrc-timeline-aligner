@@ -1350,7 +1350,7 @@ def _song_payload(report_path, report, anchor=None):
         "read_only": bool(readonly),
         "read_only_reason": reason,
         "encoding_uncertain": encoding_uncertain,
-        "simplified": None if readonly or not rows else zh_traditional.song_candidates(rows),
+        "simplified": None if readonly or not rows else zh_traditional.song_candidates(rows, _header_lines(current_lines), encoding_uncertain),
         "entry_model": entry_model,
         "manual_edited": bool(manual_edited),
         "manual_edit_reason": manual_reason,
@@ -1860,6 +1860,37 @@ def _save_song(song, body):
 _MARKED_LINE_RE = re.compile(r"^(\*+[ \t]*)?(\[\d{2,}:\d{2}\.\d{2}\])(.*)$", re.S)
 
 
+def _header_lines(lines):
+    """``(line index, text)`` of every ID tag line ([ti:] [ar:] [al:] ...) that is UTF-8 text."""
+    found = []
+    for index, line in enumerate(lines):
+        if _HEADER_RE.match(line):
+            try:
+                found.append((index, line.decode("utf-8").rstrip("\r")))
+            except UnicodeDecodeError:
+                continue
+    return found
+
+
+def _convert_header_lines(lines, indexes):
+    """s2tw the text between the colon and the closing ``]`` of each listed ID tag line; the tag name, the bracket and the line ending keep their bytes."""
+    changed = 0
+    for index in indexes:
+        if not _HEADER_RE.match(lines[index]):
+            continue
+        try:
+            text = lines[index].decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        ending = "\r" if text.endswith("\r") else ""
+        match = zh_traditional.HEADER_TEXT_RE.match(text[:len(text) - len(ending)])
+        after = zh_traditional.convert_line(match.group(2)) if match else None
+        if after is not None:
+            lines[index] = (match.group(1) + after + match.group(3) + ending).encode("utf-8")
+            changed += 1
+    return changed
+
+
 def _convert_lines(lines, indexes):
     """Replace only the lyric text of ``lines[i]`` for each index with its s2tw form; tags, marks and every other line keep their bytes."""
     changed = 0
@@ -1884,8 +1915,9 @@ def _convert_song(song, body):
     """
     if song["read_only"]:
         return 403, {"error": song["read_only_reason"] or "read-only"}
-    if set(body) != {"base_sha256", "entries"} or not isinstance(body["base_sha256"], str) or not isinstance(body["entries"], list):
-        return 400, {"error": "body must contain base_sha256 and entries"}
+    if not {"base_sha256", "entries"} <= set(body) <= {"base_sha256", "entries", "headers"} or not isinstance(body["base_sha256"], str) \
+            or not isinstance(body["entries"], list) or not isinstance(body.get("headers", []), list):
+        return 400, {"error": "body must contain base_sha256 and entries (and optionally headers)"}
     if zh_traditional.converter() is None:
         return 503, {"error": "OpenCC 不可用，無法轉換"}
     output = song["output"]
@@ -1909,8 +1941,17 @@ def _convert_song(song, body):
         entries.append(item)
     indexes = [index for entry in entries for index in mapping[entry - 1]]
     bom, trailing, lines = _split_lrc(current)
-    if not _convert_lines(lines, indexes):
-        return 200, _song_payload(pathlib.Path(song["report"]), song["report_data"])
+    header_indexes = []
+    for item in body.get("headers", []):
+        if isinstance(item, bool) or not isinstance(item, int) or item < 0 or item >= len(lines) or item in header_indexes or not _HEADER_RE.match(lines[item]):
+            return 400, {"error": "invalid headers"}
+        header_indexes.append(item)
+    original_lines = list(lines)
+    converted = _convert_lines(lines, indexes) + _convert_header_lines(lines, header_indexes)
+    if not converted:
+        result = _song_payload(pathlib.Path(song["report"]), song["report_data"])
+        result["converted"] = 0
+        return 200, result
     updated = _join_lrc(bom, trailing, lines)
     auto, edits_path = song["auto"], song["edits"]
     auto_updated = log_updated = None
@@ -1919,13 +1960,14 @@ def _convert_song(song, body):
         a_bom, a_trailing, auto_lines = _split_lrc(auto_raw)
         if len(auto_lines) == len(lines):
             _convert_lines(auto_lines, indexes)
+            _convert_header_lines(auto_lines, header_indexes)
             auto_updated = _join_lrc(a_bom, a_trailing, auto_lines)
             log = _read_log(edits_path)
             if log is not None:
                 log["auto_lrc_sha256"] = _sha256_bytes(auto_updated)
                 log["last_lrc_sha256"] = _sha256_bytes(updated)
                 log.setdefault("text_conversions", []).append({
-                    "utc": datetime.now(timezone.utc).isoformat(), "kind": "s2tw", "entries": entries,
+                    "utc": datetime.now(timezone.utc).isoformat(), "kind": "s2tw", "entries": entries, "headers": header_indexes,
                     "lrc_sha256_after": _sha256_bytes(updated),
                 })
                 log_updated = (json.dumps(log, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
@@ -1979,7 +2021,14 @@ def _convert_song(song, body):
         if auto_updated is not None:
             _restore_lrc(auto, auto_raw)
         return 500, {"error": "未轉換：審查紀錄寫入失敗，LRC 已還原 (nothing was converted)"}
-    return 200, _song_payload(pathlib.Path(song["report"]), song["report_data"])
+    result = _song_payload(pathlib.Path(song["report"]), song["report_data"])
+    result["converted"] = converted
+    # A converted row's line_key hash follows its text: old key -> new key, so the page can carry its 已確認 marks across.
+    result["line_key_map"] = {
+        _line_key(original_lines, group): _line_key(lines, group)
+        for group in mapping if _line_key(original_lines, group) != _line_key(lines, group)
+    }
+    return 200, result
 
 
 # ---------------------------------------------------------------------------
@@ -2980,7 +3029,7 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
                 self._json(status, result)
                 return
             payload = _public_song(result, self.server.store.read_only)
-            payload["generation"] = self.server.store.absorb_change(int(match.group(1)))  # the saving page adopts it, so its poll does not reload everything
+            payload["generation"] = self.server.store.generation if result.get("converted") == 0 else self.server.store.absorb_change(int(match.group(1)))  # the saving page adopts it, so its poll does not reload everything
             self._json(200, payload)
 
     def _handle_import(self, path, cancel, body):

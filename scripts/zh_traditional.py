@@ -7,7 +7,10 @@ from __future__ import annotations
 
 import re
 
-_KANA_RE = re.compile("[぀-ヿ]")
+# Hiragana, katakana (not the middle dot U+30FB or the long-vowel mark U+30FC: Chinese lyrics use both), katakana extensions and halfwidth katakana.
+_KANA_RE = re.compile(r"[぀-ヺヽ-ヿㇰ-ㇿｦ-ﾟ]")
+# ID tags whose text is prose: [ti:] [ar:] [al:] [au:] [by:] [re:] [ve:]. Only the text between the colon and the closing bracket is converted.
+HEADER_TEXT_RE = re.compile(r"^(\[(?:ti|ar|al|au|by|re|ve):)(.*?)(\][ 	]*)$", re.I | re.S)
 _converter = None
 _loaded = False
 
@@ -40,11 +43,21 @@ def convert_line(text):
     return after if after != text else None
 
 
-def song_candidates(rows):
-    """``{count, japanese, lines}`` for the payload rows, or None when OpenCC is missing.
+def convert_header(text):
+    """``(before, after)`` of the text inside an ID tag line (``[ti:...]``) when it converts; None otherwise (same kana rule as a lyric line)."""
+    match = HEADER_TEXT_RE.match(text.rstrip("\r"))
+    if not match:
+        return None
+    after = convert_line(match.group(2))
+    return (match.group(2), after) if after is not None else None
 
-    A song with no kana line at all is Chinese: its candidates start checked. In a song with kana the candidates
-    may be Japanese kanji lines, so they start unchecked.
+
+def song_candidates(rows, headers=(), uncertain=False):
+    """``{count, japanese, uncertain, lines, headers}`` for the payload rows, or None when OpenCC is missing.
+
+    ``headers`` are ``(line_index, text)`` of the ID tag lines. A song with no kana line at all is Chinese: its
+    candidates (lyric and header lines alike) start checked. In a song with kana the candidates may be Japanese kanji
+    lines, so they start unchecked; so do all of them when the encoding guess is uncertain (the text may be mojibake).
     """
     if converter() is None:
         return None
@@ -57,6 +70,11 @@ def song_candidates(rows):
         if any(after is not None for after in converted):
             after = [new if new is not None else old for old, new in zip(lyrics, converted)]
             lines.append({"entry": row["entry"], "before": "\n".join(lyrics), "after": "\n".join(after)})
-    for item in lines:
-        item["default_checked"] = not japanese
-    return {"count": len(lines), "japanese": japanese, "lines": lines}
+    found = []
+    for index, text in headers:
+        pair = convert_header(text)
+        if pair is not None:
+            found.append({"line": index, "tag": text[1:3].lower(), "before": pair[0], "after": pair[1]})
+    for item in lines + found:
+        item["default_checked"] = not japanese and not uncertain
+    return {"count": len(lines) + len(found), "japanese": japanese, "uncertain": bool(uncertain), "lines": lines, "headers": found}
