@@ -169,7 +169,7 @@ class LrcDecodeError(ValueError):
     """The LRC bytes are not text in any encoding this tool reads (UTF-8, UTF-16 with BOM, Shift-JIS, GB18030, Big5)."""
 
 
-_LEGACY_TAG_RE = re.compile(rb"(?m)^((?:\*+[ \t]*)?)\[(\d{2,}):(\d{2})\.(\d{3})\]")
+_LEGACY_TAG_RE = re.compile(rb"(?m)^((?:\*+[ \t]*)?)\[(\d{1,3}):(\d{1,2})(?:\.(\d{1,3}))?\]")
 
 
 def _legacy_score(text):
@@ -258,8 +258,20 @@ def lrc_encoding_uncertain(raw):
 
 
 def _millisecond_tags_to_centiseconds(data):
+    """The first tag of each line as ``[mm:ss.xx]``: ``[m:ss.xx]``, ``[mm:ss]``, ``[mm:ss.x]`` and ``[mm:ss.xxx]`` are converted, canonical ones stay."""
     def replace(match):
-        cs = (int(match.group(2)) * 60 + int(match.group(3))) * 100 + (int(match.group(4)) + 5) // 10
+        minutes, seconds, fraction = match.group(2), match.group(3), match.group(4) or b""
+        if len(minutes) >= 2 and len(seconds) == 2 and len(fraction) == 2:
+            return match.group(0)
+        if len(fraction) != 3 and int(seconds) >= 60:
+            return match.group(0)
+        if len(fraction) == 3:
+            hundredths = (int(fraction) + 5) // 10
+        elif len(fraction) == 1:
+            hundredths = int(fraction) * 10
+        else:
+            hundredths = int(fraction or b"0")
+        cs = (int(minutes) * 60 + int(seconds)) * 100 + hundredths
         return match.group(1) + _format_tag(cs)
     return _LEGACY_TAG_RE.sub(replace, data)
 

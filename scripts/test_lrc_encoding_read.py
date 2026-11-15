@@ -93,6 +93,15 @@ class DecodeTests(unittest.TestCase):
         self.assertEqual(review_server._canonical_lrc(raw), b"[00:01.54]a\n*[10:00.00]b*\n[01:00.00]c\n[00:01.50]kept\n")
 
 
+    def test_odd_tag_shapes_become_centiseconds(self) -> None:
+        raw = b"[0:05.12]a\n[00:07]b\n[00:09.5]c\n*[1:02.5]d*\n[00:61]kept\n"
+        self.assertEqual(review_server._canonical_lrc(raw), b"[00:05.12]a\n[00:07.00]b\n[00:09.50]c\n*[01:02.50]d*\n[00:61]kept\n")
+
+    def test_canonical_bytes_do_not_change(self) -> None:
+        raw = "[ti:x]\r\n[00:01.00]一\r\n[100:00.05]二\r\n*[02:03.45]三*\r\n[00:05.00]a [00:06.00]b\r\n".encode("utf-8")
+        self.assertEqual(review_server._canonical_lrc(raw), raw)
+
+
 class ReviewReadsLegacyLrcTests(unittest.TestCase):
     _start = _fixture_module.ReviewServerTests._start
     _request = _fixture_module.ReviewServerTests._request
@@ -150,6 +159,19 @@ class ReviewReadsLegacyLrcTests(unittest.TestCase):
         saved = self.output.read_bytes().decode("utf-8")
         self.assertIn("[ti:テストのうた]", saved)
         self.assertIn("[00:01.60]これはテストです", saved)
+        self.assertEqual([path.read_bytes() for path in self.root.glob("song.lrc.orig-*.bak")], [original])
+
+    def test_odd_tag_lrc_shows_every_row_and_saves_canonical_with_backup(self) -> None:
+        original = b"[0:01.50]first\n[00:03]second\n[00:05.5]third\n[00:07.00]fourth\n"
+        self.output.write_bytes(original)
+        self.store.refresh_if_changed()
+        detail = self._detail()
+        self.assertFalse(detail["read_only"], detail["read_only_reason"])
+        self.assertEqual([row["lyric"] for row in detail["rows"]], ["first", "second", "third", "fourth"])
+        body = {"base_sha256": detail["base_sha256"], "edits": [{"entry": 2, "cs": 320, "source": "ear", "nudge_cs": 0}]}
+        status, _headers, data = self._json_request("POST", "/api/song/0/save", body)
+        self.assertEqual(status, 200, data)
+        self.assertEqual(self.output.read_bytes(), b"[00:01.50]first\n[00:03.20]second\n[00:05.50]third\n[00:07.00]fourth\n")
         self.assertEqual([path.read_bytes() for path in self.root.glob("song.lrc.orig-*.bak")], [original])
 
     def test_two_char_ambiguous_lrc_sets_the_payload_flag(self) -> None:
