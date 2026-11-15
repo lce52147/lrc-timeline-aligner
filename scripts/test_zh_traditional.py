@@ -162,6 +162,37 @@ class ConvertTests(unittest.TestCase):
         status, _headers, data = self._convert(self._detail(), [2])
         self.assertEqual((status, json.loads(data)["converted"]), (200, 1))
 
+    @staticmethod
+    def _songs(lines, uncertain=False):
+        info = zh_traditional.song_candidates([{"entry": i + 1, "lyrics": [text]} for i, text in enumerate(lines)], (), uncertain)
+        return info["count"], [(item["before"], item["default_checked"]) for item in info["lines"]]
+
+    def test_traditional_song_lists_nothing_even_when_s2tw_would_rewrite_a_variant(self) -> None:
+        names = ["范瑋琪", "于文文", "后弘", "游鴻明", "郁可唯", "台北", "裏面", "了解", "祢是神", "這是第一句"]
+        for text in names:
+            self.assertEqual(self._songs([text, "這是第一句"]), (0, []), text)
+        info = self._load(chr(10).join("[00:%02d.00]%s" % (i + 1, text) for i, text in enumerate(names)).encode("utf-8"))["simplified"]
+        self.assertEqual((info["count"], info["lines"], info["headers"]), (0, [], []))
+
+    def test_real_simplified_lines_are_listed_and_checked(self) -> None:
+        texts = ["后来的我们", "我爱你", "这是我们的歌", "说好的幸福呢", "爱情转移", "着急"]
+        count, lines = self._songs(texts)
+        self.assertEqual((count, lines), (6, [(text, True) for text in texts]))
+        self.assertEqual(self._songs(texts, True), (6, [(text, False) for text in texts]))
+
+    def test_variant_line_in_a_simplified_song_is_listed_but_not_checked(self) -> None:
+        self.assertEqual(self._songs(["后面", "我们"]), (1, [("后面", False), ("我们", True)]))
+
+    def test_japanese_kanji_are_not_simplified_but_simplified_hanzi_in_a_japanese_song_is_unchecked(self) -> None:
+        self.assertEqual(self._songs(["国境", "独奏", "きみ"]), (0, []))
+        self.assertEqual(self._songs(["国境", "独奏", "きみ", "我们一起走"]), (1, [("国境", False), ("独奏", False), ("我们一起走", False)]))
+
+    def test_header_only_simplified_is_a_candidate_and_count_counts_simplified_items(self) -> None:
+        info = zh_traditional.song_candidates([{"entry": 1, "lyrics": ["后面"]}], [(0, "[ti:爱你]")])
+        self.assertEqual((info["count"], [i["default_checked"] for i in info["lines"]], [i["default_checked"] for i in info["headers"]]), (1, [False], [True]))
+        self.assertEqual(zh_traditional.song_candidates([{"entry": 1, "lyrics": ["后面"]}], [(0, "[ti:范瑋琪]")])["lines"], [])
+
+
     def test_halfwidth_katakana_and_katakana_extensions_are_kana(self) -> None:
         for text in ("ｱｲ爱你", "ｶﾞ爱", "ㇰ爱", "ｦ爱"):
             self.assertTrue(zh_traditional.has_kana(text), text)
