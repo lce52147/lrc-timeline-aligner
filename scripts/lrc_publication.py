@@ -1,5 +1,6 @@
 """Recoverable two-file publication of an LRC and its alignment report."""
 from __future__ import annotations
+import contextlib
 import hashlib
 import json
 import os
@@ -23,11 +24,21 @@ def journal_path(report_path: Path) -> Path:
     return report_path.with_name(report_path.name + ".txn.json")
 
 
+def committed_marker_path(journal: Path) -> Path:
+    """A file next to the journal that says "both files are in place" when the journal itself could not be rewritten."""
+    return journal.with_name(journal.name + ".committed")
+
+
 def _remove_journal(journal: Path) -> bool:
-    """Delete ``journal``, retrying a locked file; False when it still cannot be deleted (the caller leaves it)."""
+    """Delete ``journal``, retrying a locked file; False when it still cannot be deleted (the caller leaves it).
+
+    The journal goes first and its commit marker after it: a marker without a journal is only litter, but a journal
+    without its marker would be rolled back."""
     for delay in (*JOURNAL_REMOVE_DELAYS, None):
         try:
             journal.unlink(missing_ok=True)
+            with contextlib.suppress(OSError):
+                committed_marker_path(journal).unlink(missing_ok=True)
             return True
         except OSError:
             if delay is None:
@@ -53,15 +64,27 @@ def _write_journal(journal: Path, manifest: dict, ident: str) -> None:
         tmp_journal.unlink(missing_ok=True)
 
 
+def _mark_committed(journal: Path, manifest: dict, ident: str) -> None:
+    """Record that both files are in place. The journal is rewritten with ``committed``; when something holds it open and
+    that cannot be done, a new marker file next to it says the same (a lock on the journal cannot block a new file).
+    Raises when neither can be written: the caller then rolls the publication back."""
+    try:
+        _write_journal(journal, {**manifest, "committed": True}, ident)
+    except OSError:
+        committed_marker_path(journal).write_text("committed", encoding="utf-8")
+
+
 def recover_pair(lrc_path: Path, report_path: Path) -> bool:
     journal = journal_path(report_path)
     if not journal.exists():
+        with contextlib.suppress(OSError):
+            committed_marker_path(journal).unlink(missing_ok=True)   # litter of a publication whose journal is gone
         return False
     try:
         info = json.loads(journal.read_text(encoding="utf-8"))
         if info.get("lrc") != str(lrc_path.resolve()) or info.get("report") != str(report_path.resolve()):
             raise PublicationError("Journal belongs to another output pair")
-        if info.get("committed"):
+        if info.get("committed") or committed_marker_path(journal).exists():
             # Both files were published and only the journal's deletion failed: nothing to undo, so no rollback.
             for backup in (info.get("backups") or {}).values():
                 if backup:
@@ -140,7 +163,8 @@ def publish_pair(
         replace(stages["lrc"], lrc_path)
         replace(stages["report"], report_path)
         # Both files are in place. Record that first, so a journal that cannot be deleted never rolls a finished publication back.
-        _write_journal(journal, {**manifest, "committed": True}, ident)
+        # Only when the mark itself cannot be written (journal and a new file both refused) is the publication rolled back.
+        _mark_committed(journal, manifest, ident)
         journal_written = False
         if not _remove_journal(journal):
             print(f"WARN: published pair is complete but its journal cannot be deleted yet: {journal}", file=sys.stderr)

@@ -125,6 +125,76 @@ class JournalLockTests(unittest.TestCase):
         self.assertEqual(self.lrc.read_text(encoding="utf-8"), "old")
         self.assertEqual(self._leftovers(), [])
 
+    def _journal_held_open_after_creation(self):
+        """os.replace onto the journal works once (its creation) and then fails: another process holds it open without delete sharing."""
+        real_replace = lrc_publication.os.replace
+        state = {"journal_replaces": 0}
+
+        def replace(src, dst, *args, **kwargs):
+            if Path(dst) == self.journal:
+                state["journal_replaces"] += 1
+                if state["journal_replaces"] > 1:
+                    raise PermissionError(32, "The process cannot access the file because it is being used by another process")
+            return real_replace(src, dst, *args, **kwargs)
+
+        return mock.patch.object(lrc_publication.os, "replace", side_effect=replace)
+
+    def test_a_journal_held_open_from_its_creation_still_publishes_and_leaves_a_commit_marker(self):
+        with self._journal_held_open_after_creation(), self._locked_journal(None):
+            warning = self._publish()
+        self.assertEqual(self.lrc.read_text(encoding="utf-8"), "new")
+        self.assertIn("new", self.report.read_text(encoding="utf-8"))
+        self.assertIn("journal cannot be deleted", warning)
+        marker = lrc_publication.committed_marker_path(self.journal)
+        self.assertEqual(self._leftovers(), sorted([self.journal.name, marker.name]))
+        self.assertFalse(json.loads(self.journal.read_text(encoding="utf-8")).get("committed"))
+        # the next start reads the marker: the pair is kept, journal and marker go
+        self.assertTrue(lrc_publication.recover_pair(self.lrc, self.report))
+        self.assertEqual(self.lrc.read_text(encoding="utf-8"), "new")
+        self.assertIn("new", self.report.read_text(encoding="utf-8"))
+        self.assertEqual(self._leftovers(), [])
+        self.assertFalse(lrc_publication.recover_pair(self.lrc, self.report))
+
+    def test_a_journal_held_open_that_frees_up_is_deleted_with_its_marker(self):
+        with self._journal_held_open_after_creation():
+            warning = self._publish()
+        self.assertEqual(warning, "")
+        self.assertEqual(self.lrc.read_text(encoding="utf-8"), "new")
+        self.assertEqual(self._leftovers(), [])
+
+    def test_a_stray_commit_marker_never_makes_the_next_publication_look_committed(self):
+        marker = lrc_publication.committed_marker_path(self.journal)
+        marker.write_text("committed", encoding="utf-8")
+        self.assertFalse(lrc_publication.recover_pair(self.lrc, self.report))
+        self.assertFalse(marker.exists())
+        marker.write_text("committed", encoding="utf-8")
+        def crash(src, dst):
+            if Path(dst) == self.report:
+                raise OSError("crash between the two replaces")
+            Path(src).replace(dst)
+
+        with self.assertRaises(OSError):
+            lrc_publication.publish_pair(self.lrc, self.report, lambda p: p.write_text("new", encoding="utf-8"),
+                                         lambda p: p.write_text('{"new": true}', encoding="utf-8"), replace=crash)
+        self.assertEqual(self.lrc.read_text(encoding="utf-8"), "old")
+        self.assertEqual(self._leftovers(), [])
+
+    def test_when_neither_the_journal_nor_a_marker_can_be_written_the_publication_rolls_back(self):
+        marker = lrc_publication.committed_marker_path(self.journal)
+        real_write = Path.write_text
+
+        def write_text(path, *args, **kwargs):
+            if Path(path) == marker:
+                raise PermissionError(13, "refused")
+            return real_write(path, *args, **kwargs)
+
+        with self._journal_held_open_after_creation(), mock.patch.object(Path, "write_text", autospec=True, side_effect=write_text):
+            with self.assertRaises(OSError):
+                self._publish()
+        self.assertEqual(self.lrc.read_text(encoding="utf-8"), "old")
+        self.assertIn("old", self.report.read_text(encoding="utf-8"))
+        self.assertEqual(self._leftovers(), [])
+
 
 if __name__ == "__main__":
     unittest.main()
