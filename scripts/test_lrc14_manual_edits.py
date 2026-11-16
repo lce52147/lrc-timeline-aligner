@@ -153,8 +153,9 @@ class ManualEditTests(unittest.TestCase):
                 "--output", str(output), "--report-dir", str(root / "reports"),
                 "--timing-source", "lyrics", "--probe",
             ])
-            with split_patch.patch("probe_duration", return_value=2.0),                     mock.patch.object(lyrics_io, "audio_track_labels", return_value=("", "Song")):
+            with split_patch.patch("probe_duration", return_value=2.0),                     mock.patch.object(lyrics_io, "audio_track_labels", return_value=("", "Song")),                     mock.patch.object(auto_lrc, "DEFAULT_PROBE_DIR", root / "probes"):   # the probe LRC goes into the temp folder, not the repo
                 auto_lrc.process_audio(root / "song.flac", args)
+            self.assertEqual([path.name.endswith(".probe.lrc") for path in (root / "probes").iterdir()], [True])
             self.assertTrue(auto_path.is_file())
             self.assertEqual(list(report.parent.glob("*.orphaned-*")), [])
 
