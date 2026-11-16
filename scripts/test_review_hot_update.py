@@ -25,8 +25,15 @@ def free_port():
 
 class Fixture:
     def __init__(self):
-        base = Path(os.environ.get("LRC_HOT_TEST_ROOT", "F:/_RuntimePrompt/LRC15/BE/tests"))
-        base.mkdir(parents=True, exist_ok=True)
+        # An absolute LRC_HOT_TEST_ROOT is used as given; otherwise a fresh directory under the
+        # system temp folder, removed again by close(). Never a relative path, never the repo.
+        configured = os.environ.get("LRC_HOT_TEST_ROOT", "")
+        self._own_base = None
+        if configured and Path(configured).is_absolute():
+            base = Path(configured)
+            base.mkdir(parents=True, exist_ok=True)
+        else:
+            base = self._own_base = Path(tempfile.mkdtemp(prefix="lrc-hot-tests-"))
         self.root = Path(tempfile.mkdtemp(prefix="lrc-hot-test-", dir=str(base)))
         self.scripts = self.root / "scripts"
         shutil.copytree(SCRIPTS, self.scripts, ignore=shutil.ignore_patterns("test_*", "__pycache__", "*.pyc"))
@@ -118,8 +125,10 @@ class Fixture:
         if info:
             pids.add(info["pid"])
         for pid in pids:
-            subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, creationflags=HIDDEN)
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, creationflags=HIDDEN)
         shutil.rmtree(self.root, ignore_errors=True)
+        if self._own_base is not None:
+            shutil.rmtree(self._own_base, ignore_errors=True)
 
 
 class HotUpdateTests(unittest.TestCase):

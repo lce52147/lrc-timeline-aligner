@@ -1739,6 +1739,15 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         self.assertFalse(review_server._path_is_excluded(self.root / "LRC tools checked references" / "song.lrc"))
         self.assertTrue(review_server._path_is_excluded(self.root / "LRC tools checked references" / "LRC bk" / "song.lrc"))
 
+    def _path_leaks(self, text: str) -> list[str]:
+        """Return the spellings of this fixture's absolute paths that occur in text."""
+        spellings = set()
+        for base in {self.root, self.root.resolve(), self.audio.parent, self.audio.parent.resolve()}:
+            plain = str(base)
+            spellings.update({plain, plain.replace("\\", "/"), plain.replace("\\", "\\\\"), "\\\\?\\" + plain})
+        haystack = text.casefold()
+        return sorted(item for item in spellings if item.casefold() in haystack)
+
     def test_bk_exclusion_and_public_api_paths(self) -> None:
         bk = self.root / "lrc bk"
         bk.mkdir()
@@ -1753,11 +1762,20 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         report.write_text(json.dumps(data), encoding="utf-8")
         store = review_server.ReviewStore(self.root, [self.root])
         self.assertEqual(len(store.songs), 1)
-        payload = json.loads(self._request("GET", "/api/songs", **{"X-Review-Token": self.server.token})[2])
-        self.assertNotIn(str(self.root), json.dumps(payload))
-        excluded = json.loads(self._request("GET", "/api/excluded", **{"X-Review-Token": self.server.token})[2])
+        raw_songs = self._request("GET", "/api/songs", **{"X-Review-Token": self.server.token})[2]
+        payload = json.loads(raw_songs)
+        # The body is JSON, so a Windows path is escaped (\ becomes \\): look at the decoded
+        # values, with both separators and any letter case. `report` is the one field that
+        # carries a path on purpose: the page keys its stored drafts by it (index.html draftId).
+        self.assertEqual([song["report"] for song in payload], [str(store.songs[0]["report"])])
+        public = [{key: value for key, value in song.items() if key != "report"} for song in payload]
+        self.assertEqual(self._path_leaks(json.dumps(public, ensure_ascii=False)), [])
+        self.assertNotIn("lrc bk", raw_songs.decode("utf-8").casefold())
+        excluded_raw = self._request("GET", "/api/excluded", **{"X-Review-Token": self.server.token})[2]
+        excluded = json.loads(excluded_raw)
         self.assertEqual(set(excluded), {"excluded_files"})
-        self.assertNotIn(str(self.root), json.dumps(excluded))
+        self.assertEqual(self._path_leaks(json.dumps(excluded, ensure_ascii=False)), [])
+        self.assertNotIn("lrc bk", excluded_raw.decode("utf-8").casefold())
         self.assertEqual(self._request("GET", "/api/excluded")[0], 403)
 
     def test_isolation_and_page_contract(self) -> None:
@@ -2130,7 +2148,10 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         fake_server = mock.Mock()
         fake_server.server_port = 1234
         fake_server.port_notice = ""
+        # No hot updater: its thread would outlive the test and, once a script changes, start a
+        # replacement "review_server.py <unittest argv> --port 1234" process nobody stops.
         with mock.patch.object(review_server, "ReviewHTTPServer", return_value=fake_server), \
+             mock.patch.dict(os.environ, {"LRC_NO_HOT_UPDATE": "1"}), \
              mock.patch("builtins.print") as output:
             review_server.run_server([bad], self.root, no_browser=True)
         startup = output.call_args_list[-1].args[0]
