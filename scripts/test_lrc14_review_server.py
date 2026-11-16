@@ -107,6 +107,9 @@ class ReviewServerTests(unittest.TestCase):
         return result
 
     def _json_request(self, method: str, path: str, payload: object, **headers):
+        # The page names the song with every decision / romaji / export write; tests that do not care get song 0's report.
+        if isinstance(payload, dict) and "song_id" not in payload and path.startswith("/api/song/0/")                 and path.rsplit("/", 1)[-1] in ("decision", "romaji", "export") and getattr(self, "report", None):
+            payload = {**payload, "song_id": str(self.store.songs[0]["report"])}
         body = json.dumps(payload).encode()
         return self._request(method, path, body, **{
             "X-Review-Token": self.server.token,

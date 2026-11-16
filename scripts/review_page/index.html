@@ -229,6 +229,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     try {
       const response = await fetch(path, Object.assign({}, options, guard ? {headers, signal:guard.signal} : {headers}));
       const data = await response.json().catch(() => ({error:response.statusText}));
+      if (response.status === 409 && data.song_changed) { queueMicrotask(() => { load().catch(() => {}); }); throw Error(data.error); }
       if (!response.ok) throw Error(response.status === 403 ? '伺服器不接受這個頁面（可能已重新啟動，請重新開啟 Review LRC）' : (data.error || response.statusText));
       return data;
     } catch (error) {
@@ -1156,7 +1157,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   // Every verdict is logged beside the report (review-decisions.jsonl) so the review thresholds can be tuned on real outcomes.
   function recordDecision(item, decision, cs, source) {
     if (!editable(item.song)) return;
-    api('/api/song/' + item.song.index + '/decision', {method:'POST', body:JSON.stringify({entry:item.row.entry, decision, cs, source:source || null})})
+    api('/api/song/' + item.song.index + '/decision', {method:'POST', body:JSON.stringify({song_id:draftId(item.song), entry:item.row.entry, decision, cs, source:source || null})})
       .catch(error => console.warn('decision not recorded:', error.message));
   }
   function accept(item) {
@@ -1560,7 +1561,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   }
   // Old body shape ({base_sha256, edits}) unless a delete is pending; then the deletes ride along in the same request.
   function saveBody(song, sending) {
-    const body = {base_sha256:song.detail.base_sha256, edits:sending.filter(edit => !edit.del).map(({base_cs,bsha,del,prev,...edit}) => edit)};
+    const body = {song_id:draftId(song), base_sha256:song.detail.base_sha256, edits:sending.filter(edit => !edit.del).map(({base_cs,bsha,del,prev,...edit}) => edit)};
     const deletes = sending.filter(edit => edit.del).map(edit => ({entry:edit.entry, line_key:edit.line_key}));
     if (deletes.length) body.deletes = deletes;
     return body;
@@ -1690,7 +1691,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     const song = exportSong();
     if (serverReadOnly() || !song || song.read_only) { exportBadgeFail('這首歌是唯讀'); return; }
     try {
-      const data = await api('/api/song/' + song.index + '/export', {method:'POST', body:JSON.stringify({audio:'', check:true})});
+      const data = await api('/api/song/' + song.index + '/export', {method:'POST', body:JSON.stringify({song_id:draftId(song), audio:'', check:true})});
       exportTargets.length = 0;
       const select = document.getElementById('export-target');
       select.innerHTML = '';
@@ -1734,7 +1735,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     box.addEventListener('click', event => event.stopPropagation());
     const post = async body => {
       try {
-        const result = await api('/api/song/' + item.song.index + '/romaji', {method:'POST', body:JSON.stringify(Object.assign({entry:item.row.entry}, body))});
+        const result = await api('/api/song/' + item.song.index + '/romaji', {method:'POST', body:JSON.stringify(Object.assign({song_id:draftId(item.song), entry:item.row.entry}, body))});
         return result;
       } catch (error) { edit.message = error.message; render(); return null; }
     };
@@ -1791,7 +1792,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     s2tw.busy = true; s2tw.note = ''; renderS2tw(song);
     const generationBefore = seenGeneration;
     try {
-      const data = await api('/api/song/' + song.index + '/convert', {method:'POST', body:JSON.stringify({base_sha256:song.detail.base_sha256, entries, headers})});
+      const data = await api('/api/song/' + song.index + '/convert', {method:'POST', body:JSON.stringify({song_id:draftId(song), base_sha256:song.detail.base_sha256, entries, headers})});
       if (data.generation != null && generationBefore !== null && data.generation === generationBefore + 1) seenGeneration = data.generation;
       s2tw.open = false; s2tw.touched = false; s2tw.busy = false;
       if (data.line_key_map) applyKeyMap(song, data.line_key_map, []);   // a converted row's line_key follows its new text: keep its 已確認 mark
@@ -1855,7 +1856,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
         await save();
         if (state.error) { exportBadgeFail('儲存失敗：' + state.error); return; }
       }
-      const data = await api('/api/song/' + song.index + '/export', {method:'POST', body:JSON.stringify({audio:target.name})});
+      const data = await api('/api/song/' + song.index + '/export', {method:'POST', body:JSON.stringify({song_id:draftId(song), audio:target.name})});
       const seconds = ((Date.now() - started) / 1000).toFixed(1);
       settleExportGeneration(data.generation, data.other_changes === true);  // our own bump must not trigger a full load(); any other one does
       try { await refreshSong(song.index); } catch (error) { console.error(error); }

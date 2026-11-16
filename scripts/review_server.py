@@ -1240,6 +1240,13 @@ def _apply_harmony(song, hashes):
         rows[entry - 1]["harmony_cand_cs"] = cs
 
 
+def _same_report(claimed, report):
+    """True when ``claimed`` (the report path a page sends as ``song_id``) is this song's report file."""
+    if not isinstance(claimed, str) or not claimed:
+        return False
+    return os.path.normcase(os.path.normpath(claimed)) == os.path.normcase(os.path.normpath(str(report)))
+
+
 def _rebind_harmony(song, old, new, old_total, new_total, entry_map=None):
     """After a text conversion or a delete the harmony sidecar keeps matching: the LRC hash it is bound to moves to the new one
     and, after a delete, its entries are renumbered. ``old`` / ``new`` are (current, reference) sha pairs: the reader accepts either, so a sidecar
@@ -3156,6 +3163,13 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
             if song is None or self.server.store.read_only:
                 self._json(403, {"error": "read-only"})
                 return
+            # A song number is only a position in a list that can be re-sorted: the writes with no content check of their own
+            # (decision, romaji, export) must name the song the page meant, and any other write may.
+            if match.group(2) in ("decision", "romaji", "export") or "song_id" in body:
+                if not _same_report(body.get("song_id"), song["report"]):
+                    self._json(409, {"error": "歌曲清單已變動，這個操作沒有寫入任何東西，請重新載入頁面（the song list changed; nothing was written）", "song_changed": True})
+                    return
+            body.pop("song_id", None)
             if match.group(2) == "decision":
                 status, result = _record_decision(song, body)
                 if status == 200:

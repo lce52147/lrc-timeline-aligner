@@ -239,5 +239,74 @@ class OffsetTests(_PageFixture):
         self.assertEqual(text.split("\r\n"), ["[00:02.00]one", "[00:03.00]two"])
 
 
+class SongIdentityTests(_PageFixture):
+    """A write that names another song than the one at that position is refused with 409 and writes nothing."""
+    OTHER = "D:\elsewhere\other.align-report.json"
+
+    def _post(self, endpoint, payload):
+        return self._request("POST", "/api/song/0/" + endpoint, json.dumps(payload).encode(), **{
+            "X-Review-Token": self.server.token, "Origin": f"http://{self.base}", "Content-Type": "application/json"})
+
+    def _tree(self):
+        return {path.name: path.read_bytes() for path in self.root.iterdir() if path.is_file()}
+
+    def test_decision_with_another_or_no_song_id_is_refused(self) -> None:
+        before = self._tree()
+        for extra in ({"song_id": self.OTHER}, {}, {"song_id": ""}, {"song_id": 3}):
+            status, _h, data = self._post("decision", {"entry": 2, "decision": "keep", "cs": None, "source": "keep", **extra})
+            self.assertEqual(status, 409, data)
+            self.assertTrue(json.loads(data)["song_changed"])
+        self.assertEqual(self._tree(), before)
+        self.assertFalse(list(self.root.glob("*.review-decisions.jsonl")))
+        status, _h, data = self._post("decision", {"song_id": self._detail()["report"], "entry": 2, "decision": "keep", "cs": None, "source": "keep"})
+        self.assertEqual(status, 200, data)
+        self.assertTrue(list(self.root.glob("*.review-decisions.jsonl")))
+
+    def test_the_same_report_written_with_other_slashes_is_accepted(self) -> None:
+        status, _h, data = self._post("decision", {"song_id": self._detail()["report"].replace("\\", "/"), "entry": 2, "decision": "keep", "cs": None, "source": "keep"})
+        self.assertEqual(status, 200, data)
+
+    def test_romaji_edit_with_another_song_id_is_refused(self) -> None:
+        before = self._tree()
+        status, _h, data = self._post("romaji", {"song_id": self.OTHER, "entry": 1, "romaji": "ichi"})
+        self.assertEqual(status, 409, data)
+        self.assertEqual(self._tree(), before)
+        self.assertFalse(list(self.root.glob("*.romaji-overrides.json")))
+
+    def test_export_check_and_export_with_another_song_id_are_refused(self) -> None:
+        before = self._tree()
+        for payload in ({"audio": "", "check": True}, {"audio": "song.flac"}):
+            status, _h, data = self._post("export", {"song_id": self.OTHER, **payload})
+            self.assertEqual(status, 409, data)
+        self.assertEqual(self._tree(), before)
+        self.assertFalse((self.root / "export.log").exists())
+
+    def test_save_and_convert_with_another_song_id_are_refused_and_without_one_still_work(self) -> None:
+        detail = self._detail()
+        before = self._tree()
+        edit = {"entry": 1, "cs": 150, "source": "ear", "nudge_cs": 0}
+        status, _h, data = self._post("save", {"song_id": self.OTHER, "base_sha256": detail["base_sha256"], "edits": [edit]})
+        self.assertEqual(status, 409, data)
+        status, _h, data = self._post("convert", {"song_id": self.OTHER, "base_sha256": detail["base_sha256"], "entries": [1]})
+        self.assertEqual(status, 409, data)
+        self.assertEqual(self._tree(), before)
+        status, _h, data = self._post("save", {"base_sha256": detail["base_sha256"], "edits": [edit]})
+        self.assertEqual(status, 200, data)
+        detail = self._detail()
+        status, _h, data = self._post("save", {"song_id": self._detail()["report"], "base_sha256": detail["base_sha256"],
+                                               "edits": [{**edit, "cs": 160}]})
+        self.assertEqual(status, 200, data)
+        self.assertIn(b"[00:01.60]one", self.output.read_bytes())
+
+
+    def test_the_page_names_the_song_in_every_write_and_reloads_on_409(self) -> None:
+        html = (SCRIPTS / "review_page" / "index.html").read_text(encoding="utf-8")
+        for endpoint in ("decision", "romaji", "export", "convert", "save"):
+            self.assertIn("/" + endpoint, html)
+        self.assertEqual(html.count("song_id:draftId("), 6, "decision, save, export check, romaji, convert, export")
+        self.assertIn("response.status === 409 && data.song_changed", html)
+        self.assertIn("load().catch", html)
+
+
 if __name__ == "__main__":
     unittest.main()
