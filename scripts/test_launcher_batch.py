@@ -218,6 +218,45 @@ class ReviewBatchDroppedNameTests(LauncherStubCase):
         self.assertEqual(result.stderr.strip(), "")
 
 
+class ReviewBatchSingleDashArgumentTests(LauncherStubCase):
+    """Review LRC.bat: whatever is typed after the file name reaches review_server.py as written, whether or not PowerShell has a parameter of that name."""
+    make_audio = ReviewBatchDroppedNameTests.make_audio
+    review_calls = ReviewBatchDroppedNameTests.review_calls
+
+    def typed(self, tail: str) -> list[str]:
+        self.calls_file.unlink(missing_ok=True)
+        result = self.run_cmdline(f'cmd /d /c ""{REPO_ROOT / "Review LRC.bat"}" {tail}"')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = self.review_calls()
+        self.assertEqual(len(calls), 1, (tail, calls))
+        return calls[0][1:]
+
+    def test_single_dash_flags_are_not_taken_by_powershell(self) -> None:
+        audio = self.make_audio("a b.flac")
+        for tail, expected in (
+            ("-d", ["-d"]),
+            ("-p 1", ["-p", "1"]),
+            (f'-Verbose "{audio}"', ["-Verbose", audio]),
+            (f'-OutVariable x "{audio}"', ["-OutVariable", "x", audio]),
+            ("-FromLauncher", ["-FromLauncher"]),
+            ("-x 5", ["-x", "5"]),
+            (f'-FromLauncher --read-only "{audio}"', ["-FromLauncher", "--read-only", audio]),
+        ):
+            with self.subTest(tail=tail):
+                self.assertEqual(self.typed(tail), expected)
+
+    def test_special_characters_still_reach_the_server_as_written(self) -> None:
+        names = ("it's (live) [2024].flac", "a&b c.flac", "a;b,c=d.flac", "a!b^c.flac", "100% love.flac", "$env_USERNAME x.flac",
+                 "a`b x.flac", "歌 曲君の名は.flac")
+        for name in names:
+            with self.subTest(name=name):
+                path = self.make_audio(name)
+                self.assertEqual(self.typed(f'"{path}"'), [path])
+
+    def test_the_launcher_marker_is_not_an_argument(self) -> None:
+        self.assertEqual(self.typed("--read-only"), ["--read-only"])
+
+
 class AlignBatchSummaryTests(LauncherStubCase):
     def drop(self, *names: str) -> list[str]:
         songs = self.tmp / "songs"

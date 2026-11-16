@@ -16,7 +16,8 @@ if "%~1"=="" (
   "%PYTHON%" "%~dp0scripts\review_server.py" --report-dir "%~dp0outputs\reports"
 ) else (
   rem A dropped name with a percent-enclosed word arrives already expanded by cmd.exe: review-lrc.ps1 puts the original back.
-  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0review-lrc.ps1" -FromLauncher %*
+  set "LRC_FROM_LAUNCHER=1"
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0review-lrc.ps1" %*
 )
 set "EXIT_CODE=%ERRORLEVEL%"
 if not "%EXIT_CODE%"=="0" if not "%LRC_NO_PAUSE%"=="1" pause
