@@ -5,6 +5,8 @@ guess is a coin flip between legacy codecs, is reported as uncertain so the call
 """
 from __future__ import annotations
 
+import re
+
 class LrcDecodeError(ValueError):
     """The LRC bytes are not text in any encoding this tool reads (UTF-8, UTF-16 with BOM, Shift-JIS, GB18030, Big5)."""
 
@@ -47,13 +49,16 @@ _UNCERTAIN_MIN_PAIRS = 4
 # without a stray character (a tie) and the byte-region shares pick Big5. At such a tie only, the GB18030 reading is looked at once more: a few
 # characters of Big5 Chinese can read as kana, Japanese is mostly kana. Clearly Japanese reads as GB18030; a trace of it is a refusal.
 # strong: >= 6 kana, >= 4 different ones, >= 40 % of the double-byte characters, two in a row, and a common particle (a repeated short Chinese
-# phrase such as one word three times reads as 6 kana of only 2 kinds); weak: >= 3 kana and >= 30 % of the double-byte characters.
+# phrase such as one word three times reads as 6 kana of only 2 kinds); weak: >= 1 kana and >= 20 % of the double-byte characters, counted on the
+# timed lines only (a Big5 title in a [ti:] tag can read as one kana). A weak trace is a refusal: with so little text the bytes cannot tell the two
+# apart, and the Big5 reading of Japanese saved as GBK is a few rare characters that nothing in the file can call wrong. Measured in the FIX11B report.
 _GBK_JAPANESE_MIN_KANA = 6
 _GBK_JAPANESE_MIN_KINDS = 4
 _GBK_JAPANESE_MIN_SHARE = 0.4
 _GBK_JAPANESE_PARTICLES = "のにをはがとでもて"
-_GBK_JAPANESE_WEAK_KANA = 3
-_GBK_JAPANESE_WEAK_SHARE = 0.3
+_GBK_JAPANESE_WEAK_KANA = 1
+_GBK_JAPANESE_WEAK_SHARE = 0.2
+_TIMED_LINE = re.compile(r"^\s*\[\d{1,3}:\d{1,2}")
 
 
 def _kana_evidence(text):
@@ -94,7 +99,7 @@ def _decode_lrc_checked(raw):
         if gb_share > big5_share:
             best = found[1]
         uncertain = pairs < _UNCERTAIN_MIN_PAIRS or abs(gb_share - big5_share) < _UNCERTAIN_MARGIN
-        kana_evidence = _kana_evidence(found[1][3])
+        kana_evidence = _kana_evidence("\n".join(line for line in found[1][3].splitlines() if _TIMED_LINE.match(line)))
         if kana_evidence == "strong":
             best, uncertain = found[1], False
         elif kana_evidence == "weak":

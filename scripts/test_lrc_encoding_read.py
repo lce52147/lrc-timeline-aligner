@@ -238,6 +238,24 @@ class GbkJapaneseTieTests(unittest.TestCase):
         for text in self.TOO_LITTLE:
             self.assertTrue(self._read(text, "gbk")[2], text)
 
+    def test_one_or_two_kana_on_a_short_gbk_file_is_a_refusal_never_a_certain_big5(self) -> None:
+        # claude-10's four: 1-2 lines whose GB18030 reading has one or two kana (the Big5 reading is a few rare characters)
+        for lines in (["もう一度"], ["君が好き"], ["花火", "空へ"], ["花火", "君が好き"]):
+            text = "".join("[00:%02d.00]%s\n" % (number, line) for number, line in enumerate(lines))
+            got = self._read(text, "gbk")
+            self.assertTrue(got[1] == "gb18030" or got[2], (lines, got[1:]))
+            self.assertNotEqual((got[1], got[2]), ("cp950", False), lines)
+
+    def test_short_big5_files_are_still_certain_and_right(self) -> None:
+        for lines in (["我愛你"], ["回家"], ["我愛你", "回家"], ["一個人", "你的心"]):
+            text = "".join("[00:%02d.00]%s\n" % (number, line) for number, line in enumerate(lines))
+            self.assertEqual(self._read(text, "cp950"), (text, "cp950", False), lines)
+
+    def test_kana_in_a_header_tag_is_not_evidence_of_japanese(self) -> None:
+        # a Big5 title whose bytes read as one kana in GB18030, on a file with no timed line
+        raw = "[ti:獵れ锭垫 BLUE BUD]\n[re:LRC tools ctc-forced-align]\n[length:03:59.00]\n".encode("gbk")
+        self.assertEqual(review_server._decode_lrc_checked(raw)[1:], ("cp950", False))
+
     def test_real_big5_chinese_is_unchanged(self) -> None:
         for text in ("[00:01.00]我們一起走過的日子\n[00:02.00]你是我心中最美的夢\n[00:03.00]了解你的心情\n", "[00:01.00]我愛你\n[00:02.00]一個人\n"):
             self.assertEqual(self._read(text, "cp950")[:2], (text, "cp950"))
