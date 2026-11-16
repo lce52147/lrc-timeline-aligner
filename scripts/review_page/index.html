@@ -277,10 +277,11 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   function fileShapeNotes(detail) {
     const notes = [];
     if (detail?.multi_tag_lines) notes.push('此檔有一行多個時間（或同一個時間重複寫了），已展開；存檔會照展開後的格式寫回（原檔有備份）');
-    if (detail?.offset_ms) {
+    const listed = Array.isArray(detail?.offset_values) ? detail.offset_values : [];
+    if (detail?.offset_ms || listed.length > 1) {
       const signed = value => (value > 0 ? '+' : '') + value;
-      const values = Array.isArray(detail.offset_values) && detail.offset_values.length ? detail.offset_values : [detail.offset_ms];
-      if (values.length > 1) notes.push('此檔有 ' + values.length + ' 個不同的 offset（' + values.map(value => signed(value) + ' ms').join('、') + '）：只採用第一個（' + signed(detail.offset_ms) + ' ms）已換算進時間，存檔時全部 offset 標頭都會換算掉（原檔有備份）');
+      const values = listed.length ? listed : [detail.offset_ms];
+      if (values.length > 1) notes.push('此檔有 ' + values.length + ' 個不同的 offset（' + values.map(value => signed(value) + ' ms').join('、') + '）：只採用第一個（' + signed(values[0]) + ' ms）已換算進時間，存檔時全部 offset 標頭都會換算掉（原檔有備份）');
       else notes.push('此檔有 offset ' + signed(detail.offset_ms) + ' ms，已換算進時間；存檔會照換算後的格式寫回（原檔有備份）');
     }
     return notes;

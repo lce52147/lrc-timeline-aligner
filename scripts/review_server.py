@@ -216,7 +216,8 @@ def _normalize_lrc_lines(data):
         if match and int(match.group(1)) not in offset_values:
             offset_values.append(int(match.group(1)))
     offset_ms = offset_values[0] if offset_values else 0
-    if offset_ms:
+    stripped = bool(offset_ms or len(offset_values) > 1)  # a lone [offset:0] means no shift: left as written
+    if stripped:
         lines = [line for line in lines if not _OFFSET_LINE_RE.match(line)]
     end = len(lines)
     while end and not lines[end - 1].strip():
@@ -256,7 +257,7 @@ def _normalize_lrc_lines(data):
     if multi:
         units.sort(key=lambda unit: unit[0])
     out = head + [line for unit in units for line in unit[1]] + tail
-    return _join_lrc(bom, trailing, out), {"multi_tag_lines": multi, "offset_ms": offset_ms, "offset_values": offset_values if offset_ms else []}
+    return _join_lrc(bom, trailing, out), {"multi_tag_lines": multi, "offset_ms": offset_ms, "offset_values": offset_values if stripped else []}
 
 
 def _canonical_lrc_info(raw):

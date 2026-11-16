@@ -310,9 +310,19 @@ class OffsetHeaderAndRepeatedTagTests(_PageFixture):
         self.assertEqual(self._backups(), [original])
         self.assertEqual(json.loads(data)["offset_values"], [])
 
-    def test_an_offset_of_zero_first_is_left_alone(self) -> None:
+    def test_an_offset_of_zero_first_is_reported_and_kept_as_the_one_used(self) -> None:
         raw = b"[offset:0]\n[offset:300]\n[00:10.00]a\n"
-        self.assertEqual(review_server._canonical_lrc(raw), raw)
+        data, info = review_server._canonical_lrc_info(raw)
+        self.assertEqual(data, b"[00:10.00]a\n")
+        self.assertEqual((info["offset_ms"], info["offset_values"]), (0, [0, 300]))
+        detail = self._load(raw)
+        self.assertEqual((detail["offset_ms"], detail["offset_values"]), (0, [0, 300]))
+        self.assertEqual([row["current_cs"] for row in detail["rows"]], [1000])
+
+    def test_a_lone_zero_offset_or_two_zeros_say_nothing_and_leave_the_file(self) -> None:
+        for raw in (b"[offset:0]\n[00:10.00]a\n", b"[offset:0]\n[offset: -0 ]\n[00:10.00]a\n"):
+            data, info = review_server._canonical_lrc_info(raw)
+            self.assertEqual((data, info["offset_ms"], info["offset_values"]), (raw, 0, []), raw)
 
     def test_the_same_time_twice_on_a_line_counts_as_a_multi_tag_line(self) -> None:
         info = review_server._canonical_lrc_info(b"[00:01.00][00:01.00]a\n[00:02.00]b\n")
@@ -343,6 +353,8 @@ class OffsetHeaderAndRepeatedTagTests(_PageFixture):
     same: fileShapeNotes({offset_ms: 500, offset_values: [500]}),
     different: fileShapeNotes({offset_ms: -200, offset_values: [-200, 500, 0]}),
     old_server: fileShapeNotes({offset_ms: 500}),
+    zero_first: fileShapeNotes({offset_ms: 0, offset_values: [0, 300]}),
+    zero_alone: fileShapeNotes({offset_ms: 0, offset_values: []}),
   };
   console.log(JSON.stringify(out));
 """
@@ -357,6 +369,10 @@ class OffsetHeaderAndRepeatedTagTests(_PageFixture):
         self.assertEqual(len(notes["different"]), 1)
         for fragment in ("3 個不同的 offset", "-200 ms、+500 ms、0 ms", "只採用第一個（-200 ms）", "全部 offset 標頭都會換算掉", "原檔有備份"):
             self.assertIn(fragment, notes["different"][0])
+        self.assertEqual(notes["zero_alone"], [])
+        self.assertEqual(len(notes["zero_first"]), 1)
+        for fragment in ("2 個不同的 offset", "0 ms、+300 ms", "只採用第一個（0 ms）", "原檔有備份"):
+            self.assertIn(fragment, notes["zero_first"][0])
 
 class SongIdentityTests(_PageFixture):
     """A write that names another song than the one at that position is refused with 409 and writes nothing."""
