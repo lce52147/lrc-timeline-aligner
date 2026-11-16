@@ -1154,6 +1154,9 @@ def _apply_harmony(song, hashes):
         rows[entry - 1]["harmony_cand_cs"] = cs
 
 
+PAGE_OUTDATED_MESSAGE = "審聽頁是舊版（程式剛更新），這次沒有寫入任何東西；請按 F5 重新載入"
+
+
 def _same_report(claimed, report):
     """True when ``claimed`` (the report path a page sends as ``song_id``) is this song's report file."""
     if not isinstance(claimed, str) or not claimed:
@@ -3094,7 +3097,13 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
                 return
             # A song number is only a position in a list that can be re-sorted: the writes with no content check of their own
             # (decision, romaji, export) must name the song the page meant, and any other write may.
-            if match.group(2) in ("decision", "romaji", "export") or "song_id" in body:
+            # A page loaded before a hot update sends no song_id at all and cannot show an error for a decision (it only logs to
+            # its console), so a decision without one is still recorded (an append-only log); a romaji or export is refused with
+            # a message that page shows as it is.
+            if "song_id" not in body and match.group(2) in ("romaji", "export"):
+                self._json(409, {"error": PAGE_OUTDATED_MESSAGE, "page_outdated": True})
+                return
+            if "song_id" in body or match.group(2) in ("romaji", "export"):
                 if not _same_report(body.get("song_id"), song["report"]):
                     self._json(409, {"error": "歌曲清單已變動，這個操作沒有寫入任何東西，請重新載入頁面（the song list changed; nothing was written）", "song_changed": True})
                     return

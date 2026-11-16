@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -250,17 +251,69 @@ class SongIdentityTests(_PageFixture):
     def _tree(self):
         return {path.name: path.read_bytes() for path in self.root.iterdir() if path.is_file()}
 
-    def test_decision_with_another_or_no_song_id_is_refused(self) -> None:
+    def test_decision_with_another_song_id_is_refused_and_without_one_is_recorded(self) -> None:
         before = self._tree()
-        for extra in ({"song_id": self.OTHER}, {}, {"song_id": ""}, {"song_id": 3}):
+        for extra in ({"song_id": self.OTHER}, {"song_id": ""}, {"song_id": 3}, {"song_id": None}):
             status, _h, data = self._post("decision", {"entry": 2, "decision": "keep", "cs": None, "source": "keep", **extra})
             self.assertEqual(status, 409, data)
             self.assertTrue(json.loads(data)["song_changed"])
         self.assertEqual(self._tree(), before)
         self.assertFalse(list(self.root.glob("*.review-decisions.jsonl")))
+        # A page loaded before a hot update sends no song_id and cannot show an error: its decision is still logged.
+        status, _h, data = self._post("decision", {"entry": 2, "decision": "keep", "cs": None, "source": "keep"})
+        self.assertEqual(status, 200, data)
+        logs = list(self.root.glob("*.review-decisions.jsonl"))
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(len(logs[0].read_text(encoding="utf-8").splitlines()), 1)
         status, _h, data = self._post("decision", {"song_id": self._detail()["report"], "entry": 2, "decision": "keep", "cs": None, "source": "keep"})
         self.assertEqual(status, 200, data)
-        self.assertTrue(list(self.root.glob("*.review-decisions.jsonl")))
+        self.assertEqual(len(logs[0].read_text(encoding="utf-8").splitlines()), 2)
+
+    def test_romaji_and_export_without_a_song_id_say_the_page_is_outdated(self) -> None:
+        before = self._tree()
+        for endpoint, payload in (("romaji", {"entry": 1, "romaji": "ichi"}), ("export", {"audio": "", "check": True}),
+                                  ("export", {"audio": "song.flac"})):
+            status, _h, data = self._post(endpoint, payload)
+            self.assertEqual(status, 409, data)
+            body = json.loads(data)
+            self.assertIs(body["page_outdated"], True)
+            self.assertNotIn("song_changed", body)
+            self.assertEqual(body["error"], review_server.PAGE_OUTDATED_MESSAGE)
+            self.assertIn("F5", body["error"])
+        self.assertEqual(self._tree(), before)
+        self.assertFalse(list(self.root.glob("*.romaji-overrides.json")))
+
+    def test_the_page_from_before_the_update_shows_that_message(self) -> None:
+        """The api() and the two error displays of the page at 956b3514 (it sends no song_id): the text reaches the user."""
+        old_api = r"""
+  const token = 't';
+  const api = async (path, options={}) => {
+    const headers = Object.assign({'X-Review-Token':token}, options.body ? {'Content-Type':'application/json'} : {}, options.headers || {});
+    try {
+      const response = await fetch(path, Object.assign({}, options, {headers}));
+      const data = await response.json().catch(() => ({error:response.statusText}));
+      if (!response.ok) throw Error(response.status === 403 ? 'forbidden' : (data.error || response.statusText));
+      return data;
+    } catch (error) { throw error; }
+  };
+  const shown = {};
+  const edit = {};
+  const romajiPost = async body => {
+    try { return await api('/api/song/0/romaji', {method:'POST', body:JSON.stringify(Object.assign({entry:1}, body))}); }
+    catch (error) { edit.message = error.message; return null; }
+  };
+  const doExport = async () => {
+    try { await api('/api/song/0/export', {method:'POST', body:JSON.stringify({audio:'song.flac'})}); }
+    catch (error) { shown.export = error && error.message ? error.message : String(error); }
+  };
+"""
+        harness = old_api + """
+  globalThis.fetch = async () => ({ok:false, status:409, statusText:'Conflict', json: async () => ({error:MESSAGE, page_outdated:true})});
+  (async () => { await romajiPost({romaji:'ichi'}); await doExport(); console.log(JSON.stringify({romaji:edit.message, export:shown.export})); })();
+""".replace("MESSAGE", json.dumps(review_server.PAGE_OUTDATED_MESSAGE))
+        result = subprocess.run(["node", "-"], input=harness, capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {"romaji": review_server.PAGE_OUTDATED_MESSAGE, "export": review_server.PAGE_OUTDATED_MESSAGE})
 
     def test_the_same_report_written_with_other_slashes_is_accepted(self) -> None:
         status, _h, data = self._post("decision", {"song_id": self._detail()["report"].replace("\\", "/"), "entry": 2, "decision": "keep", "cs": None, "source": "keep"})
