@@ -149,18 +149,18 @@ class TrailingStarTests(_PageFixture):
         self.assertEqual([row["lyric"] for row in detail["rows"]], ["one", "f***", "Song Title", "end*", "tail"])
         self.assertEqual([row["user_marked"] for row in detail["rows"]], [False, True, True, False, False])
 
-    def test_saving_a_time_changes_only_the_tag(self) -> None:
+    def test_saving_a_time_clears_the_marks_and_keeps_every_other_byte(self) -> None:
         detail = self._load(self.SONG)
         status, _headers, data = self._save(detail, edits=[(2, 250), (3, 350), (4, 450)])
         self.assertEqual(status, 200, data)
         self.assertEqual(self.output.read_bytes(),
-                         b"[00:01.00]one\n*[00:02.50]f***\n*[00:03.50]Song Title*\n[00:04.50]end*\n[00:05.00]tail\n")
+                         b"[00:01.00]one\n[00:02.50]f***\n[00:03.50]Song Title\n[00:04.50]end*\n[00:05.00]tail\n")
 
-    def test_saving_a_time_keeps_crlf_and_double_marks(self) -> None:
+    def test_saving_a_time_keeps_crlf_and_the_star_run(self) -> None:
         detail = self._load(b"[00:01.00]one\r\n** [00:02.00]f**\r\n[00:05.00]tail\r\n")
         status, _headers, data = self._save(detail, edits=[(2, 250)])
         self.assertEqual(status, 200, data)
-        self.assertEqual(self.output.read_bytes(), b"[00:01.00]one\r\n** [00:02.50]f**\r\n[00:05.00]tail\r\n")
+        self.assertEqual(self.output.read_bytes(), b"[00:01.00]one\r\n[00:02.50]f**\r\n[00:05.00]tail\r\n")
 
     def test_deleting_a_line_leaves_the_others_untouched(self) -> None:
         detail = self._load(self.SONG)

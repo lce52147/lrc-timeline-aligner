@@ -1762,9 +1762,11 @@ def _save_song(song, body):
     for edit in edits:
         tag = _format_tag(edit["cs"])
         for line_index in mapping[edit["entry"] - 1]:
-            # Only the time changes: the marks and every byte of the lyric stay as they are.
-            found = _MARKED_TAG_RE.match(lines[line_index])
-            lines[line_index] = found.group(1) + tag + lines[line_index][found.end():]
+            # A line fixed here is resolved, so its * mark goes (the leading one, and a closing one only next to a leading
+            # one); every other byte of the lyric, including stars that are lyric text, stays as it is.
+            line = _strip_line_marks(lines[line_index])
+            found = _MARKED_TAG_RE.match(line)
+            lines[line_index] = found.group(1) + tag + line[found.end():]
     original_lines = list(lines)
     if removed_indexes:
         lines = [line for index, line in enumerate(lines) if index not in removed_indexes]

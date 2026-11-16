@@ -1053,13 +1053,51 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         self.assertEqual(self._json_request("POST", "/api/song/0/save", body)[0], 200)
         saved = self.output.read_bytes()
         self.assertIn(b"*[00:02.00]two a\n*[00:02.00]two b\n", saved)  # untouched marks survive byte for byte
-        self.assertIn(b"*[00:03.50]four*\n", saved)  # a save changes the time only: marks and lyric bytes stay
+        self.assertIn(b"[00:03.50]four\n", saved)  # a line fixed here is resolved: both its marks go
+        self.assertNotIn(b"*[00:03.50]", saved)
         auto, edits = review_server.review_artifact_paths(self.report)
         self.assertTrue(auto.is_file() and edits.is_file())
         again = self._detail()
         self.assertFalse(again["read_only"])
-        self.assertEqual(again["marked_rows"], 2)  # the edited line keeps its mark too
+        self.assertEqual(again["marked_rows"], 1)  # only the entry that was not edited is still marked
         self.assertEqual(again["rows"][3]["current_cs"], 350)
+        self.assertFalse(again["rows"][3]["user_marked"])
+        self.assertTrue(again["rows"][1]["user_marked"])
+
+    def test_time_edit_clears_marks_by_the_mark_rules(self) -> None:
+        cases = [  # (the "four" line before a time edit, after it)
+            (b"*[00:03.25]four*", b"[00:03.50]four"),
+            (b"*[00:03.25]f***", b"[00:03.50]f***"),
+            (b"* [00:03.25]four", b"[00:03.50]four"),
+            (b"[00:03.25]four*", b"[00:03.50]four*"),
+            (b"[00:03.25]f***", b"[00:03.50]f***"),
+            (b"*[00:03.25]ab**", b"[00:03.50]ab**"),
+            (b"**[00:03.25]four *", b"[00:03.50]four"),
+        ]
+        for before, after in cases:
+            with self.subTest(before=before):
+                self.output.write_bytes(self.original)
+                self._hand_edit({b"[00:03.00]four": before})
+                detail = self._detail()
+                body = {"base_sha256": detail["base_sha256"], "edits": [{"entry": 4, "cs": 350, "source": "ear", "nudge_cs": 0}]}
+                self.assertEqual(self._json_request("POST", "/api/song/0/save", body)[0], 200)
+                saved = self.output.read_bytes()
+                self.assertIn(after + b"\n", saved)
+                self.assertEqual(saved.count(b"\n"), self.original.count(b"\n"))
+                self.assertFalse(self._detail()["rows"][3]["user_marked"])
+
+    def test_time_edit_of_a_multi_tag_marked_line_clears_the_expanded_marks(self) -> None:
+        self.output.write_bytes(self.original.replace(b"[00:03.00]three", b"*[00:03.00][00:50.00]three*"))
+        self.store.refresh_if_changed()
+        detail = self._detail()
+        self.assertEqual(detail["multi_tag_lines"], 1)
+        marked = [row["entry"] for row in detail["rows"] if row["user_marked"]]
+        self.assertEqual(len(marked), 2)
+        body = {"base_sha256": detail["base_sha256"], "edits": [{"entry": marked[0], "cs": 310, "source": "ear", "nudge_cs": 0}]}
+        self.assertEqual(self._json_request("POST", "/api/song/0/save", body)[0], 200)
+        saved = self.output.read_bytes()
+        self.assertIn(b"[00:03.10]three\n", saved)
+        self.assertIn(b"*[00:50.00]three*\n", saved)   # the other expansion was not edited: its mark stays byte for byte
 
     def _real_flac(self) -> None:
         import shutil
