@@ -3,6 +3,7 @@ setlocal
 chcp 65001 >nul
 set "PYTHONUTF8=1"
 set "PYTHON=%~dp0.venv-asr\Scripts\python.exe"
+if defined LRC_VENV_PYTHON if exist "%LRC_VENV_PYTHON%" if not exist "%LRC_VENV_PYTHON%\" set "PYTHON=%LRC_VENV_PYTHON%"
 if not exist "%PYTHON%" (
   echo Python runtime not found: "%PYTHON%"
   echo Run setup.ps1 first.
