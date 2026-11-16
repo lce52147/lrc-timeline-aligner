@@ -6,30 +6,125 @@
 
 The same algorithm as `opencc-python-reimplemented`'s `s2tw` (read from the installed package), run on our own tables: split at separators; in each clause take the longest phrase of `STPhrases`, the leftmost one among equally long ones, and convert the two sides the same way; characters no phrase covers go through `STCharacters`; then `TWVariants`. There is no scoring, no forward / backward comparison and no priority: a rule word is an ordinary dictionary word, so it only wins by being longer or further left. `convert_marked` still returns the marks (position and options of every character `STCharacters` maps to several forms) for the page.
 
-## The four kinds of rule
+## The four kinds of rule (BH2-FIX11A: closed contexts only)
 
-1. `ENTRIES`: a word added to or replaced in the dictionary. Kept in two lists: `CORRECTIONS` (stock is wrong) and `PREFERENCES` (both forms are standard; the user's lyrics use this one).
-2. `DROPPED_PHRASES`: a stock phrase that is not used, because it swallows the first character of the next word (一起干杯 is 一起+干杯, stock's 一起干 hides 干杯).
-3. `CONTEXT_RULES`: a regular expression over the Simplified clause that fixes a span and its Traditional form where only the surrounding text can tell (a fixed span is a boundary: no phrase crosses it). A clause ends at a punctuation mark, so a rule cannot look at a colon or a quotation mark behind it.
-4. `VARIANT_PREFERENCE`: a character-level variant choice applied to the characters the conversion produced (never to Traditional text already in the line).
+The default is stock. A difference from stock is allowed in three forms only:
 
-Totals: 21 corrections, 26 preferences, 10 dropped phrases, 16 context rules, 8 variant characters.
+1. **Literal word** (`ENTRIES`): a fixed string longer than the stock word it replaces; the longest match wins, so its reach is the string itself. Two lists: `CORRECTIONS` (stock is wrong) and `PREFERENCES` (both forms are standard; the user's lyrics use this one).
+2. **Closed context rule** (`CONTEXT_RULES`): a regular expression whose left and right sides are both lists of literal words. Not allowed: a gap (`.{m,n}`), a "not followed by" guard as the only protection, a one-character left or right context that can be the tail or head of another word without a word boundary, a noun list that decides a default. A rule that a reviewer breaks once is deleted, not patched.
+3. **Preference** (`VARIANT_PREFERENCE`, and the `PREFERENCES` entries): either spelling is standard, the user's own lyrics decide.
+
+`DROPPED_PHRASES` (a stock phrase that is not used) stays only where the Taiwan dictionary corpus has no sentence that needs the stock phrase (victims 0); every other stock phrase that hides a word is covered by a longer literal word instead (短短几, 一起干杯, 被发送 ...).
+
+Totals: 113 corrections, 26 preferences, 6 dropped phrases, 4 context rules, 8 variant characters.
 
 ## Rules and their reasons
 
-Every entry lists the look-alike that must not change (negative example); the context rules' and dropped phrases' positive and negative sentences are in the table `CONTEXT_RULES` / `DROPPED_NOTES` and run by `test_zh_convert.py`.
+Every entry lists the look-alike that must not change (negative example); `scripts/test_zh_rules_r3.py` has for every non-preference word and every context rule two sentences where it fires and two look-alikes where it must not (the look-alikes use a different word with the same ending or beginning).
 
-### a1. Corrections of stock OpenCC (21)
+### a1. Corrections of stock OpenCC (113)
 
 | word | written | reason | negative example |
 |---|---|---|---|
-| 一直 | 一直 | not a stock phrase: 直发 (直髮) swallows the 发 of 一直\|发现 / 一直\|发光 | 直发 -> 直髮 |
-| 一头 | 一頭 | not a stock phrase: 头发 (頭髮) swallows the 发 of 一头\|发光 | 长头发 -> 長頭髮 |
+| 一直发现 | 一直發現 | stock's 直发 (直髮) swallows the 发 of 一直\|发现 | 梳着一直发 -> 梳著一直髮 |
+| 一直发光 | 一直發光 | stock's 直发 (直髮) swallows the 发 of 一直\|发光 | 梳着一直发 -> 梳著一直髮 |
+| 一直发生 | 一直發生 | stock's 直发 (直髮) swallows the 发 of 一直\|发生 | 梳着一直发 -> 梳著一直髮 |
+| 一直发展 | 一直發展 | stock's 直发 (直髮) swallows the 发 of 一直\|发展 | 梳着一直发 -> 梳著一直髮 |
+| 一直发出 | 一直發出 | stock's 直发 (直髮) swallows the 发 of 一直\|发出 | 梳着一直发 -> 梳著一直髮 |
+| 一直发愁 | 一直發愁 | stock's 直发 (直髮) swallows the 发 of 一直\|发愁 | 梳着一直发 -> 梳著一直髮 |
+| 一直发呆 | 一直發呆 | stock's 直发 (直髮) swallows the 发 of 一直\|发呆 | 梳着一直发 -> 梳著一直髮 |
+| 一直发抖 | 一直發抖 | stock's 直发 (直髮) swallows the 发 of 一直\|发抖 | 梳着一直发 -> 梳著一直髮 |
+| 一直发烧 | 一直發燒 | stock's 直发 (直髮) swallows the 发 of 一直\|发烧 | 梳着一直发 -> 梳著一直髮 |
+| 一直发笑 | 一直發笑 | stock's 直发 (直髮) swallows the 发 of 一直\|发笑 | 梳着一直发 -> 梳著一直髮 |
+| 一直发亮 | 一直發亮 | stock's 直发 (直髮) swallows the 发 of 一直\|发亮 | 梳着一直发 -> 梳著一直髮 |
+| 一直发怒 | 一直發怒 | stock's 直发 (直髮) swallows the 发 of 一直\|发怒 | 梳着一直发 -> 梳著一直髮 |
+| 一直发火 | 一直發火 | stock's 直发 (直髮) swallows the 发 of 一直\|发火 | 梳着一直发 -> 梳著一直髮 |
+| 一直发狂 | 一直發狂 | stock's 直发 (直髮) swallows the 发 of 一直\|发狂 | 梳着一直发 -> 梳著一直髮 |
+| 一直发挥 | 一直發揮 | stock's 直发 (直髮) swallows the 发 of 一直\|发挥 | 梳着一直发 -> 梳著一直髮 |
+| 一直发布 | 一直發布 | stock's 直发 (直髮) swallows the 发 of 一直\|发布 | 梳着一直发 -> 梳著一直髮 |
+| 一直发表 | 一直發表 | stock's 直发 (直髮) swallows the 发 of 一直\|发表 | 梳着一直发 -> 梳著一直髮 |
+| 一直发誓 | 一直發誓 | stock's phrase 直发 (直髮) swallows the 发 of 一直\|发誓 | 梳着一直发 -> 梳著一直髮 |
+| 一头发光 | 一頭發光 | stock's 头发 (頭髮) swallows the 发 of 一头\|发光 | 长头发 -> 長頭髮 |
+| 一头发亮 | 一頭發亮 | stock's 头发 (頭髮) swallows the 发 of 一头\|发亮 | 长头发 -> 長頭髮 |
 | 风后来 | 風後來 | 风后 is the name 風后 (kept); 风+后来 is wind + 'later' | 风后 -> 風后 |
 | 风后面 | 風後面 | 风后 is the name 風后 (kept); 风+后面 is wind + 'behind' | 风后 -> 風后 |
 | 回归线 | 回歸線 | Taiwan writes 回歸線 (tropic); stock gives 迴歸線 | 线性回归 -> 線性迴歸 |
-| 干了啥 | 幹了啥 | stock's phrase 天干 (heavenly stem) swallows the 干 of 今天\|干了啥 | 池塘干了啥都不剩 -> 池塘乾了啥都不剩 |
-| 书签名 | 書簽名 | 书签名 = signing a book (签名), not the bookmark 书签 of the preference below | 书签 -> 書籤 |
+| 今天干了啥 | 今天幹了啥 | stock's phrase 天干 (heavenly stem) swallows the 干 of 今天\|干了啥 (stock leaves 干 unconverted) | 吃完饼干了啥都不想做 -> 吃完餅乾了啥都不想做 |
+| 昨天干了啥 | 昨天幹了啥 | stock's phrase 天干 swallows the 干 of 昨天\|干了啥 | 吃完饼干了啥都不想做 -> 吃完餅乾了啥都不想做 |
+| 明天干了啥 | 明天幹了啥 | stock's phrase 天干 swallows the 干 of 明天\|干了啥 | 吃完饼干了啥都不想做 -> 吃完餅乾了啥都不想做 |
+| 新书签名 | 新書簽名 | 新书签名 = a new book signing (书\|签名), not the bookmark 书签 | 书签名称 -> 書籤名稱 |
+| 图书签名 | 圖書簽名 | 图书签名 = signing of a book (书\|签名), not the bookmark 书签 | 书签名称 -> 書籤名稱 |
+| 短短几 | 短短幾 | stock's phrase 短几 (a low table) swallows 短短\|几秒 | 一张短几 -> 一張短几 |
+| 一起干杯 | 一起乾杯 | stock's phrase 一起干 (一起幹) swallows 一起\|干杯 | 一起干活 -> 一起幹活 |
+| 统计划分 | 統計劃分 | stock reads 统计\|划分; the preference 计划 -> 計畫 would take the 计划 across the two words | 计划 -> 計畫 |
+| 没干透 | 沒乾透 | stock's phrase 没干 (沒幹) swallows the 干 of 没\|干透 (not dry yet) | 他没干坏事 -> 他沒幹壞事 |
+| 没干净 | 沒乾淨 | stock's phrase 没干 (沒幹) swallows the 干 of 没\|干净 (not clean) | 他没干坏事 -> 他沒幹壞事 |
+| 没干燥 | 沒乾燥 | stock's phrase 没干 (沒幹) swallows the 干 of 没\|干燥 (not dry) | 他没干坏事 -> 他沒幹壞事 |
+| 这杯干了 | 這杯乾了 | this cup / drink is finished (stock 幹了); the word is the whole string, a 这杯 elsewhere stays stock | 他把这件事干了吧 -> 他把這件事幹了吧 |
+| 酒我干了 | 酒我乾了 | 'I drain this wine': 酒 + 我 + 干了 (stock 幹了) | 他干了一件大事 -> 他幹了一件大事 |
+| 熬干了 | 熬乾了 | boiled dry (stock 熬幹了) | 他干了坏事 -> 他幹了壞事 |
+| 嘴巴干了 | 嘴巴乾了 | a dry mouth (stock 嘴巴幹了) | 他干了坏事 -> 他幹了壞事 |
+| 在海里 | 在海裡 | in the sea (stock leaves 在海里: 海里 is the nautical mile in stock); 在 + 海里 is never a distance | 航行了二十海里 -> 航行了二十海里 |
+| 大海里 | 大海裡 | in the ocean (stock 大海里); a number before 海里 is never 大 | 还有半海里 -> 還有半海里 |
+| 到海里 | 到海裡 | to the sea (stock 到海里) | 多少海里才到岸 -> 多少海里才到岸 |
+| 入海里 | 入海裡 | into the sea (stock 入海里) | 每海里收费十元 -> 每海里收費十元 |
+| 有云层 | 有雲層 | weather: a layer of cloud (stock keeps the classical phrase 有云 = 'it is said') | 古人有云 -> 古人有云 |
+| 有云雾 | 有雲霧 | weather: cloud and mist (stock keeps the classical phrase 有云) | 古人有云 -> 古人有云 |
+| 有云彩 | 有雲彩 | weather: clouds (stock keeps the classical phrase 有云) | 古人有云 -> 古人有云 |
+| 有云朵 | 有雲朵 | weather: clouds (stock keeps the classical phrase 有云) | 古人有云 -> 古人有云 |
+| 有云纹 | 有雲紋 | a cloud pattern (stock keeps the classical phrase 有云) | 古人有云 -> 古人有云 |
+| 有云形 | 有雲形 | a cloud shape (stock keeps the classical phrase 有云) | 古人有云 -> 古人有云 |
+| 有云状 | 有雲狀 | a cloud-like shape (stock keeps the classical phrase 有云) | 古人有云 -> 古人有云 |
+| 有云雷 | 有雲雷 | clouds and thunder (stock keeps the classical phrase 有云) | 古人有云 -> 古人有云 |
+| 有云雀 | 有雲雀 | 有\|云雀 (a lark); stock's classical phrase 有云 would hide it | 古人有云 -> 古人有云 |
+| 不是只有 | 不是只有 | 不是 + 只有 = 'not only' (stock reads 是只 as 是隻); stock's phrase 有只 / 是只 / 别只 reads 只 as the measure word 隻, here it is the adverb | 院子里有只会说话的八哥 -> 院子裡有隻會說話的八哥 |
+| 若是只有 | 若是只有 | 若是 + 只有 = 'if only'; stock's phrase 有只 / 是只 / 别只 reads 只 as the measure word 隻, here it is the adverb | 院子里有只会说话的八哥 -> 院子裡有隻會說話的八哥 |
+| 总是只有 | 總是只有 | 总是 + 只有 = 'always only'; stock's phrase 有只 / 是只 / 别只 reads 只 as the measure word 隻, here it is the adverb | 院子里有只会说话的八哥 -> 院子裡有隻會說話的八哥 |
+| 总是只在 | 總是只在 | 总是 + 只在 = 'always only in'; stock's phrase 有只 / 是只 / 别只 reads 只 as the measure word 隻, here it is the adverb | 院子里有只会说话的八哥 -> 院子裡有隻會說話的八哥 |
+| 还是只想 | 還是只想 | 还是 + 只想 = 'still only want'; stock's phrase 有只 / 是只 / 别只 reads 只 as the measure word 隻, here it is the adverb | 院子里有只会说话的八哥 -> 院子裡有隻會說話的八哥 |
+| 没有只要 | 沒有只要 | 没有 + 只要 = 'without just asking'; stock's phrase 有只 / 是只 / 别只 reads 只 as the measure word 隻, here it is the adverb | 院子里有只会说话的八哥 -> 院子裡有隻會說話的八哥 |
+| 别只是 | 別只是 | 别 + 只是 = 'don't just'; stock's phrase 有只 / 是只 / 别只 reads 只 as the measure word 隻, here it is the adverb | 院子里有只会说话的八哥 -> 院子裡有隻會說話的八哥 |
+| 卷卷而上 | 捲捲而上 | curling upward (捲捲而上); stock leaves 卷卷 | 问卷卷成了筒状 -> 問卷捲成了筒狀 |
+| 湿润的风后 | 濕潤的風後 | wet air after the wind (風後); 风后 alone stays the name 風后 (stock) | 黄帝的大臣风后 -> 黃帝的大臣風后 |
+| 海里有各种 | 海裡有各種 | in the sea there are all kinds (stock leaves 海里, the nautical mile, at the start of a clause) | 十二海里有一座岛 -> 十二海里有一座島 |
+| 星海里 | 星海裡 | in the sea of stars (stock 星海里) | 多少海里才到岸 -> 多少海里才到岸 |
+| 海里的鱼 | 海裡的魚 | the fish in the sea (stock 海里的魚) | 每小时航行十二海里的速度 -> 每小時航行十二海里的速度 |
+| 古松开 | 古松開 | an old pine + 开 (古松开始变黄); stock's phrase 松开 (鬆開) would hide the 开 | 鞋带又松开了 -> 鞋帶又鬆開了 |
+| 被发送 | 被發送 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发送 | 被发乱首 -> 被髮亂首 |
+| 被发生 | 被發生 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发生 | 被发乱首 -> 被髮亂首 |
+| 被发布 | 被發布 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发布 | 被发乱首 -> 被髮亂首 |
+| 被发表 | 被發表 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发表 | 被发乱首 -> 被髮亂首 |
+| 被发展 | 被發展 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发展 | 被发乱首 -> 被髮亂首 |
+| 被发动 | 被發動 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发动 | 被发乱首 -> 被髮亂首 |
+| 被发明 | 被發明 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发明 | 被发乱首 -> 被髮亂首 |
+| 被发挥 | 被發揮 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发挥 | 被发乱首 -> 被髮亂首 |
+| 被发出 | 被發出 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发出 | 被发乱首 -> 被髮亂首 |
+| 被发回 | 被發回 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发回 | 被发乱首 -> 被髮亂首 |
+| 被发下 | 被發下 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发下 | 被发乱首 -> 被髮亂首 |
+| 被发给 | 被發給 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发给 | 被发乱首 -> 被髮亂首 |
+| 被发到 | 被發到 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发到 | 被发乱首 -> 被髮亂首 |
+| 被发往 | 被發往 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发往 | 被发乱首 -> 被髮亂首 |
+| 被发掘 | 被發掘 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发掘 | 被发乱首 -> 被髮亂首 |
+| 被发配 | 被發配 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发配 | 被发乱首 -> 被髮亂首 |
+| 被发育 | 被發育 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发育 | 被发乱首 -> 被髮亂首 |
+| 被发票 | 被發票 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发票 | 被发乱首 -> 被髮亂首 |
+| 被发放 | 被發放 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发放 | 被发乱首 -> 被髮亂首 |
+| 被发射 | 被發射 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发射 | 被发乱首 -> 被髮亂首 |
+| 被发起 | 被發起 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发起 | 被发乱首 -> 被髮亂首 |
+| 被发言 | 被發言 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发言 | 被发乱首 -> 被髮亂首 |
+| 被发达 | 被發達 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发达 | 被发乱首 -> 被髮亂首 |
+| 被发扬 | 被發揚 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发扬 | 被发乱首 -> 被髮亂首 |
+| 被发来 | 被發來 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发来 | 被发乱首 -> 被髮亂首 |
+| 被发过 | 被發過 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发过 | 被发乱首 -> 被髮亂首 |
+| 被发去 | 被發去 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发去 | 被发乱首 -> 被髮亂首 |
+| 被发走 | 被發走 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发走 | 被发乱首 -> 被髮亂首 |
+| 被发了 | 被發了 | stock reads 被发 as 被髮 (loose hair); here it is 被\|发了 | 被发乱首 -> 被髮亂首 |
+| 游标卡尺 | 游標卡尺 | vernier caliper: 游標; stock's longer phrase gives 遊標卡尺 | 旅游 -> 旅遊 |
+| 兼容并包 | 兼容並包 | idiom written 並包 in Taiwan (stock 幷包) | 并包含 -> 並包含 |
+| 天上有云 | 天上有雲 | weather: there are clouds in the sky (stock keeps the classical phrase 有云 = 'it is said') | 古人有云 -> 古人有云 |
+| 天空有云 | 天空有雲 | weather: there are clouds in the sky (stock keeps the classical phrase 有云) | 古人有云 -> 古人有云 |
+| 今天有云 | 今天有雲 | weather: clouds today (stock keeps the classical phrase 有云) | 古人有云 -> 古人有云 |
+| 明天有云 | 明天有雲 | weather: clouds tomorrow (stock keeps the classical phrase 有云) | 古人有云 -> 古人有云 |
 | 了如列眉 | 瞭如列眉 | idiom: stock only has 了如指掌 and the dropped 了如 phrase leaves 了如列眉 unconverted (0 / 1 in the Taiwan corpus) | 我明白了如何做 -> 我明白了如何做 |
 | 周几 | 週幾 | week + how many ('which day of the week'): Taiwan writes 週幾; stock writes 周幾 (9 / 0 in the Taiwan corpus) | 周末 -> 週末 |
 | 游标 | 游標 | cursor / vernier: 游標; stock writes 遊標 (12 / 0 in the Taiwan corpus) | 旅游 -> 旅遊 |
@@ -76,113 +171,83 @@ Every entry lists the look-alike that must not change (negative example); the co
 | 命运注定 | 命運注定 | both are standard; 注定 25 / 註定 0 in the lyrics | 注册 -> 註冊 |
 | 五百姻缘天注定 | 五百姻緣天注定 | both are standard; 注定 25 / 註定 0 in the lyrics | 注册 -> 註冊 |
 
-### b. Dropped stock phrases (10)
+### b. Dropped stock phrases (6)
 
 | phrase | reason (positive -> result; negative -> result) |
 |---|---|
-| 一起干 | 一起干杯 -> 一起乾杯; 一起干活 -> 一起幹活 |
 | 了如 | 我明白了如何做 -> 我明白了如何做; 了如指掌 -> 瞭如指掌 |
 | 先尝 | 先尝试 -> 先嘗試; 尝试 -> 嘗試 |
 | 如干 | 倒不如干脆 -> 倒不如乾脆; 若干 -> 若干 |
 | 并产 | 并产生 -> 並產生; 合并 -> 合併 |
 | 并包 | 并包含 -> 並包含; 合并 -> 合併 |
 | 心向 | 内心向往 -> 內心嚮往; 心向党 -> 心向黨 |
-| 有云 | 唯有云雀 -> 唯有雲雀; 今天有云 -> 今天有雲 |
-| 短几 | 短短几秒 -> 短短幾秒; 茶几 -> 茶几 |
-| 被发 | 被发送 -> 被發送; 被发现 -> 被發現 |
 
-### c. Context rules (16)
+### c. Context rules (4)
 
-| name | why |
-|---|---|
-| sea | 海里 after a numeral is the nautical mile (stays 海里), and so is a clause that is just 海里 (a headword); anywhere else it is 海+里 'in the sea' -> 海裡 |
-| dry-drink | a cup / wine / soup / bowl / bottle (or 一口 一饮) within four characters before 干了 is a drink finished: 乾了 |
-| dry-verb | 喝干 晾干 晒干 流干 烧干 熬干 风干, and 汤 / 碗 / 喉咙 / 嘴 / 口 / 泪 / 眼泪 / 衣服 + 干了, are dried: 乾了 (stock writes 熬幹了, 喉嚨幹了, 衣服幹了) |
-| dry-toast | 干了这杯 / 干了杯 / 干了就没事: the drink or the thirst is gone: 乾了 |
-| dry-place | a river / pond / well / spring / water word right before 干了 is dried up (熬干了 is boiled dry): 乾了 |
-| zhi-demonstrative | stock reads 这只 as 這隻 (measure word); before 有 能 会 想 要 the user's lyrics mean 'only' (這只), unless the clause has 的 + an animal noun (這隻會飛的鳥) |
-| zhi-adverb | 只 right after 有 别 是 and before 有 能 会 想 要 是 在 is 'only' (没有只要 别只是 总是只有), 隻 when the clause has 的 + an animal noun (是只有毒的蛇); stock's phrases 有只 / 别只 / 是只 always read it as 隻. Anywhere else stock is kept: 只能 / 只有 are stock phrases, and a rule that fixed their 只 would hide the next word (只能\|干呕) |
-| said-yun | 有云 right after 人 子 书 诗 易 经 谚 语 传 史 》 is the classical 'it is said' (古人有云, 孔子有云, 兵书有云); the dropped stock phrase would otherwise turn it into weather 有雲 (the clause ends at the colon, so only the word before can tell) |
-| loose-hair | 被发 not followed by 送 现 生 布 表 展 起 觉 动 明 挥 达 言 is 'with loose hair' (被髮, stock): 被发乱首, 被发而为狂; the stock phrase is dropped because it swallows 被\|发送 / 被\|发现 |
-| wind-after | 风后 after 的 了 着 吹 ... is 'after the wind' (風後); alone it is the name 風后 (stock) |
-| dry-compound | 没干透 / 没干净: dried (乾); stock's phrase 没干 -> 沒幹 swallows the 干 |
-| curl | 卷卷 + 而 的 地 着 起 成 了 = curling (捲捲而上, 捲捲的头发); 卷卷 alone, or before another word, is 卷卷 (volumes, 惓惓: stock); after 试 长 画 书 手 经 压 考 答 the first 卷 belongs to the word before (试卷\|卷面) |
-| pine | after 青 古 老 孤 苍 劲 乔 雪 the 松 is a pine tree and the 开 starts the next word (青松\|开花); stock's phrase 松开 -> 鬆開 hides it |
-| tour | after 旅 漫 导 周 巡 夜 远 出 畅 郊 the 游 is 遊 (tour) and 动 过 移 starts the next word; the preference 游动/游过/游移 (swim) would take it |
-| scrape | after 胡 须 脸 毛 腿 头 眉 the 刮 is shave / scrape (刮); stock's phrase 刮了 is the wind 颳了 |
-| surname-yu | the surname 余 at the start of a clause (or after 姓 叫 是 找 ...) before a title stays 余; stock writes 餘 |
+| name | fires | must not fire | why |
+|---|---|---|---|
+| tour | 漫游过去的事 -> 漫遊過去的事; 导游过来接我们 -> 導遊過來接我們 | 他游过了河 -> 他游過了河; 鱼游动着 -> 魚游動著 | 旅游 漫游 导游 周游 巡游 畅游 before 动 过 移 is the tourism word (遊) and 动 过 移 starts the next word; the preference 游动/游过/游移 (swim) would take the 游 |
+| dry-throat | 如果喉咙干了，就去喝水 -> 如果喉嚨乾了，就去喝水; 喉咙干了就喝水 -> 喉嚨乾了就喝水 | 捂住喉咙干了坏事 -> 捂住喉嚨幹了壞事; 他喉咙干了三杯 -> 他喉嚨幹了三杯 | 喉咙 + 干了 that ends the clause (or is followed by a particle: 的 了 就 都 也 ...) is a dry throat: 乾了 (stock 喉嚨幹了) |
+| toast-start | 干了就没事了 -> 乾了就沒事了 | 这活儿干了就没事了 -> 這活兒幹了就沒事了; 他干了就没事 -> 他幹了就沒事 | a clause that starts with 干了就没事 is the toast 'drink up and it is fine': 乾了 (stock 幹了); after any other word it is 'do it and it is fine' (幹了, stock) |
+| surname-yu | 余先生在家 -> 余先生在家; 我找余老师 -> 我找余老師 | 剩余先生产 -> 剩餘先生產; 多余老师的话 -> 多餘老師的話 | the surname 余 at the start of a clause (or right after 姓 叫 找 问 请) and right before a title that ends the word stays 余; stock writes 餘 |
 
 ### d. Variant preference (8)
 
 臺->台, 溼->濕, 汙->污, 燬->毀, 絃->弦, 悽->淒, 歎->嘆, 唸->念
 
 
+## Removed in BH2-FIX11A (REVIEW4: 42 + 22 sentences where stock was right and the rules were wrong)
+
+`sea` (海里), `dry-drink` / `dry-verb` / `dry-toast` / `dry-place` / `dry-compound` (干了), `zhi-demonstrative` / `zhi-adverb` (这只), `said-yun` (有云), `loose-hair` (被发), `wind-after` (风后), `curl` (卷卷), `pine` (松开), `scrape` (刮), the stock-phrase drops 一起干 / 短几 / 有云 / 被发, and the entries 一直 / 一头 / 干了啥 / 书签名 (each swallowed a longer stock word). What the user's lyrics or the dictionary corpus needed from them is a literal word now; the rest is stock.
+
+## Known stock limitations (not regressions: stock is wrong too, a single sentence cannot tell)
+
+* 这只 / 那只 + 有 能 会 想 要: stock reads the measure word (這隻); the adverb 這只 (这只有五分钟) is written the same, so stock stays except for the literal 总是只有 / 不是只有 / 若是只有 / 还是只想 / 没有只要 / 别只是.
+* 干了 as 乾了 (a drink or a river finished) vs 幹了 (did): stock 幹; only the literal words 把这杯干了 / 酒我干了 / 熬干了 / 嘴巴干了 / the clause-start 干了就没事 and 喉咙干了 at a clause end are fixed. Sentences such as 河水都干了, 池塘干了啥都不剩, 把汤干了吧 stay 幹.
+* 有云 (classical 'it is said' vs weather): stock 有云 (classical) except the literal weather words (有云层 天上有云 今天有云 ...).
+* 海里 (nautical mile vs in the sea): stock 海里 except 在海里 大海里 到海里 入海里 星海里 海里有各种 海里的鱼.
+* 卷卷 / 刮 / 风后 / 古松开 variants and the 游 of 夜游过: stock.
+* 髮 -> 發 inside a proper name written with 后+发 in the lyrics (the one remaining wrong meaning of the lyrics round trip).
+* The page still marks every character with several Traditional forms, so the user can pick by hand.
+
 ## Measurements (final HEAD)
 
-* **Empty rules = stock** (`tools/g1_all.py`, rules emptied): every `STPhrases` word (49051), the 530 sentences of the adversarial set, the 7174 kana-free lyric lines of the user's corpus (after `t2s`): 0 differences from `OpenCC("s2tw")`. `test_zh_convert.py` repeats it for all `STPhrases` words plus a fixed sample.
-* **Adversarial set** (530 sentences, `run_cases.py`): stock-right-new-wrong 0, both wrong 0, stock-wrong-new-right 59.
-* **User's lyrics round trip** (169 songs, 6628 lines, 66860 Han characters): wrong meaning 1, variant 14, Japanese 11, same output as before this change.
-* **Taiwan dictionary corpus round trip** (MOE 《重編國語辭典修訂本》 as published in g0v/moedict-data `dict-revised.json.xz`: 656935 lines of headwords, definitions and examples, 8681563 Han characters; Traditional -> `tw2s` -> ours and stock `s2tw` -> compared with the source; test data only, not in the repo): positions where stock is right and ours wrong 6789, of which 6781 come from the *preference* rules (臺->台 4648 and the like: the dictionary is Taiwan-official and the user's own lyrics use the other form) and **8 from correction rules**, all of them one case: 有云 in classical quotations that no word before it identifies (古人有云 is handled; 署名有云臨川, 各有云設 are not). Positions where ours is right and stock wrong: 2075. Both wrong: 48620 (mostly 出->齣 in 〇出, 卷 sections, 分佈, names; they need a dictionary, not a rule).
+* **Empty rules = stock** (`tools/g1_all.py`, rules emptied): every `STPhrases` word (49051), the 530 sentences of the adversarial set, the 7174 kana-free lyric lines of the user's corpus (after `t2s`): 0 differences from `OpenCC("s2tw")`; `test_zh_convert.py` repeats it for all `STPhrases` words plus a fixed sample.
+* **Adversarial sets** (`tools/run_cases.py`, stock right and ours wrong / both wrong / stock wrong and ours right): `cases.tsv` 530 sentences 0 / 22 / 37; REVIEW4 set 1 (100 sentences) 0 / 18 / 11; REVIEW4 set 2 (112 sentences) 0 / 26 / 20; self-made set (85 sentences, `cases_self2.tsv`) 0 / 0 / 21 (9 more are listed as uncertain). The both-wrong sentences are the known limitations below.
+* **User's lyrics round trip** (169 songs, 6628 lines, 66860 Han characters): wrong meaning 1, variant 14, Japanese 11; 0 lines differ from FIX9 (`tools/lyrics_diff.py` over 7174 lines). Converting the 7174 lines: FIX9 0.56 s, now 0.43 s.
+* **Taiwan dictionary corpus round trip** (MOE 《重編國語辭典修訂本》 from g0v/moedict-data `dict-revised.json.xz`: 656935 lines, 8681563 Han characters; Traditional -> `tw2s` -> ours and stock `s2tw` -> compared with the source; test data only, not in the repo): positions where stock is right and ours wrong 6781, **0 of them outside the preference rules** (臺->台 4648 and the like: the dictionary is Taiwan-official, the user's own lyrics use the other form); ours right and stock wrong 2041; both wrong 48654 (出->齣 in 〇出, 卷 sections, 分佈, names: they need a dictionary, not a rule). Hit table of the non-preference rules (final HEAD, `tools/g4.py`):
 
 | correction / context / drop rule | lines | helped positions | hurt positions | neutral lines |
 |---|---|---|---|---|
-| drop:有云 | 26 | 18 | 8 | 0 |
-| ctx:sea | 25 | 25 | 0 | 0 |
 | drop:并产 | 16 | 16 | 0 | 0 |
-| ctx:zhi-adverb | 12 | 12 | 0 | 0 |
 | drop:并包 | 10 | 5 | 0 | 6 |
 | drop:先尝 | 9 | 9 | 0 | 0 |
-| ctx:dry-compound | 5 | 5 | 0 | 0 |
+| entry:在海里 | 6 | 6 | 0 | 0 |
+| entry:兼容并包 | 5 | 0 | 0 | 5 |
+| entry:大海里 | 5 | 5 | 0 | 0 |
 | entry:游标 | 4 | 4 | 0 | 0 |
-| drop:短几 | 3 | 3 | 0 | 0 |
-| entry:一直 | 2 | 2 | 0 | 0 |
+| entry:有云形 | 3 | 3 | 0 | 0 |
+| entry:到海里 | 2 | 2 | 0 | 0 |
+| entry:被发掘 | 2 | 2 | 0 | 0 |
 | drop:心向 | 2 | 2 | 0 | 0 |
 | entry:回归线 | 2 | 3 | 0 | 0 |
 | entry:控制台 | 2 | 0 | 0 | 2 |
-| ctx:zhi-demonstrative | 2 | 2 | 0 | 0 |
+| entry:入海里 | 2 | 2 | 0 | 0 |
+| entry:有云雾 | 2 | 2 | 0 | 0 |
+| entry:没干净 | 2 | 2 | 0 | 0 |
 | drop:如干 | 2 | 3 | 0 | 0 |
-| entry:书签名 | 1 | 1 | 0 | 0 |
+| entry:有云纹 | 2 | 2 | 0 | 0 |
+| entry:一直发抖 | 1 | 1 | 0 | 0 |
+| entry:被发配 | 1 | 1 | 0 | 0 |
+| entry:被发票 | 1 | 1 | 0 | 0 |
 | drop:了如 | 1 | 1 | 0 | 0 |
-| ctx:surname-yu | 1 | 1 | 0 | 0 |
+| entry:游标卡尺 | 1 | 1 | 0 | 0 |
+| entry:被发育 | 1 | 1 | 0 | 0 |
+| entry:有云雷 | 1 | 1 | 0 | 0 |
+| entry:有云状 | 1 | 1 | 0 | 0 |
+| entry:短短几 | 1 | 1 | 0 | 0 |
+| entry:有云彩 | 1 | 1 | 0 | 0 |
 
-Preference rules (both forms standard in Taiwan; the user's lyrics decide; hurt counts are expected):
-
-| rule | lines | helped positions | hurt positions | neutral lines |
-|---|---|---|---|---|
-| variant:臺 | 4291 | 43 | 4648 | 36 |
-| variant:汙 | 871 | 5 | 900 | 0 |
-| variant:溼 | 711 | 131 | 616 | 3 |
-| variant:絃 | 454 | 397 | 87 | 2 |
-| variant:悽 | 403 | 260 | 199 | 6 |
-| entry:计划 | 339 | 268 | 75 | 0 |
-| variant:唸 | 260 | 224 | 55 | 2 |
-| entry:了解 | 255 | 216 | 37 | 2 |
-| variant:歎 | 158 | 106 | 54 | 0 |
-| variant:燬 | 69 | 45 | 25 | 0 |
-| entry:背负 | 56 | 56 | 0 | 0 |
-| entry:注定 | 36 | 19 | 16 | 1 |
-| entry:糊里糊涂 | 34 | 26 | 8 | 0 |
-| entry:命中注定 | 29 | 20 | 9 | 0 |
-| entry:回归 | 28 | 27 | 3 | 0 |
-| entry:胡同 | 22 | 28 | 22 | 0 |
-| entry:周而复始 | 21 | 18 | 3 | 0 |
-| entry:克制 | 15 | 13 | 2 | 0 |
-| entry:游动 | 14 | 12 | 2 | 0 |
-| entry:尽可能 | 11 | 9 | 2 | 0 |
-| entry:背包 | 9 | 10 | 0 | 0 |
-| entry:熏染 | 9 | 0 | 0 | 9 |
-| entry:游移 | 7 | 7 | 0 | 0 |
-| entry:游过 | 5 | 3 | 2 | 0 |
-| entry:女生外向 | 4 | 1 | 3 | 0 |
-| entry:死胡同 | 4 | 8 | 0 | 0 |
-| entry:五百姻缘天注定 | 2 | 0 | 2 | 0 |
-
-## Known single-sentence undecidables
-
-* 有云: classical "it is said" (有云：「…」) and weather 有雲 are written the same way once the colon is cut off; only a word before it (人 子 书 诗 易 经 谚 语 传 史) is used.
-* 船只能 (a boat can only) vs 船只 + 能 (vessels): stock 船隻能 is kept.
-* 髮 -> 發 inside a proper name written with 后+发 in the lyrics (the one remaining wrong meaning of the lyrics round trip): no rule can tell it from 发现.
-* The page still marks every character with several Traditional forms, so the user can pick by hand.
 
 ## Round trip tables (BH2-FIX6 / FIX9, same corpus and method)
 
