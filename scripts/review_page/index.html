@@ -28,7 +28,7 @@ header .song-name{font-weight:600;font-size:15px;max-width:34vw;overflow:hidden;
 .draft-banner[hidden]{display:none}.draft-banner button{padding:2px 10px}
 .s2tw-panel{margin:0 0 10px;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:rgba(0,0,0,.22);font-size:13px}.s2tw-panel[hidden]{display:none}
 .s2tw-row{display:flex;align-items:baseline;gap:8px;padding:3px 0}.s2tw-row .num{flex:none;min-width:34px;color:var(--fg-3)}.s2tw-row .arrow{flex:none;color:var(--fg-3)}.s2tw-row .txt{min-width:0;overflow-wrap:anywhere}
-.s2tw-row mark{background:color-mix(in srgb,var(--warn) 35%,transparent);color:var(--fg);border-radius:3px}
+.s2tw-row mark{background:color-mix(in srgb,var(--warn) 35%,transparent);color:var(--fg);border-radius:3px}.s2tw-row .many{border-bottom:2px dotted var(--accent,#7aa2ff);cursor:help}
 .s2tw-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px}.s2tw-actions .warning{font-size:12px}
 .export-badge button{padding:0 6px;line-height:1.4;background:transparent;border:0;color:var(--fg);flex:none}.export-badge button[hidden]{display:none}
 @keyframes export-pulse{50%{opacity:.35}}
@@ -1756,28 +1756,34 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       if (event.key === 'Escape') { event.preventDefault(); state.romajiEdit = null; render(); }
     });
   }
-  // Simplified-Chinese lines: the server lists them (s2tw, kana lines never); the page previews and sends the checked entries.
+  // Simplified-Chinese lines: the server lists them one by one (s2tw, kana lines never); the page previews and sends the checked lines as [entry, sub].
   const s2tw = {open:false, song:null, unchecked:new Set(), busy:false, note:''};
-  const s2twDiff = (before, after) => {
+  // The converted text with the changed characters highlighted; a character whose simplified form has several Traditional forms (marks) is underlined and its other forms show on hover.
+  const s2twDiff = (before, after, marks) => {
     if (before.length !== after.length) return '<mark>' + esc(after) + '</mark>';
+    const many = new Map((marks || []).map(mark => [mark.at, mark]));
     let html = '';
-    [...after].forEach((ch, i) => { html += ch === before[i] ? esc(ch) : '<mark>' + esc(ch) + '</mark>'; });
+    [...after].forEach((ch, i) => {
+      const mark = many.get(i);
+      let piece = ch === before[i] ? esc(ch) : '<mark>' + esc(ch) + '</mark>';
+      if (mark) piece = '<span class="many" title="' + esc('「' + mark.from + '」也可能是：' + mark.options.filter(option => option !== ch).join('、') + '（目前：' + ch + '）') + '">' + piece + '</span>';
+      html += piece;
+    });
     return html;
   };
   function renderS2tw(song) {
     const info = song && !serverReadOnly() ? song.detail?.simplified : null;
-    const lines = info && info.count ? [...(info.headers || []).map(item => Object.assign({key:'h' + item.line}, item)), ...info.lines.map(item => Object.assign({key:'e' + item.entry}, item))] : [];
+    const lines = info ? [...(info.headers || []).map(item => Object.assign({key:'h' + item.line}, item)), ...(info.lines || []).map(item => Object.assign({key:'e' + item.entry + '.' + item.sub}, item))] : [];
     if (!song || s2tw.song !== song.index) { s2tw.song = song ? song.index : null; s2tw.open = false; s2tw.unchecked = new Set(); s2tw.note = ''; }
     document.getElementById('s2tw').hidden = !lines.length;
     const panel = document.getElementById('s2tw-panel');
     panel.hidden = !lines.length || !s2tw.open;
     if (!lines.length) return;
-    document.getElementById('s2tw-text').textContent = '這首有 ' + info.count + ' 行簡體中文' + (info.japanese ? '（整首含日文，請自行勾選要轉的行）' : '') + (info.uncertain ? '（編碼不確定，請先確認文字正確再轉）' : '');
+    document.getElementById('s2tw-text').textContent = '這首有 ' + info.count + ' 行要轉成繁體' + (info.optional ? '，另有 ' + info.optional + ' 行可選' : '') + (info.uncertain ? '（編碼不確定，請先確認文字正確再轉）' : '');
     if (panel.hidden) return;
     document.getElementById('s2tw-list').innerHTML = lines.map(line => {
       const on = s2tw.touched ? !s2tw.unchecked.has(line.key) : line.default_checked;
-      const flat = text => text.split(String.fromCharCode(10)).join(' / ');
-      return '<label class="s2tw-row"><input type="checkbox" data-key="' + line.key + '"' + (on ? ' checked' : '') + '><span class="num">' + (line.line != null ? '標頭' : line.entry) + '</span><span class="txt">' + esc(flat(line.before)) + '</span><span class="arrow">→</span><span class="txt">' + s2twDiff(flat(line.before), flat(line.after)) + '</span></label>';
+      return '<label class="s2tw-row"><input type="checkbox" data-key="' + line.key + '"' + (on ? ' checked' : '') + '><span class="num">' + (line.line != null ? '標頭' : line.entry + (line.sub ? '.' + (line.sub + 1) : '')) + '</span><span class="txt">' + esc(line.before) + '</span><span class="arrow">→</span><span class="txt">' + s2twDiff(line.before, line.after, line.marks) + '</span></label>';
     }).join('');
     document.getElementById('s2tw-apply').disabled = s2tw.busy;
     document.getElementById('s2tw-note').textContent = s2tw.note;
@@ -1787,12 +1793,12 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     if (!song || s2tw.busy) return;
     if ([...state.edits.keys()].some(key => key.split(':')[0] === String(song.index))) { s2tw.note = '有尚未儲存的時間修改，請先儲存（Ctrl+S）再轉換'; renderS2tw(song); return; }
     const keys = [...document.querySelectorAll('#s2tw-list input[type=checkbox]')].filter(box => box.checked).map(box => box.dataset.key);
-    const entries = keys.filter(key => key[0] === 'e').map(key => Number(key.slice(1))), headers = keys.filter(key => key[0] === 'h').map(key => Number(key.slice(1)));
+    const lineRefs = keys.filter(key => key[0] === 'e').map(key => key.slice(1).split('.').map(Number)), headers = keys.filter(key => key[0] === 'h').map(key => Number(key.slice(1)));
     if (!keys.length) { s2tw.note = '沒有勾選任何行'; renderS2tw(song); return; }
     s2tw.busy = true; s2tw.note = ''; renderS2tw(song);
     const generationBefore = seenGeneration;
     try {
-      const data = await api('/api/song/' + song.index + '/convert', {method:'POST', body:JSON.stringify({song_id:draftId(song), base_sha256:song.detail.base_sha256, entries, headers})});
+      const data = await api('/api/song/' + song.index + '/convert', {method:'POST', body:JSON.stringify({song_id:draftId(song), base_sha256:song.detail.base_sha256, entries:[], lines:lineRefs, headers})});
       if (data.generation != null && generationBefore !== null && data.generation === generationBefore + 1) seenGeneration = data.generation;
       s2tw.open = false; s2tw.touched = false; s2tw.busy = false;
       if (data.line_key_map) applyKeyMap(song, data.line_key_map, []);   // a converted row's line_key follows its new text: keep its 已確認 mark
@@ -1807,7 +1813,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   document.getElementById('s2tw-apply').addEventListener('click', s2twApply);
   document.getElementById('s2tw-list').addEventListener('change', event => {
     const box = event.target; if (!box || !box.dataset || !box.dataset.key) return;
-    if (!s2tw.touched) { s2tw.touched = true; const song = state.songs.find(item => item.index === state.activeSong); const info = song?.detail?.simplified || {}; s2tw.unchecked = new Set([...(info.headers || []).map(item => ['h' + item.line, item.default_checked]), ...(info.lines || []).map(item => ['e' + item.entry, item.default_checked])].filter(pair => pair[1] === false).map(pair => pair[0])); }
+    if (!s2tw.touched) { s2tw.touched = true; const song = state.songs.find(item => item.index === state.activeSong); const info = song?.detail?.simplified || {}; s2tw.unchecked = new Set([...(info.headers || []).map(item => ['h' + item.line, item.default_checked]), ...(info.lines || []).map(item => ['e' + item.entry + '.' + item.sub, item.default_checked])].filter(pair => pair[1] === false).map(pair => pair[0])); }
     if (box.checked) s2tw.unchecked.delete(box.dataset.key); else s2tw.unchecked.add(box.dataset.key);
   });
   async function refreshSong(index) {
