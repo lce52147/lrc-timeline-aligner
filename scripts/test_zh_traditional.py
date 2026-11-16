@@ -59,11 +59,11 @@ class ConvertTests(unittest.TestCase):
     def test_s2tw_not_s2twp(self) -> None:
         self.assertEqual(zh_traditional.convert_line("奔驰 循环"), "奔馳 循環")
 
-    def test_japanese_song_candidates_start_unchecked_and_kana_lines_are_skipped(self) -> None:
+    def test_japanese_song_lists_only_lines_with_a_certainly_simplified_character_and_checks_them(self) -> None:
         detail = self._load(JAPANESE.encode("utf-8"))
         info = detail["simplified"]
         self.assertEqual((info["count"], info["japanese"]), (1, True))
-        self.assertEqual([(line["entry"], line["before"], line["default_checked"]) for line in info["lines"]], [(2, "爱", False)])
+        self.assertEqual([(line["entry"], line["before"], line["default_checked"]) for line in info["lines"]], [(2, "爱", True)])
 
     def test_traditional_song_has_no_candidates(self) -> None:
         info = self._load(TRADITIONAL.encode("utf-8"))["simplified"]
@@ -167,6 +167,11 @@ class ConvertTests(unittest.TestCase):
         info = zh_traditional.song_candidates([{"entry": i + 1, "lyrics": [text]} for i, text in enumerate(lines)], (), uncertain)
         return info["count"], [(item["before"], item["default_checked"]) for item in info["lines"]]
 
+    @staticmethod
+    def _entries(rows):
+        info = zh_traditional.song_candidates(rows)
+        return [(item["entry"], item["sub"], item["before"], item["default_checked"]) for item in info["lines"]], info["count"], info["optional"]
+
     def test_traditional_song_lists_nothing_even_when_s2tw_would_rewrite_a_variant(self) -> None:
         names = ["范瑋琪", "于文文", "后弘", "游鴻明", "郁可唯", "台北", "裏面", "了解", "祢是神", "這是第一句"]
         for text in names:
@@ -178,7 +183,7 @@ class ConvertTests(unittest.TestCase):
         texts = ["后来的我们", "我爱你", "这是我们的歌", "说好的幸福呢", "爱情转移", "着急"]
         count, lines = self._songs(texts)
         self.assertEqual((count, lines), (6, [(text, True) for text in texts]))
-        self.assertEqual(self._songs(texts, True), (6, [(text, False) for text in texts]))
+        self.assertEqual(self._songs(texts, True), (0, [(text, False) for text in texts]))   # count = the lines that start checked
 
     def test_line_made_of_big5_characters_in_a_simplified_song_is_listed_and_checked(self) -> None:
         self.assertEqual(self._songs(["后面", "我们"]), (2, [("后面", True), ("我们", True)]))
@@ -188,12 +193,12 @@ class ConvertTests(unittest.TestCase):
     def test_hong_kong_characters_do_not_open_the_song_gate(self) -> None:
         self.assertEqual(self._songs(["我哋嘅愛喺心裏", "冇咗你點算"]), (0, []))
 
-    def test_simplified_line_in_a_japanese_song_is_listed_unchecked_with_its_big5_neighbours(self) -> None:
-        self.assertEqual(self._songs(["きみ", "我们一起走", "后面"]), (2, [("我们一起走", False), ("后面", False)]))
+    def test_simplified_line_in_a_japanese_song_is_listed_checked_and_its_big5_only_neighbours_are_not(self) -> None:
+        self.assertEqual(self._songs(["きみ", "我们一起走", "后面"]), (1, [("我们一起走", True)]))
 
-    def test_japanese_kanji_are_not_simplified_but_simplified_hanzi_in_a_japanese_song_is_unchecked(self) -> None:
+    def test_japanese_kanji_are_not_simplified_and_kanji_only_japanese_lines_are_never_listed(self) -> None:
         self.assertEqual(self._songs(["国境", "独奏", "きみ"]), (0, []))
-        self.assertEqual(self._songs(["国境", "独奏", "きみ", "我们一起走"]), (3, [("国境", False), ("独奏", False), ("我们一起走", False)]))
+        self.assertEqual(self._songs(["国境", "独奏", "きみ", "我们一起走"]), (1, [("我们一起走", True)]))
 
     def test_header_only_simplified_is_a_candidate_and_count_counts_candidates(self) -> None:
         info = zh_traditional.song_candidates([{"entry": 1, "lyrics": ["后面"]}], [(0, "[ti:爱你]")])
@@ -207,7 +212,7 @@ class ConvertTests(unittest.TestCase):
             self.assertIsNone(zh_traditional.convert_line(text), text)
         info = zh_traditional.song_candidates([{"entry": 1, "lyrics": ["ｱｲ爱你"]}, {"entry": 2, "lyrics": ["爱你"]}])
         self.assertEqual(([line["entry"] for line in info["lines"]], info["japanese"]), ([2], True))
-        self.assertEqual([line["default_checked"] for line in info["lines"]], [False])
+        self.assertEqual([line["default_checked"] for line in info["lines"]], [True])
 
     def test_middle_dot_and_long_vowel_mark_are_not_kana(self) -> None:
         for text in ("哈利・波特", "爱ー你", "・", "ー"):
@@ -251,7 +256,7 @@ class ConvertTests(unittest.TestCase):
         self.assertEqual(zh_traditional.convert_header("[al:爱你]  "), ("爱你", "愛你"))
         detail = self._load(("[ti:爱你]\r\n" + JAPANESE).encode("utf-8"))
         info = detail["simplified"]
-        self.assertEqual((info["japanese"], info["headers"][0]["default_checked"], info["lines"][0]["default_checked"]), (True, False, False))
+        self.assertEqual((info["japanese"], info["headers"][0]["default_checked"], info["lines"][0]["default_checked"]), (True, True, True))
 
     def test_invalid_header_indexes_are_rejected(self) -> None:
         detail = self._load(("[ti:爱你]\r\n" + CHINESE).encode("utf-8"))
@@ -259,6 +264,54 @@ class ConvertTests(unittest.TestCase):
             status, _headers, data = self._json_request(
                 "POST", "/api/song/0/convert", {"base_sha256": detail["base_sha256"], "entries": [], "headers": headers})
             self.assertEqual(status, 400, (headers, data))
+
+    def test_candidates_are_single_lines_a_translation_line_under_a_lyric_line_is_its_own_candidate(self) -> None:
+        rows = [{"entry": 1, "lyrics": ["我们的爱", "我們的愛"]}, {"entry": 2, "lyrics": ["運氣在裏面"]}]
+        lines, count, optional = self._entries(rows)
+        self.assertEqual(lines, [(1, 0, "我们的爱", True), (2, 0, "運氣在裏面", False)])
+        self.assertEqual((count, optional), (1, 1))
+
+    def test_default_rules_after_the_song_gate(self) -> None:
+        texts = ["我们一起走", "后面", "一起干杯", "運氣在裏面", "我們", "這是第一句"]
+        rows = [{"entry": i + 1, "lyrics": [text]} for i, text in enumerate(texts)]
+        lines, count, optional = self._entries(rows)
+        self.assertEqual(lines, [(1, 0, "我们一起走", True), (2, 0, "后面", True), (3, 0, "一起干杯", True), (4, 0, "運氣在裏面", False)])
+        self.assertEqual((count, optional), (3, 1))   # 我們 and the Traditional line have nothing to convert
+
+    def test_traditional_only_characters(self) -> None:
+        self.assertTrue(zh_traditional.has_traditional_only("運"))
+        self.assertTrue(zh_traditional.has_traditional_only("我們"))
+        self.assertFalse(zh_traditional.has_traditional_only("后面一起干杯"))
+
+    def test_mixed_japanese_original_and_simplified_translation_lists_only_the_translation(self) -> None:
+        rows = [{"entry": 1, "lyrics": ["君の声が聞こえる", "我们一起走"]}, {"entry": 2, "lyrics": ["国境の町", "国境"]}]
+        lines, count, optional = self._entries(rows)
+        self.assertEqual(lines, [(1, 1, "我们一起走", True)])
+
+    def test_cantonese_lines_are_never_candidates(self) -> None:
+        self.assertEqual(zh_traditional.song_candidates([{"entry": 1, "lyrics": ["我哋嘅愛喺心裏", "冇咗你點算"]}])["lines"], [])
+
+    def test_candidates_carry_one_to_many_marks(self) -> None:
+        info = zh_traditional.song_candidates([{"entry": 1, "lyrics": ["我们的头发"]}])
+        marks = info["lines"][0]["marks"]
+        self.assertEqual([(m["from"], m["at"]) for m in marks], [("发", 4)])
+        self.assertIn("髮", marks[0]["options"])
+        self.assertIn("發", marks[0]["options"])
+        self.assertEqual(info["lines"][0]["after"][marks[0]["at"]], "髮")
+
+    def test_convert_api_converts_only_the_listed_line_of_an_entry(self) -> None:
+        raw = "[00:01.00]我们的爱\r\n[00:01.00]我们的爱\r\n[00:03.00]second\r\n".encode("utf-8")
+        detail = self._load(raw)
+        status, _headers, data = self._json_request("POST", "/api/song/0/convert", {"base_sha256": detail["base_sha256"], "entries": [], "lines": [[1, 1]]})
+        self.assertEqual((status, json.loads(data)["converted"]), (200, 1), data)
+        self.assertEqual(self.output.read_bytes(), "[00:01.00]我们的爱\r\n[00:01.00]我們的愛\r\n[00:03.00]second\r\n".encode("utf-8"))
+
+    def test_convert_api_rejects_bad_line_references(self) -> None:
+        detail = self._load(CHINESE.encode("utf-8"))
+        for lines in ([[1, 1]], [[0, 0]], [[9, 0]], [[1, -1]], [[1, 0], [1, 0]], [[True, 0]], [[1]], ["1.0"], "x"):
+            status, _headers, data = self._json_request("POST", "/api/song/0/convert", {"base_sha256": detail["base_sha256"], "entries": [], "lines": lines})
+            self.assertEqual(status, 400, (lines, data))
+        self.assertEqual(self.output.read_bytes(), CHINESE.encode("utf-8"))
 
 
 if __name__ == "__main__":

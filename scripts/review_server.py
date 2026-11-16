@@ -2053,16 +2053,16 @@ def _convert_lines(lines, indexes):
 
 
 def _convert_song(song, body):
-    """POST /api/song/N/convert: s2tw the lyric text of the listed entries, nothing else.
+    """POST /api/song/N/convert: s2tw the lyric text of the listed entries (all their lines) and of the listed single lines ``[entry, sub]``, nothing else.
 
     Shares the save path's guards (read-only, base_sha256, entry mapping) and its publish pattern. Under a review
     log the 自動 baseline gets the same text so the song is not seen as hand-edited, and the log hash follows.
     """
     if song["read_only"]:
         return 403, {"error": song["read_only_reason"] or "read-only"}
-    if not {"base_sha256", "entries"} <= set(body) <= {"base_sha256", "entries", "headers"} or not isinstance(body["base_sha256"], str) \
-            or not isinstance(body["entries"], list) or not isinstance(body.get("headers", []), list):
-        return 400, {"error": "body must contain base_sha256 and entries (and optionally headers)"}
+    if not {"base_sha256", "entries"} <= set(body) <= {"base_sha256", "entries", "headers", "lines"} or not isinstance(body["base_sha256"], str) \
+            or not isinstance(body["entries"], list) or not isinstance(body.get("headers", []), list) or not isinstance(body.get("lines", []), list):
+        return 400, {"error": "body must contain base_sha256 and entries (and optionally headers, lines)"}
     if zh_traditional.converter() is None:
         return 503, {"error": "OpenCC 不可用，無法轉換"}
     output = song["output"]
@@ -2085,6 +2085,16 @@ def _convert_song(song, body):
             return 400, {"error": "invalid entries"}
         entries.append(item)
     indexes = [index for entry in entries for index in mapping[entry - 1]]
+    line_refs = []
+    for item in body.get("lines", []):
+        if not isinstance(item, list) or len(item) != 2 or any(isinstance(part, bool) or not isinstance(part, int) for part in item):
+            return 400, {"error": "invalid lines"}
+        entry, sub = item
+        if entry < 1 or entry > len(mapping) or sub < 0 or sub >= len(mapping[entry - 1]) or item in line_refs:
+            return 400, {"error": "invalid lines"}
+        line_refs.append(item)
+        if mapping[entry - 1][sub] not in indexes:
+            indexes.append(mapping[entry - 1][sub])
     bom, trailing, lines = _split_lrc(current)
     header_indexes = []
     for item in body.get("headers", []):
@@ -2112,7 +2122,7 @@ def _convert_song(song, body):
                 log["auto_lrc_sha256"] = _sha256_bytes(auto_updated)
                 log["last_lrc_sha256"] = _sha256_bytes(updated)
                 log.setdefault("text_conversions", []).append({
-                    "utc": datetime.now(timezone.utc).isoformat(), "kind": "s2tw", "entries": entries, "headers": header_indexes,
+                    "utc": datetime.now(timezone.utc).isoformat(), "kind": "s2tw", "entries": entries, "lines": line_refs, "headers": header_indexes,
                     "lrc_sha256_after": _sha256_bytes(updated),
                 })
                 log_updated = (json.dumps(log, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
