@@ -129,5 +129,66 @@ class MultiTagTests(_PageFixture):
         self.assertEqual(text.split("\r\n"), ["[00:01.00]hook", "[00:02.00]verse", "[00:30.00]hook"])
 
 
+class TrailingStarTests(_PageFixture):
+    SONG = b"[00:01.00]one\n*[00:02.00]f***\n*[00:03.00]Song Title*\n[00:04.00]end*\n[00:05.00]tail\n"
+
+    def test_strip_rules(self) -> None:
+        strip = review_server._strip_line_marks
+        self.assertEqual(strip(b"*[00:10.00]f***"), b"[00:10.00]f***")
+        self.assertEqual(strip(b"*[00:10.00]f**"), b"[00:10.00]f**")
+        self.assertEqual(strip(b"*[00:10.00]f*"), b"[00:10.00]f")
+        self.assertEqual(strip(b"*[00:10.00]f *\r"), b"[00:10.00]f\r")
+        self.assertEqual(strip(b"**[00:10.00]f*"), b"[00:10.00]f")
+        self.assertEqual(strip(b"[00:10.00]f*"), b"[00:10.00]f*")
+        self.assertEqual(strip(b"[00:10.00]f***"), b"[00:10.00]f***")
+        self.assertEqual(strip(b"*[00:01.00]Song Title*"), b"[00:01.00]Song Title")
+
+    def test_page_shows_the_star_run_as_lyric_text(self) -> None:
+        detail = self._load(self.SONG)
+        self.assertFalse(detail["read_only"], detail["read_only_reason"])
+        self.assertEqual([row["lyric"] for row in detail["rows"]], ["one", "f***", "Song Title", "end*", "tail"])
+        self.assertEqual([row["user_marked"] for row in detail["rows"]], [False, True, True, False, False])
+
+    def test_saving_a_time_changes_only_the_tag(self) -> None:
+        detail = self._load(self.SONG)
+        status, _headers, data = self._save(detail, edits=[(2, 250), (3, 350), (4, 450)])
+        self.assertEqual(status, 200, data)
+        self.assertEqual(self.output.read_bytes(),
+                         b"[00:01.00]one\n*[00:02.50]f***\n*[00:03.50]Song Title*\n[00:04.50]end*\n[00:05.00]tail\n")
+
+    def test_saving_a_time_keeps_crlf_and_double_marks(self) -> None:
+        detail = self._load(b"[00:01.00]one\r\n** [00:02.00]f**\r\n[00:05.00]tail\r\n")
+        status, _headers, data = self._save(detail, edits=[(2, 250)])
+        self.assertEqual(status, 200, data)
+        self.assertEqual(self.output.read_bytes(), b"[00:01.00]one\r\n** [00:02.50]f**\r\n[00:05.00]tail\r\n")
+
+    def test_deleting_a_line_leaves_the_others_untouched(self) -> None:
+        detail = self._load(self.SONG)
+        status, _headers, data = self._save(detail, deletes=[1])
+        self.assertEqual(status, 200, data)
+        self.assertEqual(self.output.read_bytes(),
+                         b"*[00:02.00]f***\n*[00:03.00]Song Title*\n[00:04.00]end*\n[00:05.00]tail\n")
+
+    def test_export_text_drops_marks_but_keeps_a_star_run(self) -> None:
+        self._real_flac()
+        self._load(self.SONG)
+        status, _headers, data = self._json_request("POST", "/api/song/0/export", {"audio": "song.flac"})
+        self.assertEqual(status, 200, data)
+        import mutagen.flac
+        text = mutagen.flac.FLAC(str(self.audio))["LYRICS"][0]
+        self.assertEqual(text.split("\r\n"), ["[00:01.00]one", "[00:02.00]f***", "[00:03.00]Song Title",
+                                               "[00:04.00]end*", "[00:05.00]tail"])
+
+    def test_convert_to_traditional_keeps_marks_and_stars(self) -> None:
+        detail = self._load("[00:01.00]one\n*[00:02.00]爱你***\n*[00:03.00]我们*\n[00:05.00]tail\n".encode("utf-8"))
+        status, _headers, data = self._json_request(
+            "POST", "/api/song/0/convert", {"base_sha256": detail["base_sha256"], "entries": [2, 3]})
+        if status == 503:
+            self.skipTest("OpenCC unavailable")
+        self.assertEqual(status, 200, data)
+        self.assertEqual(self.output.read_bytes().decode("utf-8"),
+                         "[00:01.00]one\n*[00:02.00]愛你***\n*[00:03.00]我們*\n[00:05.00]tail\n")
+
+
 if __name__ == "__main__":
     unittest.main()

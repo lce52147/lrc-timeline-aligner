@@ -1041,7 +1041,7 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         self.assertEqual(len(changed), 2)
         self.assertTrue(all(y.startswith(b"[00:02.15]zwei") for _x, y in changed))
 
-    def test_save_keeps_marks_on_lines_that_were_not_edited(self) -> None:
+    def test_save_keeps_every_mark_byte_for_byte(self) -> None:
         self._hand_edit({b"[00:02.00]two a": b"*[00:02.00]two a", b"[00:02.00]two b": b"*[00:02.00]two b",
                          b"[00:03.00]four": b"*[00:03.00]four*"})
         detail = self._detail()
@@ -1050,13 +1050,12 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         self.assertEqual(self._json_request("POST", "/api/song/0/save", body)[0], 200)
         saved = self.output.read_bytes()
         self.assertIn(b"*[00:02.00]two a\n*[00:02.00]two b\n", saved)  # untouched marks survive byte for byte
-        self.assertIn(b"[00:03.50]four\n", saved)  # the edited line is resolved, its mark goes
-        self.assertNotIn(b"four*", saved)
+        self.assertIn(b"*[00:03.50]four*\n", saved)  # a save changes the time only: marks and lyric bytes stay
         auto, edits = review_server.review_artifact_paths(self.report)
         self.assertTrue(auto.is_file() and edits.is_file())
         again = self._detail()
         self.assertFalse(again["read_only"])
-        self.assertEqual(again["marked_rows"], 1)
+        self.assertEqual(again["marked_rows"], 2)  # the edited line keeps its mark too
         self.assertEqual(again["rows"][3]["current_cs"], 350)
 
     def _real_flac(self) -> None:

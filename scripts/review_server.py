@@ -401,13 +401,14 @@ def _tag_tail(line):
 
 
 _LEAD_MARK_RE = re.compile(rb"^\*+[ \t]*(?=\[\d{2,}:\d{2}\.\d{2}\])")
-_TRAIL_MARK_RE = re.compile(rb"[ \t]*\*+(?=\r?$)")
+_TRAIL_MARK_RE = re.compile(rb"(?<!\*)[ \t]*\*(?=\r?$)")   # exactly one closing *: two or more in a row are lyric text
+_MARKED_TAG_RE = re.compile(rb"^((?:\*+[ \t]*)?)\[\d{2,}:\d{2}\.\d{2}\]")
 
 
 def _line_marks(line):
     """(leading, trailing) user marks on a timed line: ``*[00:01.00]text``, optionally also ``text*``.
 
-    A trailing ``*`` on its own is lyric text (footnote, censor symbol), never a mark.
+    A trailing ``*`` on its own is lyric text (footnote, censor symbol), never a mark, and so is a run of two or more.
     """
     lead = _LEAD_MARK_RE.match(line)
     if not lead:
@@ -1828,9 +1829,9 @@ def _save_song(song, body):
     for edit in edits:
         tag = _format_tag(edit["cs"])
         for line_index in mapping[edit["entry"] - 1]:
-            # A line he fixes here is resolved, so its `*` mark goes; every untouched line keeps its bytes.
-            clean = _strip_line_marks(lines[line_index])
-            lines[line_index] = tag + clean[_TAG_RE.match(clean).end():]
+            # Only the time changes: the marks and every byte of the lyric stay as they are.
+            found = _MARKED_TAG_RE.match(lines[line_index])
+            lines[line_index] = found.group(1) + tag + lines[line_index][found.end():]
     original_lines = list(lines)
     if removed_indexes:
         lines = [line for index, line in enumerate(lines) if index not in removed_indexes]
