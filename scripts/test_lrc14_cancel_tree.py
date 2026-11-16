@@ -88,7 +88,22 @@ class CancelStartRaceTests(unittest.TestCase):
             with mock.patch.object(review_server.subprocess, "Popen") as popen:
                 runner._run_item(job, 0)
             popen.assert_not_called()
-            self.assertEqual(job["items"][0]["status"], "queued")
+            self.assertEqual(job["items"][0]["status"], "cancelled")   # closed, not left queued for _next_item to hand out again
+            self.assertEqual(runner._next_item(), (None, None))
+
+    def test_run_loop_does_not_spin_on_a_cancelled_jobs_queued_item(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            runner, job = self._runner(folder)
+            runner.cancelled.add("job1")
+            calls = []
+            original = runner._run_item
+            runner._run_item = lambda picked, index: (calls.append(index), original(picked, index))[1] if len(calls) < 5 else (_ for _ in ()).throw(AssertionError("spinning"))
+            with mock.patch.object(review_server.subprocess, "Popen") as popen:
+                runner._run_loop()
+            popen.assert_not_called()
+            self.assertEqual(calls, [0])
+            self.assertEqual(job["items"][0]["status"], "cancelled")
+            self.assertIsNone(runner._worker)
 
     def test_cancel_after_popen_before_registration_kills_the_process(self) -> None:
         with tempfile.TemporaryDirectory() as folder:

@@ -2492,6 +2492,9 @@ class JobRunner:
         started = time.time()
         with self.lock:
             if item["status"] != "queued" or job["id"] in self.cancelled:
+                if item["status"] == "queued":   # a cancelled job's queued item is closed here, or _next_item would hand it out again forever
+                    item.update({"status": "cancelled", "stage": "已取消"})
+                    self._save(job)
                 return   # cancelled between _next_item and here: never start it
             item.update({"status": "running", "stage": "對齊中", "log": str(log_path),
                          "started": datetime.now(timezone.utc).isoformat(timespec="seconds")})
