@@ -204,15 +204,18 @@ def _normalize_lrc_lines(data):
     (stably sorted by time, the ID tags stay on top) and a non-zero ``[offset:]`` folded into the times
     (displayed time = tag - offset, rounded to 0.01 s, never below 0).
 
-    Returns (bytes, {"multi_tag_lines": n, "offset_ms": n}).
+    The tool's own title card (the first line, at 00:00.00 in the file as written) stays at 0 whatever the offset: it is
+    recognized on the times as read from the file, by the rule the page uses (``_card_text_rule``).
+
+    Returns (bytes, {"multi_tag_lines": n, "offset_ms": n, "offset_values": [every different [offset:] value, in file order]}).
     """
     bom, trailing, lines = _split_lrc(data)
-    offset_ms = 0
+    offset_values = []
     for line in lines:
         match = _OFFSET_LINE_RE.match(line)
-        if match:
-            offset_ms = int(match.group(1))
-            break
+        if match and int(match.group(1)) not in offset_values:
+            offset_values.append(int(match.group(1)))
+    offset_ms = offset_values[0] if offset_values else 0
     if offset_ms:
         lines = [line for line in lines if not _OFFSET_LINE_RE.match(line)]
     end = len(lines)
@@ -221,10 +224,13 @@ def _normalize_lrc_lines(data):
     body, tail = lines[:end], lines[end:]
     parsed = [_leading_tags(line) for line in body]
     if not any(parsed):
-        return data, {"multi_tag_lines": 0, "offset_ms": 0}
+        return data, {"multi_tag_lines": 0, "offset_ms": 0, "offset_values": []}
+    card = _raw_title_card_index(body, parsed) if offset_ms else None
 
-    def tag_bytes(tag):
+    def tag_bytes(tag, pinned=False):
         milliseconds, canonical = tag
+        if pinned:
+            return _format_tag(0)
         if offset_ms:
             return _format_tag(max(0, milliseconds - offset_ms + 5) // 10)
         return canonical if canonical is not None else _format_tag((milliseconds + 5) // 10)
@@ -233,24 +239,24 @@ def _normalize_lrc_lines(data):
     head = []
     units = []   # [time in cs, lines]: one per time of a timed line, the untimed lines after it follow its first time
     anchor = None
-    for line, found in zip(body, parsed):
+    for number, (line, found) in enumerate(zip(body, parsed)):
         if found is None:
             (anchor[1] if anchor is not None else head).append(line)
             continue
         marks, tags, rest = found
         times = []
         for tag in tags:
-            text = tag_bytes(tag)
+            text = tag_bytes(tag, number == card)
             if text not in times:
                 times.append(text)
-        multi += len(times) > 1
+        multi += len(tags) > 1  # the same time twice on one line is still a line with several tags: it is rewritten with one
         first = len(units)
         units.extend([_line_tag(text), [marks + text + rest]] for text in times)
         anchor = units[first]
     if multi:
         units.sort(key=lambda unit: unit[0])
     out = head + [line for unit in units for line in unit[1]] + tail
-    return _join_lrc(bom, trailing, out), {"multi_tag_lines": multi, "offset_ms": offset_ms}
+    return _join_lrc(bom, trailing, out), {"multi_tag_lines": multi, "offset_ms": offset_ms, "offset_values": offset_values if offset_ms else []}
 
 
 def _canonical_lrc_info(raw):
@@ -259,7 +265,7 @@ def _canonical_lrc_info(raw):
     Raises LrcDecodeError instead of guessing when the bytes are not text in a known encoding.
     """
     if not raw:
-        return raw, {"multi_tag_lines": 0, "offset_ms": 0}
+        return raw, {"multi_tag_lines": 0, "offset_ms": 0, "offset_values": []}
     text, encoding = _decode_lrc(raw)
     data = text.encode("utf-8")
     if encoding == "utf-8" and raw.startswith(b"\xef\xbb\xbf"):
@@ -872,6 +878,23 @@ def _lrc_entry_groups(current_data):
 _HEADER_RE = re.compile(rb"^\[(?:ti|ar|al|au|by|offset|length|re|ve):", re.I)
 
 
+def _card_text_rule(before, tail):
+    """The text half of the title-card rule: a [ti:]/[ar:]/[al:]... header line before it, or ``Artist - Title`` text."""
+    return any(_HEADER_RE.match(line) for line in before) or b" - " in tail
+
+
+def _raw_title_card_index(body, parsed):
+    """Index (in ``body``) of the tool's title card as the file wrote it, or None: the same rule as ``_is_title_group`` on the
+    times before any offset is applied. The first timed line, only at 00:00.00, alone at that time, with the text rule above."""
+    first = next((number for number, found in enumerate(parsed) if found), None)
+    if first is None or any(total != 0 for total, _canonical in parsed[first][1]):
+        return None
+    after = parsed[first + 1] if first + 1 < len(parsed) else None
+    if after and after[1][0][0] == 0:
+        return None  # a second line at 00:00.00 right behind it: a real entry (_is_title_group wants a group of one line)
+    return first if _card_text_rule(body[:first], parsed[first][2]) else None
+
+
 def _is_title_group(lines, group):
     """The tool's title card: the single first tagged line at 00:00.00, in a file with a [ti:]/[ar:]/[al:] header or an
     ``Artist - Title`` text (evaluate_lrc.is_generated_title_card). Any other 00:00.00 line is a real entry."""
@@ -879,9 +902,7 @@ def _is_title_group(lines, group):
         return False
     if any(_line_tag(line) is not None for line in lines[:group[0]]):
         return False
-    if any(_HEADER_RE.match(line) for line in lines[:group[0]]):
-        return True
-    return b" - " in _tag_tail(lines[group[0]])
+    return _card_text_rule(lines[:group[0]], _tag_tail(lines[group[0]]))
 
 
 def _line_key(lines, indexes):
@@ -1226,7 +1247,7 @@ def _song_payload(report_path, report, anchor=None):
     output_path = pathlib.Path(output_value).expanduser() if isinstance(output_value, str) and output_value else None
     auto_path, edits_path = review_artifact_paths(report_path)
     encoding_uncertain = False
-    normalized = {"multi_tag_lines": 0, "offset_ms": 0}
+    normalized = {"multi_tag_lines": 0, "offset_ms": 0, "offset_values": []}
     try:
         if output_path and output_path.is_file():
             file_bytes = output_path.read_bytes()
@@ -1384,6 +1405,7 @@ def _song_payload(report_path, report, anchor=None):
         "encoding_uncertain": encoding_uncertain,
         "multi_tag_lines": normalized["multi_tag_lines"],
         "offset_ms": normalized["offset_ms"],
+        "offset_values": normalized["offset_values"],
         "simplified": None if readonly or not rows else zh_traditional.song_candidates(rows, _header_lines(current_lines), encoding_uncertain),
         "entry_model": entry_model,
         "manual_edited": bool(manual_edited),

@@ -273,6 +273,18 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   const time = cs => cs == null ? '—' :
     String(Math.floor(cs/6000)).padStart(2,'0') + ':' + String(Math.floor(cs%6000/100)).padStart(2,'0') + '.' + String(cs%100).padStart(2,'0');
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  // the notes about how the file was read (several times on a line, [offset:] headers); one place so a test can run it on its own
+  function fileShapeNotes(detail) {
+    const notes = [];
+    if (detail?.multi_tag_lines) notes.push('此檔有一行多個時間（或同一個時間重複寫了），已展開；存檔會照展開後的格式寫回（原檔有備份）');
+    if (detail?.offset_ms) {
+      const signed = value => (value > 0 ? '+' : '') + value;
+      const values = Array.isArray(detail.offset_values) && detail.offset_values.length ? detail.offset_values : [detail.offset_ms];
+      if (values.length > 1) notes.push('此檔有 ' + values.length + ' 個不同的 offset（' + values.map(value => signed(value) + ' ms').join('、') + '）：只採用第一個（' + signed(detail.offset_ms) + ' ms）已換算進時間，存檔時全部 offset 標頭都會換算掉（原檔有備份）');
+      else notes.push('此檔有 offset ' + signed(detail.offset_ms) + ' ms，已換算進時間；存檔會照換算後的格式寫回（原檔有備份）');
+    }
+    return notes;
+  }
   // REVIEW lines are grouped by risk (high first); low-risk lines stay folded until opened and are not counted as left.
   // A line nobody asked to review but whose gap to the next line is suspiciously short joins the 一般 group and is counted like one.
   const sane = item => item.row.review !== 'REVIEW' && !!item.row.sanity;
@@ -1257,8 +1269,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       if (risk && risk.class === 'choir') notes.push('整首高風險（' + esc((risk.reasons || []).join(', ')) + '）：合唱／疊聲類，建議整首聽過再逐句確認');
       if (song.detail?.manual_edited) notes.push('<b>手動修改過</b>：顯示的是目前硬碟上的 LRC' + (song.detail.marked_rows ? '，其中 ' + song.detail.marked_rows + ' 句有你的 * 標記（已列為高風險）' : '') + '；存檔時改過時間的句子視為處理好了，* 標記會去掉，其餘原樣保留');
       if (song.detail?.entry_model === 'lrc' && !song.read_only) notes.push('以 LRC 檔為準（報告對不上）');
-      if (song.detail?.multi_tag_lines) notes.push('此檔有一行多個時間，已展開；存檔會照展開後的格式寫回（原檔有備份）');
-      if (song.detail?.offset_ms) notes.push('此檔有 offset ' + (song.detail.offset_ms > 0 ? '+' : '') + song.detail.offset_ms + ' ms，已換算進時間；存檔會照換算後的格式寫回（原檔有備份）');
+      notes.push(...fileShapeNotes(song.detail));
       if (song.read_only || song.detail?.server_read_only) notes.push('唯讀：' + esc(readOnlyText(song.read_only_reason || (song.detail?.server_read_only ? 'server' : 'unknown'))));
       if (state.notice) notes.push(esc(state.notice));
       if (notes.length) { const note = document.createElement('div'); note.className = 'meta'; note.innerHTML = notes.join(' · '); queue.appendChild(note); }

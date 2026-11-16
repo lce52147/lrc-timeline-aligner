@@ -240,6 +240,124 @@ class OffsetTests(_PageFixture):
         self.assertEqual(text.split("\r\n"), ["[00:02.00]one", "[00:03.00]two"])
 
 
+class TitleCardOffsetTests(_PageFixture):
+    """The tool's title card is 0 s in the file as written: an [offset:] never moves it (a real lyric at 0 s moves like any other)."""
+    HEADER = b"[ti:Song]\n[ar:Artist]\n"
+
+    def test_negative_offset_keeps_the_title_card_at_zero_and_moves_the_rest(self) -> None:
+        raw = self.HEADER + b"[offset:-300]\n[00:00.00]Artist - Song\n[00:10.00]a\n[00:20.00]b\n"
+        self.assertEqual(review_server._canonical_lrc(raw), self.HEADER + b"[00:00.00]Artist - Song\n[00:10.30]a\n[00:20.30]b\n")
+
+    def test_positive_offset_keeps_the_title_card_at_zero_and_moves_the_rest(self) -> None:
+        raw = self.HEADER + b"[offset:+300]\n[00:00.00]Artist - Song\n[00:10.00]a\n"
+        self.assertEqual(review_server._canonical_lrc(raw), self.HEADER + b"[00:00.00]Artist - Song\n[00:09.70]a\n")
+
+    def test_a_card_without_an_artist_is_recognized_by_the_header(self) -> None:
+        raw = b"[ti:Song]\n[offset:-300]\n[00:00.00]Song\n[00:10.00]a\n"
+        self.assertEqual(review_server._canonical_lrc(raw), b"[ti:Song]\n[00:00.00]Song\n[00:10.30]a\n")
+
+    def test_a_card_is_recognized_when_the_offset_header_comes_after_the_card_header_or_before_it(self) -> None:
+        for headers in (b"[offset:-300]\n[ti:Song]\n", b"[ti:Song]\n[offset:-300]\n"):
+            self.assertEqual(review_server._canonical_lrc(headers + b"[00:00.00]Song\n[00:10.00]a\n"), b"[ti:Song]\n[00:00.00]Song\n[00:10.30]a\n")
+
+    def test_a_real_lyric_at_zero_seconds_moves_like_any_other(self) -> None:
+        for raw in (b"[offset:-300]\n[00:00.00]a plain lyric\n[00:10.00]b\n", b"[ti:Song]\n[offset:-300]\n[00:00.00]one\n[00:00.00]two\n[00:10.00]b\n"):
+            out = review_server._canonical_lrc(raw)
+            self.assertIn(b"[00:00.30]", out, raw)
+            self.assertNotIn(b"[00:00.00]", out, raw)
+
+    def test_only_the_first_timed_line_can_be_the_card(self) -> None:
+        raw = b"[ti:Song]\n[offset:-300]\n[00:02.00]first\n[00:00.00]Artist - Song\n"
+        self.assertEqual(review_server._canonical_lrc(raw), b"[ti:Song]\n[00:02.30]first\n[00:00.30]Artist - Song\n")
+
+    def test_the_card_stays_when_the_text_is_not_a_card_only_at_zero_without_an_offset(self) -> None:
+        raw = b"[ti:Song]\n[00:00.00]Song\n[00:10.00]a\n"
+        self.assertEqual(review_server._canonical_lrc(raw), raw)
+
+    def test_page_shows_no_extra_row_for_the_card_and_save_writes_it_back_at_zero(self) -> None:
+        for offset, shown in ((b"-300", [1030, 2030]), (b"+300", [970, 1970])):
+            original = self.HEADER + b"[offset:" + offset + b"]\n[00:00.00]Artist - Song\n[00:10.00]one\n[00:20.00]two\n"
+            detail = self._load(original)
+            self.assertFalse(detail["read_only"], detail["read_only_reason"])
+            self.assertEqual([row["current_cs"] for row in detail["rows"]], shown, offset)
+            status, _headers, data = self._save(detail, edits=[(2, shown[1] + 10)])
+            self.assertEqual(status, 200, data)
+            self.assertEqual(self.output.read_bytes(), self.HEADER + b"[00:00.00]Artist - Song\n" + ("[00:%05.2f]one\n[00:%05.2f]two\n" % (shown[0] / 100, (shown[1] + 10) / 100)).encode())
+            self.assertEqual(self._backups()[-1], original)
+
+
+class OffsetHeaderAndRepeatedTagTests(_PageFixture):
+    def test_the_same_offset_twice_is_applied_once_and_both_headers_go(self) -> None:
+        raw = b"[offset:+500]\n[offset:+500]\n[00:10.00]a\n"
+        self.assertEqual(review_server._canonical_lrc(raw), b"[00:09.50]a\n")
+        info = review_server._canonical_lrc_info(raw)[1]
+        self.assertEqual((info["offset_ms"], info["offset_values"]), (500, [500]))
+
+    def test_different_offsets_use_the_first_report_every_value_and_drop_every_header(self) -> None:
+        raw = b"[ti:t]\n[offset:+500]\n[00:10.00]a\n[offset:-200]\n[00:20.00]b\n[OFFSET: +500 ]\n"
+        data, info = review_server._canonical_lrc_info(raw)
+        self.assertEqual(data, b"[ti:t]\n[00:09.50]a\n[00:19.50]b\n")
+        self.assertEqual((info["offset_ms"], info["offset_values"]), (500, [500, -200]))
+
+    def test_page_detail_and_save_for_different_offsets(self) -> None:
+        original = b"[offset:+500]\n[offset:-200]\n[00:01.00]one\n[00:02.00]two\n[00:05.00]end\n"
+        detail = self._load(original)
+        self.assertEqual((detail["offset_ms"], detail["offset_values"]), (500, [500, -200]))
+        self.assertEqual([row["current_cs"] for row in detail["rows"]], [50, 150, 450])
+        status, _headers, data = self._save(detail, edits=[(2, 160)])
+        self.assertEqual(status, 200, data)
+        self.assertEqual(self.output.read_bytes(), b"[00:00.50]one\n[00:01.60]two\n[00:04.50]end\n")
+        self.assertEqual(self._backups(), [original])
+        self.assertEqual(json.loads(data)["offset_values"], [])
+
+    def test_an_offset_of_zero_first_is_left_alone(self) -> None:
+        raw = b"[offset:0]\n[offset:300]\n[00:10.00]a\n"
+        self.assertEqual(review_server._canonical_lrc(raw), raw)
+
+    def test_the_same_time_twice_on_a_line_counts_as_a_multi_tag_line(self) -> None:
+        info = review_server._canonical_lrc_info(b"[00:01.00][00:01.00]a\n[00:02.00]b\n")
+        self.assertEqual(info[0], b"[00:01.00]a\n[00:02.00]b\n")
+        self.assertEqual(info[1]["multi_tag_lines"], 1)
+        self.assertEqual(review_server._canonical_lrc_info(b"[00:01.00][0:01]a\n")[1]["multi_tag_lines"], 1)
+        self.assertEqual(review_server._canonical_lrc_info(b"[00:01.00]a\n[00:02.00]b\n")[1]["multi_tag_lines"], 0)
+
+    def test_page_detail_and_save_for_a_repeated_tag(self) -> None:
+        original = b"[00:01.00][00:01.00]hook\n[00:02.00]verse\n"
+        detail = self._load(original)
+        self.assertEqual(detail["multi_tag_lines"], 1)
+        self.assertEqual([(row["current_cs"], row["lyric"]) for row in detail["rows"]], [(100, "hook"), (200, "verse")])
+        status, _headers, data = self._save(detail, edits=[(2, 210)])
+        self.assertEqual(status, 200, data)
+        self.assertEqual(self.output.read_bytes(), b"[00:01.00]hook\n[00:02.10]verse\n")
+        self.assertEqual(self._backups(), [original])
+
+    def test_the_page_notes_say_it(self) -> None:
+        """index.html's fileShapeNotes, run on its own: the texts for the repeated tag, the same offset, and different offsets."""
+        html = (SCRIPTS / "review_page" / "index.html").read_text(encoding="utf-8")
+        start = html.index("function fileShapeNotes(detail)")
+        end = html.index("\n  }\n", start) + 4
+        harness = html[start:end] + """
+  const out = {
+    none: fileShapeNotes({}),
+    repeated: fileShapeNotes({multi_tag_lines: 1}),
+    same: fileShapeNotes({offset_ms: 500, offset_values: [500]}),
+    different: fileShapeNotes({offset_ms: -200, offset_values: [-200, 500, 0]}),
+    old_server: fileShapeNotes({offset_ms: 500}),
+  };
+  console.log(JSON.stringify(out));
+"""
+        result = subprocess.run(["node", "-"], input=harness, capture_output=True, text=True, encoding="utf-8", creationflags=0x08000000 if os.name == "nt" else 0)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        notes = json.loads(result.stdout)
+        self.assertEqual(notes["none"], [])
+        self.assertEqual(len(notes["repeated"]), 1)
+        self.assertIn("同一個時間重複", notes["repeated"][0])
+        self.assertEqual(notes["same"], ["此檔有 offset +500 ms，已換算進時間；存檔會照換算後的格式寫回（原檔有備份）"])
+        self.assertEqual(notes["old_server"], notes["same"])
+        self.assertEqual(len(notes["different"]), 1)
+        for fragment in ("3 個不同的 offset", "-200 ms、+500 ms、0 ms", "只採用第一個（-200 ms）", "全部 offset 標頭都會換算掉", "原檔有備份"):
+            self.assertIn(fragment, notes["different"][0])
+
 class SongIdentityTests(_PageFixture):
     """A write that names another song than the one at that position is refused with 409 and writes nothing."""
     OTHER = "D:\elsewhere\other.align-report.json"
