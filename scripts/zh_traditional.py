@@ -63,13 +63,73 @@ class Context(NamedTuple):
 # own lyrics use the one written here (PREFERENCES; "count in the lyrics: this form / the stock form").
 # --------------------------------------------------------------------------------------------------------------------
 CORRECTIONS: tuple = (
-    Entry("一直", "一直", "not a stock phrase: 直发 (直髮) swallows the 发 of 一直|发现 / 一直|发光", ("直发", "直髮"), ("一直发现", "一直發現")),
-    Entry("一头", "一頭", "not a stock phrase: 头发 (頭髮) swallows the 发 of 一头|发光", ("长头发", "長頭髮"), ("一头发光", "一頭發光")),
+    # 一直发X / 一头发X: stock's phrase 直发 / 头发 (hair) swallows the 发 of the verb; each word below is the whole string, so 梳着一直发 (一|直发) stays stock
+    Entry("一直发现", "一直發現", "stock's 直发 (直髮) swallows the 发 of 一直|发现", ("梳着一直发", "梳著一直髮")),
+    Entry("一直发光", "一直發光", "stock's 直发 (直髮) swallows the 发 of 一直|发光", ("梳着一直发", "梳著一直髮")),
+    Entry("一直发生", "一直發生", "stock's 直发 (直髮) swallows the 发 of 一直|发生", ("梳着一直发", "梳著一直髮")),
+    Entry("一直发展", "一直發展", "stock's 直发 (直髮) swallows the 发 of 一直|发展", ("梳着一直发", "梳著一直髮")),
+    Entry("一直发出", "一直發出", "stock's 直发 (直髮) swallows the 发 of 一直|发出", ("梳着一直发", "梳著一直髮")),
+    Entry("一直发愁", "一直發愁", "stock's 直发 (直髮) swallows the 发 of 一直|发愁", ("梳着一直发", "梳著一直髮")),
+    Entry("一直发呆", "一直發呆", "stock's 直发 (直髮) swallows the 发 of 一直|发呆", ("梳着一直发", "梳著一直髮")),
+    Entry("一直发抖", "一直發抖", "stock's 直发 (直髮) swallows the 发 of 一直|发抖", ("梳着一直发", "梳著一直髮")),
+    Entry("一直发烧", "一直發燒", "stock's 直发 (直髮) swallows the 发 of 一直|发烧", ("梳着一直发", "梳著一直髮")),
+    Entry("一直发笑", "一直發笑", "stock's 直发 (直髮) swallows the 发 of 一直|发笑", ("梳着一直发", "梳著一直髮")),
+    Entry("一直发亮", "一直發亮", "stock's 直发 (直髮) swallows the 发 of 一直|发亮", ("梳着一直发", "梳著一直髮")),
+    Entry("一直发怒", "一直發怒", "stock's 直发 (直髮) swallows the 发 of 一直|发怒", ("梳着一直发", "梳著一直髮")),
+    Entry("一直发火", "一直發火", "stock's 直发 (直髮) swallows the 发 of 一直|发火", ("梳着一直发", "梳著一直髮")),
+    Entry("一直发狂", "一直發狂", "stock's 直发 (直髮) swallows the 发 of 一直|发狂", ("梳着一直发", "梳著一直髮")),
+    Entry("一直发挥", "一直發揮", "stock's 直发 (直髮) swallows the 发 of 一直|发挥", ("梳着一直发", "梳著一直髮")),
+    Entry("一直发布", "一直發布", "stock's 直发 (直髮) swallows the 发 of 一直|发布", ("梳着一直发", "梳著一直髮")),
+    Entry("一直发表", "一直發表", "stock's 直发 (直髮) swallows the 发 of 一直|发表", ("梳着一直发", "梳著一直髮")),
+    Entry("一直发誓", "一直發誓", "stock's phrase 直发 (直髮) swallows the 发 of 一直|发誓", ("梳着一直发", "梳著一直髮")),
+    Entry("一头发光", "一頭發光", "stock's 头发 (頭髮) swallows the 发 of 一头|发光", ("长头发", "長頭髮")),
+    Entry("一头发亮", "一頭發亮", "stock's 头发 (頭髮) swallows the 发 of 一头|发亮", ("长头发", "長頭髮")),
     Entry("风后来", "風後來", "风后 is the name 風后 (kept); 风+后来 is wind + 'later'", ("风后", "風后")),
     Entry("风后面", "風後面", "风后 is the name 風后 (kept); 风+后面 is wind + 'behind'", ("风后", "風后")),
     Entry("回归线", "回歸線", "Taiwan writes 回歸線 (tropic); stock gives 迴歸線", ("线性回归", "線性迴歸")),
-    Entry("干了啥", "幹了啥", "stock's phrase 天干 (heavenly stem) swallows the 干 of 今天|干了啥", ("池塘干了啥都不剩", "池塘乾了啥都不剩"), ("你今天干了啥", "你今天幹了啥")),
-    Entry("书签名", "書簽名", "书签名 = signing a book (签名), not the bookmark 书签 of the preference below", ("书签", "書籤")),
+    Entry("今天干了啥", "今天幹了啥", "stock's phrase 天干 (heavenly stem) swallows the 干 of 今天|干了啥 (stock leaves 干 unconverted)", ("吃完饼干了啥都不想做", "吃完餅乾了啥都不想做")),
+    Entry("昨天干了啥", "昨天幹了啥", "stock's phrase 天干 swallows the 干 of 昨天|干了啥", ("吃完饼干了啥都不想做", "吃完餅乾了啥都不想做")),
+    Entry("明天干了啥", "明天幹了啥", "stock's phrase 天干 swallows the 干 of 明天|干了啥", ("吃完饼干了啥都不想做", "吃完餅乾了啥都不想做")),
+    Entry("新书签名", "新書簽名", "新书签名 = a new book signing (书|签名), not the bookmark 书签", ("书签名称", "書籤名稱")),
+    Entry("图书签名", "圖書簽名", "图书签名 = signing of a book (书|签名), not the bookmark 书签", ("书签名称", "書籤名稱")),
+    Entry("短短几", "短短幾", "stock's phrase 短几 (a low table) swallows 短短|几秒", ("一张短几", "一張短几")),
+    Entry("一起干杯", "一起乾杯", "stock's phrase 一起干 (一起幹) swallows 一起|干杯", ("一起干活", "一起幹活")),
+    Entry("统计划分", "統計劃分", "stock reads 统计|划分; the preference 计划 -> 計畫 would take the 计划 across the two words", ("计划", "計畫")),
+    Entry("没干透", "沒乾透", "stock's phrase 没干 (沒幹) swallows the 干 of 没|干透 (not dry yet)", ("他没干坏事", "他沒幹壞事")),
+    Entry("没干净", "沒乾淨", "stock's phrase 没干 (沒幹) swallows the 干 of 没|干净 (not clean)", ("他没干坏事", "他沒幹壞事")),
+    Entry("没干燥", "沒乾燥", "stock's phrase 没干 (沒幹) swallows the 干 of 没|干燥 (not dry)", ("他没干坏事", "他沒幹壞事")),
+    Entry("这杯干了", "這杯乾了", "this cup / drink is finished (stock 幹了); the word is the whole string, a 这杯 elsewhere stays stock", ("他把这件事干了吧", "他把這件事幹了吧"), ("把这杯干了吧", "把這杯乾了吧")),
+    Entry("酒我干了", "酒我乾了", "'I drain this wine': 酒 + 我 + 干了 (stock 幹了)", ("他干了一件大事", "他幹了一件大事"), ("这杯酒我干了", "這杯酒我乾了")),
+    Entry("熬干了", "熬乾了", "boiled dry (stock 熬幹了)", ("他干了坏事", "他幹了壞事")),
+    Entry("嘴巴干了", "嘴巴乾了", "a dry mouth (stock 嘴巴幹了)", ("他干了坏事", "他幹了壞事")),
+    Entry("在海里", "在海裡", "in the sea (stock leaves 在海里: 海里 is the nautical mile in stock); 在 + 海里 is never a distance", ("航行了二十海里", "航行了二十海里")),
+    Entry("大海里", "大海裡", "in the ocean (stock 大海里); a number before 海里 is never 大", ("还有半海里", "還有半海里")),
+    Entry("到海里", "到海裡", "to the sea (stock 到海里)", ("多少海里才到岸", "多少海里才到岸")),
+    Entry("入海里", "入海裡", "into the sea (stock 入海里)", ("每海里收费十元", "每海里收費十元")),
+    Entry("有云层", "有雲層", "weather: a layer of cloud (stock keeps the classical phrase 有云 = 'it is said')", ("古人有云", "古人有云")),
+    Entry("有云雾", "有雲霧", "weather: cloud and mist (stock keeps the classical phrase 有云)", ("古人有云", "古人有云")),
+    Entry("有云彩", "有雲彩", "weather: clouds (stock keeps the classical phrase 有云)", ("古人有云", "古人有云")),
+    Entry("有云朵", "有雲朵", "weather: clouds (stock keeps the classical phrase 有云)", ("古人有云", "古人有云")),
+    Entry("有云纹", "有雲紋", "a cloud pattern (stock keeps the classical phrase 有云)", ("古人有云", "古人有云")),
+    Entry("有云形", "有雲形", "a cloud shape (stock keeps the classical phrase 有云)", ("古人有云", "古人有云")),
+    Entry("有云状", "有雲狀", "a cloud-like shape (stock keeps the classical phrase 有云)", ("古人有云", "古人有云")),
+    Entry("有云雷", "有雲雷", "clouds and thunder (stock keeps the classical phrase 有云)", ("古人有云", "古人有云")),
+    Entry("有云雀", "有雲雀", "有|云雀 (a lark); stock's classical phrase 有云 would hide it", ("古人有云", "古人有云")),
+    Entry("被发乱首", "被髮亂首", "classical: with loose hair (the stock phrase 被发 is dropped because it swallows 被|发送 / 被|发现)", ("被发送", "被發送")),
+    Entry("被发而", "被髮而", "classical: 被发而为狂 (loose hair and then ...)", ("被发出去了", "被發出去了")),
+    Entry("不是只有", "不是只有", "不是 + 只有 = 'not only' (stock reads 是只 as 是隻); stock's phrase 有只 / 是只 / 别只 reads 只 as the measure word 隻, here it is the adverb", ("院子里有只会说话的八哥", "院子裡有隻會說話的八哥"), ("不是只有", "不是只有")),
+    Entry("若是只有", "若是只有", "若是 + 只有 = 'if only'; stock's phrase 有只 / 是只 / 别只 reads 只 as the measure word 隻, here it is the adverb", ("院子里有只会说话的八哥", "院子裡有隻會說話的八哥"), ("若是只有", "若是只有")),
+    Entry("总是只有", "總是只有", "总是 + 只有 = 'always only'; stock's phrase 有只 / 是只 / 别只 reads 只 as the measure word 隻, here it is the adverb", ("院子里有只会说话的八哥", "院子裡有隻會說話的八哥"), ("总是只有", "總是只有")),
+    Entry("总是只在", "總是只在", "总是 + 只在 = 'always only in'; stock's phrase 有只 / 是只 / 别只 reads 只 as the measure word 隻, here it is the adverb", ("院子里有只会说话的八哥", "院子裡有隻會說話的八哥"), ("总是只在", "總是只在")),
+    Entry("还是只想", "還是只想", "还是 + 只想 = 'still only want'; stock's phrase 有只 / 是只 / 别只 reads 只 as the measure word 隻, here it is the adverb", ("院子里有只会说话的八哥", "院子裡有隻會說話的八哥"), ("还是只想", "還是只想")),
+    Entry("没有只要", "沒有只要", "没有 + 只要 = 'without just asking'; stock's phrase 有只 / 是只 / 别只 reads 只 as the measure word 隻, here it is the adverb", ("院子里有只会说话的八哥", "院子裡有隻會說話的八哥"), ("没有只要", "沒有只要")),
+    Entry("别只是", "別只是", "别 + 只是 = 'don't just'; stock's phrase 有只 / 是只 / 别只 reads 只 as the measure word 隻, here it is the adverb", ("院子里有只会说话的八哥", "院子裡有隻會說話的八哥"), ("别只是", "別只是")),
+    Entry("卷卷而上", "捲捲而上", "curling upward (捲捲而上); stock leaves 卷卷", ("问卷卷成了筒状", "問卷捲成了筒狀")),
+    Entry("湿润的风后", "濕潤的風後", "wet air after the wind (風後); 风后 alone stays the name 風后 (stock)", ("黄帝的大臣风后", "黃帝的大臣風后")),
+    Entry("海里有各种", "海裡有各種", "in the sea there are all kinds (stock leaves 海里, the nautical mile, at the start of a clause)", ("十二海里有一座岛", "十二海里有一座島")),
+    Entry("星海里", "星海裡", "in the sea of stars (stock 星海里)", ("多少海里才到岸", "多少海里才到岸")),
+    Entry("海里的鱼", "海裡的魚", "the fish in the sea (stock 海里的魚)", ("每小时航行十二海里的速度", "每小時航行十二海里的速度")),
+    Entry("古松开", "古松開", "an old pine + 开 (古松开始变黄); stock's phrase 松开 (鬆開) would hide the 开", ("鞋带又松开了", "鞋帶又鬆開了")),
     Entry("了如列眉", "瞭如列眉", "idiom: stock only has 了如指掌 and the dropped 了如 phrase leaves 了如列眉 unconverted (0 / 1 in the Taiwan corpus)", ("我明白了如何做", "我明白了如何做")),
     Entry("周几", "週幾", "week + how many ('which day of the week'): Taiwan writes 週幾; stock writes 周幾 (9 / 0 in the Taiwan corpus)", ("周末", "週末")),
     Entry("游标", "游標", "cursor / vernier: 游標; stock writes 遊標 (12 / 0 in the Taiwan corpus)", ("旅游", "旅遊")),
@@ -116,96 +176,40 @@ PREFERENCES: tuple = (
 # --------------------------------------------------------------------------------------------------------------------
 # b. DROPPED_PHRASES: stock phrases that hide a better match across the same characters.
 # --------------------------------------------------------------------------------------------------------------------
-DROPPED_PHRASES = frozenset({"一起干", "了如", "短几", "有云", "如干", "心向", "并包", "并产", "被发", "先尝"})   # 一起干杯 is 一起+干杯 (stock: 一起干 hides 干杯); 了如 is only meant for 了如指掌, which stock has as a whole phrase
+DROPPED_PHRASES = frozenset({"了如", "如干", "心向", "并包", "并产", "被发", "先尝"})   # kept only where the Taiwan dictionary has no sentence that needs the stock phrase (G4: 0 victims); every other stock phrase that hides a word is covered by a longer ENTRIES word instead
 DROPPED_NOTES: dict = {
-    "一起干": (("一起干杯", "一起乾杯"), ("一起干活", "一起幹活")),
-    "了如": (("我明白了如何做", "我明白了如何做"), ("了如指掌", "瞭如指掌")),
-    "短几": (("短短几秒", "短短幾秒"), ("茶几", "茶几")),       # 短几 (a short low table) is stock's phrase and swallows 短短|几秒
-    "有云": (("唯有云雀", "唯有雲雀"), ("今天有云", "今天有雲")),   # 有云 ('it is said') swallows 有|云雀 and 有|云层
+    "了如": (("我明白了如何做", "我明白了如何做"), ("了如指掌", "瞭如指掌")),   # 了如 is only meant for 了如指掌, which stock has as a whole phrase
     "如干": (("倒不如干脆", "倒不如乾脆"), ("若干", "若干")),     # 如干 swallows 不如|干脆
     "心向": (("内心向往", "內心嚮往"), ("心向党", "心向黨")),     # 心向 swallows 内心|向往
-    # found in the Taiwan corpus (G4: the Taiwan wording in 5 or more places, the stock wording in none): each swallows the first character of the next word
-    "并包": (("并包含", "並包含"), ("合并", "合併")),             # 并包 (幷包) swallows 并|包含: 11 / 0
-    "并产": (("并产生", "並產生"), ("合并", "合併")),             # 并产 (併產) swallows 并|产生: 7 / 0
-    "被发": (("被发送", "被發送"), ("被发现", "被發現")),         # 被发 (被髮, 'with loose hair') swallows 被|发送 / 被|发现: 19 / 0
-    "先尝": (("先尝试", "先嘗試"), ("尝试", "嘗試")),             # 先尝 (先嚐) swallows 先|尝试: 7 / 0
+    "并包": (("并包含", "並包含"), ("合并", "合併")),             # 并包 (幷包) swallows 并|包含
+    "并产": (("并产生", "並產生"), ("合并", "合併")),             # 并产 (併產) swallows 并|产生
+    "被发": (("被发送", "被發送"), ("被发现", "被發現")),         # 被发 (被髮, 'with loose hair') swallows 被|发送 / 被|发现 / 被|发出去了; the classical phrases are ENTRIES (被发乱首 ...)
+    "先尝": (("先尝试", "先嘗試"), ("尝试", "嘗試")),             # 先尝 (先嚐) swallows 先|尝试
 }
+# c. CONTEXT_RULES: only a pattern whose left AND right side are closed lists of literal words (no gaps, no "not followed by"
+# guards, no one-character left context that could end another word). Everything else is a literal ENTRIES word or stock.
 # --------------------------------------------------------------------------------------------------------------------
-# c. CONTEXT_RULES. Constants used by them:
-# --------------------------------------------------------------------------------------------------------------------
-_NUMERALS = "一二三四五六七八九十百千万两几数多零〇0-9０-９"   # 海里 after one of these is the nautical mile
-# Words counted with 隻 (animals) that follow ``的``: 这只会飞的鸟 is "this bird that can fly"; 这只会更糟 is "only"
-ZHI_NOUNS = ("鸟", "猫", "狗", "鸡", "鸭", "鹅", "羊", "兔", "虫", "蚁", "蜂", "蝶", "蛙", "虎", "狼", "狐", "熊", "猴", "鹿", "鼠", "鹰", "雁",
-             "鸦", "雀", "燕", "鸥", "鹤", "鹦鹉", "孔雀", "蛇", "鱼", "龙", "蚊", "蝇", "蜘蛛", "松鼠", "刺猬", "蝙蝠", "乌龟", "老虎", "狮", "象", "牛", "马", "猪")
-_CLAUSE_END = "，。！？!?,.;；、…\n"
-_ZHI_AFTER = re.compile(r"[^%s]{0,6}?的[小大老白黑黄花红灰]?(?:%s)" % (re.escape(_CLAUSE_END), "|".join(ZHI_NOUNS)))
-
-
-def _zhi(match: "re.Match", rest: str) -> str:
-    """这只 / 那只 / 是只 followed by 有 能 会 想 要: 隻 when the same clause has 的 + a noun counted with 隻, otherwise 只 (the user's wording)."""
-    measure = not rest.startswith("是") and _ZHI_AFTER.match(rest) is not None
-    lead = {"这": "這", "那": "那"}.get(match.groupdict().get("lead") or "", "")
-    return lead + ("隻" if measure else "只")
-
-
-_VERB_AFTER = "有能会想要是在"
+_CONTEXT_END = "，。！？!?,.;；、… 的在是说有来去也就都很和与们了"
+_TOUR = {"旅游": "旅遊", "漫游": "漫遊", "导游": "導遊", "周游": "周遊", "巡游": "巡遊", "畅游": "暢遊"}
 CONTEXT_RULES: tuple = (
-    # --- 海里: nautical mile after a number, otherwise "in the sea"
-    Context("sea", r"(?<![%s])(?P<fix>(?<=.)海里|海里(?=.))" % _NUMERALS, "海裡",
-            "海里 after a numeral is the nautical mile (stays 海里), and so is a clause that is just 海里 (a headword); anywhere else it is 海+里 'in the sea' -> 海裡",
-            (("在海里游泳", "在海裡游泳"), ("山里海里", "山裡海裡")), (("离岸几海里", "離岸幾海里"), ("航行了二十海里", "航行了二十海里"))),
-    # --- 干了: stock reads "do" (幹); "dried / drained / finished a drink" (乾) only in closed contexts
-    Context("dry-drink", r"(?:杯|酒|汤|碗|瓶|一口|一饮).{0,3}(?P<fix>干)了(?!一(?:件|番|场|票|桩|笔|单|仗|架|辈))", "乾",
-            "a cup / wine / soup / bowl / bottle (or 一口 一饮) within four characters before 干了 is a drink finished: 乾了",
-            (("把这杯干了吧", "把這杯乾了吧"), ("这杯酒我干了", "這杯酒我乾了")), (("他把这件事干了吧", "他把這件事幹了吧"), ("他干了一件大事", "他幹了一件大事"))),
-    Context("dry-verb", r"(?:喝|晾|晒|流|烧|熬|风|汤|碗|喉咙|嘴巴?|口|泪水?|眼泪|衣服)(?P<fix>干)了", "乾",
-            "喝干 晾干 晒干 流干 烧干 熬干 风干, and 汤 / 碗 / 喉咙 / 嘴 / 口 / 泪 / 眼泪 / 衣服 + 干了, are dried: 乾了 (stock writes 熬幹了, 喉嚨幹了, 衣服幹了)",
-            (("喝干了", "喝乾了"), ("熬干了", "熬乾了"), ("喉咙干了", "喉嚨乾了"), ("衣服干了", "衣服乾了")), (("他干了坏事", "他幹了壞事"), ("苦干了一辈子", "苦幹了一輩子"))),
-    Context("dry-toast", r"(?P<fix>干)了(?:这杯|杯|就没事)", "乾",
-            "干了这杯 / 干了杯 / 干了就没事: the drink or the thirst is gone: 乾了",
-            (("干了这杯酒", "乾了這杯酒"), ("干了就没事", "乾了就沒事")), (("干了这件事", "幹了這件事"), ("干了一杯", "幹了一杯"))),
-    Context("dry-place", r"(?:河床|池塘|河水?|湖水?|井水?|泉水?|水|熬)(?:都|全|已经)?(?P<fix>干)了", "乾",
-            "a river / pond / well / spring / water word right before 干了 is dried up (熬干了 is boiled dry): 乾了",
-            (("河床干了什么鱼都没有", "河床乾了什麼魚都沒有"), ("池塘干了啥都不剩", "池塘乾了啥都不剩")), (("他干了水电的活", "他幹了水電的活"),)),
-    # --- 这只 / 那只 / 是只 + 有 能 会 想 要: "only" (只) unless the clause has 的 + an animal (隻)
-    Context("zhi-demonstrative", r"(?P<fix>(?P<lead>[这那])只)(?=[%s])" % _VERB_AFTER, _zhi,
-            "stock reads 这只 as 這隻 (measure word); before 有 能 会 想 要 the user's lyrics mean 'only' (這只), unless the clause has 的 + an animal noun (這隻會飛的鳥)",
-            (("这只有五分钟", "這只有五分鐘"), ("这只会飞的鸟", "這隻會飛的鳥")), (("这只猫", "這隻貓"), ("这只会唱歌的鹦鹉", "這隻會唱歌的鸚鵡"))),
-    Context("zhi-adverb", r"(?<=[有别是])(?P<fix>只)(?=[%s])" % _VERB_AFTER, _zhi,
-            "只 right after 有 别 是 and before 有 能 会 想 要 是 在 is 'only' (没有只要 别只是 总是只有), 隻 when the clause has 的 + an animal noun (是只有毒的蛇); stock's phrases 有只 / 别只 / 是只 always read it as 隻. Anywhere else stock is kept: 只能 / 只有 are stock phrases, and a rule that fixed their 只 would hide the next word (只能|干呕)",
-            (("没有只要祈求", "沒有只要祈求"), ("别只是旁观", "別只是旁觀"), ("总是只有我", "總是只有我"), ("他是只有毒的蛇", "他是隻有毒的蛇")), (("一只会飞的鸟", "一隻會飛的鳥"), ("两只是黑的", "兩隻是黑的"))),
-    Context("said-yun", r"(?<=[人子书诗易经谚语传史》])(?P<fix>有云)", "有云",
-            "有云 right after 人 子 书 诗 易 经 谚 语 传 史 》 is the classical 'it is said' (古人有云, 孔子有云, 兵书有云); the dropped stock phrase would otherwise turn it into weather 有雲 (the clause ends at the colon, so only the word before can tell)",
-            (("古人有云：学无止境", "古人有云：學無止境"), ("孔子有云", "孔子有云")), (("今天有云", "今天有雲"), ("唯有云雀", "唯有雲雀"))),
-    Context("loose-hair", r"(?P<fix>被发)(?![送现生布表展起觉动明挥达言])", "被髮",
-            "被发 not followed by 送 现 生 布 表 展 起 觉 动 明 挥 达 言 is 'with loose hair' (被髮, stock): 被发乱首, 被发而为狂; the stock phrase is dropped because it swallows 被|发送 / 被|发现",
-            (("被发乱首", "被髮亂首"), ("漆身而为厉，被发而为狂", "漆身而為厲，被髮而為狂")), (("被发送", "被發送"), ("被发现", "被發現"))),
-    Context("wind-after", r"(?<=[的了着吹随被把乘借顺逆迎])(?P<fix>风后)", "風後",
-            "风后 after 的 了 着 吹 ... is 'after the wind' (風後); alone it is the name 風后 (stock)",
-            (("吸入湿润的风后", "吸入濕潤的風後"),), (("黄帝的大臣风后", "黃帝的大臣風后"),)),
-    Context("dry-compound", r"(?<=[没不未])(?<!干不)(?P<fix>干)(?=[透净燥涸枯爽])", "乾",
-            "没干透 / 没干净: dried (乾); stock's phrase 没干 -> 沒幹 swallows the 干",
-            (("道路还没干透吧", "道路還沒乾透吧"),), (("他没干坏事", "他沒幹壞事"),)),
-    Context("curl", r"(?<![试长画书手经压考答])(?P<fix>卷卷)(?=[而的地着起成了])", "捲捲",
-            "卷卷 + 而 的 地 着 起 成 了 = curling (捲捲而上, 捲捲的头发); 卷卷 alone, or before another word, is 卷卷 (volumes, 惓惓: stock); after 试 长 画 书 手 经 压 考 答 the first 卷 belongs to the word before (试卷|卷面)",
-            (("卷卷而上的火焰", "捲捲而上的火焰"),), (("试卷卷面整洁", "試卷卷面整潔"), ("长卷卷首有题字", "長卷卷首有題字"))),
-    # --- 松: the pine of a tree word followed by 开 (青松|开花, 古松|开始); stock's phrase 松开 (鬆開) would swallow the 开
-    Context("pine", r"(?<=[青古老孤苍劲乔雪])(?P<fix>松)(?=开)", "松",
-            "after 青 古 老 孤 苍 劲 乔 雪 the 松 is a pine tree and the 开 starts the next word (青松|开花); stock's phrase 松开 -> 鬆開 hides it",
-            (("青松开花了", "青松開花了"), ("古松开始变黄", "古松開始變黃")), (("鞋带又松开了", "鞋帶又鬆開了"), ("松开我的手", "鬆開我的手"))),
     # --- 游: the 游 of a tourism word before 动 过 移 (旅游|动态, 漫游|过去, 导游|过来)
-    Context("tour", r"(?<=[旅漫导周巡夜远出畅郊])(?P<fix>游)(?=[动过移])", "遊",
-            "after 旅 漫 导 周 巡 夜 远 出 畅 郊 the 游 is 遊 (tour) and 动 过 移 starts the next word; the preference 游动/游过/游移 (swim) would take it",
+    Context("tour", r"(?P<fix>旅游|漫游|导游|周游|巡游|畅游)(?=[动过移])", lambda match, rest: _TOUR[match.group("fix")],
+            "旅游 漫游 导游 周游 巡游 畅游 before 动 过 移 is the tourism word (遊) and 动 过 移 starts the next word; the preference 游动/游过/游移 (swim) would take the 游",
             (("漫游过去的事", "漫遊過去的事"), ("导游过来接我们", "導遊過來接我們")), (("他游过了河", "他游過了河"), ("鱼游动着", "魚游動著"))),
-    # --- 刮: shaving / scraping (刮), not the wind (颳)
-    Context("scrape", r"(?:(?<=胡子)|(?<=[胡须脸毛腿头眉]))(?P<fix>刮)", "刮",
-            "after 胡 须 脸 毛 腿 头 眉 the 刮 is shave / scrape (刮); stock's phrase 刮了 is the wind 颳了",
-            (("胡子刮了", "鬍子刮了"), ("脸刮干净", "臉刮乾淨")), (("刮了一阵风", "颳了一陣風"),)),
+    # --- 干了 after 喉咙 that ends the clause or a particle: a dry throat (喉咙干了, 喉咙干了就去喝水); 喉咙干了坏事 is not matched
+    Context("dry-throat", r"(?<=喉咙)(?P<fix>干)了(?=$|[%s])" % _CONTEXT_END, "乾",
+            "喉咙 + 干了 that ends the clause (or is followed by a particle: 的 了 就 都 也 ...) is a dry throat: 乾了 (stock 喉嚨幹了)",
+            (("如果喉咙干了，就去喝水", "如果喉嚨乾了，就去喝水"), ("喉咙干了就喝水", "喉嚨乾了就喝水")), (("捂住喉咙干了坏事", "捂住喉嚨幹了壞事"), ("他喉咙干了三杯", "他喉嚨幹了三杯"))),
+    # --- 干了就没事 at the start of a clause is a toast (the lyrics); anywhere else (这活儿干了就没事了) stock
+    Context("toast-start", r"^(?P<fix>干)了就没事", "乾",
+            "a clause that starts with 干了就没事 is the toast 'drink up and it is fine': 乾了 (stock 幹了); after any other word it is 'do it and it is fine' (幹了, stock)",
+            (("干了就没事了", "乾了就沒事了"),), (("这活儿干了就没事了", "這活兒幹了就沒事了"), ("他干了就没事", "他幹了就沒事"))),
     # --- 余: the surname before a title
-    Context("surname-yu", r"(?:^|(?<=[姓叫是找问请跟和对给让被把由说谢与同]))(?P<fix>余)(?=先生|小姐|老师|医生|教授|女士|同学|太太|博士|经理|师傅)", "余",
-            "the surname 余 at the start of a clause (or after 姓 叫 是 找 ...) before a title stays 余; stock writes 餘",
-            (("余先生在家", "余先生在家"), ("我找余老师", "我找余老師")), (("剩余先生产", "剩餘先生產"),)),
+    Context("surname-yu", r"(?:^|(?<=姓|叫|找|问|请))(?P<fix>余)(?=(?:先生|小姐|老师|医生|教授|女士|同学|太太|博士|经理|师傅)(?:$|[%s]))" % _CONTEXT_END, "余",
+            "the surname 余 at the start of a clause (or right after 姓 叫 找 问 请) and right before a title that ends the word stays 余; stock writes 餘",
+            (("余先生在家", "余先生在家"), ("我找余老师", "我找余老師")), (("剩余先生产", "剩餘先生產"), ("多余老师的话", "多餘老師的話"))),
 )
+# --------------------------------------------------------------------------------------------------------------------
 # --------------------------------------------------------------------------------------------------------------------
 # d. VARIANT_PREFERENCE. Characters where stock writes one standard Traditional form and the user's lyrics use the other
 # form more often (count of the form written here / of the form stock writes). Applied only to characters the conversion
@@ -466,10 +470,11 @@ def looks_simplified(text, japanese=False):
     return False
 
 
-# Chinese function words. A line that has two different ones is not Japanese kanji-only text (初恋 一期一会 回来 have none).
-# Characters Japanese words use a lot on their own (的 在 有 不 ...) count only in pairs; the set is the common
-# Mandarin particles, pronouns, auxiliaries and prepositions of lyrics.
-CHINESE_FUNCTION_CHARS = frozenset("的了是不我你他她在有也就都很这那把被给让没还和吗呢吧啊嘛着过么")
+# Chinese function words that Japanese text does not use. A line with a kanji-only Japanese word (初恋 一期一会 他国 目的 不安 存在 有名 回来)
+# must not be checked because of 的 他 不 有 在 我 是 来 没 着 ..., which Japanese words contain; so only characters that are simplified-only
+# forms of a different Japanese character (这 们 吗 说 对 为 过 时 个 给 让 还 谁 啥 您 咱, Japanese: 這 們 說 対 為 過 時 個 給 譲 還), or particles
+# Japanese never writes in kanji (呢 哪 么), count here. Two different ones, or one next to a kana line of the same row, check the line.
+CHINESE_FUNCTION_CHARS = frozenset("这们吗呢还让说对为过时个么给谁哪啥您咱")
 
 
 def _surely_not_japanese(text):
