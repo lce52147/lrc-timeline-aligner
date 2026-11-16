@@ -52,7 +52,10 @@ param(
     [ValidateSet("none", "strict", "balanced", "loose")]
     [string] $ReviewerProfile = "none",
 
-    [switch] $Overwrite
+    [switch] $Overwrite,
+
+    # Set by Align LRC.bat: the dropped names may have been percent-expanded by cmd.exe.
+    [switch] $FromLauncher
 )
 
 $ErrorActionPreference = "Stop"
@@ -98,6 +101,40 @@ if (-not $Paths -or $Paths.Count -eq 0) {
     Write-Host "Lyrics may be beside the audio file as <song>.lyrics.lrc, <song>.lyrics.txt, or <song>.txt." -ForegroundColor Yellow
     Write-Host "Use an explicit lyric/template file when you need to preserve known text or timestamps." -ForegroundColor Yellow
     exit 2
+}
+
+# cmd.exe expands %NAME% in a command line given with its /c switch before the batch runs,
+# so a dropped file called "a%TEMP%b.flac" reaches %* as "a<temp path>b.flac". The
+# unexpanded text is still in the command line of the parent cmd.exe: take a name
+# from there only when expanding it gives exactly the name that was received.
+if ($FromLauncher) {
+    try {
+        $parentId = (Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$PID" -ErrorAction Stop).ParentProcessId
+        $parentLine = [string](Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$parentId" -ErrorAction Stop).CommandLine
+        $batchMarker = $parentLine.IndexOf("Align LRC.bat", [System.StringComparison]::OrdinalIgnoreCase)
+        if ($batchMarker -ge 0) {
+            $originalTokens = @()
+            foreach ($match in [regex]::Matches($parentLine.Substring($batchMarker + "Align LRC.bat".Length).TrimStart('"'), '"([^"]*)"|(\S+)')) {
+                if ($match.Groups[1].Success) { $originalTokens += $match.Groups[1].Value } else { $originalTokens += $match.Groups[2].Value }
+            }
+            $recoveredPaths = @()
+            foreach ($receivedPath in $Paths) {
+                $recovered = $receivedPath
+                foreach ($token in $originalTokens) {
+                    if (($token -ne $receivedPath) -and
+                        [string]::Equals([System.Environment]::ExpandEnvironmentVariables($token), $receivedPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+                        $recovered = $token
+                        break
+                    }
+                }
+                $recoveredPaths += $recovered
+            }
+            $Paths = $recoveredPaths
+        }
+    }
+    catch {
+        Write-Warning ("Could not recover the dropped file names from the launcher: {0}" -f $_.Exception.Message)
+    }
 }
 
 # A lyric file is a convenient drag target too: resolve its sibling FLAC and

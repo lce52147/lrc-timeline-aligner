@@ -46,7 +46,7 @@ class LauncherStubCase(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        self.tmp = Path(self._tmp.name)
+        self.tmp = Path(self._tmp.name).resolve()  # long form: PowerShell expands 8.3 names
         stub_dir = self.tmp / "stub"
         stub_dir.mkdir()
         (stub_dir / "sitecustomize.py").write_text(STUB_SITECUSTOMIZE, encoding="utf-8")
@@ -104,6 +104,43 @@ class ReviewBatchPythonChoiceTests(LauncherStubCase):
                     self.assertEqual(result.returncode, 2)
                     self.assertIn("Python runtime not found", result.stdout)
 
+class AlignBatchDroppedNameTests(LauncherStubCase):
+    NAMES = [
+        "pct%TEMP%x.flac",
+        "dbl%%pct.flac",
+        "%PATH%.flac",
+        "bang!name.flac",
+        "amp&name.flac",
+        "caret^name.flac",
+        "sp ace name.flac",
+        "\u4e2d\u6587\u6b4c.flac",
+        "\u65e5\u672c\u8a9e\u306e\u6b4c.flac",
+    ]
+
+    def make_audio(self, name: str) -> str:
+        path = self.tmp / "songs" / name
+        path.parent.mkdir(exist_ok=True)
+        path.write_bytes(b"")
+        return str(path)
+
+    def aligned_paths(self) -> list[str]:
+        # The aligner calls end with the song path; the batch summary call does not.
+        return [c[-1] for c in read_stub_calls(self.calls_file) if c[0].endswith("r2_pipeline.py")]
+
+    def test_dropped_names_reach_the_aligner_verbatim(self) -> None:
+        for name in self.NAMES:
+            with self.subTest(name=name):
+                self.calls_file.unlink(missing_ok=True)
+                path = self.make_audio(name)
+                result = self.run_bat("Align LRC.bat", path)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.aligned_paths(), [path])
+
+    def test_several_dropped_files_keep_their_own_names(self) -> None:
+        paths = [self.make_audio(n) for n in ("a%TEMP%b.flac", "plain.flac", "c%%d!&^.flac")]
+        result = self.run_bat("Align LRC.bat", *paths)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.aligned_paths(), paths)
 
 if __name__ == "__main__":
     unittest.main()
