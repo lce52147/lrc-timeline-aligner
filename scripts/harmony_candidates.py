@@ -172,14 +172,30 @@ def _align(harmony_path, runs, romaji, threads=4):
     return found
 
 
+def _title_only_card(entry, meta, audio):
+    """The tool writes ``[00:00.00]<title>`` (no ``Artist - `` part) for a song without an ARTIST tag: that first zero-time line is
+    the title card, not a lyric. It is the card when its text is the file's own ``[ti:]`` value or the audio file's name."""
+    if entry.time_cs != 0 or len(entry.lines) != 1:
+        return False
+    key = lambda text: re.sub(r"\s+", "", text).casefold()
+    text = key(entry.lines[0])
+    if not text:
+        return False
+    titles = [key(m.group(1)) for m in (re.match(r"\[ti:(.*)\]\s*$", line, re.I) for line in meta) if m]
+    titles.append(key(pathlib.Path(audio).stem))
+    return text in titles
+
+
 def generate(audio, lrc, report, stems, out, include_unsure=False):
     here = pathlib.Path(__file__).resolve().parent
     sys.path.insert(0, str(here))
     import evaluate_lrc as ev
 
     lrc = pathlib.Path(lrc)
-    _meta, entries = ev.parse_lrc(lrc)
+    meta, entries = ev.parse_lrc(lrc)
     entries = [e for e in entries if not ev.is_generated_title_card(e)]
+    if entries and _title_only_card(entries[0], meta, audio):
+        entries = entries[1:]
     data = json.loads(pathlib.Path(report).read_text(encoding="utf-8"))
     assignments = data.get("assignments") or []
     if len(assignments) != len(entries):

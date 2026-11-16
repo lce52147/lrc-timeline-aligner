@@ -21,6 +21,44 @@ import test_lrc14_review_server as _fixture_module
 INDEX_HTML = (SCRIPTS / "review_page" / "index.html").read_text(encoding="utf-8")
 
 
+class TitleOnlyCardTests(unittest.TestCase):
+    """A song without an ARTIST tag gets ``[00:00.00]<title>``: that card is not a lyric entry and must not stop the generator."""
+
+    def _generate(self, lrc_text, assignments, audio_name="Song Title.flac"):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        lrc, report, stems = root / "song.lrc", root / "song.align-report.json", root / "stems"
+        stems.mkdir()
+        (stems / "harmony.flac").write_bytes(b"x")
+        lrc.write_text(lrc_text, encoding="utf-8-sig")
+        report.write_text(json.dumps({"duration_seconds": 60, "assignments": [{"romaji": "a"} for _ in range(assignments)]}), encoding="utf-8")
+        with mock.patch.object(hc, "_align", side_effect=lambda harmony, runs, romaji: {k: 12.0 for run in runs for k in run["lines"]}):
+            return hc.generate(root / audio_name, lrc, report, stems, root / "out.json")
+
+    def test_title_only_card_is_not_an_entry(self):
+        lrc = "[ti:Song Title]\n[re:x]\n[00:00.00]Song Title\n[00:05.00]first line\n[00:10.00](backing vocal)\n[00:15.00]last line\n"
+        payload = self._generate(lrc, 3)
+        self.assertEqual(payload["lines_total"], 3)
+        self.assertEqual([line["entry"] for line in payload["lines"]], [2])
+
+    def test_card_matching_the_audio_name_without_a_header(self):
+        payload = self._generate("[00:00.00]Song Title\n[00:05.00]first line\n[00:10.00](backing vocal)\n", 2)
+        self.assertEqual(payload["lines_total"], 2)
+
+    def test_artist_title_card_still_dropped(self):
+        payload = self._generate("[00:00.00]Artist - Song Title\n[00:05.00]first line\n[00:10.00](backing vocal)\n", 2)
+        self.assertEqual(payload["lines_total"], 2)
+
+    def test_a_real_first_line_at_zero_is_kept(self):
+        payload = self._generate("[ti:Song Title]\n[00:00.00]a real lyric\n[00:05.00]first line\n[00:10.00](backing vocal)\n", 3)
+        self.assertEqual(payload["lines_total"], 3)
+
+    def test_count_mismatch_still_stops(self):
+        with self.assertRaises(SystemExit):
+            self._generate("[ti:Song Title]\n[00:00.00]Song Title\n[00:05.00]first line\n[00:10.00](backing vocal)\n", 5)
+
+
 class CueTests(unittest.TestCase):
     def test_cue_lines_have_no_explicit_lyric(self):
         for text in ("(間奏)", "（イントロ）", "(×2)", "(Chorus)", "(♪)", "()", "（コーラス：ギター）"):
