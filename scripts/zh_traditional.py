@@ -72,6 +72,9 @@ CORRECTIONS: tuple = (
     Entry("克制", "克制", "Taiwan writes 克制 (restrain); stock gives 剋制", ("克星", "剋星")),
     Entry("干了啥", "幹了啥", "stock's phrase 天干 (heavenly stem) swallows the 干 of 今天|干了啥", ("池塘干了啥都不剩", "池塘乾了啥都不剩"), ("你今天干了啥", "你今天幹了啥")),
     Entry("书签名", "書簽名", "书签名 = signing a book (签名), not the bookmark 书签 of the preference below", ("书签", "書籤")),
+    Entry("周几", "週幾", "week + how many ('which day of the week'): Taiwan writes 週幾; stock writes 周幾 (9 / 0 in the Taiwan corpus)", ("周末", "週末")),
+    Entry("游标", "游標", "cursor / vernier: 游標; stock writes 遊標 (12 / 0 in the Taiwan corpus)", ("旅游", "旅遊")),
+    Entry("控制台", "控制台", "console: Taiwan writes 控制台; stock's 控制檯 is the table-like 檯 (24 / 0 in the Taiwan corpus)", ("台灯", "檯燈")),
     Entry("老么", "老么", "么 is the Traditional character in 老么 / 么儿 / 么妹 / 么弟 / 么女 (youngest child); 么 after 什 怎 这 那 多 要 甚 is 麼", ("什么", "什麼")),
     Entry("么儿", "么兒", "youngest son: 么 is Traditional here", ("什么", "什麼")),
     Entry("么妹", "么妹", "youngest sister: 么 is Traditional here", ("什么", "什麼")),
@@ -112,7 +115,7 @@ PREFERENCES: tuple = (
 # --------------------------------------------------------------------------------------------------------------------
 # b. DROPPED_PHRASES: stock phrases that hide a better match across the same characters.
 # --------------------------------------------------------------------------------------------------------------------
-DROPPED_PHRASES = frozenset({"一起干", "了如", "短几", "有云", "如干", "心向"})   # 一起干杯 is 一起+干杯 (stock: 一起干 hides 干杯); 了如 is only meant for 了如指掌, which stock has as a whole phrase
+DROPPED_PHRASES = frozenset({"一起干", "了如", "短几", "有云", "如干", "心向", "并包", "并产", "被发", "先尝"})   # 一起干杯 is 一起+干杯 (stock: 一起干 hides 干杯); 了如 is only meant for 了如指掌, which stock has as a whole phrase
 DROPPED_NOTES: dict = {
     "一起干": (("一起干杯", "一起乾杯"), ("一起干活", "一起幹活")),
     "了如": (("我明白了如何做", "我明白了如何做"), ("了如指掌", "瞭如指掌")),
@@ -120,6 +123,11 @@ DROPPED_NOTES: dict = {
     "有云": (("唯有云雀", "唯有雲雀"), ("今天有云", "今天有雲")),   # 有云 ('it is said') swallows 有|云雀 and 有|云层
     "如干": (("倒不如干脆", "倒不如乾脆"), ("若干", "若干")),     # 如干 swallows 不如|干脆
     "心向": (("内心向往", "內心嚮往"), ("心向党", "心向黨")),     # 心向 swallows 内心|向往
+    # found in the Taiwan corpus (G4: the Taiwan wording in 5 or more places, the stock wording in none): each swallows the first character of the next word
+    "并包": (("并包含", "並包含"), ("合并", "合併")),             # 并包 (幷包) swallows 并|包含: 11 / 0
+    "并产": (("并产生", "並產生"), ("合并", "合併")),             # 并产 (併產) swallows 并|产生: 7 / 0
+    "被发": (("被发送", "被發送"), ("被发现", "被發現")),         # 被发 (被髮, 'with loose hair') swallows 被|发送 / 被|发现: 19 / 0
+    "先尝": (("先尝试", "先嘗試"), ("尝试", "嘗試")),             # 先尝 (先嚐) swallows 先|尝试: 7 / 0
 }
 # --------------------------------------------------------------------------------------------------------------------
 # c. CONTEXT_RULES. Constants used by them:
