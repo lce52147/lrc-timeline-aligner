@@ -158,6 +158,14 @@ powershell -ExecutionPolicy Bypass -File .\align-lrc.ps1 "D:\Music\Song.flac"
 
 參數說明見 [docs/TECHNICAL.md](docs/TECHNICAL.md)。
 
+## 程式架構
+
+![LRC 模組分層圖](docs/architecture/architecture-map.png)
+
+`scripts/` 的模組分成六層。只有「Central 決策」那層決定時間；「證據來源」只提供候選和佐證；審核頁和對齊管線之間只透過報告與 LRC 檔案相連。線上的數字是兩層之間的引用次數，用 [graphify](https://pypi.org/project/graphifyy/) 對程式碼做 AST 分析得到。
+
+互動版在 [docs/architecture/index.html](docs/architecture/index.html)。GitHub 不會直接執行這個頁面，要下載後用瀏覽器打開。打開後可以點方塊看每層的職責、檔案和上下游，也可以切換「一首歌的主路徑」。
+
 ## 演算流程
 
 下圖是 v1.9.0 預設設定下，一首歌從輸入到寫出 LRC 的順序（對照 `scripts/auto_lrc.py` 的 `process_audio()`）。方框裡標了該步驟用的模型；實線是每首歌都會走的路，虛線是預設關閉的分支。

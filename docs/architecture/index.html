@@ -1,0 +1,1689 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{margin:0}</style>
+</head>
+<body>
+<title>LRC 1.9 架構圖</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one schematic (layers as horizontal bands) + a side panel that explains whatever you click */
+:root {
+  --bg: #f4f5f1; --surface: #ffffff; --ink: #1c2420; --muted: #5d6a63; --line: #cdd5cf; --band: #e8ece7;
+  --accent: #1f6f5c; --accent-soft: #d8ece5; --http: #a8650f; --path: #c2410c; --paper: #fcfcfa; --dim: 0.16;
+  --sans: "Noto Sans TC", "Microsoft JhengHei", "PingFang TC", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #121815; --surface: #1a221e; --ink: #e2e9e5; --muted: #94a39b; --line: #33413a; --band: #18211d;
+  --accent: #6fc7ae; --accent-soft: #1d3d34; --http: #e3a24a; --path: #fb923c; color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #121815; --surface: #1a221e; --ink: #e2e9e5; --muted: #94a39b; --line: #33413a; --band: #18211d;
+  --accent: #6fc7ae; --accent-soft: #1d3d34; --http: #e3a24a; --path: #fb923c; color-scheme: dark; }
+body { background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.6; }
+.wrap { max-width: 1320px; margin: 0 auto; padding-block: 28px 56px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; }
+.wrap > * { min-width: 0; }
+header h1 { font-size: 26px; margin: 0; text-wrap: balance; font-weight: 700; }
+header p { margin: 4px 0 0; color: var(--muted); max-width: 70ch; }
+.meta { font-family: var(--mono); font-size: 12px; color: var(--muted); letter-spacing: .02em; margin-top: 6px; }
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+button { font: inherit; font-size: 14px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); padding: 6px 14px; border-radius: 6px; cursor: pointer; }
+button[aria-pressed="true"] { background: var(--path); border-color: var(--path); color: #fff; }
+button:focus-visible, .node:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 26px; height: 0; border-top: 3px solid var(--accent); display: inline-block; }
+.sw.http { border-top: 2px dashed var(--http); }
+.sw.path { border-top: 3px solid var(--path); }
+.main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
+@media (max-width: 960px) { .main { grid-template-columns: minmax(0, 1fr); } }
+.canvas { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+svg#map { display: block; width: 100%; min-width: 780px; height: auto; }
+.band rect { fill: var(--band); }
+.band text { fill: var(--muted); font-size: 13px; font-weight: 500; }
+.band .sub { font-size: 11px; font-family: var(--mono); }
+.node rect { fill: var(--surface); stroke: var(--ink); stroke-width: 1.4; }
+.node.core rect { stroke: var(--accent); stroke-width: 2.2; }
+.node.ghost rect { stroke-dasharray: 5 4; stroke: var(--muted); }
+.node text { fill: var(--ink); font-size: 14px; font-weight: 500; pointer-events: none; }
+.node text.cnt { fill: var(--muted); font-size: 11px; font-family: var(--mono); font-weight: 400; }
+.node { cursor: pointer; transition: opacity .15s; }
+.node.sel rect { fill: var(--accent-soft); }
+.node.onpath rect { stroke: var(--path); stroke-width: 2.6; }
+.edge path { fill: none; stroke: var(--accent); transition: opacity .15s; }
+.edge.http path { stroke: var(--http); stroke-dasharray: 6 5; }
+.edge.hook path { stroke: var(--muted); stroke-dasharray: 2 4; }
+.edge text { font-family: var(--mono); font-size: 11px; fill: var(--ink); }
+.edge rect.lbl { fill: var(--surface); stroke: var(--line); }
+.dimmed { opacity: var(--dim); }
+.pathline circle { fill: var(--path); }
+.pathline text { fill: #fff; font-size: 11px; font-weight: 700; font-family: var(--mono); }
+aside { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px 18px 20px; display: grid; gap: 10px; min-width: 0; }
+aside h2 { margin: 0; font-size: 19px; }
+aside p { margin: 0; }
+aside .layer { font-size: 12px; color: var(--muted); letter-spacing: .04em; }
+aside dl { margin: 0; display: grid; gap: 8px; }
+aside dt { font-size: 12px; color: var(--muted); letter-spacing: .04em; }
+aside dd { margin: 0; overflow-wrap: anywhere; }
+code, .fn { font-family: var(--mono); font-size: 13px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-family: var(--mono); font-size: 12px; background: var(--accent-soft); padding: 1px 8px; border-radius: 4px; }
+ol.steps { margin: 0; padding-left: 24px; display: grid; gap: 6px; }
+section h2, summary h2 { font-size: 20px; margin: 0 0 12px; }
+summary { cursor: pointer; } summary h2 { display: inline; }
+.tablewrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12px; color: var(--muted); font-weight: 500; letter-spacing: .04em; }
+td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
+.bar { height: 8px; background: var(--accent); border-radius: 2px; min-width: 2px; }
+ul.blind { margin: 0; padding-left: 20px; display: grid; gap: 6px; max-width: 80ch; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.feat { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; display: grid; gap: 4px; align-content: start; min-width: 0; cursor: pointer; }
+.feat:hover { border-color: var(--accent); }
+.feat h3 { margin: 0; font-size: 15px; }
+.feat p { margin: 0; color: var(--muted); font-size: 13.5px; overflow-wrap: anywhere; }
+.tag { justify-self: start; font-size: 11px; font-family: var(--mono); padding: 0 6px; border-radius: 3px; border: 1px solid var(--line); color: var(--muted); }
+.tag.miss { border-color: var(--http); color: var(--http); }
+.paper { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; overflow: auto; max-height: 80vh; margin-top: 12px; }
+.note { color: var(--muted); margin: 8px 0 0; max-width: 75ch; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>LRC 1.9 架構圖</h1>
+    <p>從 graphify 程式碼圖整理出的模組層級架構。點任一方塊看它的職責、檔案、核心函式與上下游；按「一首歌的主路徑」看一首歌怎麼從 FLAC 走到 LRC。</p>
+    <div class="meta">graphify 0.9.102 · 正式版 main = dev = ef0b219f（2026-11-15）· 5444 節點 / 16709 邊 · 正式模組 111 個、66,270 行 · 線上數字＝跨層 calls+imports+references 邊數</div>
+  </header>
+
+  <div class="controls">
+    <button id="btnPath" type="button" aria-pressed="false">一首歌的主路徑</button>
+    <button id="btnReset" type="button">全部顯示</button>
+    <div class="legend">
+      <span><i class="sw"></i>程式內引用（粗細＝邊數）</span>
+      <span><i class="sw http"></i>子行程（圖中無邊，依原始碼）</span>
+      <span><i class="sw path"></i>主路徑</span>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="canvas"><svg id="map" viewBox="0 0 1180 990" role="img" aria-label="LRC 模組分層關係圖"></svg></div>
+    <aside id="panel" aria-live="polite"></aside>
+  </div>
+
+  <section>
+    <h2>近期功能落點</h2>
+    <div class="grid2" id="feats"></div>
+  </section>
+
+  <section>
+    <h2>改動影響最大的節點（god nodes，不含測試）</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>#</th><th>節點</th><th>檔案</th><th style="text-align:right">度數</th><th style="width:18%"></th><th>改了會影響</th></tr></thead>
+      <tbody id="gods"></tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <details>
+      <summary><h2>完整模組圖（98 個模組，建議桌機看）</h2></summary>
+      <p class="note">每個方框是一個 .py，下方是行數。408 條相依做過遞移簡化後剩 104 條。可左右捲動。</p>
+      <div class="paper"><svg style="display:block;width:100%;min-width:1500px;height:auto"
+ viewBox="0.00 0.00 4505.71 1146.00" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(4 1142)">
+<title>M</title>
+<g id="clust1" class="cluster">
+<title>cluster_entry</title>
+<path fill="#f4c7a1" fill-opacity="0.333333" stroke="#888888" stroke-opacity="0.533333" d="M2627.74,-996C2627.74,-996 2873.74,-996 2873.74,-996 2879.74,-996 2885.74,-1002 2885.74,-1008 2885.74,-1008 2885.74,-1118 2885.74,-1118 2885.74,-1124 2879.74,-1130 2873.74,-1130 2873.74,-1130 2627.74,-1130 2627.74,-1130 2621.74,-1130 2615.74,-1124 2615.74,-1118 2615.74,-1118 2615.74,-1008 2615.74,-1008 2615.74,-1002 2621.74,-996 2627.74,-996"/>
+<text text-anchor="start" x="2711.24" y="-1116.6" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-weight="bold" font-size="13.00">入口 / facade</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_post</title>
+<path fill="#e6b8d8" fill-opacity="0.333333" stroke="#888888" stroke-opacity="0.533333" d="M2530.74,-786C2530.74,-786 2873.74,-786 2873.74,-786 2879.74,-786 2885.74,-792 2885.74,-798 2885.74,-798 2885.74,-976 2885.74,-976 2885.74,-982 2879.74,-988 2873.74,-988 2873.74,-988 2530.74,-988 2530.74,-988 2524.74,-988 2518.74,-982 2518.74,-976 2518.74,-976 2518.74,-798 2518.74,-798 2518.74,-792 2524.74,-786 2530.74,-786"/>
+<text text-anchor="start" x="2600.74" y="-974.6" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-weight="bold" font-size="13.00">Central 後回收（HuBERT／句尾）</text>
+</g>
+<g id="clust3" class="cluster">
+<title>cluster_central</title>
+<path fill="#f2a6a6" fill-opacity="0.333333" stroke="#888888" stroke-opacity="0.533333" d="M2317.74,-576C2317.74,-576 2422.74,-576 2422.74,-576 2428.74,-576 2434.74,-582 2434.74,-588 2434.74,-588 2434.74,-840 2434.74,-840 2434.74,-846 2428.74,-852 2422.74,-852 2422.74,-852 2317.74,-852 2317.74,-852 2311.74,-852 2305.74,-846 2305.74,-840 2305.74,-840 2305.74,-588 2305.74,-588 2305.74,-582 2311.74,-576 2317.74,-576"/>
+<text text-anchor="start" x="2313.74" y="-838.6" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-weight="bold" font-size="13.00">Central 仲裁與寫定</text>
+</g>
+<g id="clust4" class="cluster">
+<title>cluster_lw</title>
+<path fill="#c9c3ee" fill-opacity="0.333333" stroke="#888888" stroke-opacity="0.533333" d="M59.74,-292C59.74,-292 524.74,-292 524.74,-292 530.74,-292 536.74,-298 536.74,-304 536.74,-304 536.74,-556 536.74,-556 536.74,-562 530.74,-568 524.74,-568 524.74,-568 59.74,-568 59.74,-568 53.74,-568 47.74,-562 47.74,-556 47.74,-556 47.74,-304 47.74,-304 47.74,-298 53.74,-292 59.74,-292"/>
+<text text-anchor="start" x="226.24" y="-554.6" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-weight="bold" font-size="13.00">whisper.cpp 局部重聽</text>
+</g>
+<g id="clust5" class="cluster">
+<title>cluster_asr</title>
+<path fill="#b5d3f0" fill-opacity="0.333333" stroke="#888888" stroke-opacity="0.533333" d="M2503.74,-292C2503.74,-292 3125.74,-292 3125.74,-292 3131.74,-292 3137.74,-298 3137.74,-304 3137.74,-304 3137.74,-420 3137.74,-420 3137.74,-426 3131.74,-432 3125.74,-432 3125.74,-432 2503.74,-432 2503.74,-432 2497.74,-432 2491.74,-426 2491.74,-420 2491.74,-420 2491.74,-304 2491.74,-304 2491.74,-298 2497.74,-292 2503.74,-292"/>
+<text text-anchor="start" x="2720.74" y="-418.6" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-weight="bold" font-size="13.00">ASR／對齊後端與 helper 子行程</text>
+</g>
+<g id="clust6" class="cluster">
+<title>cluster_hyp</title>
+<path fill="#bfe3d6" fill-opacity="0.333333" stroke="#888888" stroke-opacity="0.533333" d="M2006.74,-718C2006.74,-718 2285.74,-718 2285.74,-718 2291.74,-718 2297.74,-724 2297.74,-730 2297.74,-730 2297.74,-976 2297.74,-976 2297.74,-982 2291.74,-988 2285.74,-988 2285.74,-988 2006.74,-988 2006.74,-988 2000.74,-988 1994.74,-982 1994.74,-976 1994.74,-976 1994.74,-730 1994.74,-730 1994.74,-724 2000.74,-718 2006.74,-718"/>
+<text text-anchor="start" x="2120.24" y="-974.6" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-weight="bold" font-size="13.00">聲學假說</text>
+</g>
+<g id="clust7" class="cluster">
+<title>cluster_ctc</title>
+<path fill="#a9dcc0" fill-opacity="0.333333" stroke="#888888" stroke-opacity="0.533333" d="M1488.74,-76C1488.74,-76 1860.74,-76 1860.74,-76 1866.74,-76 1872.74,-82 1872.74,-88 1872.74,-88 1872.74,-272 1872.74,-272 1872.74,-278 1866.74,-284 1860.74,-284 1860.74,-284 1488.74,-284 1488.74,-284 1482.74,-284 1476.74,-278 1476.74,-272 1476.74,-272 1476.74,-88 1476.74,-88 1476.74,-82 1482.74,-76 1488.74,-76"/>
+<text text-anchor="start" x="1648.24" y="-270.6" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-weight="bold" font-size="13.00">CTC 精修</text>
+</g>
+<g id="clust8" class="cluster">
+<title>cluster_seg</title>
+<path fill="#d7e6a5" fill-opacity="0.333333" stroke="#888888" stroke-opacity="0.533333" d="M556.74,-76C556.74,-76 1437.74,-76 1437.74,-76 1443.74,-76 1449.74,-82 1449.74,-88 1449.74,-88 1449.74,-346 1449.74,-346 1449.74,-352 1443.74,-358 1437.74,-358 1437.74,-358 556.74,-358 556.74,-358 550.74,-358 544.74,-352 544.74,-346 544.74,-346 544.74,-88 544.74,-88 544.74,-82 550.74,-76 556.74,-76"/>
+<text text-anchor="start" x="926.74" y="-344.6" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-weight="bold" font-size="13.00">段落骨架／段落級重對齊</text>
+</g>
+<g id="clust9" class="cluster">
+<title>cluster_timing</title>
+<path fill="#f6e3a1" fill-opacity="0.333333" stroke="#888888" stroke-opacity="0.533333" d="M3157.74,-366C3157.74,-366 3318.74,-366 3318.74,-366 3324.74,-366 3330.74,-372 3330.74,-378 3330.74,-378 3330.74,-698 3330.74,-698 3330.74,-704 3324.74,-710 3318.74,-710 3318.74,-710 3157.74,-710 3157.74,-710 3151.74,-710 3145.74,-704 3145.74,-698 3145.74,-698 3145.74,-378 3145.74,-378 3145.74,-372 3151.74,-366 3157.74,-366"/>
+<text text-anchor="start" x="3174.24" y="-696.6" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-weight="bold" font-size="13.00">時間證據核心與可信度</text>
+</g>
+<g id="clust10" class="cluster">
+<title>cluster_io</title>
+<path fill="#e3d3bd" fill-opacity="0.333333" stroke="#888888" stroke-opacity="0.533333" d="M3157.74,-218C3157.74,-218 3392.74,-218 3392.74,-218 3398.74,-218 3404.74,-224 3404.74,-230 3404.74,-230 3404.74,-346 3404.74,-346 3404.74,-352 3398.74,-358 3392.74,-358 3392.74,-358 3157.74,-358 3157.74,-358 3151.74,-358 3145.74,-352 3145.74,-346 3145.74,-346 3145.74,-230 3145.74,-230 3145.74,-224 3151.74,-218 3157.74,-218"/>
+<text text-anchor="start" x="3217.74" y="-344.6" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-weight="bold" font-size="13.00">音訊特徵／歌詞讀寫</text>
+</g>
+<g id="clust11" class="cluster">
+<title>cluster_base</title>
+<path fill="#d5d8dc" fill-opacity="0.333333" stroke="#888888" stroke-opacity="0.533333" d="M3124.74,-8C3124.74,-8 3386.74,-8 3386.74,-8 3392.74,-8 3398.74,-14 3398.74,-20 3398.74,-20 3398.74,-198 3398.74,-198 3398.74,-204 3392.74,-210 3386.74,-210 3386.74,-210 3124.74,-210 3124.74,-210 3118.74,-210 3112.74,-204 3112.74,-198 3112.74,-198 3112.74,-20 3112.74,-20 3112.74,-14 3118.74,-8 3124.74,-8"/>
+<text text-anchor="start" x="3204.24" y="-196.6" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-weight="bold" font-size="13.00">執行期基礎與快取</text>
+</g>
+<g id="clust12" class="cluster">
+<title>cluster_out</title>
+<path fill="#c8e0e8" fill-opacity="0.333333" stroke="#888888" stroke-opacity="0.533333" d="M2497.74,-76C2497.74,-76 3044.74,-76 3044.74,-76 3050.74,-76 3056.74,-82 3056.74,-88 3056.74,-88 3056.74,-198 3056.74,-198 3056.74,-204 3050.74,-210 3044.74,-210 3044.74,-210 2497.74,-210 2497.74,-210 2491.74,-210 2485.74,-204 2485.74,-198 2485.74,-198 2485.74,-88 2485.74,-88 2485.74,-82 2491.74,-76 2497.74,-76"/>
+<text text-anchor="start" x="2726.24" y="-196.6" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-weight="bold" font-size="13.00">輸出與批次摘要</text>
+</g>
+<g id="clust13" class="cluster">
+<title>cluster_review</title>
+<path fill="#f3c4cf" fill-opacity="0.333333" stroke="#888888" stroke-opacity="0.533333" d="M1892.74,-144C1892.74,-144 2449.74,-144 2449.74,-144 2455.74,-144 2461.74,-150 2461.74,-156 2461.74,-156 2461.74,-346 2461.74,-346 2461.74,-352 2455.74,-358 2449.74,-358 2449.74,-358 1892.74,-358 1892.74,-358 1886.74,-358 1880.74,-352 1880.74,-346 1880.74,-346 1880.74,-156 1880.74,-156 1880.74,-150 1886.74,-144 1892.74,-144"/>
+<text text-anchor="start" x="2052.24" y="-344.6" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-weight="bold" font-size="13.00">審核頁（review_server + index.html）</text>
+</g>
+<g id="clust14" class="cluster">
+<title>cluster_rev</title>
+<path fill="#d9cbe8" fill-opacity="0.333333" stroke="#888888" stroke-opacity="0.533333" d="M2905.74,-922C2905.74,-922 4471.74,-922 4471.74,-922 4477.74,-922 4483.74,-928 4483.74,-934 4483.74,-934 4483.74,-1050 4483.74,-1050 4483.74,-1056 4477.74,-1062 4471.74,-1062 4471.74,-1062 2905.74,-1062 2905.74,-1062 2899.74,-1062 2893.74,-1056 2893.74,-1050 2893.74,-1050 2893.74,-934 2893.74,-934 2893.74,-928 2899.74,-922 2905.74,-922"/>
+<text text-anchor="start" x="3631.24" y="-1048.6" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-weight="bold" font-size="13.00">Reviewer 層（r2）</text>
+</g>
+<!-- auto_lrc -->
+<g id="node1" class="node">
+<title>auto_lrc</title>
+<path fill="#f4c7a1" stroke="#666666" d="M2841.41,-1032C2841.41,-1032 2806.07,-1032 2806.07,-1032 2801.41,-1032 2796.74,-1027.33 2796.74,-1022.67 2796.74,-1022.67 2796.74,-1013.33 2796.74,-1013.33 2796.74,-1008.67 2801.41,-1004 2806.07,-1004 2806.07,-1004 2841.41,-1004 2841.41,-1004 2846.07,-1004 2850.74,-1008.67 2850.74,-1013.33 2850.74,-1013.33 2850.74,-1022.67 2850.74,-1022.67 2850.74,-1027.33 2846.07,-1032 2841.41,-1032"/>
+<text text-anchor="middle" x="2823.74" y="-1021" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">auto_lrc</text>
+<text text-anchor="middle" x="2823.74" y="-1010" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">2,575</text>
+</g>
+<!-- postcentral_recovery -->
+<g id="node5" class="node">
+<title>postcentral_recovery</title>
+<path fill="#e6b8d8" stroke="#666666" d="M2851.91,-958C2851.91,-958 2755.57,-958 2755.57,-958 2750.91,-958 2746.24,-953.33 2746.24,-948.67 2746.24,-948.67 2746.24,-939.33 2746.24,-939.33 2746.24,-934.67 2750.91,-930 2755.57,-930 2755.57,-930 2851.91,-930 2851.91,-930 2856.57,-930 2861.24,-934.67 2861.24,-939.33 2861.24,-939.33 2861.24,-948.67 2861.24,-948.67 2861.24,-953.33 2856.57,-958 2851.91,-958"/>
+<text text-anchor="middle" x="2803.74" y="-947" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">postcentral_recovery</text>
+<text text-anchor="middle" x="2803.74" y="-936" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">949</text>
+</g>
+<!-- auto_lrc&#45;&gt;postcentral_recovery -->
+<g id="edge1" class="edge">
+<title>auto_lrc&#45;&gt;postcentral_recovery</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2820.07,-1003.79C2816.94,-992.53 2812.41,-976.2 2808.91,-963.61"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2810.71,-962.91 2807.38,-958.12 2807,-963.94 2810.71,-962.91"/>
+</g>
+<!-- lrc_publication -->
+<g id="node72" class="node">
+<title>lrc_publication</title>
+<path fill="#c8e0e8" stroke="#666666" d="M2896.41,-180C2896.41,-180 2831.07,-180 2831.07,-180 2826.41,-180 2821.74,-175.33 2821.74,-170.67 2821.74,-170.67 2821.74,-161.33 2821.74,-161.33 2821.74,-156.67 2826.41,-152 2831.07,-152 2831.07,-152 2896.41,-152 2896.41,-152 2901.07,-152 2905.74,-156.67 2905.74,-161.33 2905.74,-161.33 2905.74,-170.67 2905.74,-170.67 2905.74,-175.33 2901.07,-180 2896.41,-180"/>
+<text text-anchor="middle" x="2863.74" y="-169" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">lrc_publication</text>
+<text text-anchor="middle" x="2863.74" y="-158" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">112</text>
+</g>
+<!-- auto_lrc&#45;&gt;lrc_publication -->
+<g id="edge2" class="edge">
+<title>auto_lrc&#45;&gt;lrc_publication</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2796.64,-1016.37C2725.15,-1014.45 2535.55,-1007.54 2515.74,-988 2480.41,-953.16 2503.74,-926.62 2503.74,-877 2503.74,-877 2503.74,-877 2503.74,-807 2503.74,-681.09 2476.74,-650.91 2476.74,-525 2476.74,-525 2476.74,-525 2476.74,-313 2476.74,-302.25 2480.17,-298.49 2488.74,-292 2608.14,-201.48 2683.4,-280.26 2815.74,-210 2827.97,-203.51 2839.59,-193.24 2848.33,-184.37"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2849.97,-185.45 2852.39,-180.15 2847.19,-182.79 2849.97,-185.45"/>
+</g>
+<!-- r2_pipeline -->
+<g id="node2" class="node">
+<title>r2_pipeline</title>
+<path fill="#f4c7a1" stroke="#666666" d="M2867.91,-1100C2867.91,-1100 2819.57,-1100 2819.57,-1100 2814.91,-1100 2810.24,-1095.33 2810.24,-1090.67 2810.24,-1090.67 2810.24,-1081.33 2810.24,-1081.33 2810.24,-1076.67 2814.91,-1072 2819.57,-1072 2819.57,-1072 2867.91,-1072 2867.91,-1072 2872.57,-1072 2877.24,-1076.67 2877.24,-1081.33 2877.24,-1081.33 2877.24,-1090.67 2877.24,-1090.67 2877.24,-1095.33 2872.57,-1100 2867.91,-1100"/>
+<text text-anchor="middle" x="2843.74" y="-1089" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">r2_pipeline</text>
+<text text-anchor="middle" x="2843.74" y="-1078" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">1,379</text>
+</g>
+<!-- r2_pipeline&#45;&gt;auto_lrc -->
+<g id="edge3" class="edge">
+<title>r2_pipeline&#45;&gt;auto_lrc</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2839.79,-1071.96C2836.8,-1062.11 2832.66,-1048.45 2829.34,-1037.47"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2831.12,-1036.72 2827.68,-1032.01 2827.44,-1037.83 2831.12,-1036.72"/>
+</g>
+<!-- reviewer_layer -->
+<g id="node86" class="node">
+<title>reviewer_layer</title>
+<path fill="#d9cbe8" stroke="#666666" d="M4187.91,-958C4187.91,-958 4121.57,-958 4121.57,-958 4116.91,-958 4112.24,-953.33 4112.24,-948.67 4112.24,-948.67 4112.24,-939.33 4112.24,-939.33 4112.24,-934.67 4116.91,-930 4121.57,-930 4121.57,-930 4187.91,-930 4187.91,-930 4192.57,-930 4197.24,-934.67 4197.24,-939.33 4197.24,-939.33 4197.24,-948.67 4197.24,-948.67 4197.24,-953.33 4192.57,-958 4187.91,-958"/>
+<text text-anchor="middle" x="4154.74" y="-947" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">reviewer_layer</text>
+<text text-anchor="middle" x="4154.74" y="-936" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">194</text>
+</g>
+<!-- r2_pipeline&#45;&gt;reviewer_layer -->
+<g id="edge4" class="edge">
+<title>r2_pipeline&#45;&gt;reviewer_layer</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2877.28,-1084.85C3109.38,-1083.77 4468.12,-1076.83 4482.74,-1062 4503.34,-1041.11 4501.82,-1018.28 4482.74,-996 4447.32,-954.65 4285.48,-946.56 4203.15,-945.15"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="4202.89,-943.22 4197.36,-945.06 4202.83,-947.07 4202.89,-943.22"/>
+</g>
+<!-- reviewer_independent_offset -->
+<g id="node87" class="node">
+<title>reviewer_independent_offset</title>
+<path fill="#d9cbe8" stroke="#666666" d="M4466.41,-1032C4466.41,-1032 4331.07,-1032 4331.07,-1032 4326.41,-1032 4321.74,-1027.33 4321.74,-1022.67 4321.74,-1022.67 4321.74,-1013.33 4321.74,-1013.33 4321.74,-1008.67 4326.41,-1004 4331.07,-1004 4331.07,-1004 4466.41,-1004 4466.41,-1004 4471.07,-1004 4475.74,-1008.67 4475.74,-1013.33 4475.74,-1013.33 4475.74,-1022.67 4475.74,-1022.67 4475.74,-1027.33 4471.07,-1032 4466.41,-1032"/>
+<text text-anchor="middle" x="4398.74" y="-1021" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">reviewer_independent_offset</text>
+<text text-anchor="middle" x="4398.74" y="-1010" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">100</text>
+</g>
+<!-- r2_pipeline&#45;&gt;reviewer_independent_offset -->
+<g id="edge5" class="edge">
+<title>r2_pipeline&#45;&gt;reviewer_independent_offset</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2877.54,-1084.91C3090.84,-1084.29 4243.79,-1080.13 4315.74,-1062 4336.99,-1056.65 4358.91,-1044.98 4374.89,-1035.14"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="4376.01,-1036.71 4379.65,-1032.16 4373.97,-1033.45 4376.01,-1036.71"/>
+</g>
+<!-- apply_start_lead -->
+<g id="node3" class="node">
+<title>apply_start_lead</title>
+<path fill="#f4c7a1" stroke="#666666" d="M2787.41,-1100C2787.41,-1100 2712.07,-1100 2712.07,-1100 2707.41,-1100 2702.74,-1095.33 2702.74,-1090.67 2702.74,-1090.67 2702.74,-1081.33 2702.74,-1081.33 2702.74,-1076.67 2707.41,-1072 2712.07,-1072 2712.07,-1072 2787.41,-1072 2787.41,-1072 2792.07,-1072 2796.74,-1076.67 2796.74,-1081.33 2796.74,-1081.33 2796.74,-1090.67 2796.74,-1090.67 2796.74,-1095.33 2792.07,-1100 2787.41,-1100"/>
+<text text-anchor="middle" x="2749.74" y="-1089" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">apply_start_lead</text>
+<text text-anchor="middle" x="2749.74" y="-1078" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">222</text>
+</g>
+<!-- lrc_scoring -->
+<g id="node4" class="node">
+<title>lrc_scoring</title>
+<path fill="#f4c7a1" stroke="#666666" d="M2679.91,-1100C2679.91,-1100 2633.57,-1100 2633.57,-1100 2628.91,-1100 2624.24,-1095.33 2624.24,-1090.67 2624.24,-1090.67 2624.24,-1081.33 2624.24,-1081.33 2624.24,-1076.67 2628.91,-1072 2633.57,-1072 2633.57,-1072 2679.91,-1072 2679.91,-1072 2684.57,-1072 2689.24,-1076.67 2689.24,-1081.33 2689.24,-1081.33 2689.24,-1090.67 2689.24,-1090.67 2689.24,-1095.33 2684.57,-1100 2679.91,-1100"/>
+<text text-anchor="middle" x="2656.74" y="-1089" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">lrc_scoring</text>
+<text text-anchor="middle" x="2656.74" y="-1078" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">380</text>
+</g>
+<!-- postcentral_tail_acquisition -->
+<g id="node6" class="node">
+<title>postcentral_tail_acquisition</title>
+<path fill="#e6b8d8" stroke="#666666" d="M2867.91,-890C2867.91,-890 2739.57,-890 2739.57,-890 2734.91,-890 2730.24,-885.33 2730.24,-880.67 2730.24,-880.67 2730.24,-871.33 2730.24,-871.33 2730.24,-866.67 2734.91,-862 2739.57,-862 2739.57,-862 2867.91,-862 2867.91,-862 2872.57,-862 2877.24,-866.67 2877.24,-871.33 2877.24,-871.33 2877.24,-880.67 2877.24,-880.67 2877.24,-885.33 2872.57,-890 2867.91,-890"/>
+<text text-anchor="middle" x="2803.74" y="-879" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">postcentral_tail_acquisition</text>
+<text text-anchor="middle" x="2803.74" y="-868" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">1,672</text>
+</g>
+<!-- postcentral_recovery&#45;&gt;postcentral_tail_acquisition -->
+<g id="edge6" class="edge">
+<title>postcentral_recovery&#45;&gt;postcentral_tail_acquisition</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2803.74,-929.96C2803.74,-920.2 2803.74,-906.7 2803.74,-895.78"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2805.66,-895.51 2803.74,-890.01 2801.81,-895.51 2805.66,-895.51"/>
+</g>
+<!-- hubert_existing_candidate_recovery -->
+<g id="node8" class="node">
+<title>hubert_existing_candidate_recovery</title>
+<path fill="#e6b8d8" stroke="#666666" d="M2707.41,-890C2707.41,-890 2536.07,-890 2536.07,-890 2531.41,-890 2526.74,-885.33 2526.74,-880.67 2526.74,-880.67 2526.74,-871.33 2526.74,-871.33 2526.74,-866.67 2531.41,-862 2536.07,-862 2536.07,-862 2707.41,-862 2707.41,-862 2712.07,-862 2716.74,-866.67 2716.74,-871.33 2716.74,-871.33 2716.74,-880.67 2716.74,-880.67 2716.74,-885.33 2712.07,-890 2707.41,-890"/>
+<text text-anchor="middle" x="2621.74" y="-879" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">hubert_existing_candidate_recovery</text>
+<text text-anchor="middle" x="2621.74" y="-868" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">839</text>
+</g>
+<!-- postcentral_recovery&#45;&gt;hubert_existing_candidate_recovery -->
+<g id="edge7" class="edge">
+<title>postcentral_recovery&#45;&gt;hubert_existing_candidate_recovery</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2767.78,-929.96C2737.62,-919.02 2694.53,-903.4 2662.98,-891.95"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2663.45,-890.08 2657.62,-890.01 2662.14,-893.7 2663.45,-890.08"/>
+</g>
+<!-- known_lyric_hubert_planning -->
+<g id="node7" class="node">
+<title>known_lyric_hubert_planning</title>
+<path fill="#e6b8d8" stroke="#666666" d="M2778.91,-822C2778.91,-822 2642.57,-822 2642.57,-822 2637.91,-822 2633.24,-817.33 2633.24,-812.67 2633.24,-812.67 2633.24,-803.33 2633.24,-803.33 2633.24,-798.67 2637.91,-794 2642.57,-794 2642.57,-794 2778.91,-794 2778.91,-794 2783.57,-794 2788.24,-798.67 2788.24,-803.33 2788.24,-803.33 2788.24,-812.67 2788.24,-812.67 2788.24,-817.33 2783.57,-822 2778.91,-822"/>
+<text text-anchor="middle" x="2710.74" y="-811" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">known_lyric_hubert_planning</text>
+<text text-anchor="middle" x="2710.74" y="-800" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">1,124</text>
+</g>
+<!-- postcentral_tail_acquisition&#45;&gt;known_lyric_hubert_planning -->
+<g id="edge8" class="edge">
+<title>postcentral_tail_acquisition&#45;&gt;known_lyric_hubert_planning</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2785.37,-861.96C2770.59,-851.47 2749.75,-836.68 2733.84,-825.39"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2734.67,-823.63 2729.07,-822.01 2732.45,-826.77 2734.67,-823.63"/>
+</g>
+<!-- backend_bundle -->
+<g id="node10" class="node">
+<title>backend_bundle</title>
+<path fill="#f2a6a6" stroke="#666666" d="M2407.91,-680C2407.91,-680 2335.57,-680 2335.57,-680 2330.91,-680 2326.24,-675.33 2326.24,-670.67 2326.24,-670.67 2326.24,-661.33 2326.24,-661.33 2326.24,-656.67 2330.91,-652 2335.57,-652 2335.57,-652 2407.91,-652 2407.91,-652 2412.57,-652 2417.24,-656.67 2417.24,-661.33 2417.24,-661.33 2417.24,-670.67 2417.24,-670.67 2417.24,-675.33 2412.57,-680 2407.91,-680"/>
+<text text-anchor="middle" x="2371.74" y="-669" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">backend_bundle</text>
+<text text-anchor="middle" x="2371.74" y="-658" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">2,982</text>
+</g>
+<!-- known_lyric_hubert_planning&#45;&gt;backend_bundle -->
+<g id="edge9" class="edge">
+<title>known_lyric_hubert_planning&#45;&gt;backend_bundle</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2679.15,-793.95C2616.32,-768.01 2475.96,-710.04 2408.85,-682.33"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2409.19,-680.38 2403.37,-680.06 2407.72,-683.94 2409.19,-680.38"/>
+</g>
+<!-- numeral_reading -->
+<g id="node64" class="node">
+<title>numeral_reading</title>
+<path fill="#e3d3bd" stroke="#666666" d="M3319.91,-328C3319.91,-328 3243.57,-328 3243.57,-328 3238.91,-328 3234.24,-323.33 3234.24,-318.67 3234.24,-318.67 3234.24,-309.33 3234.24,-309.33 3234.24,-304.67 3238.91,-300 3243.57,-300 3243.57,-300 3319.91,-300 3319.91,-300 3324.57,-300 3329.24,-304.67 3329.24,-309.33 3329.24,-309.33 3329.24,-318.67 3329.24,-318.67 3329.24,-323.33 3324.57,-328 3319.91,-328"/>
+<text text-anchor="middle" x="3281.74" y="-317" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">numeral_reading</text>
+<text text-anchor="middle" x="3281.74" y="-306" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">50</text>
+</g>
+<!-- known_lyric_hubert_planning&#45;&gt;numeral_reading -->
+<g id="edge10" class="edge">
+<title>known_lyric_hubert_planning&#45;&gt;numeral_reading</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2788.41,-805.11C2937.11,-799.9 3254.32,-780.58 3333.74,-710 3348.57,-696.82 3345.74,-686.84 3345.74,-667 3345.74,-667 3345.74,-667 3345.74,-455 3345.74,-415.09 3351.62,-401.68 3333.74,-366 3327.05,-352.65 3315.46,-340.76 3304.92,-331.82"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3305.95,-330.18 3300.48,-328.18 3303.51,-333.16 3305.95,-330.18"/>
+</g>
+<!-- hubert_existing_candidate_recovery&#45;&gt;known_lyric_hubert_planning -->
+<g id="edge11" class="edge">
+<title>hubert_existing_candidate_recovery&#45;&gt;known_lyric_hubert_planning</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2639.32,-861.96C2653.46,-851.47 2673.41,-836.68 2688.63,-825.39"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2689.92,-826.83 2693.19,-822.01 2687.63,-823.74 2689.92,-826.83"/>
+</g>
+<!-- neutral_arbitration -->
+<g id="node12" class="node">
+<title>neutral_arbitration</title>
+<path fill="#f2a6a6" stroke="#666666" d="M2414.91,-822C2414.91,-822 2330.57,-822 2330.57,-822 2325.91,-822 2321.24,-817.33 2321.24,-812.67 2321.24,-812.67 2321.24,-803.33 2321.24,-803.33 2321.24,-798.67 2325.91,-794 2330.57,-794 2330.57,-794 2414.91,-794 2414.91,-794 2419.57,-794 2424.24,-798.67 2424.24,-803.33 2424.24,-803.33 2424.24,-812.67 2424.24,-812.67 2424.24,-817.33 2419.57,-822 2414.91,-822"/>
+<text text-anchor="middle" x="2372.74" y="-811" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">neutral_arbitration</text>
+<text text-anchor="middle" x="2372.74" y="-800" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">1,396</text>
+</g>
+<!-- hubert_existing_candidate_recovery&#45;&gt;neutral_arbitration -->
+<g id="edge12" class="edge">
+<title>hubert_existing_candidate_recovery&#45;&gt;neutral_arbitration</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2557.65,-861.94C2543.78,-858.88 2529.23,-855.49 2515.74,-852 2483.03,-843.55 2446.57,-832.56 2418.65,-823.81"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2419.01,-821.9 2413.18,-822.09 2417.85,-825.57 2419.01,-821.9"/>
+</g>
+<!-- central_commit -->
+<g id="node9" class="node">
+<title>central_commit</title>
+<path fill="#f2a6a6" stroke="#666666" d="M2399.91,-612C2399.91,-612 2329.57,-612 2329.57,-612 2324.91,-612 2320.24,-607.33 2320.24,-602.67 2320.24,-602.67 2320.24,-593.33 2320.24,-593.33 2320.24,-588.67 2324.91,-584 2329.57,-584 2329.57,-584 2399.91,-584 2399.91,-584 2404.57,-584 2409.24,-588.67 2409.24,-593.33 2409.24,-593.33 2409.24,-602.67 2409.24,-602.67 2409.24,-607.33 2404.57,-612 2399.91,-612"/>
+<text text-anchor="middle" x="2364.74" y="-601" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">central_commit</text>
+<text text-anchor="middle" x="2364.74" y="-590" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">2,769</text>
+</g>
+<!-- local_whisper_retry -->
+<g id="node13" class="node">
+<title>local_whisper_retry</title>
+<path fill="#c9c3ee" stroke="#666666" d="M482.41,-538C482.41,-538 393.07,-538 393.07,-538 388.41,-538 383.74,-533.33 383.74,-528.67 383.74,-528.67 383.74,-519.33 383.74,-519.33 383.74,-514.67 388.41,-510 393.07,-510 393.07,-510 482.41,-510 482.41,-510 487.07,-510 491.74,-514.67 491.74,-519.33 491.74,-519.33 491.74,-528.67 491.74,-528.67 491.74,-533.33 487.07,-538 482.41,-538"/>
+<text text-anchor="middle" x="437.74" y="-527" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">local_whisper_retry</text>
+<text text-anchor="middle" x="437.74" y="-516" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">2,167</text>
+</g>
+<!-- central_commit&#45;&gt;local_whisper_retry -->
+<g id="edge13" class="edge">
+<title>central_commit&#45;&gt;local_whisper_retry</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2319.94,-595.33C2064.3,-585.77 790.99,-538.2 497.95,-527.25"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="497.61,-525.31 492.04,-527.03 497.46,-529.16 497.61,-525.31"/>
+</g>
+<!-- segment_production -->
+<g id="node47" class="node">
+<title>segment_production</title>
+<path fill="#d7e6a5" stroke="#666666" d="M890.41,-254C890.41,-254 797.07,-254 797.07,-254 792.41,-254 787.74,-249.33 787.74,-244.67 787.74,-244.67 787.74,-235.33 787.74,-235.33 787.74,-230.67 792.41,-226 797.07,-226 797.07,-226 890.41,-226 890.41,-226 895.07,-226 899.74,-230.67 899.74,-235.33 899.74,-235.33 899.74,-244.67 899.74,-244.67 899.74,-249.33 895.07,-254 890.41,-254"/>
+<text text-anchor="middle" x="843.74" y="-243" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">segment_production</text>
+<text text-anchor="middle" x="843.74" y="-232" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">224</text>
+</g>
+<!-- central_commit&#45;&gt;segment_production -->
+<g id="edge14" class="edge">
+<title>central_commit&#45;&gt;segment_production</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2319.99,-596.84C1997.88,-595.64 45.26,-587.58 22.74,-568 -14.93,-535.26 5.74,-506.91 5.74,-457 5.74,-457 5.74,-457 5.74,-387 5.74,-344.11 -9.28,-320.54 22.74,-292 79,-241.87 600.56,-239.73 781.93,-240.53"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="781.95,-242.45 787.46,-240.55 781.97,-238.6 781.95,-242.45"/>
+</g>
+<!-- backend_bundle&#45;&gt;central_commit -->
+<g id="edge15" class="edge">
+<title>backend_bundle&#45;&gt;central_commit</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2370.36,-651.96C2369.32,-642.2 2367.89,-628.7 2366.73,-617.78"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2368.61,-617.28 2366.12,-612.01 2364.79,-617.68 2368.61,-617.28"/>
+</g>
+<!-- central_commit_tail -->
+<g id="node11" class="node">
+<title>central_commit_tail</title>
+<path fill="#f2a6a6" stroke="#666666" d="M2417.41,-754C2417.41,-754 2326.07,-754 2326.07,-754 2321.41,-754 2316.74,-749.33 2316.74,-744.67 2316.74,-744.67 2316.74,-735.33 2316.74,-735.33 2316.74,-730.67 2321.41,-726 2326.07,-726 2326.07,-726 2417.41,-726 2417.41,-726 2422.07,-726 2426.74,-730.67 2426.74,-735.33 2426.74,-735.33 2426.74,-744.67 2426.74,-744.67 2426.74,-749.33 2422.07,-754 2417.41,-754"/>
+<text text-anchor="middle" x="2371.74" y="-743" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">central_commit_tail</text>
+<text text-anchor="middle" x="2371.74" y="-732" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">403</text>
+</g>
+<!-- central_commit_tail&#45;&gt;backend_bundle -->
+<g id="edge16" class="edge">
+<title>central_commit_tail&#45;&gt;backend_bundle</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2371.74,-725.79C2371.74,-714.63 2371.74,-698.5 2371.74,-685.95"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2373.66,-685.62 2371.74,-680.12 2369.81,-685.62 2373.66,-685.62"/>
+</g>
+<!-- neutral_arbitration&#45;&gt;central_commit_tail -->
+<g id="edge17" class="edge">
+<title>neutral_arbitration&#45;&gt;central_commit_tail</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2372.54,-793.96C2372.39,-784.2 2372.19,-770.7 2372.02,-759.78"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2373.94,-759.48 2371.94,-754.01 2370.1,-759.54 2373.94,-759.48"/>
+</g>
+<!-- local_whisper_requests -->
+<g id="node14" class="node">
+<title>local_whisper_requests</title>
+<path fill="#c9c3ee" stroke="#666666" d="M323.91,-470C323.91,-470 215.57,-470 215.57,-470 210.91,-470 206.24,-465.33 206.24,-460.67 206.24,-460.67 206.24,-451.33 206.24,-451.33 206.24,-446.67 210.91,-442 215.57,-442 215.57,-442 323.91,-442 323.91,-442 328.57,-442 333.24,-446.67 333.24,-451.33 333.24,-451.33 333.24,-460.67 333.24,-460.67 333.24,-465.33 328.57,-470 323.91,-470"/>
+<text text-anchor="middle" x="269.74" y="-459" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">local_whisper_requests</text>
+<text text-anchor="middle" x="269.74" y="-448" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">773</text>
+</g>
+<!-- local_whisper_retry&#45;&gt;local_whisper_requests -->
+<g id="edge18" class="edge">
+<title>local_whisper_retry&#45;&gt;local_whisper_requests</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M404.55,-509.96C376.82,-499.07 337.26,-483.53 308.17,-472.1"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="308.68,-470.23 302.86,-470.01 307.28,-473.82 308.68,-470.23"/>
+</g>
+<!-- crossline_retry_execution -->
+<g id="node16" class="node">
+<title>crossline_retry_execution</title>
+<path fill="#c9c3ee" stroke="#666666" d="M183.91,-470C183.91,-470 65.57,-470 65.57,-470 60.91,-470 56.24,-465.33 56.24,-460.67 56.24,-460.67 56.24,-451.33 56.24,-451.33 56.24,-446.67 60.91,-442 65.57,-442 65.57,-442 183.91,-442 183.91,-442 188.57,-442 193.24,-446.67 193.24,-451.33 193.24,-451.33 193.24,-460.67 193.24,-460.67 193.24,-465.33 188.57,-470 183.91,-470"/>
+<text text-anchor="middle" x="124.74" y="-459" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">crossline_retry_execution</text>
+<text text-anchor="middle" x="124.74" y="-448" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">936</text>
+</g>
+<!-- local_whisper_retry&#45;&gt;crossline_retry_execution -->
+<g id="edge19" class="edge">
+<title>local_whisper_retry&#45;&gt;crossline_retry_execution</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M383.58,-511.58C330.44,-500.37 249.27,-483.26 192.02,-471.19"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="192.33,-469.29 186.55,-470.03 191.54,-473.05 192.33,-469.29"/>
+</g>
+<!-- local_whisper_incremental_budget -->
+<g id="node17" class="node">
+<title>local_whisper_incremental_budget</title>
+<path fill="#c9c3ee" stroke="#666666" d="M519.41,-470C519.41,-470 356.07,-470 356.07,-470 351.41,-470 346.74,-465.33 346.74,-460.67 346.74,-460.67 346.74,-451.33 346.74,-451.33 346.74,-446.67 351.41,-442 356.07,-442 356.07,-442 519.41,-442 519.41,-442 524.07,-442 528.74,-446.67 528.74,-451.33 528.74,-451.33 528.74,-460.67 528.74,-460.67 528.74,-465.33 524.07,-470 519.41,-470"/>
+<text text-anchor="middle" x="437.74" y="-459" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">local_whisper_incremental_budget</text>
+<text text-anchor="middle" x="437.74" y="-448" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">67</text>
+</g>
+<!-- local_whisper_retry&#45;&gt;local_whisper_incremental_budget -->
+<g id="edge20" class="edge">
+<title>local_whisper_retry&#45;&gt;local_whisper_incremental_budget</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M437.74,-509.96C437.74,-500.2 437.74,-486.7 437.74,-475.78"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="439.66,-475.51 437.74,-470.01 435.81,-475.51 439.66,-475.51"/>
+</g>
+<!-- segment_peer_outlier -->
+<g id="node45" class="node">
+<title>segment_peer_outlier</title>
+<path fill="#d7e6a5" stroke="#666666" d="M662.91,-328C662.91,-328 562.57,-328 562.57,-328 557.91,-328 553.24,-323.33 553.24,-318.67 553.24,-318.67 553.24,-309.33 553.24,-309.33 553.24,-304.67 557.91,-300 562.57,-300 562.57,-300 662.91,-300 662.91,-300 667.57,-300 672.24,-304.67 672.24,-309.33 672.24,-309.33 672.24,-318.67 672.24,-318.67 672.24,-323.33 667.57,-328 662.91,-328"/>
+<text text-anchor="middle" x="612.74" y="-317" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">segment_peer_outlier</text>
+<text text-anchor="middle" x="612.74" y="-306" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">35</text>
+</g>
+<!-- local_whisper_retry&#45;&gt;segment_peer_outlier -->
+<g id="edge21" class="edge">
+<title>local_whisper_retry&#45;&gt;segment_peer_outlier</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M472.97,-509.95C493.04,-501.12 517.53,-487.8 534.74,-470 573.96,-429.42 597.55,-365.23 607.38,-333.71"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="609.29,-334.04 609.06,-328.22 605.61,-332.92 609.29,-334.04"/>
+</g>
+<!-- asr_backends -->
+<g id="node19" class="node">
+<title>asr_backends</title>
+<path fill="#b5d3f0" stroke="#666666" d="M2821.91,-402C2821.91,-402 2761.57,-402 2761.57,-402 2756.91,-402 2752.24,-397.33 2752.24,-392.67 2752.24,-392.67 2752.24,-383.33 2752.24,-383.33 2752.24,-378.67 2756.91,-374 2761.57,-374 2761.57,-374 2821.91,-374 2821.91,-374 2826.57,-374 2831.24,-378.67 2831.24,-383.33 2831.24,-383.33 2831.24,-392.67 2831.24,-392.67 2831.24,-397.33 2826.57,-402 2821.91,-402"/>
+<text text-anchor="middle" x="2791.74" y="-391" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">asr_backends</text>
+<text text-anchor="middle" x="2791.74" y="-380" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">2,797</text>
+</g>
+<!-- local_whisper_requests&#45;&gt;asr_backends -->
+<g id="edge22" class="edge">
+<title>local_whisper_requests&#45;&gt;asr_backends</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M333.38,-442.68C335.52,-442.43 337.65,-442.2 339.74,-442 373.01,-438.87 2714.68,-444.33 2745.74,-432 2758.78,-426.82 2770.31,-416.03 2778.56,-406.55"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2780.05,-407.76 2782.12,-402.31 2777.11,-405.29 2780.05,-407.76"/>
+</g>
+<!-- crossline_retry_planning -->
+<g id="node15" class="node">
+<title>crossline_retry_planning</title>
+<path fill="#c9c3ee" stroke="#666666" d="M265.41,-402C265.41,-402 152.07,-402 152.07,-402 147.41,-402 142.74,-397.33 142.74,-392.67 142.74,-392.67 142.74,-383.33 142.74,-383.33 142.74,-378.67 147.41,-374 152.07,-374 152.07,-374 265.41,-374 265.41,-374 270.07,-374 274.74,-378.67 274.74,-383.33 274.74,-383.33 274.74,-392.67 274.74,-392.67 274.74,-397.33 270.07,-402 265.41,-402"/>
+<text text-anchor="middle" x="208.74" y="-391" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">crossline_retry_planning</text>
+<text text-anchor="middle" x="208.74" y="-380" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">486</text>
+</g>
+<!-- runtime_evidence_binding -->
+<g id="node18" class="node">
+<title>runtime_evidence_binding</title>
+<path fill="#c9c3ee" stroke="#666666" d="M353.41,-328C353.41,-328 230.07,-328 230.07,-328 225.41,-328 220.74,-323.33 220.74,-318.67 220.74,-318.67 220.74,-309.33 220.74,-309.33 220.74,-304.67 225.41,-300 230.07,-300 230.07,-300 353.41,-300 353.41,-300 358.07,-300 362.74,-304.67 362.74,-309.33 362.74,-309.33 362.74,-318.67 362.74,-318.67 362.74,-323.33 358.07,-328 353.41,-328"/>
+<text text-anchor="middle" x="291.74" y="-317" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">runtime_evidence_binding</text>
+<text text-anchor="middle" x="291.74" y="-306" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">1,203</text>
+</g>
+<!-- crossline_retry_planning&#45;&gt;runtime_evidence_binding -->
+<g id="edge23" class="edge">
+<title>crossline_retry_planning&#45;&gt;runtime_evidence_binding</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M223.96,-373.79C237.53,-362.02 257.48,-344.72 272.22,-331.93"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="273.72,-333.18 276.61,-328.12 271.2,-330.27 273.72,-333.18"/>
+</g>
+<!-- crossline_retry_execution&#45;&gt;crossline_retry_planning -->
+<g id="edge24" class="edge">
+<title>crossline_retry_execution&#45;&gt;crossline_retry_planning</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M141.33,-441.96C154.57,-431.56 173.18,-416.94 187.5,-405.69"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="189.04,-406.92 192.18,-402.01 186.66,-403.9 189.04,-406.92"/>
+</g>
+<!-- ctc_refinement -->
+<g id="node31" class="node">
+<title>ctc_refinement</title>
+<path fill="#a9dcc0" stroke="#666666" d="M1572.91,-254C1572.91,-254 1506.57,-254 1506.57,-254 1501.91,-254 1497.24,-249.33 1497.24,-244.67 1497.24,-244.67 1497.24,-235.33 1497.24,-235.33 1497.24,-230.67 1501.91,-226 1506.57,-226 1506.57,-226 1572.91,-226 1572.91,-226 1577.57,-226 1582.24,-230.67 1582.24,-235.33 1582.24,-235.33 1582.24,-244.67 1582.24,-244.67 1582.24,-249.33 1577.57,-254 1572.91,-254"/>
+<text text-anchor="middle" x="1539.74" y="-243" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">ctc_refinement</text>
+<text text-anchor="middle" x="1539.74" y="-232" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">682</text>
+</g>
+<!-- runtime_evidence_binding&#45;&gt;ctc_refinement -->
+<g id="edge25" class="edge">
+<title>runtime_evidence_binding&#45;&gt;ctc_refinement</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M362.77,-305.6C412.76,-300.75 481.26,-294.8 541.74,-292 567.63,-290.8 1449.95,-291.57 1474.74,-284 1491.8,-278.79 1508.52,-267.54 1520.73,-257.86"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="1521.96,-259.34 1525.02,-254.38 1519.54,-256.35 1521.96,-259.34"/>
+</g>
+<!-- acoustic_hypotheses -->
+<g id="node26" class="node">
+<title>acoustic_hypotheses</title>
+<path fill="#bfe3d6" stroke="#666666" d="M2273.91,-958C2273.91,-958 2177.57,-958 2177.57,-958 2172.91,-958 2168.24,-953.33 2168.24,-948.67 2168.24,-948.67 2168.24,-939.33 2168.24,-939.33 2168.24,-934.67 2172.91,-930 2177.57,-930 2177.57,-930 2273.91,-930 2273.91,-930 2278.57,-930 2283.24,-934.67 2283.24,-939.33 2283.24,-939.33 2283.24,-948.67 2283.24,-948.67 2283.24,-953.33 2278.57,-958 2273.91,-958"/>
+<text text-anchor="middle" x="2225.74" y="-947" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">acoustic_hypotheses</text>
+<text text-anchor="middle" x="2225.74" y="-936" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">1,977</text>
+</g>
+<!-- asr_backends&#45;&gt;acoustic_hypotheses -->
+<g id="edge26" class="edge">
+<title>asr_backends&#45;&gt;acoustic_hypotheses</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2779.2,-402.32C2770.34,-411.31 2757.93,-423.11 2745.74,-432 2624.05,-520.75 2449.74,-446.39 2449.74,-597 2449.74,-809 2449.74,-809 2449.74,-809 2449.74,-884.37 2355.19,-918.37 2288.94,-932.94"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2288.4,-931.08 2283.42,-934.12 2289.21,-934.85 2288.4,-931.08"/>
+</g>
+<!-- segment_skeleton_production -->
+<g id="node53" class="node">
+<title>segment_skeleton_production</title>
+<path fill="#d7e6a5" stroke="#666666" d="M1178.91,-328C1178.91,-328 1038.57,-328 1038.57,-328 1033.91,-328 1029.24,-323.33 1029.24,-318.67 1029.24,-318.67 1029.24,-309.33 1029.24,-309.33 1029.24,-304.67 1033.91,-300 1038.57,-300 1038.57,-300 1178.91,-300 1178.91,-300 1183.57,-300 1188.24,-304.67 1188.24,-309.33 1188.24,-309.33 1188.24,-318.67 1188.24,-318.67 1188.24,-323.33 1183.57,-328 1178.91,-328"/>
+<text text-anchor="middle" x="1108.74" y="-317" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">segment_skeleton_production</text>
+<text text-anchor="middle" x="1108.74" y="-306" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">611</text>
+</g>
+<!-- asr_backends&#45;&gt;segment_skeleton_production -->
+<g id="edge27" class="edge">
+<title>asr_backends&#45;&gt;segment_skeleton_production</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2768.06,-373.88C2761.08,-370.66 2753.28,-367.66 2745.74,-366 2661.59,-347.47 1278.55,-378.01 1194.74,-358 1172.67,-352.73 1149.79,-340.93 1133.18,-331.02"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="1133.94,-329.23 1128.24,-328.02 1131.94,-332.52 1133.94,-329.23"/>
+</g>
+<!-- multimodel_consensus -->
+<g id="node20" class="node">
+<title>multimodel_consensus</title>
+<path fill="#b5d3f0" stroke="#666666" d="M3060.91,-328C3060.91,-328 2954.57,-328 2954.57,-328 2949.91,-328 2945.24,-323.33 2945.24,-318.67 2945.24,-318.67 2945.24,-309.33 2945.24,-309.33 2945.24,-304.67 2949.91,-300 2954.57,-300 2954.57,-300 3060.91,-300 3060.91,-300 3065.57,-300 3070.24,-304.67 3070.24,-309.33 3070.24,-309.33 3070.24,-318.67 3070.24,-318.67 3070.24,-323.33 3065.57,-328 3060.91,-328"/>
+<text text-anchor="middle" x="3007.74" y="-317" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">multimodel_consensus</text>
+<text text-anchor="middle" x="3007.74" y="-306" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">514</text>
+</g>
+<!-- file_digest -->
+<g id="node69" class="node">
+<title>file_digest</title>
+<path fill="#d5d8dc" stroke="#666666" d="M3265.91,-112C3265.91,-112 3221.57,-112 3221.57,-112 3216.91,-112 3212.24,-107.33 3212.24,-102.67 3212.24,-102.67 3212.24,-93.33 3212.24,-93.33 3212.24,-88.67 3216.91,-84 3221.57,-84 3221.57,-84 3265.91,-84 3265.91,-84 3270.57,-84 3275.24,-88.67 3275.24,-93.33 3275.24,-93.33 3275.24,-102.67 3275.24,-102.67 3275.24,-107.33 3270.57,-112 3265.91,-112"/>
+<text text-anchor="middle" x="3243.74" y="-101" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">file_digest</text>
+<text text-anchor="middle" x="3243.74" y="-90" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">82</text>
+</g>
+<!-- multimodel_consensus&#45;&gt;file_digest -->
+<g id="edge28" class="edge">
+<title>multimodel_consensus&#45;&gt;file_digest</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M3036.75,-299.96C3043.98,-295.68 3051.23,-290.35 3056.74,-284 3100.87,-233.13 3065.77,-190.24 3114.74,-144 3115.63,-143.16 3168.89,-124.73 3206.69,-111.72"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3207.57,-113.46 3212.15,-109.85 3206.32,-109.82 3207.57,-113.46"/>
+</g>
+<!-- review_server -->
+<g id="node78" class="node">
+<title>review_server</title>
+<path fill="#f3c4cf" stroke="#666666" d="M2443.41,-254C2443.41,-254 2380.07,-254 2380.07,-254 2375.41,-254 2370.74,-249.33 2370.74,-244.67 2370.74,-244.67 2370.74,-235.33 2370.74,-235.33 2370.74,-230.67 2375.41,-226 2380.07,-226 2380.07,-226 2443.41,-226 2443.41,-226 2448.07,-226 2452.74,-230.67 2452.74,-235.33 2452.74,-235.33 2452.74,-244.67 2452.74,-244.67 2452.74,-249.33 2448.07,-254 2443.41,-254"/>
+<text text-anchor="middle" x="2411.74" y="-243" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">review_server</text>
+<text text-anchor="middle" x="2411.74" y="-232" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">3,336</text>
+</g>
+<!-- multimodel_consensus&#45;&gt;review_server -->
+<g id="edge29" class="edge">
+<title>multimodel_consensus&#45;&gt;review_server</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2945.08,-305.43C2824.99,-290.92 2564.91,-259.5 2458.53,-246.65"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2458.66,-244.73 2452.97,-245.98 2458.2,-248.55 2458.66,-244.73"/>
+</g>
+<!-- multimodel_align -->
+<g id="node21" class="node">
+<title>multimodel_align</title>
+<path fill="#b5d3f0" stroke="#666666" d="M2932.41,-402C2932.41,-402 2853.07,-402 2853.07,-402 2848.41,-402 2843.74,-397.33 2843.74,-392.67 2843.74,-392.67 2843.74,-383.33 2843.74,-383.33 2843.74,-378.67 2848.41,-374 2853.07,-374 2853.07,-374 2932.41,-374 2932.41,-374 2937.07,-374 2941.74,-378.67 2941.74,-383.33 2941.74,-383.33 2941.74,-392.67 2941.74,-392.67 2941.74,-397.33 2937.07,-402 2932.41,-402"/>
+<text text-anchor="middle" x="2892.74" y="-391" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">multimodel_align</text>
+<text text-anchor="middle" x="2892.74" y="-380" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">350</text>
+</g>
+<!-- multimodel_align&#45;&gt;multimodel_consensus -->
+<g id="edge30" class="edge">
+<title>multimodel_align&#45;&gt;multimodel_consensus</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2913.56,-373.96C2932.74,-361.96 2961.25,-344.1 2981.88,-331.19"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2983.04,-332.74 2986.68,-328.18 2981,-329.47 2983.04,-332.74"/>
+</g>
+<!-- ctc_align -->
+<g id="node22" class="node">
+<title>ctc_align</title>
+<path fill="#b5d3f0" stroke="#666666" d="M3120.41,-402C3120.41,-402 3083.07,-402 3083.07,-402 3078.41,-402 3073.74,-397.33 3073.74,-392.67 3073.74,-392.67 3073.74,-383.33 3073.74,-383.33 3073.74,-378.67 3078.41,-374 3083.07,-374 3083.07,-374 3120.41,-374 3120.41,-374 3125.07,-374 3129.74,-378.67 3129.74,-383.33 3129.74,-383.33 3129.74,-392.67 3129.74,-392.67 3129.74,-397.33 3125.07,-402 3120.41,-402"/>
+<text text-anchor="middle" x="3101.74" y="-391" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">ctc_align</text>
+<text text-anchor="middle" x="3101.74" y="-380" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">382</text>
+</g>
+<!-- ctc_align&#45;&gt;numeral_reading -->
+<g id="edge31" class="edge">
+<title>ctc_align&#45;&gt;numeral_reading</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M3123.66,-373.84C3129.66,-370.79 3136.29,-367.88 3142.74,-366 3179.17,-355.38 3192.55,-372.19 3227.74,-358 3241.94,-352.28 3255.41,-341.56 3265.35,-332.25"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3266.76,-333.57 3269.39,-328.37 3264.09,-330.8 3266.76,-333.57"/>
+</g>
+<!-- japanese_ctc_align -->
+<g id="node23" class="node">
+<title>japanese_ctc_align</title>
+<path fill="#b5d3f0" stroke="#666666" d="M3051.41,-402C3051.41,-402 2964.07,-402 2964.07,-402 2959.41,-402 2954.74,-397.33 2954.74,-392.67 2954.74,-392.67 2954.74,-383.33 2954.74,-383.33 2954.74,-378.67 2959.41,-374 2964.07,-374 2964.07,-374 3051.41,-374 3051.41,-374 3056.07,-374 3060.74,-378.67 3060.74,-383.33 3060.74,-383.33 3060.74,-392.67 3060.74,-392.67 3060.74,-397.33 3056.07,-402 3051.41,-402"/>
+<text text-anchor="middle" x="3007.74" y="-391" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">japanese_ctc_align</text>
+<text text-anchor="middle" x="3007.74" y="-380" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">153</text>
+</g>
+<!-- japanese_ctc_align&#45;&gt;multimodel_consensus -->
+<g id="edge32" class="edge">
+<title>japanese_ctc_align&#45;&gt;multimodel_consensus</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M3007.74,-373.79C3007.74,-362.63 3007.74,-346.5 3007.74,-333.95"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3009.66,-333.62 3007.74,-328.12 3005.81,-333.62 3009.66,-333.62"/>
+</g>
+<!-- japanese_ctc_align&#45;&gt;numeral_reading -->
+<g id="edge33" class="edge">
+<title>japanese_ctc_align&#45;&gt;numeral_reading</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M3039.65,-373.93C3048.6,-370.79 3058.42,-367.82 3067.74,-366 3102.68,-359.16 3194.44,-370.58 3227.74,-358 3242.26,-352.52 3255.91,-341.58 3265.85,-332.1"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3267.3,-333.38 3269.87,-328.16 3264.6,-330.63 3267.3,-333.38"/>
+</g>
+<!-- whisperx_refine -->
+<g id="node24" class="node">
+<title>whisperx_refine</title>
+<path fill="#b5d3f0" stroke="#666666" d="M2729.41,-402C2729.41,-402 2658.07,-402 2658.07,-402 2653.41,-402 2648.74,-397.33 2648.74,-392.67 2648.74,-392.67 2648.74,-383.33 2648.74,-383.33 2648.74,-378.67 2653.41,-374 2658.07,-374 2658.07,-374 2729.41,-374 2729.41,-374 2734.07,-374 2738.74,-378.67 2738.74,-383.33 2738.74,-383.33 2738.74,-392.67 2738.74,-392.67 2738.74,-397.33 2734.07,-402 2729.41,-402"/>
+<text text-anchor="middle" x="2693.74" y="-391" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">whisperx_refine</text>
+<text text-anchor="middle" x="2693.74" y="-380" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">152</text>
+</g>
+<!-- persistent_helper_worker -->
+<g id="node25" class="node">
+<title>persistent_helper_worker</title>
+<path fill="#b5d3f0" stroke="#666666" d="M2626.41,-402C2626.41,-402 2509.07,-402 2509.07,-402 2504.41,-402 2499.74,-397.33 2499.74,-392.67 2499.74,-392.67 2499.74,-383.33 2499.74,-383.33 2499.74,-378.67 2504.41,-374 2509.07,-374 2509.07,-374 2626.41,-374 2626.41,-374 2631.07,-374 2635.74,-378.67 2635.74,-383.33 2635.74,-383.33 2635.74,-392.67 2635.74,-392.67 2635.74,-397.33 2631.07,-402 2626.41,-402"/>
+<text text-anchor="middle" x="2567.74" y="-391" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">persistent_helper_worker</text>
+<text text-anchor="middle" x="2567.74" y="-380" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">264</text>
+</g>
+<!-- hypothesis_provenance -->
+<g id="node29" class="node">
+<title>hypothesis_provenance</title>
+<path fill="#bfe3d6" stroke="#666666" d="M2280.41,-890C2280.41,-890 2171.07,-890 2171.07,-890 2166.41,-890 2161.74,-885.33 2161.74,-880.67 2161.74,-880.67 2161.74,-871.33 2161.74,-871.33 2161.74,-866.67 2166.41,-862 2171.07,-862 2171.07,-862 2280.41,-862 2280.41,-862 2285.07,-862 2289.74,-866.67 2289.74,-871.33 2289.74,-871.33 2289.74,-880.67 2289.74,-880.67 2289.74,-885.33 2285.07,-890 2280.41,-890"/>
+<text text-anchor="middle" x="2225.74" y="-879" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">hypothesis_provenance</text>
+<text text-anchor="middle" x="2225.74" y="-868" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">961</text>
+</g>
+<!-- acoustic_hypotheses&#45;&gt;hypothesis_provenance -->
+<g id="edge34" class="edge">
+<title>acoustic_hypotheses&#45;&gt;hypothesis_provenance</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2225.74,-929.96C2225.74,-920.2 2225.74,-906.7 2225.74,-895.78"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2227.66,-895.51 2225.74,-890.01 2223.81,-895.51 2227.66,-895.51"/>
+</g>
+<!-- duplicate_audio_consensus -->
+<g id="node30" class="node">
+<title>duplicate_audio_consensus</title>
+<path fill="#bfe3d6" stroke="#666666" d="M2139.41,-890C2139.41,-890 2012.07,-890 2012.07,-890 2007.41,-890 2002.74,-885.33 2002.74,-880.67 2002.74,-880.67 2002.74,-871.33 2002.74,-871.33 2002.74,-866.67 2007.41,-862 2012.07,-862 2012.07,-862 2139.41,-862 2139.41,-862 2144.07,-862 2148.74,-866.67 2148.74,-871.33 2148.74,-871.33 2148.74,-880.67 2148.74,-880.67 2148.74,-885.33 2144.07,-890 2139.41,-890"/>
+<text text-anchor="middle" x="2075.74" y="-879" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">duplicate_audio_consensus</text>
+<text text-anchor="middle" x="2075.74" y="-868" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">80</text>
+</g>
+<!-- acoustic_hypotheses&#45;&gt;duplicate_audio_consensus -->
+<g id="edge35" class="edge">
+<title>acoustic_hypotheses&#45;&gt;duplicate_audio_consensus</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2196.1,-929.96C2171.45,-919.11 2136.32,-903.66 2110.37,-892.24"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2111.12,-890.47 2105.31,-890.01 2109.57,-893.99 2111.12,-890.47"/>
+</g>
+<!-- vocal_onset_hypotheses -->
+<g id="node27" class="node">
+<title>vocal_onset_hypotheses</title>
+<path fill="#bfe3d6" stroke="#666666" d="M2279.91,-754C2279.91,-754 2165.57,-754 2165.57,-754 2160.91,-754 2156.24,-749.33 2156.24,-744.67 2156.24,-744.67 2156.24,-735.33 2156.24,-735.33 2156.24,-730.67 2160.91,-726 2165.57,-726 2165.57,-726 2279.91,-726 2279.91,-726 2284.57,-726 2289.24,-730.67 2289.24,-735.33 2289.24,-735.33 2289.24,-744.67 2289.24,-744.67 2289.24,-749.33 2284.57,-754 2279.91,-754"/>
+<text text-anchor="middle" x="2222.74" y="-743" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">vocal_onset_hypotheses</text>
+<text text-anchor="middle" x="2222.74" y="-732" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">482</text>
+</g>
+<!-- report_trust -->
+<g id="node60" class="node">
+<title>report_trust</title>
+<path fill="#f6e3a1" stroke="#666666" d="M3214.41,-680C3214.41,-680 3163.07,-680 3163.07,-680 3158.41,-680 3153.74,-675.33 3153.74,-670.67 3153.74,-670.67 3153.74,-661.33 3153.74,-661.33 3153.74,-656.67 3158.41,-652 3163.07,-652 3163.07,-652 3214.41,-652 3214.41,-652 3219.07,-652 3223.74,-656.67 3223.74,-661.33 3223.74,-661.33 3223.74,-670.67 3223.74,-670.67 3223.74,-675.33 3219.07,-680 3214.41,-680"/>
+<text text-anchor="middle" x="3188.74" y="-669" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">report_trust</text>
+<text text-anchor="middle" x="3188.74" y="-658" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">2,312</text>
+</g>
+<!-- vocal_onset_hypotheses&#45;&gt;report_trust -->
+<g id="edge36" class="edge">
+<title>vocal_onset_hypotheses&#45;&gt;report_trust</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2266,-725.96C2277.81,-722.87 2290.68,-719.91 2302.74,-718 2305.39,-717.58 2974.04,-679.29 3147.85,-669.34"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3148.2,-671.25 3153.58,-669.01 3147.98,-667.4 3148.2,-671.25"/>
+</g>
+<!-- recurrence_hypotheses -->
+<g id="node28" class="node">
+<title>recurrence_hypotheses</title>
+<path fill="#bfe3d6" stroke="#666666" d="M2277.41,-822C2277.41,-822 2170.07,-822 2170.07,-822 2165.41,-822 2160.74,-817.33 2160.74,-812.67 2160.74,-812.67 2160.74,-803.33 2160.74,-803.33 2160.74,-798.67 2165.41,-794 2170.07,-794 2170.07,-794 2277.41,-794 2277.41,-794 2282.07,-794 2286.74,-798.67 2286.74,-803.33 2286.74,-803.33 2286.74,-812.67 2286.74,-812.67 2286.74,-817.33 2282.07,-822 2277.41,-822"/>
+<text text-anchor="middle" x="2223.74" y="-811" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">recurrence_hypotheses</text>
+<text text-anchor="middle" x="2223.74" y="-800" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">903</text>
+</g>
+<!-- recurrence_hypotheses&#45;&gt;vocal_onset_hypotheses -->
+<g id="edge37" class="edge">
+<title>recurrence_hypotheses&#45;&gt;vocal_onset_hypotheses</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2223.54,-793.96C2223.39,-784.2 2223.19,-770.7 2223.02,-759.78"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2224.94,-759.48 2222.94,-754.01 2221.1,-759.54 2224.94,-759.48"/>
+</g>
+<!-- hypothesis_provenance&#45;&gt;recurrence_hypotheses -->
+<g id="edge38" class="edge">
+<title>hypothesis_provenance&#45;&gt;recurrence_hypotheses</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2225.34,-861.96C2225.05,-852.2 2224.64,-838.7 2224.31,-827.78"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2226.22,-827.45 2224.13,-822.01 2222.38,-827.57 2226.22,-827.45"/>
+</g>
+<!-- ctc_window_realign -->
+<g id="node33" class="node">
+<title>ctc_window_realign</title>
+<path fill="#a9dcc0" stroke="#666666" d="M1584.91,-180C1584.91,-180 1494.57,-180 1494.57,-180 1489.91,-180 1485.24,-175.33 1485.24,-170.67 1485.24,-170.67 1485.24,-161.33 1485.24,-161.33 1485.24,-156.67 1489.91,-152 1494.57,-152 1494.57,-152 1584.91,-152 1584.91,-152 1589.57,-152 1594.24,-156.67 1594.24,-161.33 1594.24,-161.33 1594.24,-170.67 1594.24,-170.67 1594.24,-175.33 1589.57,-180 1584.91,-180"/>
+<text text-anchor="middle" x="1539.74" y="-169" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">ctc_window_realign</text>
+<text text-anchor="middle" x="1539.74" y="-158" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">1,092</text>
+</g>
+<!-- ctc_refinement&#45;&gt;ctc_window_realign -->
+<g id="edge39" class="edge">
+<title>ctc_refinement&#45;&gt;ctc_window_realign</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M1539.74,-225.79C1539.74,-214.63 1539.74,-198.5 1539.74,-185.95"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="1541.66,-185.62 1539.74,-180.12 1537.81,-185.62 1541.66,-185.62"/>
+</g>
+<!-- ctc_prefix_recovery -->
+<g id="node34" class="node">
+<title>ctc_prefix_recovery</title>
+<path fill="#a9dcc0" stroke="#666666" d="M1706.41,-180C1706.41,-180 1617.07,-180 1617.07,-180 1612.41,-180 1607.74,-175.33 1607.74,-170.67 1607.74,-170.67 1607.74,-161.33 1607.74,-161.33 1607.74,-156.67 1612.41,-152 1617.07,-152 1617.07,-152 1706.41,-152 1706.41,-152 1711.07,-152 1715.74,-156.67 1715.74,-161.33 1715.74,-161.33 1715.74,-170.67 1715.74,-170.67 1715.74,-175.33 1711.07,-180 1706.41,-180"/>
+<text text-anchor="middle" x="1661.74" y="-169" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">ctc_prefix_recovery</text>
+<text text-anchor="middle" x="1661.74" y="-158" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">1,077</text>
+</g>
+<!-- ctc_refinement&#45;&gt;ctc_prefix_recovery -->
+<g id="edge40" class="edge">
+<title>ctc_refinement&#45;&gt;ctc_prefix_recovery</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M1569.74,-225.98C1579.78,-221.29 1590.92,-215.74 1600.74,-210 1614.34,-202.05 1628.79,-191.95 1640.21,-183.53"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="1641.64,-184.87 1644.9,-180.04 1639.34,-181.78 1641.64,-184.87"/>
+</g>
+<!-- ctc_whisperx_refinement -->
+<g id="node35" class="node">
+<title>ctc_whisperx_refinement</title>
+<path fill="#a9dcc0" stroke="#666666" d="M1854.91,-180C1854.91,-180 1738.57,-180 1738.57,-180 1733.91,-180 1729.24,-175.33 1729.24,-170.67 1729.24,-170.67 1729.24,-161.33 1729.24,-161.33 1729.24,-156.67 1733.91,-152 1738.57,-152 1738.57,-152 1854.91,-152 1854.91,-152 1859.57,-152 1864.24,-156.67 1864.24,-161.33 1864.24,-161.33 1864.24,-170.67 1864.24,-170.67 1864.24,-175.33 1859.57,-180 1854.91,-180"/>
+<text text-anchor="middle" x="1796.74" y="-169" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">ctc_whisperx_refinement</text>
+<text text-anchor="middle" x="1796.74" y="-158" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">961</text>
+</g>
+<!-- ctc_refinement&#45;&gt;ctc_whisperx_refinement -->
+<g id="edge41" class="edge">
+<title>ctc_refinement&#45;&gt;ctc_whisperx_refinement</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M1565.62,-225.94C1572.92,-222.8 1580.99,-219.83 1588.74,-218 1646.8,-204.27 1665.62,-227.23 1722.74,-210 1741.65,-204.29 1760.88,-192.91 1775,-183.29"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="1776.16,-184.83 1779.58,-180.11 1773.97,-181.67 1776.16,-184.83"/>
+</g>
+<!-- ctc_boundary_evidence -->
+<g id="node32" class="node">
+<title>ctc_boundary_evidence</title>
+<path fill="#a9dcc0" stroke="#666666" d="M1658.91,-112C1658.91,-112 1550.57,-112 1550.57,-112 1545.91,-112 1541.24,-107.33 1541.24,-102.67 1541.24,-102.67 1541.24,-93.33 1541.24,-93.33 1541.24,-88.67 1545.91,-84 1550.57,-84 1550.57,-84 1658.91,-84 1658.91,-84 1663.57,-84 1668.24,-88.67 1668.24,-93.33 1668.24,-93.33 1668.24,-102.67 1668.24,-102.67 1668.24,-107.33 1663.57,-112 1658.91,-112"/>
+<text text-anchor="middle" x="1604.74" y="-101" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">ctc_boundary_evidence</text>
+<text text-anchor="middle" x="1604.74" y="-90" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">1,240</text>
+</g>
+<!-- ctc_boundary_evidence&#45;&gt;report_trust -->
+<g id="edge42" class="edge">
+<title>ctc_boundary_evidence&#45;&gt;report_trust</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M1541.13,-108.21C1518.37,-114.63 1494.48,-125.52 1478.74,-144 1437.69,-192.17 1501.29,-243.4 1452.74,-284 1437.74,-296.54 59.37,-279.03 44.74,-292 12.9,-320.23 32.74,-344.44 32.74,-387 32.74,-457 32.74,-457 32.74,-457 32.74,-506.62 7.87,-534.79 44.74,-568 57.09,-579.12 2421.15,-574.99 2437.74,-576 2710.31,-592.55 3035.7,-640.96 3148.16,-658.53"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3147.95,-660.44 3153.68,-659.39 3148.54,-656.64 3147.95,-660.44"/>
+</g>
+<!-- ctc_window_realign&#45;&gt;ctc_boundary_evidence -->
+<g id="edge43" class="edge">
+<title>ctc_window_realign&#45;&gt;ctc_boundary_evidence</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M1552.58,-151.96C1562.73,-141.66 1576.98,-127.19 1588.02,-115.98"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="1589.44,-117.28 1591.92,-112.01 1586.69,-114.58 1589.44,-117.28"/>
+</g>
+<!-- ctc_prefix_recovery&#45;&gt;ctc_boundary_evidence -->
+<g id="edge44" class="edge">
+<title>ctc_prefix_recovery&#45;&gt;ctc_boundary_evidence</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M1650.48,-151.96C1641.66,-141.75 1629.3,-127.44 1619.66,-116.28"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="1621.03,-114.92 1615.98,-112.01 1618.12,-117.43 1621.03,-114.92"/>
+</g>
+<!-- ctc_whisperx_refinement&#45;&gt;ctc_boundary_evidence -->
+<g id="edge45" class="edge">
+<title>ctc_whisperx_refinement&#45;&gt;ctc_boundary_evidence</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M1758.81,-151.96C1726.86,-140.98 1681.16,-125.27 1647.83,-113.81"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="1648.42,-111.98 1642.59,-112.01 1647.17,-115.62 1648.42,-111.98"/>
+</g>
+<!-- ctc_confidence -->
+<g id="node36" class="node">
+<title>ctc_confidence</title>
+<path fill="#a9dcc0" stroke="#666666" d="M1670.91,-254C1670.91,-254 1604.57,-254 1604.57,-254 1599.91,-254 1595.24,-249.33 1595.24,-244.67 1595.24,-244.67 1595.24,-235.33 1595.24,-235.33 1595.24,-230.67 1599.91,-226 1604.57,-226 1604.57,-226 1670.91,-226 1670.91,-226 1675.57,-226 1680.24,-230.67 1680.24,-235.33 1680.24,-235.33 1680.24,-244.67 1680.24,-244.67 1680.24,-249.33 1675.57,-254 1670.91,-254"/>
+<text text-anchor="middle" x="1637.74" y="-243" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">ctc_confidence</text>
+<text text-anchor="middle" x="1637.74" y="-232" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">5</text>
+</g>
+<!-- segment_anchor_inference -->
+<g id="node37" class="node">
+<title>segment_anchor_inference</title>
+<path fill="#d7e6a5" stroke="#666666" d="M830.91,-180C830.91,-180 704.57,-180 704.57,-180 699.91,-180 695.24,-175.33 695.24,-170.67 695.24,-170.67 695.24,-161.33 695.24,-161.33 695.24,-156.67 699.91,-152 704.57,-152 704.57,-152 830.91,-152 830.91,-152 835.57,-152 840.24,-156.67 840.24,-161.33 840.24,-161.33 840.24,-170.67 840.24,-170.67 840.24,-175.33 835.57,-180 830.91,-180"/>
+<text text-anchor="middle" x="767.74" y="-169" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">segment_anchor_inference</text>
+<text text-anchor="middle" x="767.74" y="-158" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">219</text>
+</g>
+<!-- segment_recurrence -->
+<g id="node49" class="node">
+<title>segment_recurrence</title>
+<path fill="#d7e6a5" stroke="#666666" d="M739.41,-112C739.41,-112 646.07,-112 646.07,-112 641.41,-112 636.74,-107.33 636.74,-102.67 636.74,-102.67 636.74,-93.33 636.74,-93.33 636.74,-88.67 641.41,-84 646.07,-84 646.07,-84 739.41,-84 739.41,-84 744.07,-84 748.74,-88.67 748.74,-93.33 748.74,-93.33 748.74,-102.67 748.74,-102.67 748.74,-107.33 744.07,-112 739.41,-112"/>
+<text text-anchor="middle" x="692.74" y="-101" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">segment_recurrence</text>
+<text text-anchor="middle" x="692.74" y="-90" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">150</text>
+</g>
+<!-- segment_anchor_inference&#45;&gt;segment_recurrence -->
+<g id="edge46" class="edge">
+<title>segment_anchor_inference&#45;&gt;segment_recurrence</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M752.92,-151.96C741.11,-141.56 724.49,-126.94 711.7,-115.69"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="712.93,-114.2 707.53,-112.01 710.38,-117.09 712.93,-114.2"/>
+</g>
+<!-- segment_structure -->
+<g id="node54" class="node">
+<title>segment_structure</title>
+<path fill="#d7e6a5" stroke="#666666" d="M1285.41,-112C1285.41,-112 1200.07,-112 1200.07,-112 1195.41,-112 1190.74,-107.33 1190.74,-102.67 1190.74,-102.67 1190.74,-93.33 1190.74,-93.33 1190.74,-88.67 1195.41,-84 1200.07,-84 1200.07,-84 1285.41,-84 1285.41,-84 1290.07,-84 1294.74,-88.67 1294.74,-93.33 1294.74,-93.33 1294.74,-102.67 1294.74,-102.67 1294.74,-107.33 1290.07,-112 1285.41,-112"/>
+<text text-anchor="middle" x="1242.74" y="-101" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">segment_structure</text>
+<text text-anchor="middle" x="1242.74" y="-90" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">315</text>
+</g>
+<!-- segment_anchor_inference&#45;&gt;segment_structure -->
+<g id="edge47" class="edge">
+<title>segment_anchor_inference&#45;&gt;segment_structure</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M812.17,-151.89C823.37,-148.94 835.43,-146.08 846.74,-144 981.66,-119.19 1017.62,-129.03 1153.74,-112 1163.81,-110.74 1174.5,-109.28 1184.84,-107.81"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="1185.38,-109.68 1190.55,-106.99 1184.83,-105.87 1185.38,-109.68"/>
+</g>
+<!-- segment_asr_corroboration -->
+<g id="node38" class="node">
+<title>segment_asr_corroboration</title>
+<path fill="#d7e6a5" stroke="#666666" d="M1285.41,-254C1285.41,-254 1158.07,-254 1158.07,-254 1153.41,-254 1148.74,-249.33 1148.74,-244.67 1148.74,-244.67 1148.74,-235.33 1148.74,-235.33 1148.74,-230.67 1153.41,-226 1158.07,-226 1158.07,-226 1285.41,-226 1285.41,-226 1290.07,-226 1294.74,-230.67 1294.74,-235.33 1294.74,-235.33 1294.74,-244.67 1294.74,-244.67 1294.74,-249.33 1290.07,-254 1285.41,-254"/>
+<text text-anchor="middle" x="1221.74" y="-243" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">segment_asr_corroboration</text>
+<text text-anchor="middle" x="1221.74" y="-232" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">77</text>
+</g>
+<!-- segment_skeleton -->
+<g id="node50" class="node">
+<title>segment_skeleton</title>
+<path fill="#d7e6a5" stroke="#666666" d="M1432.41,-180C1432.41,-180 1349.07,-180 1349.07,-180 1344.41,-180 1339.74,-175.33 1339.74,-170.67 1339.74,-170.67 1339.74,-161.33 1339.74,-161.33 1339.74,-156.67 1344.41,-152 1349.07,-152 1349.07,-152 1432.41,-152 1432.41,-152 1437.07,-152 1441.74,-156.67 1441.74,-161.33 1441.74,-161.33 1441.74,-170.67 1441.74,-170.67 1441.74,-175.33 1437.07,-180 1432.41,-180"/>
+<text text-anchor="middle" x="1390.74" y="-169" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">segment_skeleton</text>
+<text text-anchor="middle" x="1390.74" y="-158" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">252</text>
+</g>
+<!-- segment_asr_corroboration&#45;&gt;segment_skeleton -->
+<g id="edge48" class="edge">
+<title>segment_asr_corroboration&#45;&gt;segment_skeleton</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M1270.94,-225.99C1298.75,-218.6 1328.27,-210.69 1329.74,-210 1344.55,-203.06 1359.59,-192.51 1371.03,-183.59"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="1372.27,-185.07 1375.38,-180.14 1369.88,-182.05 1372.27,-185.07"/>
+</g>
+<!-- segment_boundary_search -->
+<g id="node39" class="node">
+<title>segment_boundary_search</title>
+<path fill="#d7e6a5" stroke="#666666" d="M1131.41,-180C1131.41,-180 1006.07,-180 1006.07,-180 1001.41,-180 996.74,-175.33 996.74,-170.67 996.74,-170.67 996.74,-161.33 996.74,-161.33 996.74,-156.67 1001.41,-152 1006.07,-152 1006.07,-152 1131.41,-152 1131.41,-152 1136.07,-152 1140.74,-156.67 1140.74,-161.33 1140.74,-161.33 1140.74,-170.67 1140.74,-170.67 1140.74,-175.33 1136.07,-180 1131.41,-180"/>
+<text text-anchor="middle" x="1068.74" y="-169" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">segment_boundary_search</text>
+<text text-anchor="middle" x="1068.74" y="-158" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">129</text>
+</g>
+<!-- segment_boundary_selection -->
+<g id="node40" class="node">
+<title>segment_boundary_selection</title>
+<path fill="#d7e6a5" stroke="#666666" d="M1137.41,-112C1137.41,-112 1000.07,-112 1000.07,-112 995.41,-112 990.74,-107.33 990.74,-102.67 990.74,-102.67 990.74,-93.33 990.74,-93.33 990.74,-88.67 995.41,-84 1000.07,-84 1000.07,-84 1137.41,-84 1137.41,-84 1142.07,-84 1146.74,-88.67 1146.74,-93.33 1146.74,-93.33 1146.74,-102.67 1146.74,-102.67 1146.74,-107.33 1142.07,-112 1137.41,-112"/>
+<text text-anchor="middle" x="1068.74" y="-101" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">segment_boundary_selection</text>
+<text text-anchor="middle" x="1068.74" y="-90" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">65</text>
+</g>
+<!-- segment_boundary_search&#45;&gt;segment_boundary_selection -->
+<g id="edge49" class="edge">
+<title>segment_boundary_search&#45;&gt;segment_boundary_selection</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M1068.74,-151.96C1068.74,-142.2 1068.74,-128.7 1068.74,-117.78"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="1070.66,-117.51 1068.74,-112.01 1066.81,-117.51 1070.66,-117.51"/>
+</g>
+<!-- segment_central_bridge -->
+<g id="node41" class="node">
+<title>segment_central_bridge</title>
+<path fill="#d7e6a5" stroke="#666666" d="M974.41,-180C974.41,-180 863.07,-180 863.07,-180 858.41,-180 853.74,-175.33 853.74,-170.67 853.74,-170.67 853.74,-161.33 853.74,-161.33 853.74,-156.67 858.41,-152 863.07,-152 863.07,-152 974.41,-152 974.41,-152 979.07,-152 983.74,-156.67 983.74,-161.33 983.74,-161.33 983.74,-170.67 983.74,-170.67 983.74,-175.33 979.07,-180 974.41,-180"/>
+<text text-anchor="middle" x="918.74" y="-169" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">segment_central_bridge</text>
+<text text-anchor="middle" x="918.74" y="-158" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">99</text>
+</g>
+<!-- segment_duplicate_line -->
+<g id="node42" class="node">
+<title>segment_duplicate_line</title>
+<path fill="#d7e6a5" stroke="#666666" d="M672.91,-180C672.91,-180 562.57,-180 562.57,-180 557.91,-180 553.24,-175.33 553.24,-170.67 553.24,-170.67 553.24,-161.33 553.24,-161.33 553.24,-156.67 557.91,-152 562.57,-152 562.57,-152 672.91,-152 672.91,-152 677.57,-152 682.24,-156.67 682.24,-161.33 682.24,-161.33 682.24,-170.67 682.24,-170.67 682.24,-175.33 677.57,-180 672.91,-180"/>
+<text text-anchor="middle" x="617.74" y="-169" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">segment_duplicate_line</text>
+<text text-anchor="middle" x="617.74" y="-158" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">121</text>
+</g>
+<!-- segment_duplicate_line&#45;&gt;segment_recurrence -->
+<g id="edge50" class="edge">
+<title>segment_duplicate_line&#45;&gt;segment_recurrence</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M632.56,-151.96C644.37,-141.56 660.99,-126.94 673.78,-115.69"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="675.1,-117.09 677.95,-112.01 672.55,-114.2 675.1,-117.09"/>
+</g>
+<!-- segment_group_acoustic -->
+<g id="node43" class="node">
+<title>segment_group_acoustic</title>
+<path fill="#d7e6a5" stroke="#666666" d="M1432.41,-254C1432.41,-254 1317.07,-254 1317.07,-254 1312.41,-254 1307.74,-249.33 1307.74,-244.67 1307.74,-244.67 1307.74,-235.33 1307.74,-235.33 1307.74,-230.67 1312.41,-226 1317.07,-226 1317.07,-226 1432.41,-226 1432.41,-226 1437.07,-226 1441.74,-230.67 1441.74,-235.33 1441.74,-235.33 1441.74,-244.67 1441.74,-244.67 1441.74,-249.33 1437.07,-254 1432.41,-254"/>
+<text text-anchor="middle" x="1374.74" y="-243" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">segment_group_acoustic</text>
+<text text-anchor="middle" x="1374.74" y="-232" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">133</text>
+</g>
+<!-- segment_min_marginals -->
+<g id="node44" class="node">
+<title>segment_min_marginals</title>
+<path fill="#d7e6a5" stroke="#666666" d="M1431.91,-112C1431.91,-112 1317.57,-112 1317.57,-112 1312.91,-112 1308.24,-107.33 1308.24,-102.67 1308.24,-102.67 1308.24,-93.33 1308.24,-93.33 1308.24,-88.67 1312.91,-84 1317.57,-84 1317.57,-84 1431.91,-84 1431.91,-84 1436.57,-84 1441.24,-88.67 1441.24,-93.33 1441.24,-93.33 1441.24,-102.67 1441.24,-102.67 1441.24,-107.33 1436.57,-112 1431.91,-112"/>
+<text text-anchor="middle" x="1374.74" y="-101" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">segment_min_marginals</text>
+<text text-anchor="middle" x="1374.74" y="-90" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">97</text>
+</g>
+<!-- segment_min_marginals&#45;&gt;segment_skeleton -->
+<g id="edge51" class="edge">
+<title>segment_min_marginals&#45;&gt;segment_skeleton</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M1382.17,-112.01C1385.66,-121.86 1389.14,-135.51 1391.02,-146.5"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="1389.13,-146.81 1391.86,-151.96 1392.93,-146.23 1389.13,-146.81"/>
+</g>
+<!-- segment_phonetic_audit -->
+<g id="node46" class="node">
+<title>segment_phonetic_audit</title>
+<path fill="#d7e6a5" stroke="#666666" d="M1324.91,-328C1324.91,-328 1210.57,-328 1210.57,-328 1205.91,-328 1201.24,-323.33 1201.24,-318.67 1201.24,-318.67 1201.24,-309.33 1201.24,-309.33 1201.24,-304.67 1205.91,-300 1210.57,-300 1210.57,-300 1324.91,-300 1324.91,-300 1329.57,-300 1334.24,-304.67 1334.24,-309.33 1334.24,-309.33 1334.24,-318.67 1334.24,-318.67 1334.24,-323.33 1329.57,-328 1324.91,-328"/>
+<text text-anchor="middle" x="1267.74" y="-317" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">segment_phonetic_audit</text>
+<text text-anchor="middle" x="1267.74" y="-306" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">89</text>
+</g>
+<!-- segment_production&#45;&gt;segment_anchor_inference -->
+<g id="edge52" class="edge">
+<title>segment_production&#45;&gt;segment_anchor_inference</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M829.8,-225.79C817.37,-214.02 799.11,-196.72 785.61,-183.93"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="786.91,-182.51 781.59,-180.12 784.26,-185.3 786.91,-182.51"/>
+</g>
+<!-- segment_production&#45;&gt;segment_boundary_search -->
+<g id="edge53" class="edge">
+<title>segment_production&#45;&gt;segment_boundary_search</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M899.93,-231.91C927.52,-227.41 960.94,-220.42 989.74,-210 1008.74,-203.12 1028.71,-192.22 1043.82,-183.11"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="1045.06,-184.61 1048.75,-180.1 1043.05,-181.32 1045.06,-184.61"/>
+</g>
+<!-- segment_production&#45;&gt;segment_central_bridge -->
+<g id="edge54" class="edge">
+<title>segment_production&#45;&gt;segment_central_bridge</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M857.5,-225.79C869.76,-214.02 887.78,-196.72 901.1,-183.93"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="902.44,-185.32 905.07,-180.12 899.77,-182.54 902.44,-185.32"/>
+</g>
+<!-- segment_realign -->
+<g id="node48" class="node">
+<title>segment_realign</title>
+<path fill="#d7e6a5" stroke="#666666" d="M1432.41,-328C1432.41,-328 1357.07,-328 1357.07,-328 1352.41,-328 1347.74,-323.33 1347.74,-318.67 1347.74,-318.67 1347.74,-309.33 1347.74,-309.33 1347.74,-304.67 1352.41,-300 1357.07,-300 1357.07,-300 1432.41,-300 1432.41,-300 1437.07,-300 1441.74,-304.67 1441.74,-309.33 1441.74,-309.33 1441.74,-318.67 1441.74,-318.67 1441.74,-323.33 1437.07,-328 1432.41,-328"/>
+<text text-anchor="middle" x="1394.74" y="-317" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">segment_realign</text>
+<text text-anchor="middle" x="1394.74" y="-306" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">687</text>
+</g>
+<!-- segment_skeleton&#45;&gt;segment_min_marginals -->
+<g id="edge55" class="edge">
+<title>segment_skeleton&#45;&gt;segment_min_marginals</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M1383.91,-151.96C1380.58,-142.11 1377.13,-128.45 1375.13,-117.47"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="1377.02,-117.12 1374.23,-112.01 1373.23,-117.75 1377.02,-117.12"/>
+</g>
+<!-- segment_skeleton&#45;&gt;segment_structure -->
+<g id="edge56" class="edge">
+<title>segment_skeleton&#45;&gt;segment_structure</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M1361.5,-151.96C1337.28,-141.16 1302.8,-125.79 1277.23,-114.38"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="1277.73,-112.49 1271.92,-112.01 1276.16,-116.01 1277.73,-112.49"/>
+</g>
+<!-- segment_skeleton_consensus -->
+<g id="node51" class="node">
+<title>segment_skeleton_consensus</title>
+<path fill="#d7e6a5" stroke="#666666" d="M1302.41,-180C1302.41,-180 1163.07,-180 1163.07,-180 1158.41,-180 1153.74,-175.33 1153.74,-170.67 1153.74,-170.67 1153.74,-161.33 1153.74,-161.33 1153.74,-156.67 1158.41,-152 1163.07,-152 1163.07,-152 1302.41,-152 1302.41,-152 1307.07,-152 1311.74,-156.67 1311.74,-161.33 1311.74,-161.33 1311.74,-170.67 1311.74,-170.67 1311.74,-175.33 1307.07,-180 1302.41,-180"/>
+<text text-anchor="middle" x="1232.74" y="-169" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">segment_skeleton_consensus</text>
+<text text-anchor="middle" x="1232.74" y="-158" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">78</text>
+</g>
+<!-- segment_skeleton_dual -->
+<g id="node52" class="node">
+<title>segment_skeleton_dual</title>
+<path fill="#d7e6a5" stroke="#666666" d="M1126.41,-254C1126.41,-254 1017.07,-254 1017.07,-254 1012.41,-254 1007.74,-249.33 1007.74,-244.67 1007.74,-244.67 1007.74,-235.33 1007.74,-235.33 1007.74,-230.67 1012.41,-226 1017.07,-226 1017.07,-226 1126.41,-226 1126.41,-226 1131.07,-226 1135.74,-230.67 1135.74,-235.33 1135.74,-235.33 1135.74,-244.67 1135.74,-244.67 1135.74,-249.33 1131.07,-254 1126.41,-254"/>
+<text text-anchor="middle" x="1071.74" y="-243" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">segment_skeleton_dual</text>
+<text text-anchor="middle" x="1071.74" y="-232" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">168</text>
+</g>
+<!-- segment_skeleton_dual&#45;&gt;segment_boundary_search -->
+<g id="edge57" class="edge">
+<title>segment_skeleton_dual&#45;&gt;segment_boundary_search</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M1071.19,-225.79C1070.72,-214.63 1070.05,-198.5 1069.53,-185.95"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="1071.44,-185.54 1069.29,-180.12 1067.59,-185.7 1071.44,-185.54"/>
+</g>
+<!-- segment_skeleton_dual&#45;&gt;segment_skeleton_consensus -->
+<g id="edge58" class="edge">
+<title>segment_skeleton_dual&#45;&gt;segment_skeleton_consensus</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M1108.39,-225.89C1120.98,-221.16 1135.08,-215.6 1147.74,-210 1166.65,-201.63 1187.37,-191.18 1203.62,-182.67"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="1204.54,-184.37 1208.51,-180.1 1202.75,-180.96 1204.54,-184.37"/>
+</g>
+<!-- segment_skeleton_dual&#45;&gt;segment_structure -->
+<g id="edge59" class="edge">
+<title>segment_skeleton_dual&#45;&gt;segment_structure</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M1109.66,-225.94C1120.25,-222.8 1131.84,-219.83 1142.74,-218 1152.39,-216.38 1311.98,-217.08 1318.74,-210 1339,-188.79 1333.27,-169.48 1318.74,-144 1311.43,-131.18 1298.88,-121.64 1286.06,-114.73"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="1286.72,-112.9 1280.95,-112.11 1284.97,-116.33 1286.72,-112.9"/>
+</g>
+<!-- segment_skeleton_production&#45;&gt;ctc_confidence -->
+<g id="edge60" class="edge">
+<title>segment_skeleton_production&#45;&gt;ctc_confidence</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M1154.36,-299.89C1167.3,-296.71 1181.48,-293.73 1194.74,-292 1216.45,-289.16 1568.33,-291.92 1588.74,-284 1602.28,-278.74 1614.56,-267.95 1623.44,-258.49"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="1625,-259.63 1627.27,-254.27 1622.15,-257.05 1625,-259.63"/>
+</g>
+<!-- segment_skeleton_production&#45;&gt;segment_asr_corroboration -->
+<g id="edge61" class="edge">
+<title>segment_skeleton_production&#45;&gt;segment_asr_corroboration</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M1129.2,-299.96C1148.04,-287.96 1176.06,-270.1 1196.33,-257.19"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="1197.44,-258.76 1201.05,-254.18 1195.37,-255.52 1197.44,-258.76"/>
+</g>
+<!-- segment_skeleton_production&#45;&gt;segment_group_acoustic -->
+<g id="edge62" class="edge">
+<title>segment_skeleton_production&#45;&gt;segment_group_acoustic</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M1156.22,-299.92C1168.67,-296.9 1182.14,-294 1194.74,-292 1241.84,-284.54 1256.23,-298.25 1301.74,-284 1320.4,-278.16 1339.37,-266.78 1353.3,-257.2"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="1354.42,-258.76 1357.82,-254.03 1352.21,-255.61 1354.42,-258.76"/>
+</g>
+<!-- segment_skeleton_production&#45;&gt;segment_skeleton_dual -->
+<g id="edge63" class="edge">
+<title>segment_skeleton_production&#45;&gt;segment_skeleton_dual</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M1101.95,-299.79C1096.11,-288.43 1087.62,-271.91 1081.13,-259.27"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="1082.71,-258.13 1078.48,-254.12 1079.28,-259.89 1082.71,-258.13"/>
+</g>
+<!-- model_cache -->
+<g id="node68" class="node">
+<title>model_cache</title>
+<path fill="#d5d8dc" stroke="#666666" d="M3189.91,-112C3189.91,-112 3131.57,-112 3131.57,-112 3126.91,-112 3122.24,-107.33 3122.24,-102.67 3122.24,-102.67 3122.24,-93.33 3122.24,-93.33 3122.24,-88.67 3126.91,-84 3131.57,-84 3131.57,-84 3189.91,-84 3189.91,-84 3194.57,-84 3199.24,-88.67 3199.24,-93.33 3199.24,-93.33 3199.24,-102.67 3199.24,-102.67 3199.24,-107.33 3194.57,-112 3189.91,-112"/>
+<text text-anchor="middle" x="3160.74" y="-101" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">model_cache</text>
+<text text-anchor="middle" x="3160.74" y="-90" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">447</text>
+</g>
+<!-- segment_skeleton_production&#45;&gt;model_cache -->
+<g id="edge64" class="edge">
+<title>segment_skeleton_production&#45;&gt;model_cache</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M1153.45,-299.99C1166.63,-296.73 1181.16,-293.68 1194.74,-292 1334.79,-274.7 2323.92,-293.17 2464.74,-284 2597.7,-275.34 2956.1,-293.74 3059.74,-210 3083.9,-190.48 3062.93,-167.93 3082.74,-144 3093.04,-131.56 3107.73,-121.83 3121.59,-114.65"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3122.59,-116.3 3126.65,-112.12 3120.87,-112.86 3122.59,-116.3"/>
+</g>
+<!-- segment_skeleton_production&#45;&gt;review_server -->
+<g id="edge65" class="edge">
+<title>segment_skeleton_production&#45;&gt;review_server</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M1153.9,-299.93C1166.97,-296.71 1181.32,-293.69 1194.74,-292 1269.81,-282.52 1800.15,-287.47 1875.74,-284 2056.83,-275.68 2271.59,-255.24 2364.75,-245.86"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2365.16,-247.75 2370.44,-245.28 2364.78,-243.92 2365.16,-247.75"/>
+</g>
+<!-- timing_core -->
+<g id="node55" class="node">
+<title>timing_core</title>
+<path fill="#f6e3a1" stroke="#666666" d="M3214.41,-612C3214.41,-612 3163.07,-612 3163.07,-612 3158.41,-612 3153.74,-607.33 3153.74,-602.67 3153.74,-602.67 3153.74,-593.33 3153.74,-593.33 3153.74,-588.67 3158.41,-584 3163.07,-584 3163.07,-584 3214.41,-584 3214.41,-584 3219.07,-584 3223.74,-588.67 3223.74,-593.33 3223.74,-593.33 3223.74,-602.67 3223.74,-602.67 3223.74,-607.33 3219.07,-612 3214.41,-612"/>
+<text text-anchor="middle" x="3188.74" y="-601" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">timing_core</text>
+<text text-anchor="middle" x="3188.74" y="-590" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">1,847</text>
+</g>
+<!-- candidate_regions -->
+<g id="node58" class="node">
+<title>candidate_regions</title>
+<path fill="#f6e3a1" stroke="#666666" d="M3313.41,-538C3313.41,-538 3230.07,-538 3230.07,-538 3225.41,-538 3220.74,-533.33 3220.74,-528.67 3220.74,-528.67 3220.74,-519.33 3220.74,-519.33 3220.74,-514.67 3225.41,-510 3230.07,-510 3230.07,-510 3313.41,-510 3313.41,-510 3318.07,-510 3322.74,-514.67 3322.74,-519.33 3322.74,-519.33 3322.74,-528.67 3322.74,-528.67 3322.74,-533.33 3318.07,-538 3313.41,-538"/>
+<text text-anchor="middle" x="3271.74" y="-527" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">candidate_regions</text>
+<text text-anchor="middle" x="3271.74" y="-516" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">1,051</text>
+</g>
+<!-- timing_core&#45;&gt;candidate_regions -->
+<g id="edge66" class="edge">
+<title>timing_core&#45;&gt;candidate_regions</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M3203.96,-583.79C3217.53,-572.02 3237.48,-554.72 3252.22,-541.93"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3253.72,-543.18 3256.61,-538.12 3251.2,-540.27 3253.72,-543.18"/>
+</g>
+<!-- arbiter -->
+<g id="node59" class="node">
+<title>arbiter</title>
+<path fill="#f6e3a1" stroke="#666666" d="M3198.41,-538C3198.41,-538 3163.07,-538 3163.07,-538 3158.41,-538 3153.74,-533.33 3153.74,-528.67 3153.74,-528.67 3153.74,-519.33 3153.74,-519.33 3153.74,-514.67 3158.41,-510 3163.07,-510 3163.07,-510 3198.41,-510 3198.41,-510 3203.07,-510 3207.74,-514.67 3207.74,-519.33 3207.74,-519.33 3207.74,-528.67 3207.74,-528.67 3207.74,-533.33 3203.07,-538 3198.41,-538"/>
+<text text-anchor="middle" x="3180.74" y="-527" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">arbiter</text>
+<text text-anchor="middle" x="3180.74" y="-516" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">131</text>
+</g>
+<!-- timing_core&#45;&gt;arbiter -->
+<g id="edge67" class="edge">
+<title>timing_core&#45;&gt;arbiter</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M3187.27,-583.79C3186.02,-572.53 3184.21,-556.2 3182.81,-543.61"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3184.72,-543.38 3182.2,-538.12 3180.89,-543.8 3184.72,-543.38"/>
+</g>
+<!-- timing_evidence_types -->
+<g id="node56" class="node">
+<title>timing_evidence_types</title>
+<path fill="#f6e3a1" stroke="#666666" d="M3308.41,-402C3308.41,-402 3201.07,-402 3201.07,-402 3196.41,-402 3191.74,-397.33 3191.74,-392.67 3191.74,-392.67 3191.74,-383.33 3191.74,-383.33 3191.74,-378.67 3196.41,-374 3201.07,-374 3201.07,-374 3308.41,-374 3308.41,-374 3313.07,-374 3317.74,-378.67 3317.74,-383.33 3317.74,-383.33 3317.74,-392.67 3317.74,-392.67 3317.74,-397.33 3313.07,-402 3308.41,-402"/>
+<text text-anchor="middle" x="3254.74" y="-391" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">timing_evidence_types</text>
+<text text-anchor="middle" x="3254.74" y="-380" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">807</text>
+</g>
+<!-- timing_evidence_types&#45;&gt;multimodel_consensus -->
+<g id="edge68" class="edge">
+<title>timing_evidence_types&#45;&gt;multimodel_consensus</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M3201.87,-373.95C3183.14,-369.15 3161.94,-363.54 3142.74,-358 3112.4,-349.25 3078.54,-338.46 3052.32,-329.88"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3052.68,-327.97 3046.85,-328.08 3051.48,-331.63 3052.68,-327.97"/>
+</g>
+<!-- lyrics_io -->
+<g id="node62" class="node">
+<title>lyrics_io</title>
+<path fill="#e3d3bd" stroke="#666666" d="M3387.41,-328C3387.41,-328 3352.07,-328 3352.07,-328 3347.41,-328 3342.74,-323.33 3342.74,-318.67 3342.74,-318.67 3342.74,-309.33 3342.74,-309.33 3342.74,-304.67 3347.41,-300 3352.07,-300 3352.07,-300 3387.41,-300 3387.41,-300 3392.07,-300 3396.74,-304.67 3396.74,-309.33 3396.74,-309.33 3396.74,-318.67 3396.74,-318.67 3396.74,-323.33 3392.07,-328 3387.41,-328"/>
+<text text-anchor="middle" x="3369.74" y="-317" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">lyrics_io</text>
+<text text-anchor="middle" x="3369.74" y="-306" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">1,316</text>
+</g>
+<!-- timing_evidence_types&#45;&gt;lyrics_io -->
+<g id="edge69" class="edge">
+<title>timing_evidence_types&#45;&gt;lyrics_io</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M3304.89,-373.97C3315.63,-369.87 3326.52,-364.62 3335.74,-358 3345,-351.35 3353.04,-341.5 3358.97,-332.91"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3360.6,-333.94 3362.05,-328.3 3357.4,-331.81 3360.6,-333.94"/>
+</g>
+<!-- tail_occurrence_evidence -->
+<g id="node57" class="node">
+<title>tail_occurrence_evidence</title>
+<path fill="#f6e3a1" stroke="#666666" d="M3313.41,-470C3313.41,-470 3196.07,-470 3196.07,-470 3191.41,-470 3186.74,-465.33 3186.74,-460.67 3186.74,-460.67 3186.74,-451.33 3186.74,-451.33 3186.74,-446.67 3191.41,-442 3196.07,-442 3196.07,-442 3313.41,-442 3313.41,-442 3318.07,-442 3322.74,-446.67 3322.74,-451.33 3322.74,-451.33 3322.74,-460.67 3322.74,-460.67 3322.74,-465.33 3318.07,-470 3313.41,-470"/>
+<text text-anchor="middle" x="3254.74" y="-459" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">tail_occurrence_evidence</text>
+<text text-anchor="middle" x="3254.74" y="-448" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">1,418</text>
+</g>
+<!-- tail_occurrence_evidence&#45;&gt;timing_evidence_types -->
+<g id="edge70" class="edge">
+<title>tail_occurrence_evidence&#45;&gt;timing_evidence_types</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M3254.74,-441.96C3254.74,-432.2 3254.74,-418.7 3254.74,-407.78"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3256.66,-407.51 3254.74,-402.01 3252.81,-407.51 3256.66,-407.51"/>
+</g>
+<!-- candidate_regions&#45;&gt;tail_occurrence_evidence -->
+<g id="edge71" class="edge">
+<title>candidate_regions&#45;&gt;tail_occurrence_evidence</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M3268.38,-509.96C3265.84,-500.11 3262.33,-486.45 3259.5,-475.47"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3261.33,-474.86 3258.09,-470.01 3257.6,-475.82 3261.33,-474.86"/>
+</g>
+<!-- report_trust&#45;&gt;central_commit -->
+<g id="edge72" class="edge">
+<title>report_trust&#45;&gt;central_commit</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M3153.64,-662.63C3051.66,-655.66 2746.57,-634.38 2493.74,-612 2467.79,-609.7 2438.94,-606.83 2415.12,-604.36"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2415.16,-602.43 2409.49,-603.78 2414.76,-606.26 2415.16,-602.43"/>
+</g>
+<!-- report_trust&#45;&gt;timing_core -->
+<g id="edge73" class="edge">
+<title>report_trust&#45;&gt;timing_core</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M3188.74,-651.96C3188.74,-642.2 3188.74,-628.7 3188.74,-617.78"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3190.66,-617.51 3188.74,-612.01 3186.81,-617.51 3190.66,-617.51"/>
+</g>
+<!-- audio_features -->
+<g id="node61" class="node">
+<title>audio_features</title>
+<path fill="#e3d3bd" stroke="#666666" d="M3385.91,-254C3385.91,-254 3319.57,-254 3319.57,-254 3314.91,-254 3310.24,-249.33 3310.24,-244.67 3310.24,-244.67 3310.24,-235.33 3310.24,-235.33 3310.24,-230.67 3314.91,-226 3319.57,-226 3319.57,-226 3385.91,-226 3385.91,-226 3390.57,-226 3395.24,-230.67 3395.24,-235.33 3395.24,-235.33 3395.24,-244.67 3395.24,-244.67 3395.24,-249.33 3390.57,-254 3385.91,-254"/>
+<text text-anchor="middle" x="3352.74" y="-243" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">audio_features</text>
+<text text-anchor="middle" x="3352.74" y="-232" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">814</text>
+</g>
+<!-- runtime_base -->
+<g id="node66" class="node">
+<title>runtime_base</title>
+<path fill="#d5d8dc" stroke="#666666" d="M3381.91,-180C3381.91,-180 3321.57,-180 3321.57,-180 3316.91,-180 3312.24,-175.33 3312.24,-170.67 3312.24,-170.67 3312.24,-161.33 3312.24,-161.33 3312.24,-156.67 3316.91,-152 3321.57,-152 3321.57,-152 3381.91,-152 3381.91,-152 3386.57,-152 3391.24,-156.67 3391.24,-161.33 3391.24,-161.33 3391.24,-170.67 3391.24,-170.67 3391.24,-175.33 3386.57,-180 3381.91,-180"/>
+<text text-anchor="middle" x="3351.74" y="-169" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">runtime_base</text>
+<text text-anchor="middle" x="3351.74" y="-158" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">1,281</text>
+</g>
+<!-- audio_features&#45;&gt;runtime_base -->
+<g id="edge74" class="edge">
+<title>audio_features&#45;&gt;runtime_base</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M3352.56,-225.79C3352.4,-214.63 3352.18,-198.5 3352,-185.95"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3353.92,-185.59 3351.92,-180.12 3350.07,-185.65 3353.92,-185.59"/>
+</g>
+<!-- lyrics_io&#45;&gt;audio_features -->
+<g id="edge75" class="edge">
+<title>lyrics_io&#45;&gt;audio_features</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M3366.62,-299.79C3363.96,-288.53 3360.11,-272.2 3357.13,-259.61"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3358.97,-259.03 3355.84,-254.12 3355.23,-259.92 3358.97,-259.03"/>
+</g>
+<!-- lrc_timestamp_pairs -->
+<g id="node65" class="node">
+<title>lrc_timestamp_pairs</title>
+<path fill="#e3d3bd" stroke="#666666" d="M3272.41,-254C3272.41,-254 3179.07,-254 3179.07,-254 3174.41,-254 3169.74,-249.33 3169.74,-244.67 3169.74,-244.67 3169.74,-235.33 3169.74,-235.33 3169.74,-230.67 3174.41,-226 3179.07,-226 3179.07,-226 3272.41,-226 3272.41,-226 3277.07,-226 3281.74,-230.67 3281.74,-235.33 3281.74,-235.33 3281.74,-244.67 3281.74,-244.67 3281.74,-249.33 3277.07,-254 3272.41,-254"/>
+<text text-anchor="middle" x="3225.74" y="-243" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">lrc_timestamp_pairs</text>
+<text text-anchor="middle" x="3225.74" y="-232" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">38</text>
+</g>
+<!-- lyrics_io&#45;&gt;lrc_timestamp_pairs -->
+<g id="edge76" class="edge">
+<title>lyrics_io&#45;&gt;lrc_timestamp_pairs</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M3350.88,-299.93C3346.09,-297.02 3340.85,-294.16 3335.74,-292 3322.23,-286.3 3317.38,-289.36 3303.74,-284 3285.25,-276.73 3265.67,-265.93 3250.76,-256.97"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3251.59,-255.22 3245.89,-254.01 3249.59,-258.51 3251.59,-255.22"/>
+</g>
+<!-- export_alignment_audit -->
+<g id="node75" class="node">
+<title>export_alignment_audit</title>
+<path fill="#c8e0e8" stroke="#666666" d="M3038.91,-180C3038.91,-180 2928.57,-180 2928.57,-180 2923.91,-180 2919.24,-175.33 2919.24,-170.67 2919.24,-170.67 2919.24,-161.33 2919.24,-161.33 2919.24,-156.67 2923.91,-152 2928.57,-152 2928.57,-152 3038.91,-152 3038.91,-152 3043.57,-152 3048.24,-156.67 3048.24,-161.33 3048.24,-161.33 3048.24,-170.67 3048.24,-170.67 3048.24,-175.33 3043.57,-180 3038.91,-180"/>
+<text text-anchor="middle" x="2983.74" y="-169" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">export_alignment_audit</text>
+<text text-anchor="middle" x="2983.74" y="-158" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">378</text>
+</g>
+<!-- lyrics_io&#45;&gt;export_alignment_audit -->
+<g id="edge77" class="edge">
+<title>lyrics_io&#45;&gt;export_alignment_audit</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M3352.21,-299.85C3347.15,-296.71 3341.44,-293.76 3335.74,-292 3262.63,-269.39 3236.59,-307.45 3163.74,-284 3098.14,-262.88 3033.4,-211.23 3002.5,-184.17"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3003.58,-182.56 2998.19,-180.37 3001.03,-185.45 3003.58,-182.56"/>
+</g>
+<!-- lrc_reading -->
+<g id="node63" class="node">
+<title>lrc_reading</title>
+<path fill="#e3d3bd" stroke="#666666" d="M3211.91,-328C3211.91,-328 3163.57,-328 3163.57,-328 3158.91,-328 3154.24,-323.33 3154.24,-318.67 3154.24,-318.67 3154.24,-309.33 3154.24,-309.33 3154.24,-304.67 3158.91,-300 3163.57,-300 3163.57,-300 3211.91,-300 3211.91,-300 3216.57,-300 3221.24,-304.67 3221.24,-309.33 3221.24,-309.33 3221.24,-318.67 3221.24,-318.67 3221.24,-323.33 3216.57,-328 3211.91,-328"/>
+<text text-anchor="middle" x="3187.74" y="-317" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">lrc_reading</text>
+<text text-anchor="middle" x="3187.74" y="-306" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">591</text>
+</g>
+<!-- lrc_timestamp_pairs&#45;&gt;review_server -->
+<g id="edge78" class="edge">
+<title>lrc_timestamp_pairs&#45;&gt;review_server</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M3169.52,-240C2932.57,-240 2695.62,-240 2458.67,-240"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2458.58,-238.08 2453.08,-240 2458.58,-241.93 2458.58,-238.08"/>
+</g>
+<!-- runtime_base&#45;&gt;model_cache -->
+<g id="edge79" class="edge">
+<title>runtime_base&#45;&gt;model_cache</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M3324.74,-151.98C3318.56,-149.2 3311.97,-146.38 3305.74,-144 3287.21,-136.93 3240.38,-122.63 3204.91,-112.04"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3205.14,-110.1 3199.32,-110.37 3204.04,-113.79 3205.14,-110.1"/>
+</g>
+<!-- runtime_base&#45;&gt;file_digest -->
+<g id="edge80" class="edge">
+<title>runtime_base&#45;&gt;file_digest</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M3330.4,-151.96C3313.1,-141.38 3288.62,-126.43 3270.09,-115.1"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3270.73,-113.24 3265.03,-112.01 3268.72,-116.52 3270.73,-113.24"/>
+</g>
+<!-- runtime_paths -->
+<g id="node67" class="node">
+<title>runtime_paths</title>
+<path fill="#d5d8dc" stroke="#666666" d="M3194.91,-44C3194.91,-44 3130.57,-44 3130.57,-44 3125.91,-44 3121.24,-39.33 3121.24,-34.67 3121.24,-34.67 3121.24,-25.33 3121.24,-25.33 3121.24,-20.67 3125.91,-16 3130.57,-16 3130.57,-16 3194.91,-16 3194.91,-16 3199.57,-16 3204.24,-20.67 3204.24,-25.33 3204.24,-25.33 3204.24,-34.67 3204.24,-34.67 3204.24,-39.33 3199.57,-44 3194.91,-44"/>
+<text text-anchor="middle" x="3162.74" y="-33" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">runtime_paths</text>
+<text text-anchor="middle" x="3162.74" y="-22" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">237</text>
+</g>
+<!-- model_cache&#45;&gt;runtime_paths -->
+<g id="edge81" class="edge">
+<title>model_cache&#45;&gt;runtime_paths</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M3161.13,-83.96C3161.43,-74.2 3161.84,-60.7 3162.17,-49.78"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3164.1,-49.57 3162.34,-44.01 3160.25,-49.45 3164.1,-49.57"/>
+</g>
+<!-- file_digest&#45;&gt;runtime_paths -->
+<g id="edge82" class="edge">
+<title>file_digest&#45;&gt;runtime_paths</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M3227.74,-83.96C3214.98,-73.56 3197.02,-58.94 3183.22,-47.69"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3184.19,-45.99 3178.71,-44.01 3181.76,-48.98 3184.19,-45.99"/>
+</g>
+<!-- lrc_stage_timings -->
+<g id="node70" class="node">
+<title>lrc_stage_timings</title>
+<path fill="#d5d8dc" stroke="#666666" d="M3289.91,-180C3289.91,-180 3209.57,-180 3209.57,-180 3204.91,-180 3200.24,-175.33 3200.24,-170.67 3200.24,-170.67 3200.24,-161.33 3200.24,-161.33 3200.24,-156.67 3204.91,-152 3209.57,-152 3209.57,-152 3289.91,-152 3289.91,-152 3294.57,-152 3299.24,-156.67 3299.24,-161.33 3299.24,-161.33 3299.24,-170.67 3299.24,-170.67 3299.24,-175.33 3294.57,-180 3289.91,-180"/>
+<text text-anchor="middle" x="3249.74" y="-169" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">lrc_stage_timings</text>
+<text text-anchor="middle" x="3249.74" y="-158" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">479</text>
+</g>
+<!-- split_patch -->
+<g id="node71" class="node">
+<title>split_patch</title>
+<path fill="#d5d8dc" stroke="#666666" d="M3177.41,-180C3177.41,-180 3130.07,-180 3130.07,-180 3125.41,-180 3120.74,-175.33 3120.74,-170.67 3120.74,-170.67 3120.74,-161.33 3120.74,-161.33 3120.74,-156.67 3125.41,-152 3130.07,-152 3130.07,-152 3177.41,-152 3177.41,-152 3182.07,-152 3186.74,-156.67 3186.74,-161.33 3186.74,-161.33 3186.74,-170.67 3186.74,-170.67 3186.74,-175.33 3182.07,-180 3177.41,-180"/>
+<text text-anchor="middle" x="3153.74" y="-169" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">split_patch</text>
+<text text-anchor="middle" x="3153.74" y="-158" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">104</text>
+</g>
+<!-- lrc_review_tsv -->
+<g id="node73" class="node">
+<title>lrc_review_tsv</title>
+<path fill="#c8e0e8" stroke="#666666" d="M2567.91,-180C2567.91,-180 2503.57,-180 2503.57,-180 2498.91,-180 2494.24,-175.33 2494.24,-170.67 2494.24,-170.67 2494.24,-161.33 2494.24,-161.33 2494.24,-156.67 2498.91,-152 2503.57,-152 2503.57,-152 2567.91,-152 2567.91,-152 2572.57,-152 2577.24,-156.67 2577.24,-161.33 2577.24,-161.33 2577.24,-170.67 2577.24,-170.67 2577.24,-175.33 2572.57,-180 2567.91,-180"/>
+<text text-anchor="middle" x="2535.74" y="-169" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">lrc_review_tsv</text>
+<text text-anchor="middle" x="2535.74" y="-158" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">347</text>
+</g>
+<!-- lrc_manual_edits -->
+<g id="node74" class="node">
+<title>lrc_manual_edits</title>
+<path fill="#c8e0e8" stroke="#666666" d="M2640.41,-112C2640.41,-112 2563.07,-112 2563.07,-112 2558.41,-112 2553.74,-107.33 2553.74,-102.67 2553.74,-102.67 2553.74,-93.33 2553.74,-93.33 2553.74,-88.67 2558.41,-84 2563.07,-84 2563.07,-84 2640.41,-84 2640.41,-84 2645.07,-84 2649.74,-88.67 2649.74,-93.33 2649.74,-93.33 2649.74,-102.67 2649.74,-102.67 2649.74,-107.33 2645.07,-112 2640.41,-112"/>
+<text text-anchor="middle" x="2601.74" y="-101" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">lrc_manual_edits</text>
+<text text-anchor="middle" x="2601.74" y="-90" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">72</text>
+</g>
+<!-- lrc_batch_summary -->
+<g id="node76" class="node">
+<title>lrc_batch_summary</title>
+<path fill="#c8e0e8" stroke="#666666" d="M2689.91,-180C2689.91,-180 2599.57,-180 2599.57,-180 2594.91,-180 2590.24,-175.33 2590.24,-170.67 2590.24,-170.67 2590.24,-161.33 2590.24,-161.33 2590.24,-156.67 2594.91,-152 2599.57,-152 2599.57,-152 2689.91,-152 2689.91,-152 2694.57,-152 2699.24,-156.67 2699.24,-161.33 2699.24,-161.33 2699.24,-170.67 2699.24,-170.67 2699.24,-175.33 2694.57,-180 2689.91,-180"/>
+<text text-anchor="middle" x="2644.74" y="-169" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">lrc_batch_summary</text>
+<text text-anchor="middle" x="2644.74" y="-158" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">516</text>
+</g>
+<!-- lrc_batch_summary&#45;&gt;runtime_paths -->
+<g id="edge83" class="edge">
+<title>lrc_batch_summary&#45;&gt;runtime_paths</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2682.47,-151.97C2690.17,-149.33 2698.21,-146.57 2705.74,-144 2794.99,-113.54 2815.37,-99.34 2906.74,-76 2978.66,-57.63 3063.86,-44.28 3115.58,-37.09"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3115.91,-38.99 3121.09,-36.33 3115.38,-35.18 3115.91,-38.99"/>
+</g>
+<!-- lrc_batch_summary&#45;&gt;lrc_manual_edits -->
+<g id="edge84" class="edge">
+<title>lrc_batch_summary&#45;&gt;lrc_manual_edits</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2636.24,-151.96C2629.71,-141.93 2620.6,-127.95 2613.38,-116.87"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2614.83,-115.57 2610.22,-112.01 2611.61,-117.67 2614.83,-115.57"/>
+</g>
+<!-- lyrics_tag_export -->
+<g id="node77" class="node">
+<title>lyrics_tag_export</title>
+<path fill="#c8e0e8" stroke="#666666" d="M2799.91,-180C2799.91,-180 2721.57,-180 2721.57,-180 2716.91,-180 2712.24,-175.33 2712.24,-170.67 2712.24,-170.67 2712.24,-161.33 2712.24,-161.33 2712.24,-156.67 2716.91,-152 2721.57,-152 2721.57,-152 2799.91,-152 2799.91,-152 2804.57,-152 2809.24,-156.67 2809.24,-161.33 2809.24,-161.33 2809.24,-170.67 2809.24,-170.67 2809.24,-175.33 2804.57,-180 2799.91,-180"/>
+<text text-anchor="middle" x="2760.74" y="-169" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">lyrics_tag_export</text>
+<text text-anchor="middle" x="2760.74" y="-158" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">433</text>
+</g>
+<!-- lyrics_tag_export&#45;&gt;runtime_paths -->
+<g id="edge85" class="edge">
+<title>lyrics_tag_export&#45;&gt;runtime_paths</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2794.09,-151.96C2801.21,-149.26 2808.7,-146.49 2815.74,-144 2922.21,-106.36 3048.63,-66.36 3115.61,-45.53"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3116.44,-47.29 3121.12,-43.82 3115.29,-43.61 3116.44,-47.29"/>
+</g>
+<!-- review_server&#45;&gt;lrc_review_tsv -->
+<g id="edge86" class="edge">
+<title>review_server&#45;&gt;lrc_review_tsv</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2445.36,-226C2462.31,-219.34 2480.06,-212.19 2483.74,-210 2495.96,-202.73 2508.28,-192.68 2517.87,-184.13"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2519.29,-185.44 2522.07,-180.32 2516.7,-182.59 2519.29,-185.44"/>
+</g>
+<!-- review_server&#45;&gt;lrc_manual_edits -->
+<g id="edge87" class="edge">
+<title>review_server&#45;&gt;lrc_manual_edits</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2440.77,-225.98C2448,-221.69 2455.25,-216.36 2460.74,-210 2481.45,-186.01 2465.19,-166.27 2487.74,-144 2504.21,-127.73 2527.26,-117.17 2548.34,-110.39"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2548.96,-112.21 2553.65,-108.75 2547.82,-108.54 2548.96,-112.21"/>
+</g>
+<!-- review_server&#45;&gt;lyrics_tag_export -->
+<g id="edge88" class="edge">
+<title>review_server&#45;&gt;lyrics_tag_export</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2440.6,-225.93C2448.88,-222.75 2458.02,-219.76 2466.74,-218 2518.83,-207.49 2655.79,-228.15 2705.74,-210 2720.49,-204.64 2734.39,-193.7 2744.53,-184.2"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2746.02,-185.44 2748.63,-180.23 2743.34,-182.67 2746.02,-185.44"/>
+</g>
+<!-- review_hot_update -->
+<g id="node79" class="node">
+<title>review_hot_update</title>
+<path fill="#f3c4cf" stroke="#666666" d="M2110.41,-180C2110.41,-180 2023.07,-180 2023.07,-180 2018.41,-180 2013.74,-175.33 2013.74,-170.67 2013.74,-170.67 2013.74,-161.33 2013.74,-161.33 2013.74,-156.67 2018.41,-152 2023.07,-152 2023.07,-152 2110.41,-152 2110.41,-152 2115.07,-152 2119.74,-156.67 2119.74,-161.33 2119.74,-161.33 2119.74,-170.67 2119.74,-170.67 2119.74,-175.33 2115.07,-180 2110.41,-180"/>
+<text text-anchor="middle" x="2066.74" y="-169" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">review_hot_update</text>
+<text text-anchor="middle" x="2066.74" y="-158" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">693</text>
+</g>
+<!-- review_server&#45;&gt;review_hot_update -->
+<g id="edge89" class="edge">
+<title>review_server&#45;&gt;review_hot_update</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2370.54,-237.41C2302.61,-234.36 2170.29,-226.47 2126.74,-210 2111.29,-204.16 2096.19,-193.3 2085,-183.95"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2086.19,-182.44 2080.76,-180.33 2083.69,-185.37 2086.19,-182.44"/>
+</g>
+<!-- review_presentation -->
+<g id="node80" class="node">
+<title>review_presentation</title>
+<path fill="#f3c4cf" stroke="#666666" d="M1991.41,-180C1991.41,-180 1898.07,-180 1898.07,-180 1893.41,-180 1888.74,-175.33 1888.74,-170.67 1888.74,-170.67 1888.74,-161.33 1888.74,-161.33 1888.74,-156.67 1893.41,-152 1898.07,-152 1898.07,-152 1991.41,-152 1991.41,-152 1996.07,-152 2000.74,-156.67 2000.74,-161.33 2000.74,-161.33 2000.74,-170.67 2000.74,-170.67 2000.74,-175.33 1996.07,-180 1991.41,-180"/>
+<text text-anchor="middle" x="1944.74" y="-169" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">review_presentation</text>
+<text text-anchor="middle" x="1944.74" y="-158" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">501</text>
+</g>
+<!-- review_server&#45;&gt;review_presentation -->
+<g id="edge90" class="edge">
+<title>review_server&#45;&gt;review_presentation</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2370.73,-238.75C2281.81,-237.79 2073.89,-233.05 2007.74,-210 1991.4,-204.31 1975.33,-193.22 1963.51,-183.74"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="1964.51,-182.06 1959.03,-180.06 1962.06,-185.04 1964.51,-182.06"/>
+</g>
+<!-- harmony_candidates -->
+<g id="node81" class="node">
+<title>harmony_candidates</title>
+<path fill="#f3c4cf" stroke="#666666" d="M2238.91,-180C2238.91,-180 2142.57,-180 2142.57,-180 2137.91,-180 2133.24,-175.33 2133.24,-170.67 2133.24,-170.67 2133.24,-161.33 2133.24,-161.33 2133.24,-156.67 2137.91,-152 2142.57,-152 2142.57,-152 2238.91,-152 2238.91,-152 2243.57,-152 2248.24,-156.67 2248.24,-161.33 2248.24,-161.33 2248.24,-170.67 2248.24,-170.67 2248.24,-175.33 2243.57,-180 2238.91,-180"/>
+<text text-anchor="middle" x="2190.74" y="-169" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">harmony_candidates</text>
+<text text-anchor="middle" x="2190.74" y="-158" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">276</text>
+</g>
+<!-- review_server&#45;&gt;harmony_candidates -->
+<g id="edge91" class="edge">
+<title>review_server&#45;&gt;harmony_candidates</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2370.74,-235.89C2338.52,-232.38 2293.03,-225.07 2255.74,-210 2239.68,-203.51 2223.43,-192.76 2211.19,-183.63"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2212.09,-181.89 2206.54,-180.1 2209.76,-184.96 2212.09,-181.89"/>
+</g>
+<!-- paren_flag_marks -->
+<g id="node82" class="node">
+<title>paren_flag_marks</title>
+<path fill="#f3c4cf" stroke="#666666" d="M2352.41,-180C2352.41,-180 2271.07,-180 2271.07,-180 2266.41,-180 2261.74,-175.33 2261.74,-170.67 2261.74,-170.67 2261.74,-161.33 2261.74,-161.33 2261.74,-156.67 2266.41,-152 2271.07,-152 2271.07,-152 2352.41,-152 2352.41,-152 2357.07,-152 2361.74,-156.67 2361.74,-161.33 2361.74,-161.33 2361.74,-170.67 2361.74,-170.67 2361.74,-175.33 2357.07,-180 2352.41,-180"/>
+<text text-anchor="middle" x="2311.74" y="-169" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">paren_flag_marks</text>
+<text text-anchor="middle" x="2311.74" y="-158" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">113</text>
+</g>
+<!-- review_server&#45;&gt;paren_flag_marks -->
+<g id="edge92" class="edge">
+<title>review_server&#45;&gt;paren_flag_marks</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2391.89,-225.93C2384.56,-221.02 2376.22,-215.34 2368.74,-210 2356.73,-201.43 2343.57,-191.54 2332.92,-183.4"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2334.06,-181.85 2328.53,-180.03 2331.72,-184.9 2334.06,-181.85"/>
+</g>
+<!-- zh_traditional -->
+<g id="node85" class="node">
+<title>zh_traditional</title>
+<path fill="#f3c4cf" stroke="#666666" d="M2444.91,-180C2444.91,-180 2384.57,-180 2384.57,-180 2379.91,-180 2375.24,-175.33 2375.24,-170.67 2375.24,-170.67 2375.24,-161.33 2375.24,-161.33 2375.24,-156.67 2379.91,-152 2384.57,-152 2384.57,-152 2444.91,-152 2444.91,-152 2449.57,-152 2454.24,-156.67 2454.24,-161.33 2454.24,-161.33 2454.24,-170.67 2454.24,-170.67 2454.24,-175.33 2449.57,-180 2444.91,-180"/>
+<text text-anchor="middle" x="2414.74" y="-169" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">zh_traditional</text>
+<text text-anchor="middle" x="2414.74" y="-158" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">80</text>
+</g>
+<!-- review_server&#45;&gt;zh_traditional -->
+<g id="edge93" class="edge">
+<title>review_server&#45;&gt;zh_traditional</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2412.29,-225.79C2412.75,-214.63 2413.43,-198.5 2413.95,-185.95"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2415.89,-185.7 2414.19,-180.12 2412.04,-185.54 2415.89,-185.7"/>
+</g>
+<!-- review_presentation&#45;&gt;segment_realign -->
+<g id="edge94" class="edge">
+<title>review_presentation&#45;&gt;segment_realign</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M1941.42,-180.06C1934.27,-205.24 1914.76,-260.12 1875.74,-284 1839.99,-305.87 1565.54,-311.27 1447.95,-312.59"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="1447.61,-310.66 1442.13,-312.65 1447.65,-314.51 1447.61,-310.66"/>
+</g>
+<!-- backfill_romaji -->
+<g id="node83" class="node">
+<title>backfill_romaji</title>
+<path fill="#f3c4cf" stroke="#666666" d="M2443.91,-328C2443.91,-328 2377.57,-328 2377.57,-328 2372.91,-328 2368.24,-323.33 2368.24,-318.67 2368.24,-318.67 2368.24,-309.33 2368.24,-309.33 2368.24,-304.67 2372.91,-300 2377.57,-300 2377.57,-300 2443.91,-300 2443.91,-300 2448.57,-300 2453.24,-304.67 2453.24,-309.33 2453.24,-309.33 2453.24,-318.67 2453.24,-318.67 2453.24,-323.33 2448.57,-328 2443.91,-328"/>
+<text text-anchor="middle" x="2410.74" y="-317" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">backfill_romaji</text>
+<text text-anchor="middle" x="2410.74" y="-306" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">83</text>
+</g>
+<!-- backfill_romaji&#45;&gt;lrc_reading -->
+<g id="edge95" class="edge">
+<title>backfill_romaji&#45;&gt;lrc_reading</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2428.97,-328.09C2445.3,-339.76 2470.44,-355.45 2495.24,-362 2512.4,-366.53 3117.16,-366.83 3134.24,-362 3150.56,-357.38 3164.64,-344.13 3174.25,-332.72"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3175.87,-333.78 3177.83,-328.3 3172.87,-331.36 3175.87,-333.78"/>
+</g>
+<!-- backfill_romaji&#45;&gt;review_server -->
+<g id="edge96" class="edge">
+<title>backfill_romaji&#45;&gt;review_server</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2410.92,-299.79C2411.08,-288.63 2411.3,-272.5 2411.48,-259.95"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2413.41,-259.65 2411.56,-254.12 2409.56,-259.59 2413.41,-259.65"/>
+</g>
+<!-- review_decisions_summary -->
+<g id="node84" class="node">
+<title>review_decisions_summary</title>
+<path fill="#f3c4cf" stroke="#666666" d="M2186.41,-328C2186.41,-328 2057.07,-328 2057.07,-328 2052.41,-328 2047.74,-323.33 2047.74,-318.67 2047.74,-318.67 2047.74,-309.33 2047.74,-309.33 2047.74,-304.67 2052.41,-300 2057.07,-300 2057.07,-300 2186.41,-300 2186.41,-300 2191.07,-300 2195.74,-304.67 2195.74,-309.33 2195.74,-309.33 2195.74,-318.67 2195.74,-318.67 2195.74,-323.33 2191.07,-328 2186.41,-328"/>
+<text text-anchor="middle" x="2121.74" y="-317" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">review_decisions_summary</text>
+<text text-anchor="middle" x="2121.74" y="-306" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">56</text>
+</g>
+<!-- reviewer_independent_offsets -->
+<g id="node88" class="node">
+<title>reviewer_independent_offsets</title>
+<path fill="#d9cbe8" stroke="#666666" d="M4299.41,-1032C4299.41,-1032 4158.07,-1032 4158.07,-1032 4153.41,-1032 4148.74,-1027.33 4148.74,-1022.67 4148.74,-1022.67 4148.74,-1013.33 4148.74,-1013.33 4148.74,-1008.67 4153.41,-1004 4158.07,-1004 4158.07,-1004 4299.41,-1004 4299.41,-1004 4304.07,-1004 4308.74,-1008.67 4308.74,-1013.33 4308.74,-1013.33 4308.74,-1022.67 4308.74,-1022.67 4308.74,-1027.33 4304.07,-1032 4299.41,-1032"/>
+<text text-anchor="middle" x="4228.74" y="-1021" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">reviewer_independent_offsets</text>
+<text text-anchor="middle" x="4228.74" y="-1010" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">91</text>
+</g>
+<!-- reviewer_human_reference_offsets -->
+<g id="node89" class="node">
+<title>reviewer_human_reference_offsets</title>
+<path fill="#d9cbe8" stroke="#666666" d="M4126.41,-1032C4126.41,-1032 3961.07,-1032 3961.07,-1032 3956.41,-1032 3951.74,-1027.33 3951.74,-1022.67 3951.74,-1022.67 3951.74,-1013.33 3951.74,-1013.33 3951.74,-1008.67 3956.41,-1004 3961.07,-1004 3961.07,-1004 4126.41,-1004 4126.41,-1004 4131.07,-1004 4135.74,-1008.67 4135.74,-1013.33 4135.74,-1013.33 4135.74,-1022.67 4135.74,-1022.67 4135.74,-1027.33 4131.07,-1032 4126.41,-1032"/>
+<text text-anchor="middle" x="4043.74" y="-1021" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">reviewer_human_reference_offsets</text>
+<text text-anchor="middle" x="4043.74" y="-1010" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">76</text>
+</g>
+<!-- run_reviewer_analysis -->
+<g id="node90" class="node">
+<title>run_reviewer_analysis</title>
+<path fill="#d9cbe8" stroke="#666666" d="M3929.41,-1032C3929.41,-1032 3826.07,-1032 3826.07,-1032 3821.41,-1032 3816.74,-1027.33 3816.74,-1022.67 3816.74,-1022.67 3816.74,-1013.33 3816.74,-1013.33 3816.74,-1008.67 3821.41,-1004 3826.07,-1004 3826.07,-1004 3929.41,-1004 3929.41,-1004 3934.07,-1004 3938.74,-1008.67 3938.74,-1013.33 3938.74,-1013.33 3938.74,-1022.67 3938.74,-1022.67 3938.74,-1027.33 3934.07,-1032 3929.41,-1032"/>
+<text text-anchor="middle" x="3877.74" y="-1021" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">run_reviewer_analysis</text>
+<text text-anchor="middle" x="3877.74" y="-1010" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">748</text>
+</g>
+<!-- run_reviewer_analysis&#45;&gt;reviewer_layer -->
+<g id="edge97" class="edge">
+<title>run_reviewer_analysis&#45;&gt;reviewer_layer</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M3918.61,-1003.94C3927.53,-1001.22 3936.93,-998.43 3945.74,-996 4000.52,-980.87 4064.02,-965.71 4106.52,-955.9"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="4107.19,-957.72 4112.12,-954.61 4106.32,-953.97 4107.19,-957.72"/>
+</g>
+<!-- reviewers.build_hfa_plan -->
+<g id="node91" class="node">
+<title>reviewers.build_hfa_plan</title>
+<path fill="#d9cbe8" stroke="#666666" d="M3421.91,-1032C3421.91,-1032 3305.57,-1032 3305.57,-1032 3300.91,-1032 3296.24,-1027.33 3296.24,-1022.67 3296.24,-1022.67 3296.24,-1013.33 3296.24,-1013.33 3296.24,-1008.67 3300.91,-1004 3305.57,-1004 3305.57,-1004 3421.91,-1004 3421.91,-1004 3426.57,-1004 3431.24,-1008.67 3431.24,-1013.33 3431.24,-1013.33 3431.24,-1022.67 3431.24,-1022.67 3431.24,-1027.33 3426.57,-1032 3421.91,-1032"/>
+<text text-anchor="middle" x="3363.74" y="-1021" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">reviewers.build_hfa_plan</text>
+<text text-anchor="middle" x="3363.74" y="-1010" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">187</text>
+</g>
+<!-- reviewers.common -->
+<g id="node93" class="node">
+<title>reviewers.common</title>
+<path fill="#d9cbe8" stroke="#666666" d="M3407.41,-958C3407.41,-958 3320.07,-958 3320.07,-958 3315.41,-958 3310.74,-953.33 3310.74,-948.67 3310.74,-948.67 3310.74,-939.33 3310.74,-939.33 3310.74,-934.67 3315.41,-930 3320.07,-930 3320.07,-930 3407.41,-930 3407.41,-930 3412.07,-930 3416.74,-934.67 3416.74,-939.33 3416.74,-939.33 3416.74,-948.67 3416.74,-948.67 3416.74,-953.33 3412.07,-958 3407.41,-958"/>
+<text text-anchor="middle" x="3363.74" y="-947" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">reviewers.common</text>
+<text text-anchor="middle" x="3363.74" y="-936" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">19</text>
+</g>
+<!-- reviewers.build_hfa_plan&#45;&gt;reviewers.common -->
+<g id="edge98" class="edge">
+<title>reviewers.build_hfa_plan&#45;&gt;reviewers.common</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M3363.74,-1003.79C3363.74,-992.63 3363.74,-976.5 3363.74,-963.95"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3365.66,-963.62 3363.74,-958.12 3361.81,-963.62 3365.66,-963.62"/>
+</g>
+<!-- reviewers.build_hubp_plan -->
+<g id="node92" class="node">
+<title>reviewers.build_hubp_plan</title>
+<path fill="#d9cbe8" stroke="#666666" d="M3151.91,-1032C3151.91,-1032 3027.57,-1032 3027.57,-1032 3022.91,-1032 3018.24,-1027.33 3018.24,-1022.67 3018.24,-1022.67 3018.24,-1013.33 3018.24,-1013.33 3018.24,-1008.67 3022.91,-1004 3027.57,-1004 3027.57,-1004 3151.91,-1004 3151.91,-1004 3156.57,-1004 3161.24,-1008.67 3161.24,-1013.33 3161.24,-1013.33 3161.24,-1022.67 3161.24,-1022.67 3161.24,-1027.33 3156.57,-1032 3151.91,-1032"/>
+<text text-anchor="middle" x="3089.74" y="-1021" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">reviewers.build_hubp_plan</text>
+<text text-anchor="middle" x="3089.74" y="-1010" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">83</text>
+</g>
+<!-- reviewers.build_hubp_plan&#45;&gt;reviewers.common -->
+<g id="edge99" class="edge">
+<title>reviewers.build_hubp_plan&#45;&gt;reviewers.common</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M3137.99,-1003.94C3147.83,-1001.3 3158.11,-998.55 3167.74,-996 3214.71,-983.57 3268.09,-969.69 3307.27,-959.56"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3308.1,-961.33 3312.95,-958.09 3307.14,-957.6 3308.1,-961.33"/>
+</g>
+<!-- reviewers.run_hfa -->
+<g id="node94" class="node">
+<title>reviewers.run_hfa</title>
+<path fill="#d9cbe8" stroke="#666666" d="M3535.41,-1032C3535.41,-1032 3454.07,-1032 3454.07,-1032 3449.41,-1032 3444.74,-1027.33 3444.74,-1022.67 3444.74,-1022.67 3444.74,-1013.33 3444.74,-1013.33 3444.74,-1008.67 3449.41,-1004 3454.07,-1004 3454.07,-1004 3535.41,-1004 3535.41,-1004 3540.07,-1004 3544.74,-1008.67 3544.74,-1013.33 3544.74,-1013.33 3544.74,-1022.67 3544.74,-1022.67 3544.74,-1027.33 3540.07,-1032 3535.41,-1032"/>
+<text text-anchor="middle" x="3494.74" y="-1021" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">reviewers.run_hfa</text>
+<text text-anchor="middle" x="3494.74" y="-1010" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">249</text>
+</g>
+<!-- reviewers.run_hub -->
+<g id="node95" class="node">
+<title>reviewers.run_hub</title>
+<path fill="#d9cbe8" stroke="#666666" d="M3793.91,-1032C3793.91,-1032 3709.57,-1032 3709.57,-1032 3704.91,-1032 3700.24,-1027.33 3700.24,-1022.67 3700.24,-1022.67 3700.24,-1013.33 3700.24,-1013.33 3700.24,-1008.67 3704.91,-1004 3709.57,-1004 3709.57,-1004 3793.91,-1004 3793.91,-1004 3798.57,-1004 3803.24,-1008.67 3803.24,-1013.33 3803.24,-1013.33 3803.24,-1022.67 3803.24,-1022.67 3803.24,-1027.33 3798.57,-1032 3793.91,-1032"/>
+<text text-anchor="middle" x="3751.74" y="-1021" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">reviewers.run_hub</text>
+<text text-anchor="middle" x="3751.74" y="-1010" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">331</text>
+</g>
+<!-- reviewers.run_hub&#45;&gt;reviewers.common -->
+<g id="edge100" class="edge">
+<title>reviewers.run_hub&#45;&gt;reviewers.common</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M3719.27,-1003.99C3711.04,-1001.04 3702.14,-998.15 3693.74,-996 3600.32,-972.11 3489,-957.74 3422.46,-950.6"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3422.63,-948.68 3416.96,-950.01 3422.22,-952.51 3422.63,-948.68"/>
+</g>
+<!-- reviewers.run_hubp -->
+<g id="node96" class="node">
+<title>reviewers.run_hubp</title>
+<path fill="#d9cbe8" stroke="#666666" d="M3273.91,-1032C3273.91,-1032 3183.57,-1032 3183.57,-1032 3178.91,-1032 3174.24,-1027.33 3174.24,-1022.67 3174.24,-1022.67 3174.24,-1013.33 3174.24,-1013.33 3174.24,-1008.67 3178.91,-1004 3183.57,-1004 3183.57,-1004 3273.91,-1004 3273.91,-1004 3278.57,-1004 3283.24,-1008.67 3283.24,-1013.33 3283.24,-1013.33 3283.24,-1022.67 3283.24,-1022.67 3283.24,-1027.33 3278.57,-1032 3273.91,-1032"/>
+<text text-anchor="middle" x="3228.74" y="-1021" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">reviewers.run_hubp</text>
+<text text-anchor="middle" x="3228.74" y="-1010" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">219</text>
+</g>
+<!-- reviewers.run_whisperx -->
+<g id="node97" class="node">
+<title>reviewers.run_whisperx</title>
+<path fill="#d9cbe8" stroke="#666666" d="M3677.91,-1032C3677.91,-1032 3567.57,-1032 3567.57,-1032 3562.91,-1032 3558.24,-1027.33 3558.24,-1022.67 3558.24,-1022.67 3558.24,-1013.33 3558.24,-1013.33 3558.24,-1008.67 3562.91,-1004 3567.57,-1004 3567.57,-1004 3677.91,-1004 3677.91,-1004 3682.57,-1004 3687.24,-1008.67 3687.24,-1013.33 3687.24,-1013.33 3687.24,-1022.67 3687.24,-1022.67 3687.24,-1027.33 3682.57,-1032 3677.91,-1032"/>
+<text text-anchor="middle" x="3622.74" y="-1021" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">reviewers.run_whisperx</text>
+<text text-anchor="middle" x="3622.74" y="-1010" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">292</text>
+</g>
+<!-- reviewers.run_whisperx&#45;&gt;auto_lrc -->
+<g id="edge101" class="edge">
+<title>reviewers.run_whisperx&#45;&gt;auto_lrc</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M3606.56,-1032.12C3591.75,-1044.05 3568.63,-1060.22 3545.24,-1067 3527.95,-1072.01 2914.47,-1072.22 2897.24,-1067 2877.06,-1060.89 2857.36,-1047.21 2843.44,-1035.86"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="2844.41,-1034.16 2838.95,-1032.11 2841.94,-1037.11 2844.41,-1034.16"/>
+</g>
+<!-- reviewers.run_whisperx&#45;&gt;reviewers.common -->
+<g id="edge102" class="edge">
+<title>reviewers.run_whisperx&#45;&gt;reviewers.common</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M3579.23,-1003.96C3570.16,-1001.29 3560.64,-998.52 3551.74,-996 3506.93,-983.3 3455.92,-969.5 3418.35,-959.46"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3418.72,-957.57 3412.91,-958.01 3417.73,-961.29 3418.72,-957.57"/>
+</g>
+<!-- reviewers.run_xlsr -->
+<g id="node98" class="node">
+<title>reviewers.run_xlsr</title>
+<path fill="#d9cbe8" stroke="#666666" d="M2995.91,-1032C2995.91,-1032 2911.57,-1032 2911.57,-1032 2906.91,-1032 2902.24,-1027.33 2902.24,-1022.67 2902.24,-1022.67 2902.24,-1013.33 2902.24,-1013.33 2902.24,-1008.67 2906.91,-1004 2911.57,-1004 2911.57,-1004 2995.91,-1004 2995.91,-1004 3000.57,-1004 3005.24,-1008.67 3005.24,-1013.33 3005.24,-1013.33 3005.24,-1022.67 3005.24,-1022.67 3005.24,-1027.33 3000.57,-1032 2995.91,-1032"/>
+<text text-anchor="middle" x="2953.74" y="-1021" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">reviewers.run_xlsr</text>
+<text text-anchor="middle" x="2953.74" y="-1010" font-family="'Noto Sans TC', 'Microsoft JhengHei', sans-serif" font-size="10.00">229</text>
+</g>
+<!-- reviewers.run_xlsr&#45;&gt;japanese_ctc_align -->
+<g id="edge103" class="edge">
+<title>reviewers.run_xlsr&#45;&gt;japanese_ctc_align</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2958.08,-1003.65C2965.71,-978.94 2980.74,-924.28 2980.74,-877 2980.74,-877 2980.74,-877 2980.74,-523 2980.74,-481.08 2993.59,-433.21 3001.56,-407.56"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3003.46,-407.96 3003.28,-402.14 2999.79,-406.8 3003.46,-407.96"/>
+</g>
+<!-- reviewers.run_xlsr&#45;&gt;reviewers.common -->
+<g id="edge104" class="edge">
+<title>reviewers.run_xlsr&#45;&gt;reviewers.common</title>
+<path fill="none" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" d="M2986.2,-1003.93C2994.43,-1000.99 3003.33,-998.11 3011.74,-996 3113.11,-970.59 3234.29,-956.49 3304.78,-949.85"/>
+<polygon fill="#444444" fill-opacity="0.533333" stroke="#444444" stroke-width="0.8" stroke-opacity="0.533333" points="3305.31,-951.73 3310.61,-949.3 3304.95,-947.9 3305.31,-951.73"/>
+</g>
+</g>
+</svg>
+</div>
+    </details>
+  </section>
+
+  <section>
+    <h2>這張圖看不到的東西</h2>
+    <ul class="blind">
+      <li>分層是依模組名稱與拆檔報告分的，不是 graphify 的自動分群（它分出 230 個函式層級的群）。邊數全部來自 graphify。</li>
+      <li>主圖只畫主幹（17 條線）。幾乎每一層都用到「時間證據核心」「音訊／歌詞」「執行期基礎」，沒有全部畫線；完整的上下游數字在點開方塊後的右側面板。</li>
+      <li>bat／ps1 啟動路徑不在 graphify 圖中，點線是依原始碼補畫的。</li>
+      <li>helper 子行程是用檔案路徑啟動的，不是 import，圖裡沒有邊；虛線是依原始碼補畫的。</li>
+      <li>審核頁前端 <code>review_page/index.html</code>（2,211 行）不是 Python，沒有進模組統計。審核頁和對齊管線之間只靠報告與 LRC 檔案相連。</li>
+      <li>執行期才綁定的 callback（例如 report_trust → central_commit）在 import 層級看不到。</li>
+      <li>lyricsee 已不在公開 repo，圖上沒有。</li>
+    </ul>
+  </section>
+</div>
+
+<script>
+const OX = 140;
+const M = {"bat": {"x": 230, "y": 30, "w": 240, "h": 60, "name": "Align LRC.bat", "sub": "align-lrc.ps1", "layer": "啟動（不在圖中）", "ghost": true, "cnt": "", "role": "把 FLAC 或資料夾拖上來就開始對齊。ps1 逐首呼叫 auto_lrc.py（或 r2_pipeline.py），最後跑 lrc_batch_summary.py 出批次摘要。", "files": ["Align LRC.bat", "align-lrc.ps1"], "fns": [], "io": "→ auto_lrc.py、r2_pipeline.py、lrc_batch_summary.py（依 ps1 原始碼）"}, "rbat": {"x": 800, "y": 30, "w": 220, "h": 60, "name": "Review LRC.bat", "layer": "啟動（不在圖中）", "ghost": true, "cnt": "", "role": "啟動審核頁伺服器。不帶參數時審 outputs\\reports 裡每一首。", "files": ["Review LRC.bat"], "fns": [], "io": "→ review_server.py"}, "rev": {"x": 10, "y": 190, "w": 170, "h": 80, "name": "Reviewer 層", "sub": "r2", "layer": "入口", "cnt": "13 模組 · 2,818 行", "role": "r2 流程用的獨立 reviewer（HuBERT、WhisperX、XLSR 等）。各自再對一次，用來判斷每一句要不要送人審，不改時間。", "files": ["run_reviewer_analysis.py（748）", "reviewers/run_hub.py（331）", "reviewers/run_whisperx.py（292）", "reviewers/run_hfa.py（249）", "reviewers/run_xlsr.py（229）", "reviewers/run_hubp.py（219）", "reviewer_layer.py（194）", "reviewers/build_hfa_plan.py（187）", "…另 5 個"], "fns": ["classify_row()", "select_songs()", "calibrate_reviewer_vocal_offset()"], "io": "用到：評測／維運工具 7、auto_lrc（facade） 1、ASR／對齊後端 1、音訊／歌詞 1；被用到：auto_lrc（facade） 7"}, "entry": {"x": 230, "y": 190, "w": 240, "h": 80, "name": "auto_lrc", "sub": "facade + r2_pipeline", "layer": "入口", "cnt": "4 模組 · 4,556 行", "core": true, "role": "對外入口。process_audio() 依序呼叫每個階段；拆檔後 auto_lrc.py 只剩 facade，演算法都在下面各層。r2_pipeline 在它外面再包一層 reviewer 流程。", "files": ["auto_lrc.py（2,575）", "r2_pipeline.py（1,379）", "lrc_scoring.py（380）", "apply_start_lead.py（222）"], "fns": ["process_audio()", "run_auto_backend_competition()", "build_parser()", "main()"], "io": "用到：執行期基礎 46、音訊／歌詞 29、時間證據核心 24、ASR／對齊後端 18、Central 仲裁 18、輸出 14；被用到：Reviewer 層 1、評測／維運工具 1"}, "out": {"x": 530, "y": 190, "w": 190, "h": 80, "name": "輸出", "sub": "LRC、報告、審核清單", "layer": "入口", "cnt": "6 模組 · 1,858 行", "role": "把 .lrc 和報告成對寫出（中斷可復原）、產生審核 TSV、記錄人工修改、匯出稽核表、批次摘要、寫回 FLAC 標籤。", "files": ["lrc_batch_summary.py（516）", "lyrics_tag_export.py（433）", "export_alignment_audit.py（378）", "lrc_review_tsv.py（347）", "lrc_publication.py（112）", "lrc_manual_edits.py（72）"], "fns": ["publish_pair()", "recover_pair()", "review_artifact_paths()", "manual_edit_reason()"], "io": "用到：評測／維運工具 5、執行期基礎 3；被用到：審核頁 16、auto_lrc（facade） 14、音訊／歌詞 5、評測／維運工具 1"}, "review": {"x": 800, "y": 190, "w": 220, "h": 80, "name": "審核頁", "sub": "review_server + index.html", "layer": "入口", "cnt": "8 模組 · 5,138 行", "core": true, "role": "本機 HTTP 伺服器加單頁前端。讀報告和 LRC，讓你逐句聽、改時間、刪行，存回 LRC。讀 LRC 時自動判斷 UTF-8／UTF-16／GBK／Big5 與毫秒標籤（EMPTY1），偵測簡體行並一鍵轉台灣繁體（TRAD1），顯示括號句的和聲候選。和對齊管線只透過檔案相連。", "files": ["review_server.py（3,336）", "review_hot_update.py（693）", "review_presentation.py（501）", "harmony_candidates.py（276）", "paren_flag_marks.py（113）", "backfill_romaji.py（83）", "zh_traditional.py（80）", "review_decisions_summary.py（56）", "review_page/index.html（2,211）"], "fns": ["ReviewStore", "ReviewHandler", "_decode_lrc()", "song_candidates()", "JobRunner"], "io": "用到：輸出 16、執行期基礎 6、音訊／歌詞 3、段落骨架 1；被用到：局部重聽 5、Central 後回收 4、Central 仲裁 2、ASR／對齊後端 2、時間證據核心 2、CTC 精修 1"}, "post": {"x": 10, "y": 370, "w": 220, "h": 80, "name": "Central 後回收", "sub": "HuBERT／句尾", "layer": "Central 決策", "cnt": "4 模組 · 4,584 行", "role": "Central 寫定前後的補救：用 HuBERT 日文 ASR 確認句尾和既有候選的開頭。只能在既有候選裡選或標成需審，不產生新時間。", "files": ["postcentral_tail_acquisition.py（1,672）", "known_lyric_hubert_planning.py（1,124）", "postcentral_recovery.py（949）", "hubert_existing_candidate_recovery.py（839）"], "fns": ["_postcentral_tail_enriched_bundle()", "_mark_material_recovery_moves_for_review()", "_hubert_recovery_isolation_units()"], "io": "用到：時間證據核心 88、Central 仲裁 69、執行期基礎 37、音訊／歌詞 35、局部重聽 11、聲學假說 4；被用到：auto_lrc（facade） 8"}, "central": {"x": 300, "y": 370, "w": 200, "h": 80, "name": "Central 仲裁", "sub": "規則，不是模型", "layer": "Central 決策", "cnt": "4 模組 · 7,550 行", "core": true, "role": "唯一決定時間的地方。比較各後端的候選，依規則選定每一句的時間並寫定；另含中立仲裁與自我檢查 F1–F4。", "files": ["backend_bundle.py（2,982）", "central_commit.py（2,769）", "neutral_arbitration.py（1,396）", "central_commit_tail.py（403）"], "fns": ["evaluate_backend_timing()", "select_evaluated_backend()", "compute_final_timing_self_check()", "central_candidate_selection_payload()"], "io": "用到：時間證據核心 227、執行期基礎 80、音訊／歌詞 33、聲學假說 14、局部重聽 13、ASR／對齊後端 7；被用到：Central 後回收 69、auto_lrc（facade） 18、時間證據核心 2"}, "lw": {"x": 580, "y": 370, "w": 210, "h": 80, "name": "局部重聽", "sub": "whisper.cpp", "layer": "Central 決策", "cnt": "6 模組 · 5,632 行", "role": "對有衝突的句子切小窗，用 whisper.cpp 重聽，證明候選「是這一句」。也負責把執行期證據綁到候選上、收集 Central 的候選。", "files": ["local_whisper_retry.py（2,167）", "runtime_evidence_binding.py（1,203）", "crossline_retry_execution.py（936）", "local_whisper_requests.py（773）", "crossline_retry_planning.py（486）", "local_whisper_incremental_budget.py（67）"], "fns": ["collect_central_timing_candidates()", "execute_local_whisper_request()", "plan_joint_boundary_retry_requests()", "bind_runtime_whisperx_row_evidence()"], "io": "用到：時間證據核心 189、執行期基礎 71、音訊／歌詞 69、ASR／對齊後端 26、聲學假說 10、CTC 精修 5；被用到：Central 仲裁 13、Central 後回收 11、auto_lrc（facade） 9"}, "seg": {"x": -40, "y": 550, "w": 180, "h": 80, "name": "段落骨架", "sub": "+ 段落級重對齊", "layer": "證據來源", "cnt": "18 模組 · 3,549 行", "role": "判斷歌曲的段落骨架是否成立；成立就跳過局部視窗重對齊。段落級重對齊（--segment-realign）預設關閉。", "files": ["segment_realign.py（687）", "segment_skeleton_production.py（611）", "segment_structure.py（315）", "segment_skeleton.py（252）", "segment_production.py（224）", "segment_anchor_inference.py（219）", "segment_skeleton_dual.py（168）", "…另 11 個"], "fns": ["run_segment_skeleton()", "plan_segment_realign()", "scan_vocal_recurrences()", "merge_vocal_passages()"], "io": "用到：執行期基礎 6、CTC 精修 2、審核頁 1；被用到：CTC 精修 4、ASR／對齊後端 1、Central 仲裁 1、局部重聽 1、審核頁 1"}, "ctc": {"x": 190, "y": 550, "w": 160, "h": 80, "name": "CTC 精修", "layer": "證據來源", "cnt": "6 模組 · 5,057 行", "role": "在全曲 CTC 對齊之上做邊界證據、局部視窗重對齊、句首回收，以及和 WhisperX 的交叉精修。", "files": ["ctc_boundary_evidence.py（1,240）", "ctc_window_realign.py（1,092）", "ctc_prefix_recovery.py（1,077）", "ctc_whisperx_refinement.py（961）", "ctc_refinement.py（682）", "ctc_confidence.py（5）"], "fns": ["first_local_onset()", "annotate_ctc_boundary_evidence()", "ctc_prefix_boundary_evidence()"], "io": "用到：音訊／歌詞 64、執行期基礎 39、時間證據核心 35、段落骨架 4、審核頁 1；被用到：auto_lrc（facade） 13、聲學假說 8、ASR／對齊後端 5、局部重聽 5、段落骨架 2"}, "hyp": {"x": 430, "y": 550, "w": 160, "h": 80, "name": "聲學假說", "layer": "證據來源", "cnt": "5 模組 · 4,403 行", "role": "從人聲軌的音量起點、重複段落提出候選時間，並記錄每個候選的來歷。", "files": ["acoustic_hypotheses.py（1,977）", "hypothesis_provenance.py（961）", "recurrence_hypotheses.py（903）", "vocal_onset_hypotheses.py（482）", "duplicate_audio_consensus.py（80）"], "fns": ["_self_bound_hypothesis_record()", "_strong_vocal_onset_near()", "assert_report_timestamp_equality()"], "io": "用到：音訊／歌詞 97、時間證據核心 73、執行期基礎 47、CTC 精修 8；被用到：Central 仲裁 14、局部重聽 10、ASR／對齊後端 8、Central 後回收 4、auto_lrc（facade） 3"}, "asr": {"x": 630, "y": 550, "w": 180, "h": 80, "name": "ASR／對齊後端", "layer": "證據來源", "cnt": "2 模組 · 3,311 行", "role": "呼叫各模型：whisper.cpp 原始辨識、MMS_FA 全曲 CTC、WhisperX 強制對齊、7 組 CTC 的多模型共識。", "files": ["asr_backends.py（2,797）", "multimodel_consensus.py（514）"], "fns": ["run_whisperx_alignment()", "asr_transcript()", "build_local_whisper_capability()", "hf_model_load_options()"], "io": "用到：執行期基礎 121、音訊／歌詞 62、時間證據核心 17、聲學假說 8、CTC 精修 5、審核頁 2；被用到：局部重聽 26、auto_lrc（facade） 18、Central 仲裁 7、評測／維運工具 3、Central 後回收 3、時間證據核心 3；子行程 → helper"}, "helper": {"x": 870, "y": 550, "w": 170, "h": 80, "name": "helper 子行程", "sub": "各模型的獨立腳本", "layer": "證據來源", "cnt": "5 模組 · 1,301 行", "ghost": true, "role": "真正載入模型的腳本，在另一個 Python 行程裡跑（GPU 環境隔離）。後端用檔案路徑啟動它們，不是 import。", "files": ["ctc_align.py（382）", "multimodel_align.py（350）", "persistent_helper_worker.py（264）", "japanese_ctc_align.py（153）", "whisperx_refine.py（152）"], "fns": [], "io": "被 asr_backends、ctc_refinement、ctc_window_realign、ctc_prefix_recovery、central_commit 以子行程啟動（graphify 圖中沒有這些邊）"}, "timing": {"x": 230, "y": 730, "w": 240, "h": 80, "name": "時間證據核心", "sub": "型別 + 可信度", "layer": "共用核心", "cnt": "6 模組 · 7,566 行", "core": true, "role": "所有層共用的資料型別（候選、決策、最終狀態）、句尾與候選區間證據，以及報告的可信度計算。", "files": ["report_trust.py（2,312）", "timing_core.py（1,847）", "tail_occurrence_evidence.py（1,418）", "candidate_regions.py（1,051）", "timing_evidence_types.py（807）", "arbiter.py（131）"], "fns": ["TimingCandidate", "FinalTimingState", "BackendSelection", "update_report_confidence_metrics()"], "io": "用到：音訊／歌詞 81、執行期基礎 65、ASR／對齊後端 3、Central 仲裁 2、審核頁 2；被用到：Central 仲裁 227、局部重聽 189、Central 後回收 88、聲學假說 73、CTC 精修 35、auto_lrc（facade） 24"}, "io": {"x": 580, "y": 730, "w": 220, "h": 80, "name": "音訊／歌詞", "layer": "共用核心", "cnt": "5 模組 · 2,809 行", "role": "解碼音訊、算特徵、Demucs 分人聲軌；讀歌詞、轉羅馬拼音、寫 LRC。", "files": ["lyrics_io.py（1,316）", "audio_features.py（814）", "lrc_reading.py（591）", "numeral_reading.py（50）", "lrc_timestamp_pairs.py（38）"], "fns": ["LyricEntry", "entry_sung_text()", "normalize_match_text()", "analyze_audio()", "write_lrc()"], "io": "用到：執行期基礎 38、輸出 5、審核頁 1；被用到：聲學假說 97、時間證據核心 81、局部重聽 69、CTC 精修 64、ASR／對齊後端 62、Central 後回收 35"}, "base": {"x": 300, "y": 900, "w": 300, "h": 64, "name": "執行期基礎與快取", "layer": "基礎", "cnt": "6 模組 · 2,630 行", "role": "路徑、錯誤型別、內容雜湊、模型快取、GPU 鎖、階段計時。每一層都用到它。", "files": ["runtime_base.py（1,281）", "lrc_stage_timings.py（479）", "model_cache.py（447）", "runtime_paths.py（237）", "split_patch.py（104）", "file_digest.py（82）"], "fns": ["LrcError", "_timing_content_digest()", "canonicalize_lrc_time()", "_path_sha256()"], "io": "被用到：ASR／對齊後端 121、Central 仲裁 80、局部重聽 71、時間證據核心 65、聲學假說 47、auto_lrc（facade） 46"}, "tools": {"x": 700, "y": 900, "w": 300, "h": 64, "name": "評測／維運工具", "layer": "基礎", "cnt": "13 模組 · 3,508 行", "role": "離線用：對 BK 評分、報告比對、benchmark、doctor 環境檢查、模型預抓、快取遷移。不在對齊路徑上。", "files": ["run_benchmarks.py（573）", "quantify_alignment.py（458）", "furigana_audit.py（457）", "compare_report_runs.py（404）", "doctor.py（387）", "evaluate_lrc.py（273）", "migrate_model_cache.py（212）", "s5_regression_gate.py（177）", "…另 5 個"], "fns": ["parse_lrc()", "summarize()"], "io": "用到：音訊／歌詞 13、執行期基礎 11、ASR／對齊後端 3、輸出 1、auto_lrc（facade） 1；被用到：Reviewer 層 7、輸出 5"}};
+const BANDS = [{"y": 14, "h": 92, "t": "啟動", "s": "不在圖中"}, {"y": 170, "h": 120, "t": "入口", "s": "facade／審核"}, {"y": 350, "h": 120, "t": "Central 決策", "s": "只有這層定時間"}, {"y": 530, "h": 120, "t": "證據來源", "s": "模型與假說"}, {"y": 710, "h": 120, "t": "共用核心", "s": "型別／I/O"}, {"y": 884, "h": 96, "t": "基礎", "s": "runtime／工具"}];
+const E = [["bat", "entry", null, "hook", 0], ["rbat", "review", null, "hook", 0], ["entry", "rev", 7, "call", 0], ["entry", "out", 14, "call", 0], ["review", "out", 16, "call", 0], ["entry", "post", 8, "call", 0], ["entry", "central", 18, "call", 0], ["post", "central", 69, "call", 0], ["central", "lw", 13, "call", 0], ["lw", "asr", 26, "call", 0], ["lw", "hyp", 10, "call", 0], ["ctc", "seg", 4, "call", 0], ["asr", "helper", null, "http", 0], ["central", "timing", 227, "call", 0], ["hyp", "timing", 73, "call", 0], ["timing", "io", 81, "call", 0], ["timing", "base", 65, "call", 0]];
+const PATH = [{"n": "bat", "t": "把 FLAC 和歌詞拖到 Align LRC.bat，ps1 逐首呼叫 auto_lrc.py"}, {"n": "entry", "t": "<span class=fn>process_audio()</span> 開始，依序跑下面每一步"}, {"n": "io", "t": "讀歌詞、預檢、轉羅馬拼音；Demucs 分出人聲軌"}, {"n": "asr", "t": "whisper.cpp 原始辨識；MMS_FA 全曲 CTC 強制對齊"}, {"n": "seg", "t": "<span class=fn>run_segment_skeleton()</span> 判斷段落骨架是否成立"}, {"n": "ctc", "t": "骨架不成立時做 CTC 局部視窗重對齊"}, {"n": "asr", "t": "WhisperX 強制對齊，當第二個候選"}, {"n": "central", "t": "Central 仲裁：比較候選，依規則選定每句時間"}, {"n": "lw", "t": "寫定前補證據：whisper.cpp 局部重聽（中立仲裁）"}, {"n": "post", "t": "HuBERT 確認句尾與既有候選，只選不造"}, {"n": "asr", "t": "多模型共識：≥3 個模型家族在 0.1 秒內一致才改未定案的句子"}, {"n": "central", "t": "自我檢查 F1–F4：只降可信度，不改時間"}, {"n": "out", "t": "寫出 .lrc、對齊報告、審核清單"}, {"n": "review", "t": "審核頁：人工確認沒把握的句子"}];
+const GODS = [["LyricEntry", "lyrics_io.py", 275, "每一層都在傳的歌詞行型別；改欄位影響全部"], ["LrcError", "runtime_base.py", 152, "統一的錯誤型別"], ["_timing_content_digest()", "runtime_base.py", 143, "快取與報告的內容雜湊；改了舊快取全部失效"], ["TimingCandidate", "timing_evidence_types.py", 124, "候選時間的型別，Central 與所有證據來源共用"], ["entry_sung_text()", "lyrics_io.py", 116, "取「實際要唱的字」；影響所有比對"], ["process_audio()", "auto_lrc.py", 88, "整條管線的順序"], ["normalize_match_text()", "lyrics_io.py", 75, "文字比對前的正規化"], ["collect_central_timing_candidates()", "local_whisper_retry.py", 70, "Central 看得到哪些候選"], ["run_auto_backend_competition()", "auto_lrc.py", 70, "後端競爭與選擇的主流程"], ["AudioFeatures", "audio_features.py", 61, "音訊特徵型別，聲學假說與自我檢查都用"]];
+const FEATS = [{"t": "EMPTY1：審核頁讀不出 LRC 變空白", "m": "review", "f": "review_server.py", "e": "_decode_lrc()、_region_shares()", "d": "自動判斷 UTF-8／UTF-16／GBK／Big5，支援 [mm:ss.xxx] 毫秒標籤；GBK 與 Big5 都能解時依字元區比例選，拿不準就標「編碼不確定」。2026-11-15 上正式版。"}, {"t": "TRAD1：簡體一鍵轉台灣繁體", "m": "review", "f": "zh_traditional.py、review_server.py、index.html", "e": "song_candidates()、POST /api/song/N/convert", "d": "OpenCC s2tw（不用 s2twp）；有假名的行不轉，日文歌與編碼不確定時預設不勾；[ti:] 等標籤一起轉；轉前留 .pre-s2tw-*.bak。2026-11-15 上正式版。"}, {"t": "和聲候選", "m": "review", "f": "harmony_candidates.py", "e": "load()", "d": "讀 sidecar，在審核頁顯示括號句在和聲軌的起點。只當參考，不會自動改時間（HARM2 證實直接覆蓋會弄壞原本對的句子）。"}, {"t": "split2 第二輪拆檔", "m": "ctc", "f": "ctc_refinement 等 5 個原檔", "e": "—", "d": "5 個超過 4,000 行的模組拆成 16 個新模組，原檔留作對外入口。下方「完整模組圖」看得到拆分後的相依。"}, {"t": "段落級重對齊（預設關閉）", "m": "seg", "f": "segment_realign.py", "e": "plan_segment_realign()", "d": "--segment-realign 預設 off。五輪 replay 沒修到任何一行，所以 1.9 不開。"}, {"t": "lyricsee 歌詞來源", "m": null, "miss": true, "f": "不在公開 repo", "e": "—", "d": "已從公開 repo 移除，只在本機保留，所以不在這張圖裡。"}];
+
+const NS = "http://www.w3.org/2000/svg";
+const svg = document.getElementById("map");
+const mk = (tag, attrs, parent) => { const el = document.createElementNS(NS, tag); for (const k in attrs) el.setAttribute(k, attrs[k]); (parent||svg).appendChild(el); return el; };
+const C = id => { const m = M[id]; return {x:m.x+OX+m.w/2, y:m.y+m.h/2, m}; };
+
+const defs = mk("defs",{});
+[["a","var(--accent)"],["h","var(--http)"],["k","var(--muted)"]].forEach(([id,c])=>{
+  const mkr = mk("marker",{id:"ar"+id,viewBox:"0 0 10 10",refX:"9",refY:"5",markerWidth:"7",markerHeight:"7",markerUnits:"userSpaceOnUse",orient:"auto-start-reverse"},defs);
+  mk("path",{d:"M0,0 L10,5 L0,10 z",style:"fill:"+c},mkr);
+});
+
+BANDS.forEach(b=>{
+  const g = mk("g",{class:"band"});
+  mk("rect",{x:4,y:b.y,width:1172,height:b.h,rx:8},g);
+  const t = mk("text",{x:18,y:b.y+26},g); t.textContent = b.t;
+  const s = mk("text",{x:18,y:b.y+44,class:"sub"},g); s.textContent = b.s;
+});
+
+function anchor(a, b) {
+  const A = M[a], B = M[b];
+  const ac = C(a), bc = C(b);
+  const sameRow = Math.abs(ac.y - bc.y) < 20;
+  if (sameRow) {
+    const dir = bc.x > ac.x ? 1 : -1;
+    return [{x: ac.x + dir*A.w/2, y: ac.y}, {x: bc.x - dir*B.w/2, y: bc.y}];
+  }
+  const dir = bc.y > ac.y ? 1 : -1;
+  // aim the end point toward the source, clamped inside the target box, so lines do not all pile on the centre
+  const qx = Math.max(bc.x - B.w/2 + 18, Math.min(bc.x + B.w/2 - 18, ac.x));
+  const px = Math.max(ac.x - A.w/2 + 18, Math.min(ac.x + A.w/2 - 18, bc.x));
+  return [{x: px, y: ac.y + dir*A.h/2}, {x: qx, y: bc.y - dir*B.h/2}];
+}
+const edgeEls = [];
+const gE = mk("g",{});
+E.forEach(([a,b,n,kind,bend])=>{
+  const [p, q] = anchor(a,b);
+  const dx = q.x-p.x, dy = q.y-p.y, len = Math.hypot(dx,dy)||1;
+  const nx = -dy/len, ny = dx/len;
+  const mx = (p.x+q.x)/2 + nx*bend, my = (p.y+q.y)/2 + ny*bend;
+  const g = mk("g",{class:"edge "+(kind==="http"?"http":kind==="hook"?"hook":"")},gE);
+  const w = n ? Math.max(1.4, Math.min(8, Math.sqrt(n)*0.5)) : 1.8;
+  const mid = kind==="http"?"h":kind==="hook"?"k":"a";
+  mk("path",{d:`M${p.x},${p.y} Q${mx},${my} ${q.x},${q.y}`,"stroke-width":w,"marker-end":`url(#ar${mid})`},g);
+  if (n) {
+    const lx = 0.25*p.x + 0.5*mx + 0.25*q.x, ly = 0.25*p.y + 0.5*my + 0.25*q.y;
+    const s = String(n), bw = 8 + s.length*7;
+    mk("rect",{class:"lbl",x:lx-bw/2,y:ly-9,width:bw,height:18,rx:4},g);
+    const t = mk("text",{x:lx,y:ly+4,"text-anchor":"middle"},g); t.textContent = s;
+  }
+  g.dataset.a = a; g.dataset.b = b;
+  edgeEls.push(g);
+});
+
+const nodeEls = {};
+Object.entries(M).forEach(([id,m])=>{
+  const cls = ["node"]; if (m.core) cls.push("core"); if (m.ghost) cls.push("ghost");
+  const g = mk("g",{class:cls.join(" "),tabindex:"0",role:"button","aria-label":m.name});
+  mk("rect",{x:m.x+OX,y:m.y,width:m.w,height:m.h,rx:7},g);
+  const cx = m.x+OX+m.w/2;
+  const lines = [m.name, m.sub, m.cnt].filter(Boolean);
+  const top = m.y + m.h/2 - (lines.length-1)*9 + 4;
+  lines.forEach((s,i)=>{
+    const t = mk("text",{x:cx,y:top+i*18,"text-anchor":"middle",class: i===0?"":"cnt"},g); t.textContent = s;
+  });
+  g.addEventListener("click",()=>select(id));
+  g.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){e.preventDefault();select(id);} });
+  nodeEls[id] = g;
+});
+
+const gP = mk("g",{class:"pathline"}); gP.style.display = "none";
+PATH.forEach((s,i)=>{
+  const c = C(s.n); const off = PATH.slice(0,i).filter(x=>x.n===s.n).length;
+  const x = c.x - c.m.w/2 + 4 + off*22, y = c.m.y + 2;
+  mk("circle",{cx:x,cy:y,r:10},gP);
+  const t = mk("text",{x:x,y:y+4,"text-anchor":"middle"},gP); t.textContent = i+1;
+});
+
+const panel = document.getElementById("panel");
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function overview() {
+  panel.innerHTML = `<div class="layer">說明</div><h2>這張圖怎麼看</h2>
+  <p>上到下是六層：bat 啟動 <b>auto_lrc</b>，它依序呼叫各階段。<b>Central</b> 是唯一決定時間的地方，下面的「證據來源」只提供候選和佐證，再往下是所有層共用的型別與基礎。</p>
+  <p>綠線上的數字是兩層之間的引用邊數，越粗越多。最大的一條是 Central 仲裁 → 時間證據核心（227）。</p>
+  <p style="color:var(--muted)">點方塊看細節；再點一次或按「全部顯示」回到這裡。</p>`;
+}
+function pathPanel() {
+  panel.innerHTML = `<div class="layer">一首歌的旅程（預設設定）</div><h2>一首歌的主路徑</h2><ol class="steps">${PATH.map(s=>`<li>${s.t}</li>`).join("")}</ol>`;
+}
+let current = null, pathOn = false;
+function select(id) {
+  if (pathOn) togglePath(false);
+  if (current === id || !id) { current = null; clearDim(); overview(); return; }
+  current = id;
+  const m = M[id];
+  const linked = new Set([id]);
+  edgeEls.forEach(g=>{ const on = g.dataset.a===id || g.dataset.b===id; g.classList.toggle("dimmed", !on); if(on){linked.add(g.dataset.a);linked.add(g.dataset.b);} });
+  Object.entries(nodeEls).forEach(([k,g])=>{ g.classList.toggle("dimmed", !linked.has(k)); g.classList.toggle("sel", k===id); });
+  panel.innerHTML = `<div class="layer">${esc(m.layer)}${m.cnt?` · ${esc(m.cnt)}`:""}</div><h2>${esc(m.name)}</h2>
+  <dl>
+    <div><dt>職責</dt><dd>${esc(m.role)}</dd></div>
+    ${m.fns.length?`<div><dt>核心函式／型別</dt><dd class="chips">${m.fns.map(f=>`<span class="chip">${esc(f)}</span>`).join("")}</dd></div>`:""}
+    ${m.files.length?`<div><dt>檔案（行數）</dt><dd>${m.files.map(f=>`<code>${esc(f)}</code>`).join("<br>")}</dd></div>`:""}
+    <div><dt>上下游（邊數）</dt><dd>${esc(m.io)}</dd></div>
+  </dl>`;
+  if (window.matchMedia("(max-width: 960px)").matches) panel.scrollIntoView({behavior:"smooth",block:"nearest"});
+}
+function clearDim() {
+  edgeEls.forEach(g=>g.classList.remove("dimmed"));
+  Object.values(nodeEls).forEach(g=>g.classList.remove("dimmed","sel","onpath"));
+}
+const btnPath = document.getElementById("btnPath");
+function togglePath(on) {
+  pathOn = on; btnPath.setAttribute("aria-pressed", on);
+  gP.style.display = on ? "" : "none";
+  clearDim(); current = null;
+  if (on) {
+    const ids = new Set(PATH.map(s=>s.n));
+    Object.entries(nodeEls).forEach(([k,g])=>{ g.classList.toggle("dimmed", !ids.has(k)); g.classList.toggle("onpath", ids.has(k)); });
+    edgeEls.forEach(g=>g.classList.add("dimmed"));
+    pathPanel();
+  } else overview();
+}
+btnPath.addEventListener("click",()=>togglePath(!pathOn));
+document.getElementById("btnReset").addEventListener("click",()=>{ togglePath(false); });
+
+document.getElementById("feats").innerHTML = FEATS.map((f,i)=>`<div class="feat" data-i="${i}" tabindex="0" role="button">
+  <span class="tag ${f.miss?"miss":""}">${f.miss?"不在圖中":esc(M[f.m].name)}</span>
+  <h3>${esc(f.t)}</h3>
+  <p><code>${esc(f.f)}</code></p>
+  <p>入口：<span class="fn">${esc(f.e)}</span></p>
+  <p>${esc(f.d)}</p></div>`).join("");
+document.querySelectorAll(".feat").forEach(el=>{
+  const go = ()=>{ const f = FEATS[+el.dataset.i]; if (f.m) { current = null; select(f.m); document.querySelector(".canvas").scrollIntoView({behavior:"smooth",block:"start"}); } };
+  el.addEventListener("click",go); el.addEventListener("keydown",e=>{ if(e.key==="Enter"){go();} });
+});
+const maxG = GODS[0][2];
+document.getElementById("gods").innerHTML = GODS.map((g,i)=>`<tr><td class="num">${i+1}</td><td><span class="fn">${esc(g[0])}</span></td><td><code>${esc(g[1])}</code></td><td class="num">${g[2]}</td><td><div class="bar" style="width:${(g[2]/maxG*100).toFixed(0)}%"></div></td><td>${esc(g[3])}</td></tr>`).join("");
+overview();
+</script>
+</body>
+</html>
