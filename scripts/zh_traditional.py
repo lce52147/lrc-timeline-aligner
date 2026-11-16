@@ -71,8 +71,6 @@ CORRECTIONS: tuple = (
     Entry("回归线", "回歸線", "Taiwan writes 回歸線 (tropic); stock gives 迴歸線", ("线性回归", "線性迴歸")),
     Entry("克制", "克制", "Taiwan writes 克制 (restrain); stock gives 剋制", ("克星", "剋星")),
     Entry("干了啥", "幹了啥", "stock leaves the 干 of 干了啥 unconverted (it only has 干了什么)", ("池塘干了啥都不剩", "池塘乾了啥都不剩")),
-    Entry("卷卷的", "捲捲的", "curly (捲), not the scroll 卷; stock writes 卷卷的", ("试卷卷面", "試卷卷面")),
-    Entry("卷卷头", "捲捲頭", "curly (捲), not the scroll 卷; stock writes 卷卷头", ("长卷卷首", "長卷卷首")),
     Entry("书签名", "書簽名", "书签名 = signing a book (签名), not the bookmark 书签 of the preference below", ("书签", "書籤")),
     Entry("老么", "老么", "么 is the Traditional character in 老么 / 么儿 / 么妹 / 么弟 / 么女 (youngest child); 么 after 什 怎 这 那 多 要 甚 is 麼", ("什么", "什麼")),
     Entry("么儿", "么兒", "youngest son: 么 is Traditional here", ("什么", "什麼")),
@@ -116,10 +114,14 @@ PREFERENCES: tuple = (
 # --------------------------------------------------------------------------------------------------------------------
 # b. DROPPED_PHRASES: stock phrases that hide a better match across the same characters.
 # --------------------------------------------------------------------------------------------------------------------
-DROPPED_PHRASES = frozenset({"一起干", "了如"})   # 一起干杯 is 一起+干杯 (stock: 一起干 hides 干杯); 了如 is only meant for 了如指掌, which stock has as a whole phrase
+DROPPED_PHRASES = frozenset({"一起干", "了如", "短几", "有云", "如干", "心向"})   # 一起干杯 is 一起+干杯 (stock: 一起干 hides 干杯); 了如 is only meant for 了如指掌, which stock has as a whole phrase
 DROPPED_NOTES: dict = {
     "一起干": (("一起干杯", "一起乾杯"), ("一起干活", "一起幹活")),
     "了如": (("了如指掌", "瞭如指掌"), ("他了如何", "他了如何")),
+    "短几": (("短短几秒", "短短幾秒"), ("短几", "短几")),       # 短几 (a short low table) is stock's phrase and swallows 短短|几秒
+    "有云": (("唯有云雀", "唯有雲雀"), ("今天有云", "今天有雲")),   # 有云 ('it is said') swallows 有|云雀 and 有|云层
+    "如干": (("倒不如干脆", "倒不如乾脆"), ("若干", "若干")),     # 如干 swallows 不如|干脆
+    "心向": (("内心向往", "內心嚮往"), ("心向党", "心向黨")),     # 心向 swallows 内心|向往
 }
 # --------------------------------------------------------------------------------------------------------------------
 # c. CONTEXT_RULES. Constants used by them:
@@ -129,17 +131,17 @@ _NUMERALS = "一二三四五六七八九十百千万两几数多零〇0-9０-９
 ZHI_NOUNS = ("鸟", "猫", "狗", "鸡", "鸭", "鹅", "羊", "兔", "虫", "蚁", "蜂", "蝶", "蛙", "虎", "狼", "狐", "熊", "猴", "鹿", "鼠", "鹰", "雁",
              "鸦", "雀", "燕", "鸥", "鹤", "鹦鹉", "孔雀", "蛇", "鱼", "龙", "蚊", "蝇", "蜘蛛", "松鼠", "刺猬", "蝙蝠", "乌龟", "老虎", "狮", "象", "牛", "马", "猪", "手", "脚", "眼", "耳")
 _CLAUSE_END = "，。！？!?,.;；、…\n"
-_ZHI_AFTER = re.compile(r"[^%s]{0,12}?的.{0,2}?(?:%s)" % (re.escape(_CLAUSE_END), "|".join(ZHI_NOUNS)))
+_ZHI_AFTER = re.compile(r"[^%s]{0,6}?的[小大老白黑黄花红灰]?(?:%s)" % (re.escape(_CLAUSE_END), "|".join(ZHI_NOUNS)))
 
 
 def _zhi(match: "re.Match", rest: str) -> str:
     """这只 / 那只 / 是只 followed by 有 能 会 想 要: 隻 when the same clause has 的 + a noun counted with 隻, otherwise 只 (the user's wording)."""
-    measure = _ZHI_AFTER.match(rest) is not None
+    measure = not rest.startswith("是") and _ZHI_AFTER.match(rest) is not None
     lead = {"这": "這", "那": "那"}.get(match.groupdict().get("lead") or "", "")
     return lead + ("隻" if measure else "只")
 
 
-_VERB_AFTER = "有能会想要"
+_VERB_AFTER = "有能会想要是在"
 CONTEXT_RULES: tuple = (
     # --- 海里: nautical mile after a number, otherwise "in the sea"
     Context("sea", r"(?<![%s])(?P<fix>海里)" % _NUMERALS, "海裡",
@@ -165,6 +167,18 @@ CONTEXT_RULES: tuple = (
     Context("zhi-copula", r"是(?P<fix>只)(?=[%s])" % _VERB_AFTER, _zhi,
             "是只有 / 是只能 ...: 'is only' (只) unless the clause has 的 + an animal noun (是隻有毒的蛇); stock always writes 隻",
             (("总是只有我", "總是只有我"), ("他是只有毒的蛇", "他是隻有毒的蛇")), (("那是只猫", "那是隻貓"),)),
+    Context("zhi-adverb", r"(?<![一二三四五六七八九十两几每各这那哪半整多少\d])(?P<fix>只)(?=[%s])" % _VERB_AFTER, _zhi,
+            "只 before 有 能 会 想 要 是 在 and not after a numeral or demonstrative is 'only' (没有只要 别只是 不只会); stock's 有只 / 别只 / 是只 read it as 隻",
+            (("没有只要祈求", "沒有只要祈求"), ("别只是旁观", "別只是旁觀")), (("一只会飞的鸟", "一隻會飛的鳥"), ("两只是黑的", "兩隻是黑的"))),
+    Context("wind-after", r"(?<=[的了着吹随被把乘借顺逆迎])(?P<fix>风后)", "風後",
+            "风后 after 的 了 着 吹 ... is 'after the wind' (風後); alone it is the name 風后 (stock)",
+            (("吸入湿润的风后", "吸入濕潤的風後"),), (("黄帝的大臣风后", "黃帝的大臣風后"),)),
+    Context("dry-compound", r"(?<=[没不未])(?P<fix>干)(?=[透净燥涸枯爽])", "乾",
+            "没干透 / 没干净: dried (乾); stock's phrase 没干 -> 沒幹 swallows the 干",
+            (("道路还没干透吧", "道路還沒乾透吧"),), (("他没干坏事", "他沒幹壞事"),)),
+    Context("curl", r"(?<![试长画书手经压考答])(?P<fix>卷卷)", "捲捲",
+            "卷卷 = curling (捲捲而上, 捲捲的头发); after 试 长 画 书 手 经 压 考 答 the first 卷 belongs to the word before (试卷|卷面)",
+            (("卷卷而上的火焰", "捲捲而上的火焰"),), (("试卷卷面整洁", "試卷卷面整潔"), ("长卷卷首有题字", "長卷卷首有題字"))),
     # --- 松: the pine of a tree word followed by 开 (青松|开花, 古松|开始); stock's phrase 松开 (鬆開) would swallow the 开
     Context("pine", r"(?<=[青古老孤苍劲乔雪])(?P<fix>松)(?=开)", "松",
             "after 青 古 老 孤 苍 劲 乔 雪 the 松 is a pine tree and the 开 starts the next word (青松|开花); stock's phrase 松开 -> 鬆開 hides it",
