@@ -2527,6 +2527,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"INFO: model cache mode={cache_mode}", file=sys.stderr, flush=True)
     if args.output and len(args.audio) != 1:
         parser.error("--output can only be used with exactly one audio file")
+    for flag, value in (("--lyrics", args.lyrics), ("--anchor-hints", args.anchor_hints)):
+        if value and len(args.audio) != 1:
+            parser.error(f"{flag} 只能搭配一首音檔使用：每首歌的歌詞與錨點不同，同時給多首音檔會讓後面的歌被寫成第一首的歌詞。請逐首執行，或讓每首歌的歌詞放在音檔旁邊。")
     if args.probe and args.output:
         parser.error("--probe cannot be combined with --output")
     failures = 0
