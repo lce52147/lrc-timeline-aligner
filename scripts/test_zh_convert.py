@@ -35,6 +35,10 @@ class SegmentationTests(unittest.TestCase):
         self.assertEqual(zh_traditional.convert_text("夹着书签在里面"), "夾著書籤在裡面")
         self.assertEqual(zh_traditional.convert_text("鞋带又松开了"), "鞋帶又鬆開了")
 
+    def test_measure_word_only_versus_only(self) -> None:
+        for text, want in {"这只猫": "這隻貓", "那只狗": "那隻狗", "这只是": "這只是", "这只有": "這只有", "这只能": "這只能", "这只想": "這只想"}.items():
+            self.assertEqual(zh_traditional.convert_text(text), want, text)
+
     def test_sentences_with_several_ambiguous_characters(self) -> None:
         self.assertEqual(zh_traditional.convert_text("后来我们一起干杯，头发里面有发现"), "後來我們一起乾杯，頭髮裡面有發現")
 

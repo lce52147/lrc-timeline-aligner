@@ -48,7 +48,8 @@ PHRASE_OVERRIDES: dict[str, str] = {
     "周而复始": "周而復始",   # 3 / 週而復始 0
     "死胡同": "死胡同",  # 1 / 死衚衕 0
     "游过": "游過", "游移": "游移",   # swim / drift, not 遊
-    "这只": "這隻", "那只": "那隻",   # measure word; 这只是 / 这只有 still match 只是 / 只有 from the right
+    "这只": "這隻", "那只": "那隻",   # measure word (这只猫) ...
+    "这只有": "這只有", "这只能": "這只能", "这只要": "這只要", "这只会": "這只會", "这只想": "這只想", "那只有": "那只有", "那只能": "那只能",   # ... but 这只+verb is "only"
     "松开": "鬆開",      # loosen, not the pine 松 (24 / 0)
 }
 # OpenCC phrases that hide a better match across the same characters (``一起干`` is a phrase for ``一起干活``; in
