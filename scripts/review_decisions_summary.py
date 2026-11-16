@@ -7,6 +7,9 @@ import json
 from pathlib import Path
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import runtime_paths  # noqa: E402
+
 
 def load_decisions(report_dir: Path) -> list[dict]:
     """Last verdict per (song, entry); a later change overrides an earlier keep and vice versa."""
@@ -34,10 +37,10 @@ def summarize(records: list[dict]) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--report-dir", type=Path, default=Path(__file__).resolve().parents[1] / "outputs" / "reports")
+    parser.add_argument("--report-dir", type=Path, default=None, help="default: LRC_REPORT_DIR, else the runtime reports folder")
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON")
     args = parser.parse_args(argv)
-    summary = summarize(load_decisions(args.report_dir))
+    summary = summarize(load_decisions((args.report_dir or runtime_paths.reports_dir()).expanduser()))
     if args.json:
         print(json.dumps(summary, ensure_ascii=False, indent=2))
         return 0
