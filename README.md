@@ -1,5 +1,9 @@
 # LRC Timeline Aligner — v1.9.0
 
+**LRC 歌詞時間軸自動對齊工具**：把你手上的歌詞對到音樂上，自動產生同步歌詞 `.lrc` 檔（LRC 產生器、歌詞對時、forced alignment），在 Windows 本機執行。
+
+*English: a local Windows LRC generator. Give it a song (FLAC) and the lyrics you already have; it finds when each line starts (WhisperX forced alignment, Demucs vocal separation) and writes a synced `.lrc` file, then opens a review page for the lines it is unsure about. Tuned mainly for Japanese songs.*
+
 在 Windows 本機替歌曲產生 LRC 時間軸。你提供 FLAC 和歌詞，工具會聽音訊、找出每一句開始唱的時間，寫出同名的 `.lrc`，再開一個審核頁，讓你確認它沒把握的句子。
 
 - 歌詞順序不會被改動，工具只決定每一句的開始時間。
