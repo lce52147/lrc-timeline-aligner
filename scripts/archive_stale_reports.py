@@ -1,16 +1,21 @@
-"""Move alignment reports whose LRC no longer exists out of the live reports folder.
+"""Move alignment reports whose audio file no longer exists out of the live reports folder.
 
-A report is "stale" when its ``output_path`` (the same-name .lrc) is missing, so the
-review page can only show it read-only as ``lrc-missing``. Old test runs leave such
-reports behind. By default this only lists them; ``--apply`` moves each report and
-its sidecars (``.review.tsv``, ``.auto.lrc``, ``.review-edits.json``) into the
-archive folder. Nothing is deleted and reports with a live LRC are never touched.
+A report is "stale" only when the audio file it points to (``audio_path``) is gone: the song was deleted or moved away,
+so nothing can be reviewed or exported from it any more. A song whose LRC was exported (the LRC is archived to ``checked/``,
+the audio is still there) is finished work, not stale, and a report with a missing LRC but a present audio is left alone.
+
+By default this only lists the stale reports; ``--apply`` moves each report together with every file that shares its stem
+(``.review.tsv``, ``.auto.lrc``, ``.review-edits.json``, ``.review-decisions.jsonl``, ``.orphaned-*``, ``.discarded-*``,
+the romaji overrides, the harmony candidate sidecar, ...) into the archive folder. A name that already exists there gets a
+``.dupN`` suffix instead of stopping the run. Nothing is deleted.
 """
 from __future__ import annotations
 
 import argparse
+import collections
 import datetime as _dt
 import json
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -19,26 +24,38 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import runtime_paths  # noqa: E402
 
 REPORT_SUFFIX = ".align-report.json"
-SIDECAR_SUFFIXES = (".review.tsv", ".auto.lrc", ".review-edits.json")
+HARMONY_SIDECAR_SUFFIX = ".harmony_cands.json"
 
 
 def report_is_stale(report_path: Path) -> tuple[bool, str]:
-    """Return (stale, reason). Unreadable reports are left alone and reported."""
+    """Return (stale, reason). Unreadable reports and reports with no audio path are left alone and reported."""
     try:
         data = json.loads(report_path.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError) as error:
         return False, f"unreadable: {error}"
-    output = data.get("output_path") if isinstance(data, dict) else None
-    if not isinstance(output, str) or not output:
-        return False, "no output_path"
-    if Path(output).expanduser().is_file():
-        return False, "lrc present"
-    return True, "lrc-missing"
+    audio = data.get("audio_path") if isinstance(data, dict) else None
+    if not isinstance(audio, str) or not audio:
+        return False, "no audio_path"
+    if Path(audio).expanduser().is_file():
+        return False, "audio present"
+    return True, "audio-missing"
 
 
 def sidecars_of(report_path: Path) -> list[Path]:
+    """Every file beside the report that belongs to it: same stem followed by a dot, plus the harmony sidecar named after the audio."""
     stem = report_path.name[: -len(REPORT_SUFFIX)]
-    return [report_path.with_name(stem + suffix) for suffix in SIDECAR_SUFFIXES]
+    prefix = stem + "."
+    found = [path for path in report_path.parent.iterdir()
+             if path.is_file() and path != report_path and path.name.startswith(prefix)]
+    try:
+        audio = json.loads(report_path.read_text(encoding="utf-8-sig")).get("audio_path")
+    except (OSError, ValueError, AttributeError):
+        audio = None
+    if isinstance(audio, str) and audio:
+        harmony = report_path.with_name(Path(audio).stem + HARMONY_SIDECAR_SUFFIX)
+        if harmony.is_file() and harmony not in found:
+            found.append(harmony)
+    return sorted(found, key=lambda path: path.name.casefold())
 
 
 def plan(report_dir: Path) -> tuple[list[Path], list[tuple[Path, str]]]:
@@ -48,24 +65,53 @@ def plan(report_dir: Path) -> tuple[list[Path], list[tuple[Path, str]]]:
         is_stale, reason = report_is_stale(report)
         if is_stale:
             stale.append(report)
-        elif reason != "lrc present":
+        elif reason != "audio present":
             skipped.append((report, reason))
     return stale, skipped
 
 
-def archive(stale: list[Path], archive_dir: Path) -> list[Path]:
+def _numbered(name: str, number: int) -> str:
+    """``a.review.tsv`` -> ``a.review.dup2.tsv``: the extension stays, so the file keeps its kind."""
+    dot = name.rfind(".")
+    return f"{name}.dup{number}" if dot <= 0 else f"{name[:dot]}.dup{number}{name[dot:]}"
+
+
+def archive_report(report: Path, archive_dir: Path) -> tuple[list[Path], int, list[str]]:
+    """Move one report and its files; (moved targets, the .dupN used or 0, failures). One number serves the whole set."""
+    files = [report, *sidecars_of(report)]
+    number = 0
+    while any((archive_dir / (path.name if not number else _numbered(path.name, number))).exists() for path in files):
+        number += 1 if number else 2
     moved: list[Path] = []
+    failures: list[str] = []
+    for path in files:
+        target = archive_dir / (path.name if not number else _numbered(path.name, number))
+        try:
+            shutil.move(str(path), str(target))
+        except OSError as error:
+            failures.append(f"{path.name}: {error}")
+            continue
+        moved.append(target)
+    return moved, number, failures
+
+
+def archive(stale: list[Path], archive_dir: Path) -> list[Path]:
+    moved, _renamed, _failures = archive_many(stale, archive_dir)
+    return moved
+
+
+def archive_many(stale: list[Path], archive_dir: Path) -> tuple[list[Path], int, list[str]]:
+    """Move every stale report; a collision renames, a failed move is recorded, and the rest still go."""
+    moved: list[Path] = []
+    renamed = 0
+    failures: list[str] = []
     archive_dir.mkdir(parents=True, exist_ok=True)
     for report in stale:
-        for path in [report, *sidecars_of(report)]:
-            if not path.is_file():
-                continue
-            target = archive_dir / path.name
-            if target.exists():
-                raise FileExistsError(f"refusing to overwrite {target}")
-            shutil.move(str(path), str(target))
-            moved.append(target)
-    return moved
+        done, number, failed = archive_report(report, archive_dir)
+        moved.extend(done)
+        renamed += 1 if number else 0
+        failures.extend(failed)
+    return moved, renamed, failures
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -90,9 +136,21 @@ def main(argv: list[str] | None = None) -> int:
     if not args.apply:
         print(f"dry run; add --apply to move them to {archive_dir}")
         return 0
-    moved = archive(stale, Path(archive_dir).expanduser().resolve())
-    print(f"moved {len(moved)} file(s) to {archive_dir}")
-    return 0
+    moved, renamed, failures = archive_many(stale, Path(archive_dir).expanduser().resolve())
+    kinds = collections.Counter(_kind(path.name) for path in moved)
+    print(f"moved {len(moved)} file(s) of {len(stale)} report(s) to {archive_dir}"
+          + (f"; {renamed} report(s) renamed with .dupN because the target name already existed" if renamed else ""))
+    print("by kind: " + ", ".join(f"{kind} x{count}" for kind, count in sorted(kinds.items())))
+    for failure in failures:
+        print(f"FAILED {failure}")
+    return 1 if failures else 0
+
+
+def _kind(name: str) -> str:
+    """The file's kind for the summary: what follows the report stem's ``--<hash>``, else its last two dotted parts."""
+    match = re.search(r"--[0-9a-f]{6,}(\.[^\/]*)$", name)
+    kind = match.group(1) if match else "." + ".".join(name.rsplit(".", 2)[-2:])
+    return re.sub(r"\d{8}T\d{6}Z(-\d+)?", "<stamp>", kind)
 
 
 if __name__ == "__main__":

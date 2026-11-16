@@ -150,8 +150,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -Prefetch
 **有些句子我聽起來是對的，為什麼還要我審？**
 「需審」代表工具證明不了這句的開頭是對的，例如幾個模型給的時間不一致，或上一句的尾音和這一句的開頭黏在一起。它不代表時間是錯的，所以大部分按 `K` 維持就好。
 
-**LRC 被搬走或刪掉的舊報告怎麼辦？**
-它們在歌曲清單裡會收成一行「另有 N 首無法審核」。要清理的話執行 `scripts\archive_stale_reports.py` 查看清單，再加 `--apply` 把它們移到 `outputs\reports\_archive`。這個指令不會刪除任何檔案。
+**音檔已經不存在的舊報告怎麼辦？**
+只有「報告指向的音檔已不存在」才算過期；歌曲匯出後 LRC 被歸檔、音檔還在，不算過期，不會被動。要清理的話執行 `scripts\archive_stale_reports.py` 查看清單，再加 `--apply` 把每份過期報告連同同名的所有附屬檔（`.review.tsv`、`.auto.lrc`、`.review-edits.json`、`.review-decisions.jsonl`、`.orphaned-*`、和聲候選等）一起移到 `outputs\reports\_archive`。目標名稱已存在時會改用 `.dupN` 的新名字，不會中斷；最後印出搬了幾個檔、各是什麼副檔名。這個指令不會刪除任何檔案。
 
 **可以用命令列嗎？**
 可以，進階參數都在 `align-lrc.ps1`：
