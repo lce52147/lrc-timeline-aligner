@@ -1100,6 +1100,41 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         self.assertIn(b"[00:03.10]three\n", saved)
         self.assertIn(b"*[00:50.00]three*\n", saved)   # the other expansion was not edited: its mark stays byte for byte
 
+    def _save_time(self, entry, cs):
+        detail = self._detail()
+        body = {"base_sha256": detail["base_sha256"], "edits": [{"entry": entry, "cs": cs, "source": "ear", "nudge_cs": 0}]}
+        self.assertEqual(self._json_request("POST", "/api/song/0/save", body)[0], 200)
+        return self.output.read_bytes()
+
+    def test_time_edit_of_a_crlf_file_keeps_crlf_on_the_edited_and_the_untouched_lines(self) -> None:
+        self._start(True)
+        self._hand_edit({b"[00:03.00]four": b"*[00:03.00]four*", b"[00:01.00]one": b"*[00:01.00]one*"})
+        saved = self._save_time(4, 350)
+        self.assertEqual(saved.count(b"\n"), saved.count(b"\r\n"), "every line ending is still CRLF")
+        self.assertIn(b"\r\n[00:03.50]four\r\n", saved)
+        self.assertIn(b"\r\n*[00:01.00]one*\r\n", saved)  # the line that was not edited: byte for byte, mark included
+        self.assertFalse(self._detail()["rows"][3]["user_marked"])
+        self.assertTrue(self._detail()["rows"][0]["user_marked"])
+
+    def test_time_edit_of_an_original_and_translation_entry_clears_both_lines_and_moves_both(self) -> None:
+        for marks in ((b"*[00:02.00]two a*", b"*[00:02.00]two b*"), (b"[00:02.00]two a", b"*[00:02.00]two b*"), (b"*[00:02.00]two a", b"[00:02.00]two b")):
+            with self.subTest(marks=marks):
+                self.output.write_bytes(self.original)
+                self._hand_edit({b"[00:02.00]two a": marks[0], b"[00:02.00]two b": marks[1]})
+                self.assertTrue(self._detail()["rows"][1]["user_marked"])
+                saved = self._save_time(2, 250)
+                self.assertIn(b"\n[00:02.50]two a\n[00:02.50]two b\n", saved)
+                self.assertNotIn(b"[00:02.00]", saved)
+                self.assertFalse(self._detail()["rows"][1]["user_marked"])
+
+    def test_a_trailing_space_and_two_stars_is_not_a_mark_and_stays(self) -> None:
+        cases = [(b"*[00:03.25]four **", b"[00:03.50]four **"), (b"[00:03.25]four **", b"[00:03.50]four **"), (b"*[00:03.25]four  **", b"[00:03.50]four  **"),
+                 (b"*[00:03.25]four ***", b"[00:03.50]four ***")]
+        for before, after in cases:
+            with self.subTest(before=before):
+                self.output.write_bytes(self.original)
+                self._hand_edit({b"[00:03.00]four": before})
+                self.assertIn(after + b"\n", self._save_time(4, 350))
     def _real_flac(self) -> None:
         import shutil
         try:
