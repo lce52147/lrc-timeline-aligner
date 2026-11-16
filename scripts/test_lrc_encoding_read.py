@@ -277,5 +277,39 @@ class GbkJapaneseTieTests(unittest.TestCase):
             path.write_bytes(self.JAPANESE_TIE[1].encode("gbk"))
             self.assertEqual(read_lyric_text(path), (self.JAPANESE_TIE[1], "gb18030"))
 
+class PlainTextLyricEncodingTests(unittest.TestCase):
+    """A lyric .txt has no time tags: the kana evidence for GBK Japanese is counted on every line except the ID-tag lines."""
+    JAPANESE_TXT = "ありがとう\nさくら さくら\n好きだよ\nもう一度\n"
+
+    def test_gbk_japanese_txt_without_time_tags_reads_as_gb18030(self) -> None:
+        raw = self.JAPANESE_TXT.encode("gbk")
+        self.assertEqual(review_server._decode_lrc_checked(raw), (self.JAPANESE_TXT, "gb18030", False))
+
+    def test_a_trace_of_kana_in_a_txt_is_a_refusal_never_a_certain_big5(self) -> None:
+        for text in ("もう一度\n", "君が好き\n", "花火\n空へ\n"):
+            got = review_server._decode_lrc_checked(text.encode("gbk"))
+            self.assertTrue(got[1] == "gb18030" or got[2], (text, got[1:]))
+
+    def test_load_lyrics_reads_a_gbk_japanese_txt_as_japanese(self) -> None:
+        import contextlib
+        import io
+        import tempfile
+        from lyrics_io import load_lyrics
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "jp.txt"
+            path.write_bytes(self.JAPANESE_TXT.encode("gbk"))
+            with contextlib.redirect_stderr(io.StringIO()):
+                document = load_lyrics(path)
+        self.assertEqual([" ".join(entry.lines) for entry in document.entries], ["ありがとう", "さくら さくら", "好きだよ", "もう一度"])
+
+    def test_real_big5_txt_is_unchanged(self) -> None:
+        for text in ("我們一起走過的日子\n你是我心中最美的夢\n了解你的心情\n", "我愛你\n一個人\n", "我愛你\n回家\n"):
+            self.assertEqual(review_server._decode_lrc_checked(text.encode("cp950")), (text, "cp950", False), text)
+
+    def test_a_big5_title_tag_is_not_evidence_in_a_txt_either(self) -> None:
+        raw = "[ti:獵れ锭垫 BLUE BUD]\n[re:LRC tools ctc-forced-align]\n[length:03:59.00]\n".encode("gbk")
+        self.assertEqual(review_server._decode_lrc_checked(raw)[1:], ("cp950", False))
+
+
 if __name__ == "__main__":
     unittest.main()
