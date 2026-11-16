@@ -89,6 +89,8 @@ CORRECTIONS: tuple = (
     Entry("不是只有一次", "不是只有一次", "不是 + 只有 + 一次 = 'not only once' (stock reads 是只 as 是隻)", ("那不是只有斑点的狗吗", "那不是隻有斑點的狗嗎")),
     Entry("这杯酒我干了", "這杯酒我乾了", "'I drain this wine': stock 幹了; the word is the whole phrase", ("卖酒我干了十年", "賣酒我幹了十年")),
     Entry("如果喉咙干了", "如果喉嚨乾了", "if the throat is dry (stock 喉嚨幹了); the word is the whole phrase, so 喉咙干了坏事 stays stock", ("捂着喉咙干了坏事", "捂著喉嚨幹了壞事")),
+    Entry("统计划分", "統計劃分", "stock reads 统计|划分; the preference 计划 -> 計畫 would take the 计划 across the two words (a reading that only changes 劃 into 畫)", ("我的计划", "我的計畫")),
+    Entry("四库禁毁书丛刋", "四庫禁燬書叢刋", "a book series title written with 燬 (the variant preference 毀 does not apply)", ("烧毁", "燒毀")),
 )
 PREFERENCES: tuple = (
     Entry("鱼类在游动", "魚類在游動", "both are standard; 游動 in the lyrics, stock 遊動; a phrase from the lyrics", ("旅游动态", "旅遊動態")),
