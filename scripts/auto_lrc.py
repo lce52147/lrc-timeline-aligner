@@ -1848,7 +1848,7 @@ def process_audio(audio_path: Path, args: argparse.Namespace) -> Path:
     )
     progress_log(f"lyrics source: {lyrics_path}")
     lyrics = load_lyrics(lyrics_path)
-    entries = remove_generated_title_cards(lyrics.entries, audio_path)
+    entries = remove_generated_title_cards(lyrics.entries, audio_path, title_only=True)
     preflight = build_lyric_preflight(lyrics_path, lyrics, entries, audio_path)
     if args.probe:
         identity = str(audio_path.resolve()).casefold().encode("utf-8")

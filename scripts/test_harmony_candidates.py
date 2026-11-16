@@ -58,6 +58,24 @@ class TitleOnlyCardTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self._generate("[ti:Song Title]\n[00:00.00]Song Title\n[00:05.00]first line\n[00:10.00](backing vocal)\n", 5)
 
+    def test_card_from_the_audio_title_tag_when_the_file_name_and_the_ti_header_differ(self):
+        # The generator writes the TITLE tag of the audio file; the LRC header was edited and the file was renamed.
+        lrc = "[ti:Another Name]\n[00:00.00]Tagged Title\n[00:05.00]first line\n[00:10.00](backing vocal)\n"
+        with mock.patch("lyrics_io.audio_track_labels", return_value=("", "Tagged Title")):
+            payload = self._generate(lrc, 2, audio_name="01 renamed.flac")
+        self.assertEqual(payload["lines_total"], 2)
+
+    def test_a_first_line_that_is_none_of_the_titles_still_counts_as_a_lyric(self):
+        lrc = "[ti:Another Name]\n[00:00.00]Not The Title\n[00:05.00]first line\n[00:10.00](backing vocal)\n"
+        with mock.patch("lyrics_io.audio_track_labels", return_value=("", "Tagged Title")):
+            payload = self._generate(lrc, 3, audio_name="01 renamed.flac")
+        self.assertEqual(payload["lines_total"], 3)
+
+    def test_an_unreadable_tag_falls_back_to_the_header_and_the_file_name(self):
+        with mock.patch("lyrics_io.audio_track_labels", side_effect=RuntimeError("ffprobe failed")):
+            payload = self._generate("[ti:Song Title]\n[00:00.00]Song Title\n[00:05.00]first line\n[00:10.00](backing vocal)\n", 2)
+        self.assertEqual(payload["lines_total"], 2)
+
 
 class CueTests(unittest.TestCase):
     def test_cue_lines_have_no_explicit_lyric(self):

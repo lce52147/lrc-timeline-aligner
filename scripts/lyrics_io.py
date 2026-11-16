@@ -111,12 +111,18 @@ def audio_track_labels(audio_path: Path) -> tuple[str, str]:
     return artist, title or audio_path.stem
 
 
-def remove_generated_title_cards(entries: list[LyricEntry], audio_path: Path) -> list[LyricEntry]:
+def remove_generated_title_cards(
+    entries: list[LyricEntry], audio_path: Path, *, title_only: bool = False
+) -> list[LyricEntry]:
     """Remove only a matching zero-time Artist - Title card.
 
     Hand-made LRCs also write the card as Title - Artist (c07, c10 of the
     corpus); both orders must match the file's own tags exactly, so a sung
     line that merely contains " - " is never removed.
+
+    ``title_only`` (the lyric input paths only, never scoring) also removes the
+    card ``write_lrc`` writes for a song without an ARTIST tag: a single zero-time
+    line whose text is the title the generator wrote (``audio_track_labels``).
     """
     artist, title = audio_track_labels(audio_path)
     normalized_title = normalize_match_text(title).casefold()
@@ -139,6 +145,13 @@ def remove_generated_title_cards(entries: list[LyricEntry], audio_path: Path) ->
             and card is not None
             and bool(normalized_title)
             and (artist_title or title_artist)
+        ) or (
+            title_only
+            and entry.source_time_cs == 0
+            and len(entry.lines) == 1
+            and not normalized_artist
+            and bool(normalized_title)
+            and normalize_match_text(text).casefold() == normalized_title
         )
         if not is_title_card:
             kept.append(entry)
@@ -574,7 +587,7 @@ def checked_lrc_timing_hint(
         if not checked.saw_timestamps:
             continue
         checked_entries, checked_skipped = remove_instrumental_markers(checked.entries)
-        checked_entries = remove_generated_title_cards(checked_entries, audio_path)
+        checked_entries = remove_generated_title_cards(checked_entries, audio_path, title_only=True)
         checked_signature = [normalize_match_text(entry_sung_text(entry)) for entry in checked_entries]
         if target_signature != checked_signature:
             continue

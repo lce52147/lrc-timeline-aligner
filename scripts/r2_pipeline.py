@@ -122,7 +122,7 @@ def build_reviewer_payload(report: Mapping[str, object]) -> dict[str, object]:
         raise FileNotFoundError(f"vocal source unavailable: {vocal_path}")
 
     document = auto_lrc.load_lyrics(lyrics_path)
-    entries = auto_lrc.remove_generated_title_cards(document.entries, audio_path)
+    entries = auto_lrc.remove_generated_title_cards(document.entries, audio_path, title_only=True)
     entries, _skipped = auto_lrc.remove_instrumental_markers(entries)
     if len(entries) != len(assignments):
         raise ValueError(

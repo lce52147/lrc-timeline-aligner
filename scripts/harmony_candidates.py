@@ -174,7 +174,9 @@ def _align(harmony_path, runs, romaji, threads=4):
 
 def _title_only_card(entry, meta, audio):
     """The tool writes ``[00:00.00]<title>`` (no ``Artist - `` part) for a song without an ARTIST tag: that first zero-time line is
-    the title card, not a lyric. It is the card when its text is the file's own ``[ti:]`` value or the audio file's name."""
+    the title card, not a lyric. The generator takes the title from the audio file's TITLE tag (the file name without one), so that
+    is asked first (``lyrics_io.audio_track_labels``, the generator's own source); the file's ``[ti:]`` value and the audio file's
+    name stay as fallbacks for a title that was edited or a tag that cannot be read."""
     if entry.time_cs != 0 or len(entry.lines) != 1:
         return False
     key = lambda text: re.sub(r"\s+", "", text).casefold()
@@ -183,6 +185,11 @@ def _title_only_card(entry, meta, audio):
         return False
     titles = [key(m.group(1)) for m in (re.match(r"\[ti:(.*)\]\s*$", line, re.I) for line in meta) if m]
     titles.append(key(pathlib.Path(audio).stem))
+    try:
+        import lyrics_io
+        titles.append(key(lyrics_io.audio_track_labels(pathlib.Path(audio))[1]))
+    except Exception:
+        pass
     return text in titles
 
 
