@@ -3,16 +3,26 @@
 OpenCC ``s2tw`` dictionaries only (never ``s2twp``: it rewrites vocabulary). A line with any kana is Japanese and is
 never converted. Without OpenCC every function answers "nothing to convert", so the review never depends on it.
 
-The conversion reads OpenCC's own dictionaries (STPhrases, STCharacters, TWVariants) but segments the text itself: the
-longest phrase matched from the left and the longest phrase matched from the right are both tried and the one that
-covers more characters with multi-character phrases wins (see ``_segment``). The stock left-to-right match alone
-turns ``一起干杯`` into ``一起幹杯`` (the phrase ``一起干`` hides ``干杯``).
+The conversion is stock OpenCC ``s2tw`` (opencc-python-reimplemented) run on our own tables: split at the separators,
+then recursively "take the longest phrase of STPhrases, the leftmost one among equally long ones, and convert the two
+sides the same way", the remaining characters through STCharacters, then TWVariants. With the four rule tables below
+emptied the output is character for character the stock output (the test suite checks every STPhrases word).
+
+Everything that differs from stock is one of four kinds of rule, each with a reason and a positive and a negative
+example that the tests run (docs/ZH_S2TW_ROUNDTRIP.md lists them):
+
+* ``ENTRIES``: a word added to or replaced in the dictionary; it takes part in the segmentation like any word, with no priority;
+* ``DROPPED_PHRASES``: a stock phrase that is not used;
+* ``CONTEXT_RULES``: a regular expression over the simplified text that fixes a span and its Traditional form where only the
+  surrounding text can tell (a fixed span is a boundary: no phrase crosses it);
+* ``VARIANT_PREFERENCE``: a character-level variant choice applied to the characters the conversion produced.
 """
 from __future__ import annotations
 
 import functools
 import os
 import re
+from typing import Callable, NamedTuple, Union
 
 # Hiragana, katakana (not the middle dot U+30FB or the long-vowel mark U+30FC: Chinese lyrics use both), katakana extensions and halfwidth katakana.
 _KANA_RE = re.compile(r"[぀-ヺヽ-ヿㇰ-ㇿｦ-ﾟ]")
@@ -21,64 +31,165 @@ HEADER_TEXT_RE = re.compile(r"^(\[(?:ti|ar|al|au|by|re|ve):)(.*?)(\][ 	]*)$", re
 # CJK ideographs: extension A, unified, compatibility.
 _HAN_RE = re.compile(r"[㐀-䶿一-鿿豈-﫿]")
 _TAIWAN_CHURCH_CHAR = "祢"   # U+7962, the standard pronoun in Taiwan church lyrics; Big5 has no code for it
+# Characters that are simplified in every word they appear in even though Big5 can encode them: 么 is only ever written 麼 in
+# Traditional text when it follows one of these (老么 / 么儿 / 么妹 are Traditional and do not match).
+_CERTAIN_MA_RE = re.compile(r"[什怎这那多要甚]么")
 _converter = None
 _loaded = False
 
-# Corrections to the OpenCC dictionaries, found by a round trip over the user's own lyrics (Traditional -> OpenCC t2s ->
-# this converter, compared character by character; numbers in docs/ZH_S2TW_ROUNDTRIP.md). Every choice follows the
-# user's own wording: where both forms are standard Traditional, the one used more often in the lyrics wins.
-# A phrase listed here replaces the OpenCC entry of the same key (simplified phrase -> Traditional text) and is not
-# touched by VARIANT_PREFERENCE.
-PHRASE_OVERRIDES: dict[str, str] = {
-    # a different word, OpenCC maps it to the wrong character (dry / not 幹; wind 后 is 後; mile 海里 is 海裡 in lyrics; ...)
-    "干了什么": "幹了什麼", "干了啥": "幹了啥", "风后": "風後", "海里": "海裡", "糊里糊涂": "糊裡糊塗", "卷卷": "捲捲",
-    # 干了 alone is "did" (他干了一件大事 -> 幹了, OpenCC's own reading); "dried" is only listed where it is meant
-    "干了就没事": "乾了就沒事", "喉咙干了": "喉嚨乾了", "嘴干了": "嘴乾了", "嘴巴干了": "嘴巴乾了", "口干了": "口乾了",
-    "泪干了": "淚乾了", "眼泪干了": "眼淚乾了", "泪水干了": "淚水乾了", "衣服干了": "衣服乾了",
-    "头发现在": "頭髮現在",   # hair + now: the right-to-left tie rule would read 头+发现+在
-    # both forms are standard; the user writes the left one more often (count in the lyrics: left / right)
-    "计划": "計畫",      # 4 / 0
-    "了解": "了解",      # 4 / 瞭解 1
-    "点赞": "點讚",      # 1 / 0
-    "胡同": "胡同",      # 1 / 衚衕 0
-    "尽可能": "盡可能",  # 1 / 儘可能 0
-    "游动": "游動",      # 7 / 遊動 0
-    "背包": "背包", "背负": "背負",   # 29 / 揹 1
-    "回归": "回歸",      # 1 / 迴歸 0
-    "熏染": "燻染",      # 1 / 薰染 0
-    "书签": "書籤",      # 1 / 書簽 0
-    "尝到": "嚐到",      # 1 / 嘗到 0
-    "周而复始": "周而復始",   # 3 / 週而復始 0
-    "死胡同": "死胡同",  # 1 / 死衚衕 0
-    "游过": "游過", "游移": "游移",   # swim / drift, not 遊
-    "这只": "這隻", "那只": "那隻",   # measure word (这只猫) ...
-    "这只有": "這只有", "这只能": "這只能", "这只要": "這只要", "这只会": "這只會", "这只想": "這只想", "那只有": "那只有", "那只能": "那只能",   # ... but 这只+verb is "only"
-    "松开": "鬆開",      # loosen, not the pine 松 (24 / 0)
-    # 注 is the user's form of 注定 (25 / 註定 0 in the lyrics), but 註冊 註解 註釋 備註 ... are 註 in Taiwan: a word rule, not a character rule
-    "注定": "注定", "命中注定": "命中注定", "命运注定": "命運注定", "五百姻缘天注定": "五百姻緣天注定",
-    # 向: 外向 / 面向 are written with 向 (OpenCC has them as 嚮 from the mainland's 面向对象); 嚮導 嚮往 心嚮往之 stay OpenCC's 嚮
-    "女生外向": "女生外向", "面向对象的技术": "面向對象的技術", "面向对象语言": "面向對象語言",
-    # OpenCC's 註 / 嚮 phrases also match across a word boundary (关注|明天 holds 注明, 迈向|明天 holds 向明): the common words that
-    # end in 注 / 向 are written out so that the phrase cannot take their last character
-    "向明": "向明",
-    "关注": "關注", "专注": "專注", "倾注": "傾注", "贯注": "貫注", "灌注": "灌注", "投注": "投注", "聚注": "聚注", "下注": "下注",
-    "押注": "押注", "赌注": "賭注",
-    "方向": "方向", "走向": "走向", "迈向": "邁向", "朝向": "朝向", "面向": "面向", "转向": "轉向", "趋向": "趨向", "志向": "志向",
-    "意向": "意向", "导向": "導向", "外向": "外向", "内向": "內向", "倾向": "傾向", "动向": "動向", "流向": "流向", "去向": "去向",
-    "指向": "指向", "偏向": "偏向", "奔向": "奔向", "飞向": "飛向", "通向": "通向", "投向": "投向", "冲向": "衝向", "迎向": "迎向",
-    "看向": "看向", "望向": "望向", "驶向": "駛向", "倒向": "倒向",
-    # 燬 is the character of the classical phrases and of a book series title; there 毀 is not written
-    "毁炎": "燬炎", "毁犀": "燬犀", "四库禁毁书丛刋": "四庫禁燬書叢刋",
+
+class Entry(NamedTuple):
+    """One dictionary word. ``negative`` is a look-alike that must NOT be affected: ``(simplified, expected)``."""
+    key: str
+    value: str
+    why: str
+    negative: tuple
+
+
+class Context(NamedTuple):
+    """One context rule. ``pattern`` is searched in each clause of the simplified text; the span of group ``fix`` (the whole match
+    without it) is fixed and written as ``value`` (a string, or a function of the match and of the rest of the clause)."""
+    name: str
+    pattern: str
+    value: Union[str, Callable]
+    why: str
+    positive: tuple
+    negative: tuple
+
+
+# --------------------------------------------------------------------------------------------------------------------
+# a. ENTRIES. Two kinds, kept apart: the stock dictionary is wrong (CORRECTIONS) or both forms are standard and the user's
+# own lyrics use the one written here (PREFERENCES; "count in the lyrics: this form / the stock form").
+# --------------------------------------------------------------------------------------------------------------------
+CORRECTIONS: tuple = (
+    Entry("糊里糊涂", "糊裡糊塗", "stock leaves 里: the Taiwan form of the idiom is 糊裡糊塗", ("糊里", "糊裡")),
+    Entry("一直发现", "一直發現", "stock matches 直发 (直髮) before 发现", ("一直发光", "一直發光")),
+    Entry("一头发光", "一頭發光", "stock matches 头发 (頭髮) across 一头|发光", ("一头发", "一頭髮")),
+    Entry("总是只有", "總是只有", "stock matches 是只 (是隻) before 只有", ("总是只猫", "總是隻貓")),
+    Entry("风后来", "風後來", "风后 is the name 風后 (kept); 风+后来 is wind + 'later'", ("风后", "風后")),
+    Entry("风后面", "風後面", "风后 is the name 風后 (kept); 风+后面 is wind + 'behind'", ("风后", "風后")),
+    Entry("回归线", "回歸線", "Taiwan writes 回歸線 (tropic); stock gives 迴歸線", ("线性回归", "線性迴歸")),
+    Entry("克制", "克制", "Taiwan writes 克制 (restrain); stock gives 剋制", ("克星", "剋星")),
+    Entry("干了啥", "幹了啥", "stock leaves the 干 of 干了啥 unconverted (it only has 干了什么)", ("池塘干了啥都不剩", "池塘乾了啥都不剩")),
+    Entry("卷卷的", "捲捲的", "curly (捲), not the scroll 卷; stock writes 卷卷的", ("试卷卷面", "試卷卷面")),
+    Entry("卷卷头", "捲捲頭", "curly (捲), not the scroll 卷; stock writes 卷卷头", ("长卷卷首", "長卷卷首")),
+    Entry("书签名", "書簽名", "书签名 = signing a book (签名), not the bookmark 书签 of the preference below", ("书签", "書籤")),
+    Entry("老么", "老么", "么 is the Traditional character in 老么 / 么儿 / 么妹 / 么弟 / 么女 (youngest child); 么 after 什 怎 这 那 多 要 甚 is 麼", ("什么", "什麼")),
+    Entry("么儿", "么兒", "youngest son: 么 is Traditional here", ("什么", "什麼")),
+    Entry("么妹", "么妹", "youngest sister: 么 is Traditional here", ("什么", "什麼")),
+    Entry("么弟", "么弟", "youngest brother: 么 is Traditional here", ("什么", "什麼")),
+    Entry("么女", "么女", "youngest daughter: 么 is Traditional here", ("什么", "什麼")),
+    Entry("女生外向", "女生外向", "Taiwan does not write 外嚮; stock turns 向 into 嚮 here", ("外向", "外嚮")),
+    Entry("面向对象的技术", "面向對象的技術", "Taiwan does not write 面嚮; stock turns 向 into 嚮 here", ("面向", "面嚮")),
+    Entry("面向对象语言", "面向對象語言", "Taiwan does not write 面嚮; stock turns 向 into 嚮 here", ("面向", "面嚮")),
+    Entry("毁炎", "燬炎", "classical words keep 燬 (the character preference to 毀 does not apply)", ("烧毁", "燒毀")),
+    Entry("毁犀", "燬犀", "classical words keep 燬 (the character preference to 毀 does not apply)", ("烧毁", "燒毀")),
+    Entry("四库禁毁书丛刋", "四庫禁燬書叢刋", "a book series title written with 燬", ("烧毁", "燒毀")),
+)
+PREFERENCES: tuple = (
+    Entry("计划", "計畫", "both are standard; 计划 -> 計畫 4 / 計劃 0 in the lyrics", ("设计划分", "設計劃分")),
+    Entry("了解", "了解", "both are standard; 了解 4 / 瞭解 1", ("了如指掌", "瞭如指掌")),
+    Entry("点赞", "點讚", "both are standard; 點讚 1 / 點贊 0", ("赞美", "讚美")),
+    Entry("胡同", "胡同", "both are standard; 胡同 1 / 衚衕 0", ("胡子", "鬍子")),
+    Entry("死胡同", "死胡同", "both are standard; 死胡同 1 / 死衚衕 0", ("胡子", "鬍子")),
+    Entry("尽可能", "盡可能", "both are standard; 盡可能 1 / 儘可能 0", ("尽管", "儘管")),
+    Entry("游动", "游動", "swimming, not touring: 游動 7 / 遊動 0", ("旅游动态", "旅遊動態")),
+    Entry("游过", "游過", "swam across, not toured: 游過 / 遊過", ("旅游过程", "旅遊過程")),
+    Entry("游移", "游移", "drifting, not touring: 游移 / 遊移", ("旅游移民", "旅遊移民")),
+    Entry("背包", "背包", "both are standard; 背包 29 / 揹包 1", ("背叛", "背叛")),
+    Entry("背负", "背負", "both are standard; 背負 / 揹負", ("背叛", "背叛")),
+    Entry("回归", "回歸", "both are standard; 回歸 1 / 迴歸 0 in the lyrics", ("线性回归", "線性迴歸")),
+    Entry("回归分析", "迴歸分析", "carve-out of 回归: statistics writes 迴歸", ("回归线", "回歸線")),
+    Entry("线性回归", "線性迴歸", "carve-out of 回归: statistics writes 迴歸", ("回归线", "回歸線")),
+    Entry("逻辑回归", "邏輯迴歸", "carve-out of 回归: statistics writes 迴歸", ("回归线", "回歸線")),
+    Entry("回归模型", "迴歸模型", "carve-out of 回归: statistics writes 迴歸", ("回归线", "回歸線")),
+    Entry("回归方程", "迴歸方程", "carve-out of 回归: statistics writes 迴歸", ("回归线", "回歸線")),
+    Entry("熏染", "燻染", "both are standard; 燻染 1 / 薰染 0", ("熏陶", "薰陶")),
+    Entry("书签", "書籤", "both are standard; 書籤 1 / 書簽 0", ("签名", "簽名")),
+    Entry("尝到", "嚐到", "both are standard; 嚐到 1 / 嘗到 0", ("尝试", "嘗試")),
+    Entry("周而复始", "周而復始", "both are standard; 周而復始 3 / 週而復始 0", ("周末", "週末")),
+    Entry("注定", "注定", "both are standard; 注定 25 / 註定 0 in the lyrics (註冊 註解 備註 are 註 in Taiwan and stay stock)", ("注册", "註冊")),
+    Entry("命中注定", "命中注定", "both are standard; 注定 25 / 註定 0 in the lyrics", ("注册", "註冊")),
+    Entry("命运注定", "命運注定", "both are standard; 注定 25 / 註定 0 in the lyrics", ("注册", "註冊")),
+    Entry("五百姻缘天注定", "五百姻緣天注定", "both are standard; 注定 25 / 註定 0 in the lyrics", ("注册", "註冊")),
+)
+# --------------------------------------------------------------------------------------------------------------------
+# b. DROPPED_PHRASES: stock phrases that hide a better match across the same characters.
+# --------------------------------------------------------------------------------------------------------------------
+DROPPED_PHRASES = frozenset({"一起干", "了如"})   # 一起干杯 is 一起+干杯 (stock: 一起干 hides 干杯); 了如 is only meant for 了如指掌, which stock has as a whole phrase
+DROPPED_NOTES: dict = {
+    "一起干": (("一起干杯", "一起乾杯"), ("一起干活", "一起幹活")),
+    "了如": (("了如指掌", "瞭如指掌"), ("他了如何", "他了如何")),
 }
-# OpenCC phrases that hide a better match across the same characters (``一起干`` is a phrase for ``一起干活``; in
-# ``一起干杯`` it would swallow the 干 that belongs to ``干杯``). They are not used.
-DROPPED_PHRASES = frozenset({"一起干", "了如"})   # 了如 is only meant for 了如指掌, which OpenCC has as a whole phrase
-# Characters where OpenCC writes one standard Traditional form and the user's lyrics use the other form more often
-# (lyrics count of the form written here / of the form OpenCC writes). Applied only to characters the conversion
-# produced, never to Traditional text that was already in the line. Only a character whose two forms are variants of
-# each other in EVERY word belongs here (audit of every OpenCC word that produces the character: docs/ZH_S2TW_ROUNDTRIP.md);
-# 註 / 注 and 嚮 / 向 are not (註冊 vs 注意, 嚮導 vs 方向), so those are word rules in PHRASE_OVERRIDES.
-VARIANT_PREFERENCE: dict[str, str] = {
+# --------------------------------------------------------------------------------------------------------------------
+# c. CONTEXT_RULES. Constants used by them:
+# --------------------------------------------------------------------------------------------------------------------
+_NUMERALS = "一二三四五六七八九十百千万两几数多零〇0-9０-９"   # 海里 after one of these is the nautical mile
+# Words counted with 隻 (animals, paired body parts) that follow ``的``: 这只会飞的鸟 is "this bird that can fly"; 这只会更糟 is "only"
+ZHI_NOUNS = ("鸟", "猫", "狗", "鸡", "鸭", "鹅", "羊", "兔", "虫", "蚁", "蜂", "蝶", "蛙", "虎", "狼", "狐", "熊", "猴", "鹿", "鼠", "鹰", "雁",
+             "鸦", "雀", "燕", "鸥", "鹤", "鹦鹉", "孔雀", "蛇", "鱼", "龙", "蚊", "蝇", "蜘蛛", "松鼠", "刺猬", "蝙蝠", "乌龟", "老虎", "狮", "象", "牛", "马", "猪", "手", "脚", "眼", "耳")
+_CLAUSE_END = "，。！？!?,.;；、…\n"
+_ZHI_AFTER = re.compile(r"[^%s]{0,12}?的.{0,2}?(?:%s)" % (re.escape(_CLAUSE_END), "|".join(ZHI_NOUNS)))
+
+
+def _zhi(match: "re.Match", rest: str) -> str:
+    """这只 / 那只 / 是只 followed by 有 能 会 想 要: 隻 when the same clause has 的 + a noun counted with 隻, otherwise 只 (the user's wording)."""
+    measure = _ZHI_AFTER.match(rest) is not None
+    lead = {"这": "這", "那": "那"}.get(match.groupdict().get("lead") or "", "")
+    return lead + ("隻" if measure else "只")
+
+
+_VERB_AFTER = "有能会想要"
+CONTEXT_RULES: tuple = (
+    # --- 海里: nautical mile after a number, otherwise "in the sea"
+    Context("sea", r"(?<![%s])(?P<fix>海里)" % _NUMERALS, "海裡",
+            "海里 after a numeral is the nautical mile (stays 海里); anywhere else it is 海+里 'in the sea' -> 海裡",
+            (("在海里游泳", "在海裡游泳"), ("山里海里", "山裡海裡")), (("离岸几海里", "離岸幾海里"), ("航行了二十海里", "航行了二十海里"))),
+    # --- 干了: stock reads "do" (幹); "dried / drained / finished a drink" (乾) only in closed contexts
+    Context("dry-drink", r"(?:杯|酒|汤|碗|瓶|一口|一饮).{0,3}(?P<fix>干)了(?!一(?:件|番|场|票|桩|笔|单|仗|架|辈))", "乾",
+            "a cup / wine / soup / bowl / bottle (or 一口 一饮) within four characters before 干了 is a drink finished: 乾了",
+            (("把这杯干了吧", "把這杯乾了吧"), ("这杯酒我干了", "這杯酒我乾了")), (("他把这件事干了吧", "他把這件事幹了吧"), ("他干了一件大事", "他幹了一件大事"))),
+    Context("dry-verb", r"(?:喝|晾|晒|流|烧|熬|风|喉咙|嘴巴?|口|泪水?|眼泪|衣服)(?P<fix>干)了", "乾",
+            "喝干 晾干 晒干 流干 烧干 熬干 风干, and 喉咙 / 嘴 / 口 / 泪 / 眼泪 / 衣服 + 干了, are dried: 乾了",
+            (("喝干了", "喝乾了"), ("眼泪干了", "眼淚乾了")), (("他干了坏事", "他幹了壞事"), ("苦干了一辈子", "苦幹了一輩子"))),
+    Context("dry-toast", r"(?P<fix>干)了(?:这杯|杯|就没事)", "乾",
+            "干了这杯 / 干了杯 / 干了就没事: the drink or the thirst is gone: 乾了",
+            (("干了这杯酒", "乾了這杯酒"), ("干了就没事", "乾了就沒事")), (("干了这件事", "幹了這件事"), ("干了一杯", "幹了一杯"))),
+    Context("dry-place", r"(?:河床|池塘|河水?|湖水?|井水?|泉水?|水|熬)(?:都|全|已经)?(?P<fix>干)了", "乾",
+            "a river / pond / well / spring / water word right before 干了 is dried up (熬干了 is boiled dry): 乾了",
+            (("河床干了什么鱼都没有", "河床乾了什麼魚都沒有"), ("池塘干了啥都不剩", "池塘乾了啥都不剩")), (("他干了水电的活", "他幹了水電的活"),)),
+    # --- 这只 / 那只 / 是只 + 有 能 会 想 要: "only" (只) unless the clause has 的 + an animal (隻)
+    Context("zhi-demonstrative", r"(?P<fix>(?P<lead>[这那])只)(?=[%s])" % _VERB_AFTER, _zhi,
+            "stock reads 这只 as 這隻 (measure word); before 有 能 会 想 要 the user's lyrics mean 'only' (這只), unless the clause has 的 + an animal noun (這隻會飛的鳥)",
+            (("这只有五分钟", "這只有五分鐘"), ("这只会飞的鸟", "這隻會飛的鳥")), (("这只猫", "這隻貓"), ("这只会唱歌的鹦鹉", "這隻會唱歌的鸚鵡"))),
+    Context("zhi-copula", r"是(?P<fix>只)(?=[%s])" % _VERB_AFTER, _zhi,
+            "是只有 / 是只能 ...: 'is only' (只) unless the clause has 的 + an animal noun (是隻有毒的蛇); stock always writes 隻",
+            (("总是只有我", "總是只有我"), ("他是只有毒的蛇", "他是隻有毒的蛇")), (("那是只猫", "那是隻貓"),)),
+    # --- 松: the pine of a tree word followed by 开 (青松|开花, 古松|开始); stock's phrase 松开 (鬆開) would swallow the 开
+    Context("pine", r"(?<=[青古老孤苍劲乔雪])(?P<fix>松)(?=开)", "松",
+            "after 青 古 老 孤 苍 劲 乔 雪 the 松 is a pine tree and the 开 starts the next word (青松|开花); stock's phrase 松开 -> 鬆開 hides it",
+            (("青松开花了", "青松開花了"), ("古松开始变黄", "古松開始變黃")), (("鞋带又松开了", "鞋帶又鬆開了"), ("松开我的手", "鬆開我的手"))),
+    # --- 游: the 游 of a tourism word before 动 过 移 (旅游|动态, 漫游|过去, 导游|过来)
+    Context("tour", r"(?<=[旅漫导周巡夜远出畅郊])(?P<fix>游)(?=[动过移])", "遊",
+            "after 旅 漫 导 周 巡 夜 远 出 畅 郊 the 游 is 遊 (tour) and 动 过 移 starts the next word; the preference 游动/游过/游移 (swim) would take it",
+            (("漫游过去的事", "漫遊過去的事"), ("导游过来接我们", "導遊過來接我們")), (("他游过了河", "他游過了河"), ("鱼游动着", "魚游動著"))),
+    # --- 刮: shaving / scraping (刮), not the wind (颳)
+    Context("scrape", r"(?:(?<=胡子)|(?<=[胡须脸毛腿头眉]))(?P<fix>刮)", "刮",
+            "after 胡 须 脸 毛 腿 头 眉 the 刮 is shave / scrape (刮); stock's phrase 刮了 is the wind 颳了",
+            (("胡子刮了", "鬍子刮了"), ("脸刮干净", "臉刮乾淨")), (("刮了一阵风", "颳了一陣風"),)),
+    # --- 余: the surname before a title
+    Context("surname-yu", r"(?:^|(?<=[姓叫是找问请跟和对给让被把由说谢与同]))(?P<fix>余)(?=先生|小姐|老师|医生|教授|女士|同学|太太|博士|经理|师傅)", "余",
+            "the surname 余 at the start of a clause (or after 姓 叫 是 找 ...) before a title stays 余; stock writes 餘",
+            (("余先生在家", "余先生在家"), ("我找余老师", "我找余老師")), (("剩余先生产", "剩餘先生產"),)),
+)
+# --------------------------------------------------------------------------------------------------------------------
+# d. VARIANT_PREFERENCE. Characters where stock writes one standard Traditional form and the user's lyrics use the other
+# form more often (count of the form written here / of the form stock writes). Applied only to characters the conversion
+# produced from a different character, never to Traditional text that was already in the line, never to an ENTRIES word or
+# a CONTEXT_RULES span. Only a character whose two forms are variants of each other in EVERY word belongs here (audit of
+# every OpenCC word that produces the character: docs/ZH_S2TW_ROUNDTRIP.md); 註 / 注 and 嚮 / 向 are not.
+# --------------------------------------------------------------------------------------------------------------------
+VARIANT_PREFERENCE: dict = {
     "臺": "台",   # 17 / 3
     "溼": "濕",   # 11 / 0
     "汙": "污",   # 3 / 2
@@ -113,26 +224,36 @@ def _read_dictionary(directory, name):
     return table
 
 
+def entries():
+    """``{simplified: Traditional}`` of ENTRIES (corrections and preferences)."""
+    return {item.key: item.value for item in CORRECTIONS + PREFERENCES}
+
+
 def _tables():
-    """``(phrases, characters, variants, traditional_only)`` or None when the OpenCC dictionaries cannot be read."""
+    """``(phrases, characters, variants, traditional_only, longest, split, context, entry_keys)`` or None when the OpenCC dictionaries cannot be read.
+
+    ``phrases`` is STPhrases without DROPPED_PHRASES plus ENTRIES, ``context`` the compiled CONTEXT_RULES."""
     global _dicts
     if _dicts is None:
         _dicts = False
         directory = _dictionary_dir()
         if directory is not None:
             try:
+                import opencc
                 phrases = {key: value[0] for key, value in _read_dictionary(directory, "STPhrases.txt").items()}
                 characters = _read_dictionary(directory, "STCharacters.txt")
                 variants = {key: value[0] for key, value in _read_dictionary(directory, "TWVariants.txt").items()}
                 reverse = _read_dictionary(directory, "TSCharacters.txt")
-            except OSError:
+                split = opencc.OpenCC("s2tw").split_chars_re
+            except Exception:
                 reverse = None
             if reverse is not None:
                 for key in DROPPED_PHRASES:
                     phrases.pop(key, None)
-                phrases.update(PHRASE_OVERRIDES)
+                phrases.update(entries())
                 traditional_only = frozenset(key for key, value in reverse.items() if value[0] != key)
-                _dicts = (phrases, characters, variants, traditional_only, max(map(len, phrases)))
+                context = tuple((re.compile(rule.pattern), rule.value) for rule in CONTEXT_RULES)
+                _dicts = (phrases, characters, variants, traditional_only, max(map(len, phrases)), split, context, frozenset(entries()))
     return _dicts or None
 
 
@@ -161,53 +282,50 @@ def _encodes(char, codec):
         return False
 
 
-def _forward(text, phrases, longest):
-    """Phrase spans ``(start, end)`` of the longest match from the left."""
-    spans, position = [], 0
-    while position < len(text):
-        for size in range(min(longest, len(text) - position), 1, -1):
-            if text[position:position + size] in phrases:
-                spans.append((position, position + size))
-                position += size
-                break
-        else:
-            position += 1
+def _segment(text, phrases, longest):
+    """Phrase spans ``(start, end)`` of ``text`` the way stock OpenCC finds them: the longest phrase in the text, the leftmost
+    among those of the same length, then the same inside the left part and inside the right part."""
+    spans = []
+    pending = [(0, len(text))]
+    while pending:
+        low, high = pending.pop()
+        for size in range(min(longest, high - low), 1, -1):
+            for start in range(low, high - size + 1):
+                if text[start:start + size] in phrases:
+                    spans.append((start, start + size))
+                    pending.append((low, start))
+                    pending.append((start + size, high))
+                    break
+            else:
+                continue
+            break
+    spans.sort()
     return spans
 
 
-def _backward(text, phrases, longest):
-    """Phrase spans of the longest match from the right, in text order."""
-    spans, position = [], len(text)
-    while position > 0:
-        for size in range(min(longest, position), 1, -1):
-            if text[position - size:position] in phrases:
-                spans.append((position - size, position))
-                position -= size
+def _fixed_spans(piece, context):
+    """``[(start, end, Traditional)]`` of the CONTEXT_RULES matches in one clause, no overlaps (leftmost, then longest, then rule order)."""
+    found = []
+    for order, (pattern, value) in enumerate(context):
+        position = 0
+        while True:
+            match = pattern.search(piece, position)
+            if match is None:
                 break
-        else:
-            position -= 1
-    return spans[::-1]
-
-
-def _segment(text, phrases, longest):
-    """Phrase spans for ``text``: the left match and the right match are compared and the better one wins.
-
-    Score, in order: the characters covered by a PHRASE_OVERRIDES phrase (curated from the user's lyrics), then the
-    characters covered by any multi-character phrase, then the length of the longest phrase (a four-character phrase
-    such as ``干了这杯`` is more specific than two phrases of two characters). On a tie the right match is used: the head
-    of a Chinese word is at its end and matching from the right is the more accurate direction (``一直发现`` is
-    一直+发现, not the phrase ``直发``; ``总是只有`` is 只有, not 是只)."""
-    left = _forward(text, phrases, longest)
-    right = _backward(text, phrases, longest)
-    if left == right:
-        return left
-
-    def score(spans):
-        return (sum(end - start for start, end in spans if text[start:end] in PHRASE_OVERRIDES),
-                sum(end - start for start, end in spans),
-                max((end - start for start, end in spans), default=0))
-
-    return left if score(left) > score(right) else right
+            start, end = match.span("fix") if "fix" in pattern.groupindex else match.span()
+            if start == end:
+                position = match.end() + 1
+                continue
+            written = value(match, piece[match.end():]) if callable(value) else value
+            found.append((start, -(end - start), order, end, written))
+            position = start + 1
+    found.sort()
+    spans, last = [], 0
+    for start, _negative, _order, end, written in found:
+        if start >= last:
+            spans.append((start, end, written))
+            last = end
+    return spans
 
 
 @functools.lru_cache(maxsize=1)
@@ -219,34 +337,57 @@ def one_to_many():
     return {key: value for key, value in tables[1].items() if len(value) > 1}
 
 
+def _convert_clause(piece, tables):
+    """``[(source, target, fixed)]`` tokens covering one clause (no separators in it)."""
+    phrases, characters, _variants_table, _only, longest, _split, context, entry_keys = tables
+    tokens = []
+
+    def plain(low, high):
+        text = piece[low:high]
+        spans = {start: end for start, end in _segment(text, phrases, longest)}
+        position = 0
+        while position < len(text):
+            end = spans.get(position)
+            if end is not None:
+                source = text[position:end]
+                tokens.append((source, phrases[source], source in entry_keys))
+            else:
+                end = position + 1
+                tokens.append((text[position], characters.get(text[position], [text[position]])[0], False))
+            position = end
+
+    last = 0
+    for start, end, written in _fixed_spans(piece, context):
+        plain(last, start)
+        tokens.append((piece[start:end], written, True))
+        last = end
+    plain(last, len(piece))
+    return tokens
+
+
 def convert_marked(text):
     """``(converted text, marks)``; ``marks`` is ``[{"at": index in the converted text, "from": char, "options": [...]}]``
     for every character of ``text`` that STCharacters maps to several Traditional forms. None without OpenCC."""
     tables = _tables()
     if tables is None:
         return None
-    phrases, characters, variants, _only, longest = tables
-    spans = {start: end for start, end in _segment(text, phrases, longest)}
-    out, marks, position = [], [], 0
+    variants, split = tables[2], tables[5]
     many = one_to_many()
-    while position < len(text):
-        end = spans.get(position)
-        if end is not None:
-            source = text[position:end]
-            target = phrases[source]
-        else:
-            end = position + 1
-            source = text[position]
-            target = characters.get(source, [source])[0]
-        target = _variants(target, variants)
-        if VARIANT_PREFERENCE and len(target) == len(source) and source not in PHRASE_OVERRIDES:
-            target = "".join(VARIANT_PREFERENCE.get(new, new) if new != old else new for new, old in zip(target, source))
-        base = sum(len(piece) for piece in out)
-        for offset, char in enumerate(source):
-            if char in many and len(target) == len(source):
-                marks.append({"at": base + offset, "from": char, "options": list(many[char])})
-        out.append(target)
-        position = end
+    out, marks, length = [], [], 0
+    for index, piece in enumerate(split.split(text)):
+        if index % 2:
+            out.append(piece)
+            length += len(piece)
+            continue
+        for source, target, fixed in _convert_clause(piece, tables):
+            target = _variants(target, variants)
+            if VARIANT_PREFERENCE and not fixed and len(target) == len(source):
+                target = "".join(VARIANT_PREFERENCE.get(new, new) if new != old else new for new, old in zip(target, source))
+            for offset, char in enumerate(source):
+                if char in many and len(target) == len(source):
+                    marks.append({"at": length + offset, "from": char, "options": list(many[char])})
+            out.append(target)
+            length += len(target)
     return "".join(out), marks
 
 
@@ -272,12 +413,15 @@ def has_traditional_only(text):
 
 def looks_simplified(text, japanese=False):
     """True when ``text`` has a character that is certainly simplified: a Han character Big5 (cp950) cannot encode and
-    that s2tw rewrites. A Traditional character s2tw only turns into a Taiwan variant (範, 臺, 裡) is in Big5, and a
-    Hong Kong character (哋 嘅 喺) is missing from Big5 but has no s2tw rewrite. In a song with kana the character
-    must also be missing from cp932, which keeps Japanese kanji such as 気 国 独."""
+    that s2tw rewrites, or 么 after 什 怎 这 那 多 要 甚 (Traditional text writes 麼; Big5 does encode 么). A Traditional
+    character s2tw only turns into a Taiwan variant (範, 臺, 裡) is in Big5, and a Hong Kong character (哋 嘅 喺) is
+    missing from Big5 but has no s2tw rewrite. In a song with kana the character must also be missing from cp932, which
+    keeps Japanese kanji such as 気 国 独."""
     cc = converter()
     if cc is None:
         return False
+    if _CERTAIN_MA_RE.search(text):
+        return True
     for char in _HAN_RE.findall(text):
         if char == _TAIWAN_CHURCH_CHAR or _encodes(char, "cp950"):
             continue
@@ -286,6 +430,21 @@ def looks_simplified(text, japanese=False):
         if cc.convert(char) != char:
             return True
     return False
+
+
+# Chinese function words. A line that has two different ones is not Japanese kanji-only text (初恋 一期一会 回来 have none).
+# Characters Japanese words use a lot on their own (的 在 有 不 ...) count only in pairs; the set is the common
+# Mandarin particles, pronouns, auxiliaries and prepositions of lyrics.
+CHINESE_FUNCTION_CHARS = frozenset("的了是不我你他她在有也就都很这那把被给让没还和吗呢吧啊嘛着过么")
+
+
+def _surely_not_japanese(text):
+    """True when ``text`` has a Han character cp932 cannot encode (a Japanese line never has one)."""
+    return any(not _encodes(char, "cp932") for char in _HAN_RE.findall(text))
+
+
+def _chinese_function_words(text):
+    return len({char for char in text if char in CHINESE_FUNCTION_CHARS})
 
 
 def convert_line(text):
@@ -313,20 +472,22 @@ def _marks_for(text):
 
 
 def song_candidates(rows, headers=(), uncertain=False):
-    """``{count, japanese, uncertain, lines, headers}`` for the payload rows, or None when OpenCC is missing.
+    """``{count, optional, japanese, uncertain, lines, headers}`` for the payload rows, or None when OpenCC is missing.
 
     Candidates are single lines: ``lines`` holds ``{entry, sub, before, after, marks, default_checked}`` where ``sub``
     is the 0-based position of the line inside its entry (a translation line under a lyric line is its own candidate).
     ``headers`` are ``(line_index, text)`` of the ID tag lines.
 
-    The song gate is unchanged: nothing is listed unless some line has a character that is certainly simplified (see
-    ``looks_simplified``). Past the gate, line by line (a line with kana is never a candidate):
-    * a certainly simplified character: listed, checked;
-    * in a song without kana, no such character, s2tw would still change the line: checked when the line has no
-      Traditional-only character (``后面``, ``一起干杯``), unchecked when it has one (``命運若早已注定``: 注 -> 註 only
-      swaps a variant);
-    * in a song with kana only the lines with a certainly simplified character are listed (kanji-only Japanese lines
-      are not).
+    The song gate: nothing is listed unless some line has a character that is certainly simplified (see
+    ``looks_simplified``; 么 after 什 怎 这 那 多 要 甚 counts, in songs with and without kana). Past the gate, line by line
+    (a line with kana is never a candidate) every line s2tw would change is listed:
+    * a certainly simplified character: checked;
+    * otherwise, in a song without kana: checked when the line has no Traditional-only character (``后面``, ``一起干杯``),
+      unchecked when it has one (``命運若早已注定``: 注 -> 註 only swaps a variant);
+    * otherwise, in a song with kana, the line has no Traditional-only character and is checked when it has a Han character
+      cp932 cannot encode, or two different Chinese function words (CHINESE_FUNCTION_CHARS), or one function word while
+      another line of the same row has kana (the translation under a Japanese line); the rest (a kanji-only Japanese line
+      such as ``初恋``, ``一期一会``) is listed unchecked.
     All candidates start unchecked when the encoding guess is uncertain (the text may be mojibake). ``count`` is the
     number of candidates that start checked; ``optional`` the number that start unchecked.
     """
@@ -337,6 +498,8 @@ def song_candidates(rows, headers=(), uncertain=False):
     found = []
     sure = False
     for row in rows:
+        texts = [item for item in (row.get("lyrics") or []) if isinstance(item, str)]
+        row_kana = any(has_kana(item) for item in texts)
         for sub, text in enumerate(row.get("lyrics") or []):
             if not isinstance(text, str):
                 continue
@@ -345,25 +508,30 @@ def song_candidates(rows, headers=(), uncertain=False):
                 continue
             certain = looks_simplified(text, japanese)
             sure = sure or certain
-            lines.append({"entry": row["entry"], "sub": sub, "before": text, "after": after, "_certain": certain})
+            lines.append({"entry": row["entry"], "sub": sub, "before": text, "after": after, "_certain": certain, "_row_kana": row_kana})
     for index, text in headers:
         pair = convert_header(text)
         if pair is not None:
             certain = looks_simplified(pair[0], japanese)
             sure = sure or certain
-            found.append({"line": index, "tag": text[1:3].lower(), "before": pair[0], "after": pair[1], "_certain": certain})
+            found.append({"line": index, "tag": text[1:3].lower(), "before": pair[0], "after": pair[1], "_certain": certain, "_row_kana": False})
     if not sure:
         return {"count": 0, "optional": 0, "japanese": japanese, "uncertain": bool(uncertain), "lines": [], "headers": []}
     for items in (lines, found):
         for item in items:
             certain = item.pop("_certain")
-            if japanese and not certain:
-                continue
-            checked = certain or not has_traditional_only(item["before"])
+            row_kana = item.pop("_row_kana")
+            if certain:
+                checked = True
+            elif has_traditional_only(item["before"]):
+                checked = False
+            elif not japanese:
+                checked = True
+            else:
+                words = _chinese_function_words(item["before"])
+                checked = _surely_not_japanese(item["before"]) or words >= 2 or (row_kana and words >= 1)
             item["default_checked"] = bool(checked and not uncertain)
             item["marks"] = _marks_for(item["before"])
-    lines = [item for item in lines if "default_checked" in item]
-    found = [item for item in found if "default_checked" in item]
     checked_count = sum(1 for item in lines + found if item["default_checked"])
     return {"count": checked_count, "optional": len(lines) + len(found) - checked_count,
             "japanese": japanese, "uncertain": bool(uncertain), "lines": lines, "headers": found}
