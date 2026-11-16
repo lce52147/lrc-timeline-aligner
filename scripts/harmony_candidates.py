@@ -258,6 +258,49 @@ def load(audio, lrc_hashes, rows_total, extra_roots=()):
     return None
 
 
+def rebind(audio, sha_map, old_total, new_total, entry_map=None, extra_roots=()):
+    """Keep a sidecar valid after the LRC changed under it: the hash it is bound to follows ``sha_map``
+    (old sha -> new sha) and, when lines were deleted, its entries are renumbered through ``entry_map``
+    (old entry -> new entry, None = deleted) and ``lines_total`` becomes ``new_total``.
+
+    Only a sidecar the reader accepts right now (bound to a key of ``sha_map``, ``lines_total == old_total``) is
+    touched; the write is atomic and a failure leaves the old file. Returns how many sidecars were updated.
+    """
+    updated = 0
+    try:
+        audio = pathlib.Path(audio)
+        candidates = [audio.with_name(audio.stem + SUFFIX)] + [root / (audio.stem + SUFFIX) for root in sidecar_roots(extra_roots)]
+    except (TypeError, ValueError):
+        return 0
+    seen = set()
+    for path in candidates:
+        if path in seen:
+            continue
+        seen.add(path)
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict) or payload.get("schema") != SCHEMA:
+                continue
+            if payload.get("lrc_sha256") not in sha_map or payload.get("lines_total") != old_total:
+                continue
+            payload["lrc_sha256"] = sha_map[payload["lrc_sha256"]]
+            payload["lines_total"] = new_total
+            if entry_map is not None:
+                kept = []
+                for item in payload.get("lines") or []:
+                    entry = item.get("entry") if isinstance(item, dict) else None
+                    if isinstance(entry, int) and not isinstance(entry, bool) and entry_map.get(entry) is not None:
+                        kept.append({**item, "entry": entry_map[entry]})
+                payload["lines"] = kept
+            stage = path.with_name(path.name + ".tmp")
+            stage.write_text(json.dumps(payload, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+            os.replace(stage, path)
+            updated += 1
+        except (OSError, ValueError, TypeError, AttributeError):
+            continue
+    return updated
+
+
 def main(argv=None):
     import argparse
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])

@@ -200,18 +200,97 @@ class ServerTests(unittest.TestCase):
         self.assertFalse(detail["has_harmony"])
         self.assertEqual(self._request("GET", f"/audio/0/harm?t={self.server.token}")[0], 404)
 
-    def test_delete_save_drops_the_chip(self):
-        self._sidecar()
-        detail = self._reload()
-        self.assertTrue(detail["has_harmony"])
-        row = detail["rows"][0]
-        status, _h, _d = self._json_request("POST", "/api/song/0/save", {
+    def _delete(self, detail, entry):
+        row = detail["rows"][entry - 1]
+        return self._json_request("POST", "/api/song/0/save", {
             "base_sha256": detail["base_sha256"], "edits": [],
             "deletes": [{"entry": row["entry"], "line_key": row["line_key"]}]})
+
+    def _cands(self, detail):
+        return {row["entry"]: row["harmony_cand_cs"] for row in detail["rows"] if row.get("harmony_cand_cs") is not None}
+
+    def test_delete_save_keeps_the_other_lines_chips_at_their_new_entry(self):
+        self._sidecar()
+        detail = self._reload()
+        times = [row["current_cs"] for row in detail["rows"]]
+        self.assertEqual(self._cands(detail), {3: 347})
+        status, _h, _d = self._delete(detail, 1)
+        self.assertEqual(status, 200)
+        after = self._detail()
+        self.assertTrue(after["has_harmony"])
+        self.assertEqual(self._cands(after), {2: 347})
+        # the delete moves the song to LRC mode, where the two lines at 3.00 s are one row: the chip follows its line
+        self.assertEqual([row["current_cs"] for row in after["rows"]], [200, 300, 6200])
+        self.assertEqual(after["rows"][1]["current_cs"], times[2])
+        again = self._detail()
+        status, _h, _d = self._delete(again, 3)   # a second delete, below the chip: it stays
+        self.assertEqual(status, 200)
+        self.assertEqual(self._cands(self._detail()), {2: 347})
+
+    def test_deleting_the_line_with_the_chip_removes_it(self):
+        self._sidecar()
+        detail = self._reload()
+        status, _h, _d = self._delete(detail, 3)
         self.assertEqual(status, 200)
         after = self._detail()
         self.assertFalse(after["has_harmony"])
         self.assertTrue(all("harmony_cand_cs" not in r for r in after["rows"]))
+
+    def test_delete_after_an_edit_save_with_a_sidecar_bound_to_the_current_file(self):
+        self._sidecar()
+        detail = self._reload()
+        status, _h, _d = self._json_request("POST", "/api/song/0/save", {
+            "base_sha256": detail["base_sha256"], "edits": [{"entry": 1, "cs": 125, "source": "ear", "nudge_cs": 25}]})
+        self.assertEqual(status, 200)
+        self._sidecar()   # now bound to the edited file, not to the baseline
+        detail = self._reload()
+        self.assertEqual(self._cands(detail), {3: 347})
+        self.assertEqual(self._delete(detail, 5)[0], 200)
+        after = self._detail()
+        self.assertEqual(self._cands(after), {3: 347})
+        self.assertEqual(self._json_request("POST", "/api/song/0/save", {
+            "base_sha256": after["base_sha256"], "edits": []})[0], 200)
+
+    def _chinese_song(self):
+        self.output.write_bytes(self.output.read_bytes().replace(b"]one", "]爱你".encode()).replace(b"]two a", "]我们".encode()))
+        self.store.refresh_if_changed()
+
+    def test_convert_to_traditional_keeps_the_chips_and_times(self):
+        self._chinese_song()
+        self._sidecar()
+        detail = self._reload()
+        self.assertEqual(self._cands(detail), {3: 347})
+        times = [row["current_cs"] for row in detail["rows"]]
+        status, _h, data = self._json_request("POST", "/api/song/0/convert", {"base_sha256": detail["base_sha256"], "entries": [1, 2]})
+        if status == 503:
+            self.skipTest("OpenCC unavailable")
+        self.assertEqual(status, 200, data)
+        self.assertGreater(json.loads(data)["converted"], 0)
+        after = self._detail()
+        self.assertTrue(after["has_harmony"])
+        self.assertEqual(self._cands(after), {3: 347})
+        self.assertEqual([row["current_cs"] for row in after["rows"]], times)
+        self.assertIn("愛你", after["rows"][0]["lyric"])
+
+    def test_convert_after_a_save_keeps_the_chips_through_the_baseline(self):
+        self._chinese_song()
+        self._sidecar()
+        detail = self._reload()
+        status, _h, _d = self._json_request("POST", "/api/song/0/save", {
+            "base_sha256": detail["base_sha256"], "edits": [{"entry": 5, "cs": 6300, "source": "ear", "nudge_cs": 100}]})
+        self.assertEqual(status, 200)
+        detail = self._detail()
+        self.assertEqual(self._cands(detail), {3: 347})
+        status, _h, data = self._json_request("POST", "/api/song/0/convert", {"base_sha256": detail["base_sha256"], "entries": [1, 2]})
+        if status == 503:
+            self.skipTest("OpenCC unavailable")
+        self.assertEqual(status, 200, data)
+        after = self._detail()
+        self.assertEqual(self._cands(after), {3: 347})
+        again = self._json_request("POST", "/api/song/0/save", {
+            "base_sha256": after["base_sha256"], "edits": [{"entry": 5, "cs": 6400, "source": "ear", "nudge_cs": 100}]})
+        self.assertEqual(again[0], 200)
+        self.assertEqual(self._cands(self._detail()), {3: 347})
 
     def test_hash_mismatch_gives_no_candidates(self):
         self._sidecar(sha="0" * 64)

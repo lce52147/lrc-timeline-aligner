@@ -1240,6 +1240,18 @@ def _apply_harmony(song, hashes):
         rows[entry - 1]["harmony_cand_cs"] = cs
 
 
+def _rebind_harmony(song, old, new, old_total, new_total, entry_map=None):
+    """After a text conversion or a delete the harmony sidecar keeps matching: the LRC hash it is bound to moves to the new one
+    and, after a delete, its entries are renumbered. ``old`` / ``new`` are (current, reference) sha pairs: the reader accepts either, so a sidecar
+    bound to the reference follows the reference, and one bound only to the current file follows the current file."""
+    sha_map = {old[1]: new[1]}
+    if old[0] != old[1]:
+        sha_map[old[0]] = new[0]
+    if not song.get("audio_path") or not (entry_map or any(key != value for key, value in sha_map.items())):
+        return
+    harmony_candidates.rebind(song["audio_path"], sha_map, old_total, new_total, entry_map, [pathlib.Path(song["report"]).parent])
+
+
 def _apply_romaji(song):
     """Set each row's romaji and its source (手動 / 歌詞標音 / 字典 / 自動) from the per-song overrides, the source furigana and the shared dictionary.
 
@@ -1950,6 +1962,23 @@ def _save_song(song, body):
             "lrc_saved": True, "deleted_lines": records,
             "fallback_file": str(fallback) if fallback else None,
         }
+    if deleted:
+        # The rows after a delete can group differently (equal-time neighbours merge in LRC mode): follow each survivor by its line index.
+        firsts = [int(str(row["line_key"]).split(":", 1)[0]) for row in
+                  _song_payload(pathlib.Path(song["report"]), song["report_data"]).get("rows") or []]
+        removed_sorted = sorted(removed_indexes)
+        entry_map = {}
+        taken = set()
+        for position, group in enumerate(mapping, start=1):
+            target = group[0] - sum(1 for index in removed_sorted if index < group[0])
+            new_entry = sum(1 for first in firsts if first <= target)
+            if position in deleted or not new_entry or new_entry in taken:
+                entry_map[position] = None
+            else:
+                entry_map[position] = new_entry
+                taken.add(new_entry)
+        _rebind_harmony(song, (_sha256_bytes(current), _sha256_bytes(auto_bytes)), (after_sha, _sha256_bytes(auto_bytes)),
+                        len(mapping), len(firsts), entry_map)
     result = _song_payload(pathlib.Path(song["report"]), song["report_data"])
     if adjusted:
         result["adjusted_cs"] = adjusted
@@ -2130,6 +2159,10 @@ def _convert_song(song, body):
         if auto_updated is not None:
             _restore_lrc(auto, auto_raw)
         return 500, {"error": "未轉換：審查紀錄寫入失敗，LRC 已還原 (nothing was converted)"}
+    old_reference = _sha256_bytes(auto_raw) if auto_updated is not None else _sha256_bytes(_read_lrc_or(auto, current))
+    new_reference = _sha256_bytes(auto_updated) if auto_updated is not None else (
+        old_reference if auto.is_file() else _sha256_bytes(updated))
+    _rebind_harmony(song, (_sha256_bytes(current), old_reference), (_sha256_bytes(updated), new_reference), len(mapping), len(mapping))
     result = _song_payload(pathlib.Path(song["report"]), song["report_data"])
     result["converted"] = converted
     # A converted row's line_key hash follows its text: old key -> new key, so the page can carry its 已確認 marks across.
