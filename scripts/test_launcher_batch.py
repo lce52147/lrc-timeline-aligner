@@ -50,6 +50,7 @@ class LauncherStubCase(unittest.TestCase):
         stub_dir = self.tmp / "stub"
         stub_dir.mkdir()
         (stub_dir / "sitecustomize.py").write_text(STUB_SITECUSTOMIZE, encoding="utf-8")
+        (self.tmp / "reports").mkdir()
         self.calls_file = self.tmp / "calls.txt"
         self.env = dict(os.environ)
         for name in ("LRC_VENV_PYTHON", "STUB_FAIL_MATCH", "LRC_REPORT_DIR"):
@@ -141,6 +142,35 @@ class AlignBatchDroppedNameTests(LauncherStubCase):
         result = self.run_bat("Align LRC.bat", *paths)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.aligned_paths(), paths)
+
+class AlignBatchSummaryTests(LauncherStubCase):
+    def drop(self, *names: str) -> list[str]:
+        songs = self.tmp / "songs"
+        songs.mkdir(exist_ok=True)
+        paths = []
+        for name in names:
+            (songs / name).write_bytes(b"")
+            paths.append(str(songs / name))
+        return paths
+
+    def test_failed_middle_song_still_prints_every_result(self) -> None:
+        self.env["STUB_FAIL_MATCH"] = "second.flac"
+        paths = self.drop("first.flac", "second.flac", "third.flac")
+        result = self.run_bat("Align LRC.bat", *paths)
+        out = result.stdout
+        self.assertNotEqual(result.returncode, 0, out + result.stderr)
+        self.assertIn("Batch result: 2 of 3 succeeded, 1 failed", out)
+        self.assertIn("OK     [1/3] first.flac (exit 0)", out)
+        self.assertIn("FAILED [2/3] second.flac (exit 1)", out)
+        self.assertIn("OK     [3/3] third.flac (exit 0)", out)
+        aligned = [c[-1] for c in read_stub_calls(self.calls_file) if c[0].endswith("r2_pipeline.py")]
+        self.assertEqual(aligned, paths)
+
+    def test_all_songs_succeeding_exits_zero(self) -> None:
+        paths = self.drop("first.flac", "second.flac")
+        result = self.run_bat("Align LRC.bat", *paths)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Batch result: 2 of 2 succeeded, 0 failed", result.stdout)
 
 if __name__ == "__main__":
     unittest.main()

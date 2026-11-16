@@ -343,6 +343,7 @@ if ($Arbiter -eq "reviewer-validity" -and -not $ReviewerEvidence) {
 Write-Host "$songCount songs queued" -ForegroundColor Cyan
 $exitCode = 0
 $songIndex = 0
+$songResults = @()
 foreach ($rawPath in $Paths) {
     $songIndex++
     $songName = [System.IO.Path]::GetFileName($rawPath)
@@ -387,6 +388,7 @@ foreach ($rawPath in $Paths) {
 
     $songElapsed = $stopwatch.Elapsed.TotalSeconds - $songStarted
     $completedSeconds += $songElapsed
+    $songResults += [pscustomobject]@{ Index = $songIndex; Name = $songName; Path = $rawPath; ExitCode = $songExitCode }
     if ($songExitCode -ne 0) {
         $exitCode = $songExitCode
     }
@@ -442,9 +444,18 @@ else {
     Write-Warning "Batch summary script was not found: $summaryScript"
 }
 
-if ($exitCode -eq 0) {
-    foreach ($rawPath in $Paths) {
+# Every song gets its result printed, including the songs after a failed one and the
+# failed song itself (a report may exist even when the run exited non-zero).
+foreach ($songResult in $songResults) {
+    $rawPath = $songResult.Path
+    try {
         $audioPath = [System.IO.Path]::GetFullPath($rawPath)
+        if ($songResult.ExitCode -ne 0) {
+            Write-Host ("[{0}/{1}] FAILED {2} (exit {3})" -f $songResult.Index, $songCount, $songResult.Name, $songResult.ExitCode) -ForegroundColor Red
+        }
+        else {
+            Write-Host ("[{0}/{1}] {2}" -f $songResult.Index, $songCount, $songResult.Name) -ForegroundColor Green
+        }
         if ($Output -and $Paths.Count -eq 1) {
             $lrcPath = [System.IO.Path]::GetFullPath($Output)
         }
@@ -527,6 +538,21 @@ if ($exitCode -eq 0) {
             throw "Explicit -TimingSource jactc did not produce a jactc backend. Actual backend: $backend"
         }
     }
+    catch {
+        Write-Warning ("Result check failed for {0}: {1}" -f $songResult.Name, $_.Exception.Message)
+        if ($songResult.ExitCode -eq 0) {
+            $songResult.ExitCode = 1
+        }
+    }
+}
+$failedSongs = @($songResults | Where-Object { $_.ExitCode -ne 0 })
+if ($failedSongs.Count -gt 0 -and $exitCode -eq 0) {
+    $exitCode = 1
+}
+Write-Host ("Batch result: {0} of {1} succeeded, {2} failed" -f ($songCount - $failedSongs.Count), $songCount, $failedSongs.Count) -ForegroundColor $(if ($failedSongs.Count -gt 0) { "Red" } else { "Green" })
+foreach ($songResult in $songResults) {
+    $state = if ($songResult.ExitCode -eq 0) { "OK    " } else { "FAILED" }
+    Write-Host ("  {0} [{1}/{2}] {3} (exit {4})" -f $state, $songResult.Index, $songCount, $songResult.Name, $songResult.ExitCode)
 }
 
 $reviewBatchPath = [System.IO.Path]::GetFullPath((Join-Path $scriptDir "Review LRC.bat"))
