@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import contextlib
 import http.client
+import importlib.util
 import io
 import json
 import os
@@ -17,7 +18,36 @@ import unittest.mock
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+import test_window_watch  # noqa: E402
+
 HIDDEN = 0x08000000 if os.name == "nt" else 0
+NEW_CONSOLE = 0x00000010
+_WATCHER = None
+
+
+def setUpModule():
+    # No test in this file may put a window on the screen, not even a minimized one: every window that becomes visible
+    # while the module runs and belongs to this process tree is recorded and fails tearDownModule.
+    global _WATCHER
+    if test_window_watch.IS_WINDOWS:
+        _WATCHER = test_window_watch.WindowWatcher().start()
+
+
+def tearDownModule():
+    if _WATCHER is not None:
+        _WATCHER.stop()
+        shown = [(event["cls"], event["name"], event["title"]) for event in _WATCHER.ours()]
+        if shown:
+            raise AssertionError("tests of this file showed windows: %r (start servers hidden; a console server gets STARTF_USESHOWWINDOW with SW_HIDE)" % shown)
+
+
+def hidden_startupinfo():
+    startup = subprocess.STARTUPINFO()
+    startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startup.wShowWindow = 0  # SW_HIDE
+    return startup
 
 
 def free_port():
@@ -49,12 +79,9 @@ class Fixture:
         env = dict(os.environ, PYTHONUTF8="1", LRC_HOT_UPDATE_INTERVAL="0.3", LRC_NO_REVIEW="1", **(extra_env or {}))
         extra = {}
         flags = HIDDEN
-        if visible and os.name == "nt":  # a console of its own, as Review LRC.bat gives it, started minimized so the test does not take the screen
-            flags = 0x10
-            startup = subprocess.STARTUPINFO()
-            startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            startup.wShowWindow = 7  # SW_SHOWMINNOACTIVE
-            extra["startupinfo"] = startup
+        if visible and os.name == "nt":  # a console of its own, as Review LRC.bat gives it (has_console() is true), but its window hidden: the test shows nothing
+            flags = NEW_CONSOLE
+            extra["startupinfo"] = hidden_startupinfo()
         self.proc = subprocess.Popen([sys.executable, str(self.scripts / "review_server.py"), "--report-dir", str(self.root / "outputs" / "reports"),
                                       "--port", str(self.port), "--no-browser"], cwd=str(self.root), env=env, stdout=subprocess.PIPE,
                                      stderr=subprocess.DEVNULL, creationflags=flags, **extra)
@@ -452,21 +479,49 @@ class ProcessListTests(unittest.TestCase):
 
 
 class LegacyServerTests(unittest.TestCase):
+    def _load_cli(self, fx):
+        spec = importlib.util.spec_from_file_location("review_hot_update_fx%d" % fx.port, str(fx.scripts / "review_hot_update.py"))
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        self.addCleanup(sys.modules.pop, spec.name, None)
+        spec.loader.exec_module(module)
+        return module
+
     def test_cli_restarts_a_server_that_has_no_hot_update_on_the_same_port(self):
+        # The CLI of the product gives the restarted server a console of its own (CREATE_NEW_CONSOLE, no STARTUPINFO): on a desktop
+        # that is a normal window that takes the focus. The test runs that same CLI code in this process and only adds a hidden
+        # STARTUPINFO to that one call, after asserting what the product passed: the product's behavior is not changed.
         fx = Fixture()
         self.addCleanup(fx.close)
         fx.start({"LRC_NO_HOT_UPDATE": "1"})
         self.assertIsNone(fx.admin())
         old_pid = fx.proc.pid
-        result = fx.cli("--wait", "120")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("restarted", result.stdout)
+        cli = self._load_cli(fx)
+        launches = []
+        real_popen = subprocess.Popen
+
+        def popen(*args, **kwargs):
+            flags = kwargs.get("creationflags", 0)
+            if flags & NEW_CONSOLE:
+                launches.append({"flags": flags, "startupinfo": kwargs.get("startupinfo")})
+                kwargs["startupinfo"] = hidden_startupinfo()
+            return real_popen(*args, **kwargs)
+
+        said = io.StringIO()
+        env = {cli.PORT_RANGE_ENV: "%d-%d" % (fx.port, fx.port)}
+        with unittest.mock.patch.object(subprocess, "Popen", popen), unittest.mock.patch.dict(os.environ, env), contextlib.redirect_stdout(said):
+            code = cli.main(["--wait", "120"])
+        self.assertEqual(code, 0, said.getvalue())
+        self.assertIn("restarted", said.getvalue())
+        self.assertEqual(len(launches), 1, "the restart starts exactly one server")
+        self.assertTrue(launches[0]["flags"] & NEW_CONSOLE, "the product must start the restarted server with a console of its own")
+        self.assertFalse(launches[0]["flags"] & HIDDEN, "never CREATE_NO_WINDOW for the server EvanOG works with")
+        self.assertIsNone(launches[0]["startupinfo"], "the product passes no STARTUPINFO: its console is the visible one")
         info = fx.wait_for(fx.admin)
         self.assertTrue(info)
         self.assertNotEqual(info["pid"], old_pid)
         self.assertEqual(info["port"], fx.port)
-        self.assertIs(info["visible"], True, "a legacy restart must give the server a visible console, never a hidden one")
-
+        self.assertIs(info["visible"], True, "a legacy restart must give the server a console, never run it without one")
     def test_cli_reports_not_running(self):
         fx = Fixture()
         self.addCleanup(fx.close)
