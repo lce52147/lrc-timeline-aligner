@@ -120,7 +120,7 @@ def run_local_window(
             report,
             silent_raw(times),
             duration,
-            type("Args", (), {"whisperx_device": "cpu"})(),
+            type("Args", (), {"whisperx_device": "cpu", "model_cache": False})(),
         )
     finally:
         auto_lrc.subprocess.run = original_run  # type: ignore[assignment]
@@ -281,7 +281,7 @@ def run_with_shadows(
 ) -> None:
     entries = [LyricEntry([f"line {index + 1}"]) for index in range(len(times))]
     cache: dict[tuple[int, int, str, str], list[object]] = {}
-    args = type("Args", (), {"whisperx_device": "cpu"})()
+    args = type("Args", (), {"whisperx_device": "cpu", "model_cache": False})()
     original_run = auto_lrc.subprocess.run
     original_python = auto_lrc.default_ctc_python
     auto_lrc.subprocess.run = helper  # type: ignore[assignment]
@@ -347,7 +347,7 @@ class LocalWindowShadowTests(unittest.TestCase):
         helper = FakeHelper()
         entries = [LyricEntry([f"line {index + 1}"]) for index in range(len(self.TIMES))]
         cache: dict[tuple[int, int, str, str], list[object]] = {}
-        args = type("Args", (), {"whisperx_device": "cpu"})()
+        args = type("Args", (), {"whisperx_device": "cpu", "model_cache": False})()
         original_run = auto_lrc.subprocess.run
         original_python = auto_lrc.default_ctc_python
         auto_lrc.subprocess.run = helper  # type: ignore[assignment]

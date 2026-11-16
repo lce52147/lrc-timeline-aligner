@@ -104,7 +104,7 @@ class LocalWindowVocalSilenceTests(unittest.TestCase):
                 levels = auto_lrc.vocal_stem_levels(report)
                 auto_lrc.apply_ctc_local_window_realign(
                     pathlib.Path("dummy.flac"), entries, list(self.TIMES), report,
-                    silent_raw(self.TIMES), 70.0, type("Args", (), {"whisperx_device": "cpu"})(),
+                    silent_raw(self.TIMES), 70.0, type("Args", (), {"whisperx_device": "cpu", "model_cache": False})(),
                 )
         self.assertEqual(levels.status, "checked")
         self.assertTrue(levels.absent(33.0))
@@ -123,7 +123,7 @@ class LocalWindowVocalSilenceTests(unittest.TestCase):
         ):
             auto_lrc.apply_ctc_local_window_realign(
                 pathlib.Path("dummy.flac"), entries, list(self.TIMES), report,
-                silent_raw(self.TIMES), 70.0, type("Args", (), {"whisperx_device": "cpu"})(),
+                silent_raw(self.TIMES), 70.0, type("Args", (), {"whisperx_device": "cpu", "model_cache": False})(),
             )
         self.assertEqual(local_window_times(report), {2: 26.0, 3: 33.0, 4: 47.0})
         self.assertEqual(report["ctc_local_window_realign"]["rejected_rows"], [])  # type: ignore[index]

@@ -67,7 +67,7 @@ class NearDuplicateLyricTests(unittest.TestCase):
         ):
             auto_lrc.apply_ctc_local_window_realign(
                 pathlib.Path("dummy.flac"), entries, list(times), report, raw, 60.0,
-                type("Args", (), {"whisperx_device": "cpu"})(),
+                type("Args", (), {"whisperx_device": "cpu", "model_cache": False})(),
             )
         # One window for row 3, ending at row 4's own CTC start, not at 30 s.
         self.assertEqual([(start, end) for start, end, _ in helper.calls], [(19.95, 44.96)])

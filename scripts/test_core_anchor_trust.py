@@ -569,7 +569,7 @@ class TimingTrustTests(unittest.TestCase):
                 report,
                 raw_report,
                 40.0,
-                type("Args", (), {"whisperx_device": "cpu"})(),
+                type("Args", (), {"whisperx_device": "cpu", "model_cache": False})(),
             )
         finally:
             auto_lrc.subprocess.run = original_run  # type: ignore[assignment]
@@ -658,7 +658,7 @@ class TimingTrustTests(unittest.TestCase):
                 report,
                 raw_report,
                 40.0,
-                type("Args", (), {"whisperx_device": "cpu"})(),
+                type("Args", (), {"whisperx_device": "cpu", "model_cache": False})(),
             )
         finally:
             auto_lrc.subprocess.run = original_run  # type: ignore[assignment]
