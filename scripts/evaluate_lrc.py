@@ -13,6 +13,8 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
+from text_encoding import read_lyric_text
+
 
 TIMESTAMP_RE = re.compile(r"^\[(\d{1,3}):(\d{2})(?:\.(\d{1,3}))?\](.*)$")
 META_RE = re.compile(r"^\[[A-Za-z]+:")
@@ -44,7 +46,7 @@ def parse_lrc(path: Path) -> tuple[list[str], list[Entry]]:
     entries: list[Entry] = []
     last_time: int | None = None
 
-    for raw in path.read_text(encoding="utf-8-sig").splitlines():
+    for raw in read_lyric_text(path)[0].splitlines():
         line = raw.strip()
         if not line:
             continue

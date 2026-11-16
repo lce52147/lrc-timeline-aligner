@@ -24,6 +24,7 @@ from audio_features import AudioFeatures
 from runtime_base import CanonicalWrittenTime, LrcError, _timing_content_digest, canonicalize_lrc_time, run_command
 from runtime_base import _timing_spans_from_value
 import lrc_stage_timings
+from text_encoding import LyricEncodingError, read_lyric_text
 
 
 LRC_ALGORITHM_REVISION = "2026-10-25-lrc-v2.0-segment-realign"
@@ -217,8 +218,19 @@ def merge_adjacent_translation_lines(entries: list[LyricEntry]) -> list[LyricEnt
     return merged
 
 
+def read_user_text(path: Path, announce: bool = False) -> str:
+    """Text of a user-provided lyric / anchor file (see ``text_encoding.read_lyric_text``); an unreadable or uncertain encoding is an ``LrcError``."""
+    try:
+        text, codec = read_lyric_text(path)
+    except LyricEncodingError as exc:
+        raise LrcError(str(exc)) from None
+    if announce and codec != "utf-8":
+        print(f"INFO: lyric file {path} read as {codec}.", file=sys.stderr)
+    return text
+
+
 def load_lyrics(path: Path, skip_comments: bool = False) -> LyricDocument:
-    text = path.read_text(encoding="utf-8-sig")
+    text = read_user_text(path, announce=True)
     entries: list[LyricEntry] = []
     metadata_lines: list[str] = []
     saw_timestamps = False
@@ -284,7 +296,7 @@ def build_lyric_preflight(
     audio_path: Path,
 ) -> dict[str, object]:
     """Audit lyric input transformations without modifying the parsed entries."""
-    raw_lines = lyrics_path.read_text(encoding="utf-8-sig").splitlines()
+    raw_lines = read_user_text(lyrics_path).splitlines()
     transformations: list[dict[str, object]] = []
     unsupported: list[dict[str, object]] = []
     garbage: list[dict[str, object]] = []
@@ -479,7 +491,7 @@ ANCHOR_ENTRY_COMMENT_RE = re.compile(r"^#\s*entry\s*=\s*(\d+)\s*$", re.IGNORECAS
 
 
 def load_anchor_hints(path: Path) -> tuple[list[AnchorHint], list[dict[str, object]]]:
-    text = path.read_text(encoding="utf-8-sig")
+    text = read_user_text(path, announce=True)
     hints: list[AnchorHint] = []
     skipped_markers: list[dict[str, object]] = []
     pending_entry_number: int | None = None

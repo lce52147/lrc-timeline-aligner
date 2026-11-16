@@ -25,6 +25,8 @@ import os
 import pathlib
 import unicodedata
 
+from text_encoding import read_lyric_text
+
 LYRIC_SUFFIXES = (".lyrics.txt", ".txt", ".lyrics")  # auto_lrc.find_lyrics order without the timed .lyrics.lrc: flags refer to text lyrics
 CLASSES = {"official-only": "官方歌詞有、聽得到的版本沒有", "unconfirmed": "官方歌詞括號區塊，沒有可比對的來源"}
 
@@ -89,7 +91,7 @@ def row_marks(audio, row_lyrics, extra_roots=()):
         flags = _load_flags(audio, lyrics_path, raw, extra_roots)
         if not flags or not flags.get("blocks"):
             return {}
-        file_lines = [_original(line) for line in raw.decode("utf-8-sig").splitlines()]
+        file_lines = [_original(line) for line in read_lyric_text(lyrics_path)[0].splitlines()]
         wanted = {}
         for block in flags["blocks"]:
             if block.get("class") in CLASSES:
