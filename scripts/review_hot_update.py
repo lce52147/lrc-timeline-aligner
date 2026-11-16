@@ -408,10 +408,37 @@ def _argv_of(command_line):
         ctypes.windll.kernel32.LocalFree(pointer)
 
 
-def _powershell(script):
-    result = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script], capture_output=True, text=True, encoding="utf-8",
-                            errors="replace", timeout=60, creationflags=0x08000000 if os.name == "nt" else 0)
-    return result.stdout
+class ProbeError(RuntimeError):
+    """The process list (or a process detail) could not be read: nothing is known about the running servers."""
+
+
+# Windows PowerShell writes to a pipe in the console's code page (950 here), not UTF-8: a command line with a Chinese or Japanese character
+# in it came back as mojibake whose stray backslashes made the process list invalid JSON ("Invalid \escape"), so the CLI died with a
+# traceback and printed nothing whenever ANY process on the machine had such a character in a review_server.py command line.
+_UTF8_OUTPUT = "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
+
+
+def _powershell(script, timeout=60, attempts=2):
+    """The output of a PowerShell command (UTF-8). A machine under heavy load can leave powershell.exe or the WMI query unanswered for a
+    while: the command is tried ``attempts`` times, and when it still does not answer (timeout, cannot start, exit code, error
+    text) a ProbeError says so, instead of an empty answer that would read as "no server is running"."""
+    reason = ""
+    for attempt in range(attempts):
+        try:
+            result = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", _UTF8_OUTPUT + script], capture_output=True, text=True,
+                                    encoding="utf-8", errors="replace", timeout=timeout, creationflags=0x08000000 if os.name == "nt" else 0,
+                                    stdin=subprocess.DEVNULL)
+        except subprocess.TimeoutExpired:
+            reason = "no answer within %d s" % timeout
+        except OSError as exc:
+            reason = "cannot start powershell: %s" % exc
+        else:
+            if result.returncode == 0:
+                return result.stdout
+            reason = "exit code %d: %s" % (result.returncode, (result.stderr or result.stdout).strip()[:300])
+        if attempt + 1 < attempts:
+            time.sleep(1)
+    raise ProbeError("powershell: " + reason)
 
 
 def _review_port(port):
@@ -451,7 +478,10 @@ def find_servers(scripts_dir=SCRIPTS_DIR, port_range=None):
                        "Select-Object ProcessId,ParentProcessId,CommandLine | ConvertTo-Json -Compress")
     if not text.strip():
         return []
-    rows = json.loads(text)
+    try:
+        rows = json.loads(text)
+    except ValueError as exc:
+        raise ProbeError("the process list is not readable: %s" % exc) from None
     rows = rows if isinstance(rows, list) else [rows]
     port_range = configured_port_range() if port_range is None else port_range
     by_pid = {row["ProcessId"]: row for row in rows}
@@ -680,7 +710,11 @@ def main(argv=None):
     parser.add_argument("--report-dir", type=pathlib.Path, default=None)
     args = parser.parse_args(argv)
     say = lambda text: print(text, flush=True)
-    servers = find_servers()
+    try:
+        servers = find_servers()
+    except (ProbeError, OSError, KeyError, TypeError) as exc:
+        say("could not list the running servers (%s); nothing was changed, run it again in a moment" % exc)
+        return 2
     if not servers:
         say("not running, next launch uses the new version")
         return 0
@@ -698,7 +732,11 @@ def main(argv=None):
         if report_dir is None:
             tokens = server["argv"]
             report_dir = pathlib.Path(tokens[tokens.index("--report-dir") + 1]) if "--report-dir" in tokens else SCRIPTS_DIR.parent / "outputs" / "reports"
-        ok = update_server(server, args.wait, report_dir, say) and ok
+        try:
+            ok = update_server(server, args.wait, report_dir, say) and ok
+        except ProbeError as exc:
+            say("port %d pid %d: %s; the server was left as it is, run it again in a moment" % (server["port"], server["pid"], exc))
+            ok = False
     return 0 if ok else 1
 
 

@@ -1,7 +1,9 @@
 """Hot update of the review server: real server processes on a copy of the scripts, code edited while they run."""
 from __future__ import annotations
 
+import contextlib
 import http.client
+import io
 import json
 import os
 import shutil
@@ -365,6 +367,88 @@ class PortRangeTests(unittest.TestCase):
         with unittest.mock.patch.object(subprocess, "run", spy):
             fx.cli("--list")
         self.assertEqual(seen["LRC_HOT_UPDATE_PORT_RANGE"], "%d-%d" % (fx.port, fx.port))
+
+
+class ProcessListTests(unittest.TestCase):
+    """The CLI's process list: UTF-8 end to end, and a list that cannot be read is said, never swallowed."""
+
+    def setUp(self):
+        sys.path.insert(0, str(SCRIPTS))
+        self.addCleanup(lambda: sys.path.remove(str(SCRIPTS)))
+        import review_hot_update
+        self.hot = review_hot_update
+
+    def _listing(self):
+        return self.hot._powershell("Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'review_server\.py' } | "
+                                    "Select-Object ProcessId,ParentProcessId,CommandLine | ConvertTo-Json -Compress")
+
+    def _server_like_process(self, name):
+        """A process that is not a server but has review_server.py and ``name`` in its command line (as another session's server would)."""
+        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)", "review_server.py", name], stdin=subprocess.DEVNULL,
+                                creationflags=HIDDEN | 0x00000040)
+        def stop():
+            proc.kill()
+            proc.wait(10)
+        self.addCleanup(stop)
+        self.assertTrue(Fixture.wait_for(None, lambda: any(name in row["CommandLine"] for row in self._rows()), 30))
+        return proc
+
+    def _rows(self):
+        text = self._listing()
+        rows = json.loads(text) if text.strip() else []
+        return rows if isinstance(rows, list) else [rows]
+
+    def test_a_chinese_and_japanese_command_line_arrives_intact_and_the_list_stays_valid_json(self):
+        # 許 and 功 end in the byte 0x5C (a backslash) in Big5: read back in the wrong code page the list was not JSON any more
+        name = "D:\許功蓋\song 日本語の歌.flac"
+        self._server_like_process(name)
+        self.assertTrue(any(name in row["CommandLine"] for row in self._rows()))
+
+    def test_find_servers_does_not_raise_while_another_process_has_such_a_command_line(self):
+        self._server_like_process("D:\許功蓋\a.flac")
+        with unittest.mock.patch.dict(os.environ, {self.hot.PORT_RANGE_ENV: "58690-58690"}):
+            self.assertEqual([server for server in self.hot.find_servers() if "tmp" in str(server["argv"]).lower()], [])
+
+    def test_a_powershell_that_does_not_answer_raises_probe_error_after_a_second_try(self):
+        calls = []
+        def run(*args, **kwargs):
+            calls.append(kwargs["timeout"])
+            raise subprocess.TimeoutExpired("powershell", kwargs["timeout"])
+        with unittest.mock.patch.object(self.hot.subprocess, "run", run), unittest.mock.patch.object(self.hot.time, "sleep"):
+            with self.assertRaises(self.hot.ProbeError) as raised:
+                self.hot._powershell("x")
+        self.assertEqual(calls, [60, 60])
+        self.assertIn("no answer within 60 s", str(raised.exception))
+
+    def test_a_failed_powershell_is_an_error_not_an_empty_list_and_a_second_try_can_succeed(self):
+        results = [subprocess.CompletedProcess([], 1, "", "WMI: quota violation"), subprocess.CompletedProcess([], 0, "[]", "")]
+        with unittest.mock.patch.object(self.hot.subprocess, "run", side_effect=results), unittest.mock.patch.object(self.hot.time, "sleep"):
+            self.assertEqual(self.hot._powershell("x"), "[]")
+        with unittest.mock.patch.object(self.hot.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "WMI: quota violation")),                 unittest.mock.patch.object(self.hot.time, "sleep"):
+            with self.assertRaises(self.hot.ProbeError) as raised:
+                self.hot._powershell("x")
+        self.assertIn("quota violation", str(raised.exception))
+
+    def test_an_unreadable_process_list_is_a_probe_error(self):
+        with unittest.mock.patch.object(self.hot, "_powershell", return_value="[{broken"):
+            with self.assertRaises(self.hot.ProbeError):
+                self.hot.find_servers()
+
+    def test_the_cli_says_what_went_wrong_instead_of_printing_nothing(self):
+        said = io.StringIO()
+        with unittest.mock.patch.object(self.hot, "find_servers", side_effect=self.hot.ProbeError("powershell: no answer within 60 s")),                 contextlib.redirect_stdout(said):
+            self.assertEqual(self.hot.main([]), 2)
+        self.assertIn("could not list the running servers", said.getvalue())
+        self.assertIn("no answer within 60 s", said.getvalue())
+        self.assertIn("nothing was changed", said.getvalue())
+
+    def test_a_probe_error_while_updating_one_server_is_reported_and_the_run_fails(self):
+        said = io.StringIO()
+        server = {"pid": 7, "ppid": 1, "port": 58691, "argv": ["python", "review_server.py"], "launcher_argv": None}
+        with unittest.mock.patch.object(self.hot, "find_servers", return_value=[server]),                 unittest.mock.patch.object(self.hot, "_get", return_value=(0, {})),                 unittest.mock.patch.object(self.hot, "update_server", side_effect=self.hot.ProbeError("powershell: exit code 1: boom")),                 contextlib.redirect_stdout(said):
+            self.assertEqual(self.hot.main([]), 1)
+        self.assertIn("exit code 1: boom", said.getvalue())
+        self.assertIn("left as it is", said.getvalue())
 
 
 class LegacyServerTests(unittest.TestCase):
