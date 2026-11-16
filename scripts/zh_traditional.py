@@ -31,14 +31,17 @@ _loaded = False
 # touched by VARIANT_PREFERENCE.
 PHRASE_OVERRIDES: dict[str, str] = {
     # a different word, OpenCC maps it to the wrong character (dry / not 幹; wind 后 is 後; mile 海里 is 海裡 in lyrics; ...)
-    "干了": "乾了", "干了什么": "幹了什麼", "干了啥": "幹了啥", "风后": "風後", "海里": "海裡", "糊里糊涂": "糊裡糊塗", "卷卷": "捲捲",
+    "干了什么": "幹了什麼", "干了啥": "幹了啥", "风后": "風後", "海里": "海裡", "糊里糊涂": "糊裡糊塗", "卷卷": "捲捲",
+    # 干了 alone is "did" (他干了一件大事 -> 幹了, OpenCC's own reading); "dried" is only listed where it is meant
+    "干了就没事": "乾了就沒事", "喉咙干了": "喉嚨乾了", "嘴干了": "嘴乾了", "嘴巴干了": "嘴巴乾了", "口干了": "口乾了",
+    "泪干了": "淚乾了", "眼泪干了": "眼淚乾了", "泪水干了": "淚水乾了", "衣服干了": "衣服乾了",
+    "头发现在": "頭髮現在",   # hair + now: the right-to-left tie rule would read 头+发现+在
     # both forms are standard; the user writes the left one more often (count in the lyrics: left / right)
     "计划": "計畫",      # 4 / 0
     "了解": "了解",      # 4 / 瞭解 1
     "点赞": "點讚",      # 1 / 0
     "胡同": "胡同",      # 1 / 衚衕 0
     "尽可能": "盡可能",  # 1 / 儘可能 0
-    "向往": "嚮往",      # 4 / 0 (the character table below prefers 向 for every other word)
     "游动": "游動",      # 7 / 遊動 0
     "背包": "背包", "背负": "背負",   # 29 / 揹 1
     "回归": "回歸",      # 1 / 迴歸 0
@@ -51,24 +54,39 @@ PHRASE_OVERRIDES: dict[str, str] = {
     "这只": "這隻", "那只": "那隻",   # measure word (这只猫) ...
     "这只有": "這只有", "这只能": "這只能", "这只要": "這只要", "这只会": "這只會", "这只想": "這只想", "那只有": "那只有", "那只能": "那只能",   # ... but 这只+verb is "only"
     "松开": "鬆開",      # loosen, not the pine 松 (24 / 0)
+    # 注 is the user's form of 注定 (25 / 註定 0 in the lyrics), but 註冊 註解 註釋 備註 ... are 註 in Taiwan: a word rule, not a character rule
+    "注定": "注定", "命中注定": "命中注定", "命运注定": "命運注定", "五百姻缘天注定": "五百姻緣天注定",
+    # 向: 外向 / 面向 are written with 向 (OpenCC has them as 嚮 from the mainland's 面向对象); 嚮導 嚮往 心嚮往之 stay OpenCC's 嚮
+    "女生外向": "女生外向", "面向对象的技术": "面向對象的技術", "面向对象语言": "面向對象語言",
+    # OpenCC's 註 / 嚮 phrases also match across a word boundary (关注|明天 holds 注明, 迈向|明天 holds 向明): the common words that
+    # end in 注 / 向 are written out so that the phrase cannot take their last character
+    "向明": "向明",
+    "关注": "關注", "专注": "專注", "倾注": "傾注", "贯注": "貫注", "灌注": "灌注", "投注": "投注", "聚注": "聚注", "下注": "下注",
+    "押注": "押注", "赌注": "賭注",
+    "方向": "方向", "走向": "走向", "迈向": "邁向", "朝向": "朝向", "面向": "面向", "转向": "轉向", "趋向": "趨向", "志向": "志向",
+    "意向": "意向", "导向": "導向", "外向": "外向", "内向": "內向", "倾向": "傾向", "动向": "動向", "流向": "流向", "去向": "去向",
+    "指向": "指向", "偏向": "偏向", "奔向": "奔向", "飞向": "飛向", "通向": "通向", "投向": "投向", "冲向": "衝向", "迎向": "迎向",
+    "看向": "看向", "望向": "望向", "驶向": "駛向", "倒向": "倒向",
+    # 燬 is the character of the classical phrases and of a book series title; there 毀 is not written
+    "毁炎": "燬炎", "毁犀": "燬犀", "四库禁毁书丛刋": "四庫禁燬書叢刋",
 }
 # OpenCC phrases that hide a better match across the same characters (``一起干`` is a phrase for ``一起干活``; in
 # ``一起干杯`` it would swallow the 干 that belongs to ``干杯``). They are not used.
 DROPPED_PHRASES = frozenset({"一起干", "了如"})   # 了如 is only meant for 了如指掌, which OpenCC has as a whole phrase
 # Characters where OpenCC writes one standard Traditional form and the user's lyrics use the other form more often
 # (lyrics count of the form written here / of the form OpenCC writes). Applied only to characters the conversion
-# produced, never to Traditional text that was already in the line.
+# produced, never to Traditional text that was already in the line. Only a character whose two forms are variants of
+# each other in EVERY word belongs here (audit of every OpenCC word that produces the character: docs/ZH_S2TW_ROUNDTRIP.md);
+# 註 / 注 and 嚮 / 向 are not (註冊 vs 注意, 嚮導 vs 方向), so those are word rules in PHRASE_OVERRIDES.
 VARIANT_PREFERENCE: dict[str, str] = {
     "臺": "台",   # 17 / 3
     "溼": "濕",   # 11 / 0
-    "註": "注",   # 25 / 0
     "汙": "污",   # 3 / 2
     "燬": "毀",   # 8 / 0
     "絃": "弦",   # 4 / 0
     "悽": "淒",   # 2 / 0
     "歎": "嘆",   # 12 / 0
     "唸": "念",   # 50 / 0
-    "嚮": "向",   # 124 / 4
 }
 
 _dicts = None
@@ -175,9 +193,10 @@ def _segment(text, phrases, longest):
     """Phrase spans for ``text``: the left match and the right match are compared and the better one wins.
 
     Score, in order: the characters covered by a PHRASE_OVERRIDES phrase (curated from the user's lyrics), then the
-    characters covered by any multi-character phrase. On a tie the right match is used: the head of a Chinese word is
-    at its end and matching from the right is the more accurate direction (``一直发现`` is 一直+发现, not the phrase
-    ``直发``; ``总是只有`` is 只有, not 是只)."""
+    characters covered by any multi-character phrase, then the length of the longest phrase (a four-character phrase
+    such as ``干了这杯`` is more specific than two phrases of two characters). On a tie the right match is used: the head
+    of a Chinese word is at its end and matching from the right is the more accurate direction (``一直发现`` is
+    一直+发现, not the phrase ``直发``; ``总是只有`` is 只有, not 是只)."""
     left = _forward(text, phrases, longest)
     right = _backward(text, phrases, longest)
     if left == right:
@@ -185,7 +204,8 @@ def _segment(text, phrases, longest):
 
     def score(spans):
         return (sum(end - start for start, end in spans if text[start:end] in PHRASE_OVERRIDES),
-                sum(end - start for start, end in spans))
+                sum(end - start for start, end in spans),
+                max((end - start for start, end in spans), default=0))
 
     return left if score(left) > score(right) else right
 

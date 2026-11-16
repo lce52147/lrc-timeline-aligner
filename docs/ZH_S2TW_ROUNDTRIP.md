@@ -97,3 +97,27 @@ pairs 26 {'wrong': 1, 'japanese': 11, 'variant': 14}
 国>國 U+56FD>U+570B x1 | orig_uses 1 back_uses 2
 
 ~~~
+
+## Word-level audit of the character preference (BH2-FIX9)
+
+`VARIANT_PREFERENCE` rewrites a character wherever the conversion produced it, so a character belongs there only when its two forms are variants of each other in every word OpenCC produces it in. The audit lists every `STPhrases` / `STCharacters` entry whose s2tw output holds the character (`audit_variants.py`, kept outside the repo like `roundtrip.py`; OpenCC dictionaries of the installed package) and judges the preferred writing against Taiwan usage (教育部《重編國語辭典修訂本》/《異體字字典》 as far as known; where it could not be judged, OpenCC's own writing is kept).
+
+| OpenCC writes | preferred | words that produce it | verdict |
+|---|---|---|---|
+| 註 | 注 | 56 phrases | **removed from the character table.** 註冊 註解 註釋 註明 註銷 備註 附註 批註 標註 腳註 註生娘娘 are written 註 in Taiwan; only 注定 / 命中注定 / 命運注定 / 五百姻緣天注定 (the user writes 注定 25 / 註定 0) are word rules now |
+| 嚮 | 向 | 14 phrases | **removed.** 嚮導 嚮導公司/員/犬 嚮往 心嚮往之 嚮應 嚮慕 嚮邇 嚮晦 are OpenCC's (MOE) writing. Exceptions that write 向: 女生外向, 面向对象的技术, 面向对象语言 (the mainland term has no 嚮 in Taiwan), 向明 (it matches inside 迈向明天) |
+| 臺 | 台 | 856 phrases + the character 台 | kept. 台 is the common variant of 臺 in every word below (Taiwan names and organisations 263, broadcast stations 60, other 533: 舞台 平台 讲台 后台 阳台 灯台 and classical or proper-name words). No word needs an exception: the user's own count is 台 17 / 臺 3 |
+| 溼 | 濕 | 14 phrases (干湿 风湿症 湿度表 ...) | kept, 濕 is the standard form in all of them; no exception |
+| 汙 | 污 | 9 phrases (污蔑 脏污 奸污 ...) | kept, 污 is in common use in all of them; no exception |
+| 燬 | 毀 | 10 phrases | kept for 烧毁 焚毁 炸毁 销毁 熔毁 禁毁 禁毁书. **Exceptions (OpenCC's 燬 kept): 毁炎, 毁犀 (classical phrases), 四库禁毁书丛刋 (a book series title)** |
+| 絃 | 弦 | 32 phrases (和弦 琴弦 心弦 管弦 弦乐 ...) | kept, 弦 is the standard form in all of them; no exception |
+| 悽 | 淒 | 25 phrases (凄凉-type words: 凄惨 凄美 凄楚 ...) | kept, 淒 is in common use in all of them; no exception |
+| 歎 | 嘆 | 19 phrases (叹为观止 赞叹 惊叹 咏叹 ...) | kept, 嘆 is in common use in all of them; no exception |
+| 唸 | 念 | 34 phrases (念书 念经 默念 叨念 ...) | kept, 念 is in common use in all of them; no exception |
+
+Two more things the audit found and fixed:
+- Removing 註 / 嚮 from the character table exposed OpenCC phrases that match across a word boundary: `关注明天` took 注明 (-> 關註明天), `迈向明天` took 向明 (-> 邁嚮明天; three lines of the user's lyrics). The common words that end in 注 or 向 (关注 专注 倾注 ... 方向 走向 迈向 ...) are listed in `PHRASE_OVERRIDES` so that the phrase cannot take their last character.
+- `干了` was a phrase override to 乾了 (a mistake for 他干了一件大事). It is gone; "dried" is only listed where it is meant (干了就没事, 喉咙干了, 眼泪干了 ...). The segmentation score has a third key, the length of the longest phrase (干了这杯酒 is the four-character phrase, not 干了 + 杯酒), and `头发现在` is a phrase of its own.
+
+Round trip after the change (same corpus, same method as above): lines with a difference 24, character differences 26, **wrong meaning 1, variant 14**, Japanese / not Traditional input 11, i.e. the same 26 pairs as before (`diff` of the two outputs is empty). A comparison of the old and the new converter over all 49051 `STPhrases` keys: 65 differ, all of them 註 -> 注 words (52), 嚮 -> 向 words (9), the three 燬 words and 干了; over the 7174 kana-free lines of the corpus (after `t2s`): 0 differ.
+
