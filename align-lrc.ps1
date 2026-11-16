@@ -67,6 +67,7 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 $env:PYTHONIOENCODING = "utf-8"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $scriptDir "launcher-names.ps1")
 $backend = Join-Path $scriptDir "scripts\auto_lrc.py"
 $r2Pipeline = Join-Path $scriptDir "scripts\r2_pipeline.py"
 $localFfmpegBin = Join-Path $scriptDir "tools\ffmpeg\bin"
@@ -103,38 +104,9 @@ if (-not $Paths -or $Paths.Count -eq 0) {
     exit 2
 }
 
-# cmd.exe expands %NAME% in a command line given with its /c switch before the batch runs,
-# so a dropped file called "a%TEMP%b.flac" reaches %* as "a<temp path>b.flac". The
-# unexpanded text is still in the command line of the parent cmd.exe: take a name
-# from there only when expanding it gives exactly the name that was received.
+# cmd.exe expands %NAME% in a dropped file's name before the batch runs: see launcher-names.ps1.
 if ($FromLauncher) {
-    try {
-        $parentId = (Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$PID" -ErrorAction Stop).ParentProcessId
-        $parentLine = [string](Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$parentId" -ErrorAction Stop).CommandLine
-        $batchMarker = $parentLine.IndexOf("Align LRC.bat", [System.StringComparison]::OrdinalIgnoreCase)
-        if ($batchMarker -ge 0) {
-            $originalTokens = @()
-            foreach ($match in [regex]::Matches($parentLine.Substring($batchMarker + "Align LRC.bat".Length).TrimStart('"'), '"([^"]*)"|(\S+)')) {
-                if ($match.Groups[1].Success) { $originalTokens += $match.Groups[1].Value } else { $originalTokens += $match.Groups[2].Value }
-            }
-            $recoveredPaths = @()
-            foreach ($receivedPath in $Paths) {
-                $recovered = $receivedPath
-                foreach ($token in $originalTokens) {
-                    if (($token -ne $receivedPath) -and
-                        [string]::Equals([System.Environment]::ExpandEnvironmentVariables($token), $receivedPath, [System.StringComparison]::OrdinalIgnoreCase)) {
-                        $recovered = $token
-                        break
-                    }
-                }
-                $recoveredPaths += $recovered
-            }
-            $Paths = $recoveredPaths
-        }
-    }
-    catch {
-        Write-Warning ("Could not recover the dropped file names from the launcher: {0}" -f $_.Exception.Message)
-    }
+    $Paths = @(Restore-DroppedNames -Received $Paths -LauncherPath (Join-Path $scriptDir "Align LRC.bat"))
 }
 
 # A lyric file is a convenient drag target too: resolve its sibling FLAC and

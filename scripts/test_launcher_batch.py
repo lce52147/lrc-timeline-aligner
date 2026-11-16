@@ -143,6 +143,81 @@ class AlignBatchDroppedNameTests(LauncherStubCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.aligned_paths(), paths)
 
+class ReviewBatchDroppedNameTests(LauncherStubCase):
+    """Review LRC.bat: a dropped name that holds a percent-enclosed word reaches review_server.py as it was dropped."""
+    NAMES = AlignBatchDroppedNameTests.NAMES
+
+    def make_audio(self, name: str) -> str:
+        path = self.tmp / "songs" / name
+        path.parent.mkdir(exist_ok=True)
+        path.write_bytes(b"")
+        return str(path)
+
+    def review_calls(self) -> list[list[str]]:
+        return [call for call in read_stub_calls(self.calls_file) if call[0].endswith("review_server.py")]
+
+    def test_dropped_names_reach_the_review_server_verbatim(self) -> None:
+        for name in self.NAMES:
+            with self.subTest(name=name):
+                self.calls_file.unlink(missing_ok=True)
+                path = self.make_audio(name)
+                result = self.run_bat("Review LRC.bat", path)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                calls = self.review_calls()
+                self.assertEqual(len(calls), 1, calls)
+                self.assertEqual(calls[0][1:], [path])
+                self.assertNotIn("Could not recover", result.stdout + result.stderr)
+
+    def test_several_dropped_files_and_options_keep_their_own_names(self) -> None:
+        paths = [self.make_audio(n) for n in ("a%TEMP%b.flac", "plain.flac", "c%%d!&^.flac")]
+        result = self.run_bat("Review LRC.bat", "--read-only", *paths)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.review_calls()[0][1:], ["--read-only", *paths])
+
+    def test_a_dropped_folder_with_a_percent_word_keeps_its_name(self) -> None:
+        folder = self.tmp / "dir%TEMP%x"
+        folder.mkdir()
+        result = self.run_bat("Review LRC.bat", str(folder))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.review_calls()[0][1:], [str(folder)])
+
+    def test_without_arguments_the_default_report_folder_is_used_and_nothing_is_recovered(self) -> None:
+        result = self.run_bat("Review LRC.bat")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = self.review_calls()
+        self.assertEqual(calls[0][1:], ["--report-dir", str(REPO_ROOT / "outputs" / "reports")])
+
+    def test_the_exit_code_of_the_server_is_the_exit_code_of_the_launcher(self) -> None:
+        self.env["STUB_FAIL_MATCH"] = "failing.flac"
+        result = self.run_bat("Review LRC.bat", self.make_audio("failing.flac"))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+
+    def test_the_launcher_run_through_its_8_3_name_still_recovers_the_names(self) -> None:
+        import ctypes
+        import shutil
+        copy = self.tmp / "long launcher folder"
+        copy.mkdir()
+        for name in ("Review LRC.bat", "review-lrc.ps1", "launcher-names.ps1"):
+            shutil.copy2(REPO_ROOT / name, copy / name)
+        buffer = ctypes.create_unicode_buffer(520)
+        ctypes.windll.kernel32.GetShortPathNameW(str(copy / "Review LRC.bat"), buffer, 520)
+        short = buffer.value
+        if not short or short.lower().endswith("review lrc.bat"):
+            self.skipTest("8.3 names are not enabled on this volume")
+        path = self.make_audio("pct%TEMP%x.flac")
+        result = self.run_cmdline(f'cmd /d /c ""{short}" "{path}""')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.review_calls()[0][1:], [path])
+
+    def test_names_are_left_alone_and_nothing_fails_when_the_parent_is_not_the_launcher(self) -> None:
+        script = (f'. "{REPO_ROOT / "launcher-names.ps1"}"; '
+                  "Restore-DroppedNames -Received @('a%TEMP%b','c') -LauncherPath 'C:/nope/Review LRC.bat'")
+        result = self.run_cmdline(f'powershell -NoProfile -ExecutionPolicy Bypass -Command "{script}"')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.split(), ["a%TEMP%b", "c"])
+        self.assertEqual(result.stderr.strip(), "")
+
+
 class AlignBatchSummaryTests(LauncherStubCase):
     def drop(self, *names: str) -> list[str]:
         songs = self.tmp / "songs"

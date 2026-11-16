@@ -15,7 +15,8 @@ if "%~1"=="" (
   echo Reviewing every aligned song. Drag a folder or FLAC onto this file to review only those.
   "%PYTHON%" "%~dp0scripts\review_server.py" --report-dir "%~dp0outputs\reports"
 ) else (
-  "%PYTHON%" "%~dp0scripts\review_server.py" %*
+  rem A dropped name with a percent-enclosed word arrives already expanded by cmd.exe: review-lrc.ps1 puts the original back.
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0review-lrc.ps1" -FromLauncher %*
 )
 set "EXIT_CODE=%ERRORLEVEL%"
 if not "%EXIT_CODE%"=="0" if not "%LRC_NO_PAUSE%"=="1" pause
