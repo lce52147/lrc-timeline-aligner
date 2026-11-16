@@ -190,5 +190,54 @@ class TrailingStarTests(_PageFixture):
                          "[00:01.00]one\n*[00:02.00]愛你***\n*[00:03.00]我們*\n[00:05.00]tail\n")
 
 
+class OffsetTests(_PageFixture):
+    def test_positive_offset_shows_the_lyric_earlier(self) -> None:
+        raw = b"[ti:t]\n[offset:+500]\n[00:10.00]a\n[00:20.25]b\n"
+        self.assertEqual(review_server._canonical_lrc(raw), b"[ti:t]\n[00:09.50]a\n[00:19.75]b\n")
+
+    def test_negative_offset_shows_the_lyric_later(self) -> None:
+        self.assertEqual(review_server._canonical_lrc(b"[offset:-1500]\n[00:10.00]a\n"), b"[00:11.50]a\n")
+        self.assertEqual(review_server._canonical_lrc(b"[OFFSET: -250 ]\r\n[00:10.00]a\r\n"), b"[00:10.25]a\r\n")
+
+    def test_result_is_rounded_to_a_hundredth_and_clamped_at_zero(self) -> None:
+        self.assertEqual(review_server._canonical_lrc(b"[offset:+503]\n[00:10.00]a\n"), b"[00:09.50]a\n")
+        self.assertEqual(review_server._canonical_lrc(b"[offset:+507]\n[00:10.00]a\n"), b"[00:09.49]a\n")
+        self.assertEqual(review_server._canonical_lrc(b"[offset:+5000]\n[00:01.00]a\n[00:09.00]b\n"),
+                         b"[00:00.00]a\n[00:04.00]b\n")
+        self.assertEqual(review_server._canonical_lrc(b"[offset:+500]\n[00:10.123]a\n"), b"[00:09.62]a\n")
+
+    def test_offset_applies_to_every_tag_of_a_multi_tag_line(self) -> None:
+        self.assertEqual(review_server._canonical_lrc(b"[offset:+1000]\n[00:10.00][00:40.00]a\n"),
+                         b"[00:09.00]a\n[00:39.00]a\n")
+
+    def test_zero_offset_and_odd_values_are_left_alone(self) -> None:
+        for raw in (b"[offset:0]\n[00:10.00]a\n", b"[offset:+0]\n[00:10.00]a\n", b"[offset:abc]\n[00:10.00]a\n"):
+            self.assertEqual(review_server._canonical_lrc(raw), raw)
+
+    def test_page_shows_and_plays_the_converted_time_with_a_notice(self) -> None:
+        detail = self._load(b"[offset:+500]\n[00:01.00]one\n[00:02.00]two\n[00:05.00]end\n")
+        self.assertFalse(detail["read_only"], detail["read_only_reason"])
+        self.assertEqual([row["current_cs"] for row in detail["rows"]], [50, 150, 450])
+        self.assertEqual(detail["offset_ms"], 500)
+
+    def test_save_writes_the_converted_form_and_keeps_the_original(self) -> None:
+        original = b"[offset:+500]\n[00:01.00]one\n[00:02.00]two\n[00:05.00]end\n"
+        detail = self._load(original)
+        status, _headers, data = self._save(detail, edits=[(2, 160)])
+        self.assertEqual(status, 200, data)
+        self.assertEqual(self.output.read_bytes(), b"[00:00.50]one\n[00:01.60]two\n[00:04.50]end\n")
+        self.assertEqual(self._backups(), [original])
+        self.assertEqual(json.loads(data)["offset_ms"], 0)
+
+    def test_export_text_has_the_converted_times(self) -> None:
+        self._real_flac()
+        self._load(b"[offset:-1000]\n[00:01.00]one\n[00:02.00]two\n")
+        status, _headers, data = self._json_request("POST", "/api/song/0/export", {"audio": "song.flac"})
+        self.assertEqual(status, 200, data)
+        import mutagen.flac
+        text = mutagen.flac.FLAC(str(self.audio))["LYRICS"][0]
+        self.assertEqual(text.split("\r\n"), ["[00:02.00]one", "[00:03.00]two"])
+
+
 if __name__ == "__main__":
     unittest.main()
