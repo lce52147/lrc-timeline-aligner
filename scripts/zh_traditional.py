@@ -63,15 +63,14 @@ class Context(NamedTuple):
 # own lyrics use the one written here (PREFERENCES; "count in the lyrics: this form / the stock form").
 # --------------------------------------------------------------------------------------------------------------------
 CORRECTIONS: tuple = (
-    Entry("糊里糊涂", "糊裡糊塗", "stock leaves 里: the Taiwan form of the idiom is 糊裡糊塗", ("糊里", "糊裡")),
     Entry("一直", "一直", "not a stock phrase: 直发 (直髮) swallows the 发 of 一直|发现 / 一直|发光", ("直发", "直髮"), ("一直发现", "一直發現")),
     Entry("一头", "一頭", "not a stock phrase: 头发 (頭髮) swallows the 发 of 一头|发光", ("长头发", "長頭髮"), ("一头发光", "一頭發光")),
     Entry("风后来", "風後來", "风后 is the name 風后 (kept); 风+后来 is wind + 'later'", ("风后", "風后")),
     Entry("风后面", "風後面", "风后 is the name 風后 (kept); 风+后面 is wind + 'behind'", ("风后", "風后")),
     Entry("回归线", "回歸線", "Taiwan writes 回歸線 (tropic); stock gives 迴歸線", ("线性回归", "線性迴歸")),
-    Entry("克制", "克制", "Taiwan writes 克制 (restrain); stock gives 剋制", ("克星", "剋星")),
     Entry("干了啥", "幹了啥", "stock's phrase 天干 (heavenly stem) swallows the 干 of 今天|干了啥", ("池塘干了啥都不剩", "池塘乾了啥都不剩"), ("你今天干了啥", "你今天幹了啥")),
     Entry("书签名", "書簽名", "书签名 = signing a book (签名), not the bookmark 书签 of the preference below", ("书签", "書籤")),
+    Entry("了如列眉", "瞭如列眉", "idiom: stock only has 了如指掌 and the dropped 了如 phrase leaves 了如列眉 unconverted (0 / 1 in the Taiwan corpus)", ("我明白了如何做", "我明白了如何做")),
     Entry("周几", "週幾", "week + how many ('which day of the week'): Taiwan writes 週幾; stock writes 周幾 (9 / 0 in the Taiwan corpus)", ("周末", "週末")),
     Entry("游标", "游標", "cursor / vernier: 游標; stock writes 遊標 (12 / 0 in the Taiwan corpus)", ("旅游", "旅遊")),
     Entry("控制台", "控制台", "console: Taiwan writes 控制台; stock's 控制檯 is the table-like 檯 (24 / 0 in the Taiwan corpus)", ("台灯", "檯燈")),
@@ -80,7 +79,6 @@ CORRECTIONS: tuple = (
     Entry("么妹", "么妹", "youngest sister: 么 is Traditional here", ("什么", "什麼")),
     Entry("么弟", "么弟", "youngest brother: 么 is Traditional here", ("什么", "什麼")),
     Entry("么女", "么女", "youngest daughter: 么 is Traditional here", ("什么", "什麼")),
-    Entry("女生外向", "女生外向", "Taiwan does not write 外嚮; stock turns 向 into 嚮 here", ("心向往之", "心嚮往之")),
     Entry("面向对象的技术", "面向對象的技術", "Taiwan does not write 面嚮; stock turns 向 into 嚮 here", ("心向往之", "心嚮往之")),
     Entry("面向对象语言", "面向對象語言", "Taiwan does not write 面嚮; stock turns 向 into 嚮 here", ("心向往之", "心嚮往之")),
     Entry("毁炎", "燬炎", "classical words keep 燬 (the character preference to 毀 does not apply)", ("烧毁", "燒毀")),
@@ -88,6 +86,9 @@ CORRECTIONS: tuple = (
     Entry("四库禁毁书丛刋", "四庫禁燬書叢刋", "a book series title written with 燬", ("烧毁", "燒毀")),
 )
 PREFERENCES: tuple = (
+    Entry("糊里糊涂", "糊裡糊塗", "both are standard (the dictionary headword itself is 糊里糊塗); the lyrics write 糊裡糊塗", ("糊里", "糊裡")),
+    Entry("克制", "克制", "both are standard (剋制 for 相剋 senses); the lyrics write 克制 (restrain), stock gives 剋制", ("克星", "剋星")),
+    Entry("女生外向", "女生外向", "both are standard (外嚮 / 外向); the lyrics write 外向, stock turns 向 into 嚮 here", ("心向往之", "心嚮往之")),
     Entry("计划", "計畫", "both are standard; 计划 -> 計畫 4 / 計劃 0 in the lyrics", ("合计划拨", "合計劃撥")),
     Entry("了解", "了解", "both are standard; 了解 4 / 瞭解 1", ("了如指掌", "瞭如指掌")),
     Entry("点赞", "點讚", "both are standard; 點讚 1 / 點贊 0", ("赞美", "讚美")),
@@ -133,9 +134,9 @@ DROPPED_NOTES: dict = {
 # c. CONTEXT_RULES. Constants used by them:
 # --------------------------------------------------------------------------------------------------------------------
 _NUMERALS = "一二三四五六七八九十百千万两几数多零〇0-9０-９"   # 海里 after one of these is the nautical mile
-# Words counted with 隻 (animals, paired body parts) that follow ``的``: 这只会飞的鸟 is "this bird that can fly"; 这只会更糟 is "only"
+# Words counted with 隻 (animals) that follow ``的``: 这只会飞的鸟 is "this bird that can fly"; 这只会更糟 is "only"
 ZHI_NOUNS = ("鸟", "猫", "狗", "鸡", "鸭", "鹅", "羊", "兔", "虫", "蚁", "蜂", "蝶", "蛙", "虎", "狼", "狐", "熊", "猴", "鹿", "鼠", "鹰", "雁",
-             "鸦", "雀", "燕", "鸥", "鹤", "鹦鹉", "孔雀", "蛇", "鱼", "龙", "蚊", "蝇", "蜘蛛", "松鼠", "刺猬", "蝙蝠", "乌龟", "老虎", "狮", "象", "牛", "马", "猪", "手", "脚", "眼", "耳")
+             "鸦", "雀", "燕", "鸥", "鹤", "鹦鹉", "孔雀", "蛇", "鱼", "龙", "蚊", "蝇", "蜘蛛", "松鼠", "刺猬", "蝙蝠", "乌龟", "老虎", "狮", "象", "牛", "马", "猪")
 _CLAUSE_END = "，。！？!?,.;；、…\n"
 _ZHI_AFTER = re.compile(r"[^%s]{0,6}?的[小大老白黑黄花红灰]?(?:%s)" % (re.escape(_CLAUSE_END), "|".join(ZHI_NOUNS)))
 
@@ -150,8 +151,8 @@ def _zhi(match: "re.Match", rest: str) -> str:
 _VERB_AFTER = "有能会想要是在"
 CONTEXT_RULES: tuple = (
     # --- 海里: nautical mile after a number, otherwise "in the sea"
-    Context("sea", r"(?<![%s])(?P<fix>海里)" % _NUMERALS, "海裡",
-            "海里 after a numeral is the nautical mile (stays 海里); anywhere else it is 海+里 'in the sea' -> 海裡",
+    Context("sea", r"(?<![%s])(?P<fix>(?<=.)海里|海里(?=.))" % _NUMERALS, "海裡",
+            "海里 after a numeral is the nautical mile (stays 海里), and so is a clause that is just 海里 (a headword); anywhere else it is 海+里 'in the sea' -> 海裡",
             (("在海里游泳", "在海裡游泳"), ("山里海里", "山裡海裡")), (("离岸几海里", "離岸幾海里"), ("航行了二十海里", "航行了二十海里"))),
     # --- 干了: stock reads "do" (幹); "dried / drained / finished a drink" (乾) only in closed contexts
     Context("dry-drink", r"(?:杯|酒|汤|碗|瓶|一口|一饮).{0,3}(?P<fix>干)了(?!一(?:件|番|场|票|桩|笔|单|仗|架|辈))", "乾",
@@ -170,17 +171,23 @@ CONTEXT_RULES: tuple = (
     Context("zhi-demonstrative", r"(?P<fix>(?P<lead>[这那])只)(?=[%s])" % _VERB_AFTER, _zhi,
             "stock reads 这只 as 這隻 (measure word); before 有 能 会 想 要 the user's lyrics mean 'only' (這只), unless the clause has 的 + an animal noun (這隻會飛的鳥)",
             (("这只有五分钟", "這只有五分鐘"), ("这只会飞的鸟", "這隻會飛的鳥")), (("这只猫", "這隻貓"), ("这只会唱歌的鹦鹉", "這隻會唱歌的鸚鵡"))),
-    Context("zhi-adverb", r"(?<![一二三四五六七八九十两几每各这那哪半整多少\d])(?P<fix>只)(?=[%s])" % _VERB_AFTER, _zhi,
-            "只 before 有 能 会 想 要 是 在 and not after a numeral or demonstrative is 'only' (没有只要 别只是 总是只有), 隻 when the clause has 的 + an animal noun (是只有毒的蛇); stock's 有只 / 别只 / 是只 always read it as 隻",
+    Context("zhi-adverb", r"(?<![一二三四五六七八九十两几每各这那哪半整多少船\d])(?P<fix>只)(?=[%s])" % _VERB_AFTER, _zhi,
+            "只 before 有 能 会 想 要 是 在 and not after a numeral, a demonstrative or 船 (船只 = vessels, stock 船隻) is 'only' (没有只要 别只是 总是只有), 隻 when the clause has 的 + an animal noun (是只有毒的蛇); stock's 有只 / 别只 / 是只 always read it as 隻",
             (("没有只要祈求", "沒有只要祈求"), ("别只是旁观", "別只是旁觀"), ("总是只有我", "總是只有我"), ("他是只有毒的蛇", "他是隻有毒的蛇")), (("一只会飞的鸟", "一隻會飛的鳥"), ("两只是黑的", "兩隻是黑的"))),
+    Context("said-yun", r"(?<=[人子书诗易经谚语传史》])(?P<fix>有云)", "有云",
+            "有云 right after 人 子 书 诗 易 经 谚 语 传 史 》 is the classical 'it is said' (古人有云, 孔子有云, 兵书有云); the dropped stock phrase would otherwise turn it into weather 有雲 (the clause ends at the colon, so only the word before can tell)",
+            (("古人有云：学无止境", "古人有云：學無止境"), ("孔子有云", "孔子有云")), (("今天有云", "今天有雲"), ("唯有云雀", "唯有雲雀"))),
+    Context("loose-hair", r"(?P<fix>被发)(?![送现生布表展起觉动明挥达言])", "被髮",
+            "被发 not followed by 送 现 生 布 表 展 起 觉 动 明 挥 达 言 is 'with loose hair' (被髮, stock): 被发乱首, 被发而为狂; the stock phrase is dropped because it swallows 被|发送 / 被|发现",
+            (("被发乱首", "被髮亂首"), ("漆身而为厉，被发而为狂", "漆身而為厲，被髮而為狂")), (("被发送", "被發送"), ("被发现", "被發現"))),
     Context("wind-after", r"(?<=[的了着吹随被把乘借顺逆迎])(?P<fix>风后)", "風後",
             "风后 after 的 了 着 吹 ... is 'after the wind' (風後); alone it is the name 風后 (stock)",
             (("吸入湿润的风后", "吸入濕潤的風後"),), (("黄帝的大臣风后", "黃帝的大臣風后"),)),
-    Context("dry-compound", r"(?<=[没不未])(?P<fix>干)(?=[透净燥涸枯爽])", "乾",
+    Context("dry-compound", r"(?<=[没不未])(?<!干不)(?P<fix>干)(?=[透净燥涸枯爽])", "乾",
             "没干透 / 没干净: dried (乾); stock's phrase 没干 -> 沒幹 swallows the 干",
             (("道路还没干透吧", "道路還沒乾透吧"),), (("他没干坏事", "他沒幹壞事"),)),
-    Context("curl", r"(?<![试长画书手经压考答])(?P<fix>卷卷)", "捲捲",
-            "卷卷 = curling (捲捲而上, 捲捲的头发); after 试 长 画 书 手 经 压 考 答 the first 卷 belongs to the word before (试卷|卷面)",
+    Context("curl", r"(?<![试长画书手经压考答])(?P<fix>卷卷)(?=[而的地着起成了])", "捲捲",
+            "卷卷 + 而 的 地 着 起 成 了 = curling (捲捲而上, 捲捲的头发); 卷卷 alone, or before another word, is 卷卷 (volumes, 惓惓: stock); after 试 长 画 书 手 经 压 考 答 the first 卷 belongs to the word before (试卷|卷面)",
             (("卷卷而上的火焰", "捲捲而上的火焰"),), (("试卷卷面整洁", "試卷卷面整潔"), ("长卷卷首有题字", "長卷卷首有題字"))),
     # --- 松: the pine of a tree word followed by 开 (青松|开花, 古松|开始); stock's phrase 松开 (鬆開) would swallow the 开
     Context("pine", r"(?<=[青古老孤苍劲乔雪])(?P<fix>松)(?=开)", "松",

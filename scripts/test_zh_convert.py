@@ -182,9 +182,9 @@ class RuleTableTests(RulesPatched):
         corrected = {entry.key for entry in zh_traditional.CORRECTIONS}
         preferred = {entry.key for entry in zh_traditional.PREFERENCES}
         self.assertFalse(corrected & preferred)
-        for key in ("计划", "了解", "游动", "回归", "注定"):
+        for key in ("计划", "了解", "游动", "回归", "注定", "克制", "糊里糊涂", "女生外向"):
             self.assertIn(key, preferred)
-        for key in ("风后来", "回归线", "克制", "干了啥", "一直"):
+        for key in ("风后来", "回归线", "了如列眉", "干了啥", "一直"):
             self.assertIn(key, corrected)
 
     def test_users_preferences(self) -> None:
