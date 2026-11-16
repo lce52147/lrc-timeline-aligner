@@ -44,6 +44,7 @@ class Entry(NamedTuple):
     value: str
     why: str
     negative: tuple
+    sample: tuple = ()   # a sentence where the word changes the result: ``(simplified, expected)``; empty = the word itself
 
 
 class Context(NamedTuple):
@@ -63,29 +64,28 @@ class Context(NamedTuple):
 # --------------------------------------------------------------------------------------------------------------------
 CORRECTIONS: tuple = (
     Entry("糊里糊涂", "糊裡糊塗", "stock leaves 里: the Taiwan form of the idiom is 糊裡糊塗", ("糊里", "糊裡")),
-    Entry("一直发现", "一直發現", "stock matches 直发 (直髮) before 发现", ("一直发光", "一直發光")),
-    Entry("一头发光", "一頭發光", "stock matches 头发 (頭髮) across 一头|发光", ("一头发", "一頭髮")),
-    Entry("总是只有", "總是只有", "stock matches 是只 (是隻) before 只有", ("总是只猫", "總是隻貓")),
+    Entry("一直", "一直", "not a stock phrase: 直发 (直髮) swallows the 发 of 一直|发现 / 一直|发光", ("直发", "直髮"), ("一直发现", "一直發現")),
+    Entry("一头", "一頭", "not a stock phrase: 头发 (頭髮) swallows the 发 of 一头|发光", ("长头发", "長頭髮"), ("一头发光", "一頭發光")),
     Entry("风后来", "風後來", "风后 is the name 風后 (kept); 风+后来 is wind + 'later'", ("风后", "風后")),
     Entry("风后面", "風後面", "风后 is the name 風后 (kept); 风+后面 is wind + 'behind'", ("风后", "風后")),
     Entry("回归线", "回歸線", "Taiwan writes 回歸線 (tropic); stock gives 迴歸線", ("线性回归", "線性迴歸")),
     Entry("克制", "克制", "Taiwan writes 克制 (restrain); stock gives 剋制", ("克星", "剋星")),
-    Entry("干了啥", "幹了啥", "stock leaves the 干 of 干了啥 unconverted (it only has 干了什么)", ("池塘干了啥都不剩", "池塘乾了啥都不剩")),
+    Entry("干了啥", "幹了啥", "stock's phrase 天干 (heavenly stem) swallows the 干 of 今天|干了啥", ("池塘干了啥都不剩", "池塘乾了啥都不剩"), ("你今天干了啥", "你今天幹了啥")),
     Entry("书签名", "書簽名", "书签名 = signing a book (签名), not the bookmark 书签 of the preference below", ("书签", "書籤")),
     Entry("老么", "老么", "么 is the Traditional character in 老么 / 么儿 / 么妹 / 么弟 / 么女 (youngest child); 么 after 什 怎 这 那 多 要 甚 is 麼", ("什么", "什麼")),
     Entry("么儿", "么兒", "youngest son: 么 is Traditional here", ("什么", "什麼")),
     Entry("么妹", "么妹", "youngest sister: 么 is Traditional here", ("什么", "什麼")),
     Entry("么弟", "么弟", "youngest brother: 么 is Traditional here", ("什么", "什麼")),
     Entry("么女", "么女", "youngest daughter: 么 is Traditional here", ("什么", "什麼")),
-    Entry("女生外向", "女生外向", "Taiwan does not write 外嚮; stock turns 向 into 嚮 here", ("外向", "外嚮")),
-    Entry("面向对象的技术", "面向對象的技術", "Taiwan does not write 面嚮; stock turns 向 into 嚮 here", ("面向", "面嚮")),
-    Entry("面向对象语言", "面向對象語言", "Taiwan does not write 面嚮; stock turns 向 into 嚮 here", ("面向", "面嚮")),
+    Entry("女生外向", "女生外向", "Taiwan does not write 外嚮; stock turns 向 into 嚮 here", ("心向往之", "心嚮往之")),
+    Entry("面向对象的技术", "面向對象的技術", "Taiwan does not write 面嚮; stock turns 向 into 嚮 here", ("心向往之", "心嚮往之")),
+    Entry("面向对象语言", "面向對象語言", "Taiwan does not write 面嚮; stock turns 向 into 嚮 here", ("心向往之", "心嚮往之")),
     Entry("毁炎", "燬炎", "classical words keep 燬 (the character preference to 毀 does not apply)", ("烧毁", "燒毀")),
     Entry("毁犀", "燬犀", "classical words keep 燬 (the character preference to 毀 does not apply)", ("烧毁", "燒毀")),
     Entry("四库禁毁书丛刋", "四庫禁燬書叢刋", "a book series title written with 燬", ("烧毁", "燒毀")),
 )
 PREFERENCES: tuple = (
-    Entry("计划", "計畫", "both are standard; 计划 -> 計畫 4 / 計劃 0 in the lyrics", ("设计划分", "設計劃分")),
+    Entry("计划", "計畫", "both are standard; 计划 -> 計畫 4 / 計劃 0 in the lyrics", ("合计划拨", "合計劃撥")),
     Entry("了解", "了解", "both are standard; 了解 4 / 瞭解 1", ("了如指掌", "瞭如指掌")),
     Entry("点赞", "點讚", "both are standard; 點讚 1 / 點贊 0", ("赞美", "讚美")),
     Entry("胡同", "胡同", "both are standard; 胡同 1 / 衚衕 0", ("胡子", "鬍子")),
@@ -103,8 +103,6 @@ PREFERENCES: tuple = (
     Entry("回归模型", "迴歸模型", "carve-out of 回归: statistics writes 迴歸", ("回归线", "回歸線")),
     Entry("回归方程", "迴歸方程", "carve-out of 回归: statistics writes 迴歸", ("回归线", "回歸線")),
     Entry("熏染", "燻染", "both are standard; 燻染 1 / 薰染 0", ("熏陶", "薰陶")),
-    Entry("书签", "書籤", "both are standard; 書籤 1 / 書簽 0", ("签名", "簽名")),
-    Entry("尝到", "嚐到", "both are standard; 嚐到 1 / 嘗到 0", ("尝试", "嘗試")),
     Entry("周而复始", "周而復始", "both are standard; 周而復始 3 / 週而復始 0", ("周末", "週末")),
     Entry("注定", "注定", "both are standard; 注定 25 / 註定 0 in the lyrics (註冊 註解 備註 are 註 in Taiwan and stay stock)", ("注册", "註冊")),
     Entry("命中注定", "命中注定", "both are standard; 注定 25 / 註定 0 in the lyrics", ("注册", "註冊")),
@@ -117,8 +115,8 @@ PREFERENCES: tuple = (
 DROPPED_PHRASES = frozenset({"一起干", "了如", "短几", "有云", "如干", "心向"})   # 一起干杯 is 一起+干杯 (stock: 一起干 hides 干杯); 了如 is only meant for 了如指掌, which stock has as a whole phrase
 DROPPED_NOTES: dict = {
     "一起干": (("一起干杯", "一起乾杯"), ("一起干活", "一起幹活")),
-    "了如": (("了如指掌", "瞭如指掌"), ("他了如何", "他了如何")),
-    "短几": (("短短几秒", "短短幾秒"), ("短几", "短几")),       # 短几 (a short low table) is stock's phrase and swallows 短短|几秒
+    "了如": (("我明白了如何做", "我明白了如何做"), ("了如指掌", "瞭如指掌")),
+    "短几": (("短短几秒", "短短幾秒"), ("茶几", "茶几")),       # 短几 (a short low table) is stock's phrase and swallows 短短|几秒
     "有云": (("唯有云雀", "唯有雲雀"), ("今天有云", "今天有雲")),   # 有云 ('it is said') swallows 有|云雀 and 有|云层
     "如干": (("倒不如干脆", "倒不如乾脆"), ("若干", "若干")),     # 如干 swallows 不如|干脆
     "心向": (("内心向往", "內心嚮往"), ("心向党", "心向黨")),     # 心向 swallows 内心|向往
@@ -151,9 +149,9 @@ CONTEXT_RULES: tuple = (
     Context("dry-drink", r"(?:杯|酒|汤|碗|瓶|一口|一饮).{0,3}(?P<fix>干)了(?!一(?:件|番|场|票|桩|笔|单|仗|架|辈))", "乾",
             "a cup / wine / soup / bowl / bottle (or 一口 一饮) within four characters before 干了 is a drink finished: 乾了",
             (("把这杯干了吧", "把這杯乾了吧"), ("这杯酒我干了", "這杯酒我乾了")), (("他把这件事干了吧", "他把這件事幹了吧"), ("他干了一件大事", "他幹了一件大事"))),
-    Context("dry-verb", r"(?:喝|晾|晒|流|烧|熬|风|喉咙|嘴巴?|口|泪水?|眼泪|衣服)(?P<fix>干)了", "乾",
-            "喝干 晾干 晒干 流干 烧干 熬干 风干, and 喉咙 / 嘴 / 口 / 泪 / 眼泪 / 衣服 + 干了, are dried: 乾了",
-            (("喝干了", "喝乾了"), ("眼泪干了", "眼淚乾了")), (("他干了坏事", "他幹了壞事"), ("苦干了一辈子", "苦幹了一輩子"))),
+    Context("dry-verb", r"(?:喝|晾|晒|流|烧|熬|风|汤|碗|喉咙|嘴巴?|口|泪水?|眼泪|衣服)(?P<fix>干)了", "乾",
+            "喝干 晾干 晒干 流干 烧干 熬干 风干, and 汤 / 碗 / 喉咙 / 嘴 / 口 / 泪 / 眼泪 / 衣服 + 干了, are dried: 乾了 (stock writes 熬幹了, 喉嚨幹了, 衣服幹了)",
+            (("喝干了", "喝乾了"), ("熬干了", "熬乾了"), ("喉咙干了", "喉嚨乾了"), ("衣服干了", "衣服乾了")), (("他干了坏事", "他幹了壞事"), ("苦干了一辈子", "苦幹了一輩子"))),
     Context("dry-toast", r"(?P<fix>干)了(?:这杯|杯|就没事)", "乾",
             "干了这杯 / 干了杯 / 干了就没事: the drink or the thirst is gone: 乾了",
             (("干了这杯酒", "乾了這杯酒"), ("干了就没事", "乾了就沒事")), (("干了这件事", "幹了這件事"), ("干了一杯", "幹了一杯"))),
@@ -164,12 +162,9 @@ CONTEXT_RULES: tuple = (
     Context("zhi-demonstrative", r"(?P<fix>(?P<lead>[这那])只)(?=[%s])" % _VERB_AFTER, _zhi,
             "stock reads 这只 as 這隻 (measure word); before 有 能 会 想 要 the user's lyrics mean 'only' (這只), unless the clause has 的 + an animal noun (這隻會飛的鳥)",
             (("这只有五分钟", "這只有五分鐘"), ("这只会飞的鸟", "這隻會飛的鳥")), (("这只猫", "這隻貓"), ("这只会唱歌的鹦鹉", "這隻會唱歌的鸚鵡"))),
-    Context("zhi-copula", r"是(?P<fix>只)(?=[%s])" % _VERB_AFTER, _zhi,
-            "是只有 / 是只能 ...: 'is only' (只) unless the clause has 的 + an animal noun (是隻有毒的蛇); stock always writes 隻",
-            (("总是只有我", "總是只有我"), ("他是只有毒的蛇", "他是隻有毒的蛇")), (("那是只猫", "那是隻貓"),)),
     Context("zhi-adverb", r"(?<![一二三四五六七八九十两几每各这那哪半整多少\d])(?P<fix>只)(?=[%s])" % _VERB_AFTER, _zhi,
-            "只 before 有 能 会 想 要 是 在 and not after a numeral or demonstrative is 'only' (没有只要 别只是 不只会); stock's 有只 / 别只 / 是只 read it as 隻",
-            (("没有只要祈求", "沒有只要祈求"), ("别只是旁观", "別只是旁觀")), (("一只会飞的鸟", "一隻會飛的鳥"), ("两只是黑的", "兩隻是黑的"))),
+            "只 before 有 能 会 想 要 是 在 and not after a numeral or demonstrative is 'only' (没有只要 别只是 总是只有), 隻 when the clause has 的 + an animal noun (是只有毒的蛇); stock's 有只 / 别只 / 是只 always read it as 隻",
+            (("没有只要祈求", "沒有只要祈求"), ("别只是旁观", "別只是旁觀"), ("总是只有我", "總是只有我"), ("他是只有毒的蛇", "他是隻有毒的蛇")), (("一只会飞的鸟", "一隻會飛的鳥"), ("两只是黑的", "兩隻是黑的"))),
     Context("wind-after", r"(?<=[的了着吹随被把乘借顺逆迎])(?P<fix>风后)", "風後",
             "风后 after 的 了 着 吹 ... is 'after the wind' (風後); alone it is the name 風后 (stock)",
             (("吸入湿润的风后", "吸入濕潤的風後"),), (("黄帝的大臣风后", "黃帝的大臣風后"),)),
@@ -243,31 +238,41 @@ def entries():
     return {item.key: item.value for item in CORRECTIONS + PREFERENCES}
 
 
+@functools.lru_cache(maxsize=1)
+def _base():
+    """The OpenCC dictionaries as read from disk, shared by every table build, or None."""
+    directory = _dictionary_dir()
+    if directory is None:
+        return None
+    try:
+        import opencc
+        phrases = {key: value[0] for key, value in _read_dictionary(directory, "STPhrases.txt").items()}
+        characters = _read_dictionary(directory, "STCharacters.txt")
+        variants = {key: value[0] for key, value in _read_dictionary(directory, "TWVariants.txt").items()}
+        reverse = _read_dictionary(directory, "TSCharacters.txt")
+        split = opencc.OpenCC("s2tw").split_chars_re
+    except Exception:
+        return None
+    traditional_only = frozenset(key for key, value in reverse.items() if value[0] != key)
+    return phrases, characters, variants, traditional_only, split
+
+
 def _tables():
     """``(phrases, characters, variants, traditional_only, longest, split, context, entry_keys)`` or None when the OpenCC dictionaries cannot be read.
 
-    ``phrases`` is STPhrases without DROPPED_PHRASES plus ENTRIES, ``context`` the compiled CONTEXT_RULES."""
+    ``phrases`` is STPhrases without DROPPED_PHRASES plus ENTRIES, ``context`` the compiled CONTEXT_RULES. The rule tables are read
+    when the tables are first built; set ``_dicts = None`` after changing them (the tests do)."""
     global _dicts
     if _dicts is None:
         _dicts = False
-        directory = _dictionary_dir()
-        if directory is not None:
-            try:
-                import opencc
-                phrases = {key: value[0] for key, value in _read_dictionary(directory, "STPhrases.txt").items()}
-                characters = _read_dictionary(directory, "STCharacters.txt")
-                variants = {key: value[0] for key, value in _read_dictionary(directory, "TWVariants.txt").items()}
-                reverse = _read_dictionary(directory, "TSCharacters.txt")
-                split = opencc.OpenCC("s2tw").split_chars_re
-            except Exception:
-                reverse = None
-            if reverse is not None:
-                for key in DROPPED_PHRASES:
-                    phrases.pop(key, None)
-                phrases.update(entries())
-                traditional_only = frozenset(key for key, value in reverse.items() if value[0] != key)
-                context = tuple((re.compile(rule.pattern), rule.value) for rule in CONTEXT_RULES)
-                _dicts = (phrases, characters, variants, traditional_only, max(map(len, phrases)), split, context, frozenset(entries()))
+        base = _base()
+        if base is not None:
+            phrases = dict(base[0])
+            for key in DROPPED_PHRASES:
+                phrases.pop(key, None)
+            phrases.update(entries())
+            context = tuple((re.compile(rule.pattern), rule.value) for rule in CONTEXT_RULES)
+            _dicts = (phrases, base[1], base[2], base[3], max(map(len, phrases)), base[4], context, frozenset(entries()))
     return _dicts or None
 
 

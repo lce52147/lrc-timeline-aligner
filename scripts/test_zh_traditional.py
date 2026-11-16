@@ -193,12 +193,12 @@ class ConvertTests(unittest.TestCase):
     def test_hong_kong_characters_do_not_open_the_song_gate(self) -> None:
         self.assertEqual(self._songs(["我哋嘅愛喺心裏", "冇咗你點算"]), (0, []))
 
-    def test_simplified_line_in_a_japanese_song_is_listed_checked_and_its_big5_only_neighbours_are_not(self) -> None:
-        self.assertEqual(self._songs(["きみ", "我们一起走", "后面"]), (1, [("我们一起走", True)]))
+    def test_simplified_line_in_a_japanese_song_is_listed_checked_and_its_big5_only_neighbours_are_listed_unchecked(self) -> None:
+        self.assertEqual(self._songs(["きみ", "我们一起走", "后面"]), (1, [("我们一起走", True), ("后面", False)]))
 
-    def test_japanese_kanji_are_not_simplified_and_kanji_only_japanese_lines_are_never_listed(self) -> None:
+    def test_japanese_kanji_are_not_simplified_and_kanji_only_japanese_lines_are_listed_unchecked(self) -> None:
         self.assertEqual(self._songs(["国境", "独奏", "きみ"]), (0, []))
-        self.assertEqual(self._songs(["国境", "独奏", "きみ", "我们一起走"]), (1, [("我们一起走", True)]))
+        self.assertEqual(self._songs(["国境", "独奏", "きみ", "我们一起走"]), (1, [("国境", False), ("独奏", False), ("我们一起走", True)]))
 
     def test_header_only_simplified_is_a_candidate_and_count_counts_candidates(self) -> None:
         info = zh_traditional.song_candidates([{"entry": 1, "lyrics": ["后面"]}], [(0, "[ti:爱你]")])
@@ -283,10 +283,10 @@ class ConvertTests(unittest.TestCase):
         self.assertTrue(zh_traditional.has_traditional_only("我們"))
         self.assertFalse(zh_traditional.has_traditional_only("后面一起干杯"))
 
-    def test_mixed_japanese_original_and_simplified_translation_lists_only_the_translation(self) -> None:
+    def test_mixed_japanese_original_and_simplified_translation_lists_the_translation_checked_and_the_kanji_line_unchecked(self) -> None:
         rows = [{"entry": 1, "lyrics": ["君の声が聞こえる", "我们一起走"]}, {"entry": 2, "lyrics": ["国境の町", "国境"]}]
         lines, count, optional = self._entries(rows)
-        self.assertEqual(lines, [(1, 1, "我们一起走", True)])
+        self.assertEqual(lines, [(1, 1, "我们一起走", True), (2, 1, "国境", False)])
 
     def test_cantonese_lines_are_never_candidates(self) -> None:
         self.assertEqual(zh_traditional.song_candidates([{"entry": 1, "lyrics": ["我哋嘅愛喺心裏", "冇咗你點算"]}])["lines"], [])
