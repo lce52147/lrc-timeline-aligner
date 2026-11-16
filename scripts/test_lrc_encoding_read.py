@@ -209,5 +209,55 @@ class ReviewReadsLegacyLrcTests(unittest.TestCase):
         self.assertEqual(self._json_request("POST", "/api/song/0/save", {"base_sha256": detail["base_sha256"], "edits": []})[0], 403)
 
 
+class GbkJapaneseTieTests(unittest.TestCase):
+    """Japanese saved as GBK on a short file: both Big5 and GB18030 read it without a stray character, and it must not come out as certain Big5."""
+    JAPANESE_TIE = ("[00:01.00]夜が明けるまで一緒にいよう\n", "[00:01.00]私の名前を呼んでくれた\n[00:02.00]遠い空の向こうに行こう\n",
+                    "[00:01.00]君が笑うと世界が変わる\n")
+    TOO_LITTLE = ("[00:01.00]ありがとう\n", "[00:01.00]さよなら\n")
+
+    def _read(self, text, codec):
+        return review_server._decode_lrc_checked(text.encode(codec))
+
+    def _tie(self, raw):
+        try:
+            return review_server._legacy_score(raw.decode("cp950")) == review_server._legacy_score(raw.decode("gb18030"))
+        except UnicodeDecodeError:
+            return False
+
+    def test_the_samples_include_ties_the_old_rule_got_wrong(self) -> None:
+        # (a sample Big5 cannot read at all is read as GB18030 by every version)
+        self.assertGreaterEqual(sum(self._tie(text.encode("gbk")) for text in self.JAPANESE_TIE), 2)
+        for text in self.TOO_LITTLE:
+            self.assertTrue(self._tie(text.encode("gbk")), text)
+
+    def test_clearly_japanese_short_files_read_as_gb18030(self) -> None:
+        for text in self.JAPANESE_TIE:
+            self.assertEqual(self._read(text, "gbk"), (text, "gb18030", False))
+
+    def test_a_trace_of_kana_is_a_refusal_not_a_certain_big5(self) -> None:
+        for text in self.TOO_LITTLE:
+            self.assertTrue(self._read(text, "gbk")[2], text)
+
+    def test_real_big5_chinese_is_unchanged(self) -> None:
+        for text in ("[00:01.00]我們一起走過的日子\n[00:02.00]你是我心中最美的夢\n[00:03.00]了解你的心情\n", "[00:01.00]我愛你\n[00:02.00]一個人\n"):
+            self.assertEqual(self._read(text, "cp950")[:2], (text, "cp950"))
+
+    def test_a_repeated_short_chinese_phrase_is_not_read_as_japanese(self) -> None:
+        # as Big5 these bytes read in GB18030 as six kana of two kinds
+        got = self._read("[00:37.66]反正 反正 反正\n", "cp950")
+        self.assertNotEqual(got[1], "gb18030")
+        self.assertTrue(got[2])
+
+    def test_a_refused_file_is_refused_by_the_lyric_reader(self) -> None:
+        import tempfile
+        from text_encoding import LyricEncodingError, read_lyric_text
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "short.lrc"
+            path.write_bytes(self.TOO_LITTLE[0].encode("gbk"))
+            with self.assertRaises(LyricEncodingError):
+                read_lyric_text(path)
+            path.write_bytes(self.JAPANESE_TIE[1].encode("gbk"))
+            self.assertEqual(read_lyric_text(path), (self.JAPANESE_TIE[1], "gb18030"))
+
 if __name__ == "__main__":
     unittest.main()

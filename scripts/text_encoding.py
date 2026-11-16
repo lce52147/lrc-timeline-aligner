@@ -43,7 +43,30 @@ def _halfwidth_kana(text):
 
 _UNCERTAIN_MARGIN = 0.25
 _UNCERTAIN_MIN_PAIRS = 4
+# Japanese saved as GBK: its kana sit in rows A4/A5, which Big5 reads as ordinary frequent characters, so on a short file both codecs read it
+# without a stray character (a tie) and the byte-region shares pick Big5. At such a tie only, the GB18030 reading is looked at once more: a few
+# characters of Big5 Chinese can read as kana, Japanese is mostly kana. Clearly Japanese reads as GB18030; a trace of it is a refusal.
+# strong: >= 6 kana, >= 4 different ones, >= 40 % of the double-byte characters, two in a row, and a common particle (a repeated short Chinese
+# phrase such as one word three times reads as 6 kana of only 2 kinds); weak: >= 3 kana and >= 30 % of the double-byte characters.
+_GBK_JAPANESE_MIN_KANA = 6
+_GBK_JAPANESE_MIN_KINDS = 4
+_GBK_JAPANESE_MIN_SHARE = 0.4
+_GBK_JAPANESE_PARTICLES = "のにをはがとでもて"
+_GBK_JAPANESE_WEAK_KANA = 3
+_GBK_JAPANESE_WEAK_SHARE = 0.3
 
+
+def _kana_evidence(text):
+    """"strong" (clearly Japanese), "weak" (some kana, not enough to say) or None for a GB18030 reading of the file."""
+    kana = [ch for ch in text if _fullwidth_kana(ch)]
+    wide = sum(1 for ch in text if ord(ch) >= 0x80 and not ch.isspace())
+    consecutive = any(_fullwidth_kana(text[i:i + 2]) == 2 for i in range(len(text) - 1))
+    if (len(kana) >= _GBK_JAPANESE_MIN_KANA and len(set(kana)) >= _GBK_JAPANESE_MIN_KINDS and len(kana) >= _GBK_JAPANESE_MIN_SHARE * wide
+            and consecutive and any(particle in text for particle in _GBK_JAPANESE_PARTICLES)):
+        return "strong"
+    if len(kana) >= _GBK_JAPANESE_WEAK_KANA and len(kana) >= _GBK_JAPANESE_WEAK_SHARE * wide:
+        return "weak"
+    return None
 
 def _decode_lrc_checked(raw):
     """(text, encoding, uncertain): ``uncertain`` when Big5 and GB18030 both fit and the byte regions barely tell them apart."""
@@ -71,6 +94,11 @@ def _decode_lrc_checked(raw):
         if gb_share > big5_share:
             best = found[1]
         uncertain = pairs < _UNCERTAIN_MIN_PAIRS or abs(gb_share - big5_share) < _UNCERTAIN_MARGIN
+        kana_evidence = _kana_evidence(found[1][3])
+        if kana_evidence == "strong":
+            best, uncertain = found[1], False
+        elif kana_evidence == "weak":
+            uncertain = True
     _score, _order, codec, text = best
     try:
         jis = raw.decode("cp932")
