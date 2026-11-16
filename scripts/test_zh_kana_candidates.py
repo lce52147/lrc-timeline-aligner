@@ -54,17 +54,25 @@ class KanaSongTests(unittest.TestCase):
         self.assertEqual((count, optional), (2, 1))
 
     def test_words_japanese_also_uses_do_not_check_a_line(self) -> None:
-        for text in ("他国", "目的", "不安", "存在", "有名", "我是", "他在有", "回来", "着物", "没収"):
+        for text in ("他国", "目的", "不安", "存在", "有名", "不要", "不能", "所以", "一期一会", "初恋", "他在有", "回来", "着物", "没収"):
             self.assertEqual(zh_traditional._chinese_function_words(text), 0, text)
         count, optional, lines = _listed(["きみ", "他国"], ["きみ", "目的"], ["きみ", "不安"], ["きみ", "存在"], ["きみ", "有名"], ["这么说"])
         self.assertIn((1, 1, "他国", False), lines)   # only 他国 changes under s2tw; 目的 不安 存在 有名 are not candidates at all
         self.assertEqual({item[2] for item in lines}, {"他国", "这么说"})
         self.assertTrue(all(not item[3] for item in lines if item[2] in ("他国", "目的", "不安", "存在", "有名")))
 
+    def test_the_closed_chinese_only_list_checks_a_kana_song_line(self) -> None:
+        count, optional, lines = _listed(["さよなら", "我不会走"], ["きみ", "怎么了"], ["きみ", "初恋"], ["きみ", "他国"], ["きみ", "一期一会"], ["きみ", "回来"])
+        self.assertEqual([(item[2], item[3]) for item in lines], [("我不会走", True), ("怎么了", True), ("初恋", False), ("他国", False), ("一期一会", False), ("回来", False)])
+        for text in ("不要", "不能", "所以", "他国", "目的", "存在", "一期一会", "初恋"):
+            self.assertEqual(zh_traditional._chinese_function_words(text), 0, text)
+        self.assertEqual(zh_traditional._chinese_function_words("我不会走"), 2)
+        self.assertEqual(zh_traditional._chinese_function_words("你好吧"), 2)
+
     def test_a_function_word_next_to_a_kana_line_of_the_same_row_checks_the_line(self) -> None:
         count, optional, lines = _listed(["さよなら", "我不会走"], ["きみ", "我后面"], ["我后面"], ["我们一起走"])
-        self.assertEqual(lines, [(1, 1, "我不会走", False), (2, 1, "我后面", False), (3, 0, "我后面", False), (4, 0, "我们一起走", True)])
-        self.assertEqual((count, optional), (1, 3))
+        self.assertEqual(lines, [(1, 1, "我不会走", True), (2, 1, "我后面", False), (3, 0, "我后面", False), (4, 0, "我们一起走", True)])
+        self.assertEqual((count, optional), (2, 2))
         count, optional, lines = _listed(["さよなら", "我不会说"], ["きみ", "这还会走"], ["这还会走"])
         self.assertEqual(lines, [(1, 1, "我不会说", True), (2, 1, "这还会走", True), (3, 0, "这还会走", True)])
 
@@ -97,7 +105,7 @@ class KanaSongTests(unittest.TestCase):
 
     def test_headers_follow_the_same_rule(self) -> None:
         info = zh_traditional.song_candidates(_rows(["きみ", "怎么了"]), [(0, "[ti:回来]"), (1, "[ar:我不会走]")], False)
-        self.assertEqual([(item["before"], item["default_checked"]) for item in info["headers"]], [("回来", False), ("我不会走", False)])
+        self.assertEqual([(item["before"], item["default_checked"]) for item in info["headers"]], [("回来", False), ("我不会走", True)])
 
     def test_a_song_without_kana_is_unchanged(self) -> None:
         count, optional, lines = _listed(["你在哪里"], ["回来"], ["運氣在裏面"], ["与你同行"])

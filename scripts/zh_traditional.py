@@ -411,7 +411,11 @@ def looks_simplified(text, japanese=False):
 # must not be checked because of 的 他 不 有 在 我 是 来 没 着 ..., which Japanese words contain; so only characters that are simplified-only
 # forms of a different Japanese character (这 们 吗 说 对 为 过 时 个 给 让 还 谁 啥 您 咱, Japanese: 這 們 說 対 為 過 時 個 給 譲 還), or particles
 # Japanese never writes in kanji (呢 哪 么), count here. Two different ones, or one next to a kana line of the same row, check the line.
-CHINESE_FUNCTION_CHARS = frozenset("这们吗呢还让说对为过时个么给谁哪啥您咱")
+CHINESE_FUNCTION_CHARS = frozenset("这们吗呢还让说对为过时个么给谁哪啥您咱你她它吧啊很")
+# Two-character Chinese words, a closed list, that Japanese text does not contain even though each character may be a Japanese kanji
+# (cp932 encodes 不 会 没 有 我 的 是 ...): 不会 不是 没有 我的 你的 他的 她的 我不 你不 我是 你是 我有 我在 你在 都是. Left out on purpose
+# because Japanese has the same word: 不要 不能 所以 有名 存在 目的 他国 回来 初恋 一期一会 (a kanji-only Japanese line must stay unchecked).
+CHINESE_FUNCTION_WORDS = frozenset(("不会", "不是", "没有", "我的", "你的", "他的", "她的", "我不", "你不", "我是", "你是", "我有", "我在", "你在", "都是"))
 
 
 def _surely_not_japanese(text):
@@ -420,7 +424,10 @@ def _surely_not_japanese(text):
 
 
 def _chinese_function_words(text):
-    return len({char for char in text if char in CHINESE_FUNCTION_CHARS})
+    """How many different Chinese-only items ``text`` has: characters of CHINESE_FUNCTION_CHARS and words of CHINESE_FUNCTION_WORDS."""
+    found = {char for char in text if char in CHINESE_FUNCTION_CHARS}
+    found.update(word for word in CHINESE_FUNCTION_WORDS if word in text)
+    return len(found)
 
 
 def convert_line(text):
