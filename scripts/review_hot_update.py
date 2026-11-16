@@ -36,6 +36,10 @@ SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent
 PAGE_FILE = SCRIPTS_DIR / "review_page" / "index.html"
 LIGHT_PATHS = ("/api/version", "/api/status", "/api/jobs", "/api/admin/version", "/api/admin/hot-update", "/api/admin/shutdown")
 LOG_NAME = "review-server.log"
+DEFAULT_PORT_RANGE = range(58400, 58421)
+# "LOW-HIGH": the ports the CLI probes for a server it cannot name by its command line. Only the tests set it, so that a test run never
+# sends a request to the ports of a real install.
+PORT_RANGE_ENV = "LRC_HOT_UPDATE_PORT_RANGE"
 
 
 def _sha(paths):
@@ -432,15 +436,24 @@ def _port_arg(argv):
     return None
 
 
-def find_servers(scripts_dir=SCRIPTS_DIR, port_range=range(58400, 58421)):
+def configured_port_range():
+    """DEFAULT_PORT_RANGE, or the ``LOW-HIGH`` range named by LRC_HOT_UPDATE_PORT_RANGE when that is valid."""
+    low, _dash, high = os.environ.get(PORT_RANGE_ENV, "").partition("-")
+    if low.strip().isdigit() and high.strip().isdigit() and 0 < int(low) <= int(high) < 65536:
+        return range(int(low), int(high) + 1)
+    return DEFAULT_PORT_RANGE
+
+
+def find_servers(scripts_dir=SCRIPTS_DIR, port_range=None):
     """Running review_server.py processes of this install: [{pid, ppid, port, argv, launcher_argv}].
     The port is the --port argument, else the one a server answers on that no other known server owns (netstat cannot name the owner here)."""
-    text = _powershell("Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'review_server\.py' } | "
+    text = _powershell("Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'review_server\\.py' } | "
                        "Select-Object ProcessId,ParentProcessId,CommandLine | ConvertTo-Json -Compress")
     if not text.strip():
         return []
     rows = json.loads(text)
     rows = rows if isinstance(rows, list) else [rows]
+    port_range = configured_port_range() if port_range is None else port_range
     by_pid = {row["ProcessId"]: row for row in rows}
     target = str(pathlib.Path(scripts_dir).resolve() / "review_server.py").casefold()
     parents = {row["ParentProcessId"] for row in rows}

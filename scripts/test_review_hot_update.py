@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -116,8 +117,10 @@ class Fixture:
         path.write_text(path.read_text(encoding="utf-8") + text, encoding="utf-8")
 
     def cli(self, *args, timeout=240):
+        # The CLI probes a range of ports for a server it cannot name by its command line: here only this fixture's own port, never the ports of a real install.
+        env = dict(os.environ, LRC_HOT_UPDATE_PORT_RANGE="%d-%d" % (self.port, self.port))
         return subprocess.run([sys.executable, str(self.scripts / "review_hot_update.py"), *args], capture_output=True, text=True, encoding="utf-8",
-                              timeout=timeout, creationflags=HIDDEN)
+                              timeout=timeout, creationflags=HIDDEN, env=env)
 
     def close(self):
         pids = {self.proc.pid} if self.proc else set()
@@ -316,6 +319,52 @@ class VisibleServerTests(unittest.TestCase):
         self.assertRegex(result.stdout, r"port %d pid \d+: has a console window" % shown.port)
         self.assertTrue(self.fx.gone())
         self.assertIsNotNone(shown.admin(), "a server with a console window is left to its window")
+
+
+class PortRangeTests(unittest.TestCase):
+    """The CLI never probes the ports of a real install from a test: the range it probes comes from LRC_HOT_UPDATE_PORT_RANGE."""
+
+    def setUp(self):
+        sys.path.insert(0, str(SCRIPTS))
+        self.addCleanup(lambda: sys.path.remove(str(SCRIPTS)))
+        import review_hot_update
+        self.hot = review_hot_update
+
+    def _range(self, value):
+        env = {k: v for k, v in os.environ.items() if k != self.hot.PORT_RANGE_ENV}
+        if value is not None:
+            env[self.hot.PORT_RANGE_ENV] = value
+        with unittest.mock.patch.dict(os.environ, env, clear=True):
+            return self.hot.configured_port_range()
+
+    def test_default_range_is_the_one_of_the_install(self):
+        self.assertEqual(self._range(None), range(58400, 58421))
+        for bad in ("", "x", "58400", "5-", "-5", "9-5", "0-5", "1-70000", "a-b"):
+            self.assertEqual(self._range(bad), range(58400, 58421), bad)
+
+    def test_range_from_the_environment(self):
+        self.assertEqual(self._range("58681-58681"), range(58681, 58682))
+        self.assertEqual(self._range("58681-58689"), range(58681, 58690))
+
+    def test_find_servers_probes_only_the_configured_ports(self):
+        probed = []
+        rows = json.dumps([{"ProcessId": 4242, "ParentProcessId": 1, "CommandLine": "x review_server.py"}])
+        with unittest.mock.patch.object(self.hot, "_powershell", return_value=rows),                 unittest.mock.patch.object(self.hot, "_review_port", side_effect=lambda port: probed.append(port) or False),                 unittest.mock.patch.dict(os.environ, {self.hot.PORT_RANGE_ENV: "58690-58692"}):
+            self.assertEqual(self.hot.find_servers(), [])
+        self.assertEqual(sorted(probed), [58690, 58691, 58692])
+        self.assertFalse(any(58400 <= port <= 58420 for port in probed))
+
+    def test_the_fixture_cli_is_given_a_range_of_its_own_port_only(self):
+        fx = Fixture()
+        self.addCleanup(fx.close)
+        seen = {}
+        real_run = subprocess.run
+        def spy(command, **kwargs):
+            seen.update(kwargs.get("env") or {})
+            return real_run([sys.executable, "-c", "print('x')"], capture_output=True, text=True)
+        with unittest.mock.patch.object(subprocess, "run", spy):
+            fx.cli("--list")
+        self.assertEqual(seen["LRC_HOT_UPDATE_PORT_RANGE"], "%d-%d" % (fx.port, fx.port))
 
 
 class LegacyServerTests(unittest.TestCase):
