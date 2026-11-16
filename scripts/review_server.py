@@ -169,8 +169,9 @@ class LrcDecodeError(ValueError):
     """The LRC bytes are not text in any encoding this tool reads (UTF-8, UTF-16 with BOM, Shift-JIS, GB18030, Big5)."""
 
 
-_LEGACY_TAG_RE = re.compile(rb"(?m)^((?:\*+[ \t]*)?)\[(\d{1,3}):(\d{2})(?:\.(\d{1,3}))?\]")
-
+_TAG_CHAIN_RE = re.compile(rb"^((?:\*+[ \t]*)?)((?:\[\d{1,3}:\d{2}(?:\.\d{1,3})?\])+)")
+_ONE_TAG_RE = re.compile(rb"\[(\d{1,3}):(\d{2})(?:\.(\d{1,3}))?\]")
+_OFFSET_LINE_RE = re.compile(rb"^[ \t]*\[offset:[ \t]*([+-]?\d{1,9})[ \t]*\][ \t]*\r?$", re.I)
 
 def _legacy_score(text):
     """Characters outside ASCII, CJK, kana, fullwidth forms and common punctuation: a wrong legacy codec produces many."""
@@ -260,37 +261,101 @@ def lrc_encoding_uncertain(raw):
         return False
 
 
-def _millisecond_tags_to_centiseconds(data):
-    """The first tag of each line as ``[mm:ss.xx]``: ``[m:ss.xx]``, ``[mm:ss]``, ``[mm:ss.x]`` and ``[mm:ss.xxx]`` are converted, canonical ones stay."""
-    def replace(match):
-        minutes, seconds, fraction = match.group(2), match.group(3), match.group(4) or b""
-        if len(minutes) >= 2 and len(seconds) == 2 and len(fraction) == 2:
-            return match.group(0)
+def _leading_tags(line):
+    """(marks, [(milliseconds, canonical bytes or None)], rest) for the consecutive tags that open a line, or None.
+
+    ``[m:ss.xx]``, ``[mm:ss]``, ``[mm:ss.x]`` and ``[mm:ss.xxx]`` are read as times; ``[00:61]`` is not a time: it ends
+    the chain, and a line that opens with one is left alone.
+    """
+    chain = _TAG_CHAIN_RE.match(line)
+    if not chain:
+        return None
+    tags = []
+    end = 0
+    for match in _ONE_TAG_RE.finditer(chain.group(2)):
+        minutes, seconds, fraction = match.group(1), match.group(2), match.group(3) or b""
         if len(fraction) != 3 and int(seconds) >= 60:
-            return match.group(0)
-        if len(fraction) == 3:
-            hundredths = (int(fraction) + 5) // 10
-        elif len(fraction) == 1:
-            hundredths = int(fraction) * 10
-        else:
-            hundredths = int(fraction or b"0")
-        cs = (int(minutes) * 60 + int(seconds)) * 100 + hundredths
-        return match.group(1) + _format_tag(cs)
-    return _LEGACY_TAG_RE.sub(replace, data)
+            break
+        total = (int(minutes) * 60 + int(seconds)) * 1000 + int(fraction.ljust(3, b"0"))
+        canonical = len(minutes) >= 2 and len(fraction) == 2
+        tags.append((total, match.group(0) if canonical else None))
+        end = match.end()
+    if not tags:
+        return None
+    return chain.group(1), tags, line[chain.start(2) + end:]
 
 
-def _canonical_lrc(raw):
-    """The LRC as the review reads and writes it: UTF-8 (a UTF-8 BOM is kept) with ``[mm:ss.xx]`` tags.
+def _normalize_lrc_lines(data):
+    """The LRC with every leading time as ``[mm:ss.xx]``, a line with several times split into one line per time
+    (stably sorted by time, the ID tags stay on top) and a non-zero ``[offset:]`` folded into the times
+    (displayed time = tag - offset, rounded to 0.01 s, never below 0).
+
+    Returns (bytes, {"multi_tag_lines": n, "offset_ms": n}).
+    """
+    bom, trailing, lines = _split_lrc(data)
+    offset_ms = 0
+    for line in lines:
+        match = _OFFSET_LINE_RE.match(line)
+        if match:
+            offset_ms = int(match.group(1))
+            break
+    if offset_ms:
+        lines = [line for line in lines if not _OFFSET_LINE_RE.match(line)]
+    end = len(lines)
+    while end and not lines[end - 1].strip():
+        end -= 1
+    body, tail = lines[:end], lines[end:]
+    parsed = [_leading_tags(line) for line in body]
+    if not any(parsed):
+        return data, {"multi_tag_lines": 0, "offset_ms": 0}
+
+    def tag_bytes(tag):
+        milliseconds, canonical = tag
+        if offset_ms:
+            return _format_tag(max(0, milliseconds - offset_ms + 5) // 10)
+        return canonical if canonical is not None else _format_tag((milliseconds + 5) // 10)
+
+    multi = 0
+    head = []
+    units = []   # [time in cs, lines]: one per time of a timed line, the untimed lines after it follow its first time
+    anchor = None
+    for line, found in zip(body, parsed):
+        if found is None:
+            (anchor[1] if anchor is not None else head).append(line)
+            continue
+        marks, tags, rest = found
+        times = []
+        for tag in tags:
+            text = tag_bytes(tag)
+            if text not in times:
+                times.append(text)
+        multi += len(times) > 1
+        first = len(units)
+        units.extend([_line_tag(text), [marks + text + rest]] for text in times)
+        anchor = units[first]
+    if multi:
+        units.sort(key=lambda unit: unit[0])
+    out = head + [line for unit in units for line in unit[1]] + tail
+    return _join_lrc(bom, trailing, out), {"multi_tag_lines": multi, "offset_ms": offset_ms}
+
+
+def _canonical_lrc_info(raw):
+    """(canonical LRC, {"multi_tag_lines", "offset_ms"}): UTF-8 (a UTF-8 BOM is kept), ``[mm:ss.xx]`` tags, one time per line, offset folded in.
 
     Raises LrcDecodeError instead of guessing when the bytes are not text in a known encoding.
     """
     if not raw:
-        return raw
+        return raw, {"multi_tag_lines": 0, "offset_ms": 0}
     text, encoding = _decode_lrc(raw)
     data = text.encode("utf-8")
     if encoding == "utf-8" and raw.startswith(b"\xef\xbb\xbf"):
         data = b"\xef\xbb\xbf" + data
-    return _millisecond_tags_to_centiseconds(data)
+    return _normalize_lrc_lines(data)
+
+
+def _canonical_lrc(raw):
+    """The LRC as the review reads and writes it."""
+    return _canonical_lrc_info(raw)[0]
 
 
 def _read_lrc(path):
@@ -1224,10 +1289,11 @@ def _song_payload(report_path, report, anchor=None):
     output_path = pathlib.Path(output_value).expanduser() if isinstance(output_value, str) and output_value else None
     auto_path, edits_path = review_artifact_paths(report_path)
     encoding_uncertain = False
+    normalized = {"multi_tag_lines": 0, "offset_ms": 0}
     try:
         if output_path and output_path.is_file():
             file_bytes = output_path.read_bytes()
-            current_raw = _canonical_lrc(file_bytes)
+            current_raw, normalized = _canonical_lrc_info(file_bytes)
             encoding_uncertain = lrc_encoding_uncertain(file_bytes)
         else:
             current_raw = b""
@@ -1379,6 +1445,8 @@ def _song_payload(report_path, report, anchor=None):
         "read_only": bool(readonly),
         "read_only_reason": reason,
         "encoding_uncertain": encoding_uncertain,
+        "multi_tag_lines": normalized["multi_tag_lines"],
+        "offset_ms": normalized["offset_ms"],
         "simplified": None if readonly or not rows else zh_traditional.song_candidates(rows, _header_lines(current_lines), encoding_uncertain),
         "entry_model": entry_model,
         "manual_edited": bool(manual_edited),
