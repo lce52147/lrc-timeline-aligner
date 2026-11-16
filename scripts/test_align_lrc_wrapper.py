@@ -44,7 +44,8 @@ class AlignLrcWrapperSafetyTests(unittest.TestCase):
         self.assertIn("setlocal", text)
         self.assertIn("scripts\\review_server.py", text)
         # Dropped names go through review-lrc.ps1 (it puts back a name that cmd.exe expanded); the default run starts the server directly.
-        self.assertIn('-File "%~dp0review-lrc.ps1" -FromLauncher %*', text)
+        self.assertIn('-File "%~dp0review-lrc.ps1" %*', text)
+        self.assertNotIn("-FromLauncher", text)   # the marker is an environment variable: a typed -FromLauncher is an ordinary argument
         runner = (REPO_ROOT / "review-lrc.ps1").read_bytes()
         self.assertNotIn(b"\x00", runner)
         self.assertNotIn(b"\n", runner.replace(b"\r\n", b""))
