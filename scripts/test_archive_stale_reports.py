@@ -66,6 +66,34 @@ class ArchiveStaleReportsTest(unittest.TestCase):
             self.assertIn(".review-decisions.jsonl x1", out.getvalue())
             self.assertIn(".orphaned-<stamp>.auto.lrc x1", out.getvalue())
 
+    def test_the_harmony_sidecar_of_an_audio_name_still_in_use_stays(self) -> None:
+        """The sidecar is named after the audio file: a song moved to a new folder and aligned again has a stale report and a live one
+        with the same audio name, and the live one needs the sidecar."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "music_new").mkdir()
+            live_audio = self._audio(root / "music_new", "01 Song.flac")
+            stale = self._report(root, "01 Song--aaaaaaaaaa", root / "music_old" / "01 Song.flac", (".review.tsv",))
+            live = self._report(root, "01 Song--bbbbbbbbbb", live_audio)
+            sidecar = root / "01 Song.harmony_cands.json"
+            sidecar.write_text("{}", encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(asr.main(["--report-dir", str(root), "--apply", "--archive-dir", str(root / "arc")]), 0)
+            self.assertEqual({path.name for path in (root / "arc").iterdir()}, {stale.name, "01 Song--aaaaaaaaaa.review.tsv"})
+            self.assertTrue(sidecar.is_file())
+            self.assertTrue(live.is_file())
+
+    def test_two_stale_reports_with_one_audio_name_move_the_sidecar_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = self._report(root, "01 Song--aaaaaaaaaa", root / "old1" / "01 Song.flac")
+            second = self._report(root, "01 Song--bbbbbbbbbb", root / "old2" / "01 Song.flac")
+            (root / "01 Song.harmony_cands.json").write_text("{}", encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(asr.main(["--report-dir", str(root), "--apply", "--archive-dir", str(root / "arc")]), 0)
+            self.assertEqual({path.name for path in (root / "arc").iterdir()}, {first.name, second.name, "01 Song.harmony_cands.json"})
+            self.assertFalse((root / "01 Song.harmony_cands.json").exists())
+
     def test_an_existing_target_gets_a_new_name_and_the_run_continues(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

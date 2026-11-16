@@ -41,8 +41,30 @@ def report_is_stale(report_path: Path) -> tuple[bool, str]:
     return True, "audio-missing"
 
 
-def sidecars_of(report_path: Path) -> list[Path]:
-    """Every file beside the report that belongs to it: same stem followed by a dot, plus the harmony sidecar named after the audio."""
+def _audio_stem(report_path: Path) -> str | None:
+    try:
+        audio = json.loads(report_path.read_text(encoding="utf-8-sig")).get("audio_path")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return Path(audio).stem.casefold() if isinstance(audio, str) and audio else None
+
+
+def live_audio_stems(report_dir: Path, stale: list[Path]) -> set[str]:
+    """The audio stems of the reports that stay: the harmony sidecar is named after the audio, so a stale report whose audio
+    has the same file name as a song still in use (a song moved to a new folder and aligned again) does not own it."""
+    leaving = {path.resolve() for path in stale}
+    stems = set()
+    for report in report_dir.glob("*" + REPORT_SUFFIX):
+        if report.resolve() not in leaving:
+            stem = _audio_stem(report)
+            if stem:
+                stems.add(stem)
+    return stems
+
+
+def sidecars_of(report_path: Path, live_stems: frozenset[str] | set[str] = frozenset()) -> list[Path]:
+    """Every file beside the report that belongs to it: same stem followed by a dot, plus the harmony sidecar named after the audio
+    (unless a report that stays uses an audio file of the same name: ``live_stems``)."""
     stem = report_path.name[: -len(REPORT_SUFFIX)]
     prefix = stem + "."
     found = [path for path in report_path.parent.iterdir()
@@ -51,7 +73,7 @@ def sidecars_of(report_path: Path) -> list[Path]:
         audio = json.loads(report_path.read_text(encoding="utf-8-sig")).get("audio_path")
     except (OSError, ValueError, AttributeError):
         audio = None
-    if isinstance(audio, str) and audio:
+    if isinstance(audio, str) and audio and Path(audio).stem.casefold() not in live_stems:
         harmony = report_path.with_name(Path(audio).stem + HARMONY_SIDECAR_SUFFIX)
         if harmony.is_file() and harmony not in found:
             found.append(harmony)
@@ -76,9 +98,9 @@ def _numbered(name: str, number: int) -> str:
     return f"{name}.dup{number}" if dot <= 0 else f"{name[:dot]}.dup{number}{name[dot:]}"
 
 
-def archive_report(report: Path, archive_dir: Path) -> tuple[list[Path], int, list[str]]:
+def archive_report(report: Path, archive_dir: Path, live_stems: frozenset[str] | set[str] = frozenset()) -> tuple[list[Path], int, list[str]]:
     """Move one report and its files; (moved targets, the .dupN used or 0, failures). One number serves the whole set."""
-    files = [report, *sidecars_of(report)]
+    files = [report, *sidecars_of(report, live_stems)]
     number = 0
     while any((archive_dir / (path.name if not number else _numbered(path.name, number))).exists() for path in files):
         number += 1 if number else 2
@@ -106,8 +128,9 @@ def archive_many(stale: list[Path], archive_dir: Path) -> tuple[list[Path], int,
     renamed = 0
     failures: list[str] = []
     archive_dir.mkdir(parents=True, exist_ok=True)
+    live_stems = live_audio_stems(stale[0].parent, stale) if stale else set()
     for report in stale:
-        done, number, failed = archive_report(report, archive_dir)
+        done, number, failed = archive_report(report, archive_dir, live_stems)
         moved.extend(done)
         renamed += 1 if number else 0
         failures.extend(failed)
