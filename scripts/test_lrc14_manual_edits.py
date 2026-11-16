@@ -201,7 +201,8 @@ class ManualEditTests(unittest.TestCase):
             output.write_bytes(b"old")
             report, _a, _t = auto_lrc.report_artifact_paths(audio, output, reports)
             report.write_text(json.dumps({"published_lrc_sha256": "0" * 64}), encoding="utf-8")
-            lrc_publication.journal_path(report).write_text("{}", encoding="utf-8")
+            manifest = {"schema": 1, "lrc": str(output.resolve()), "report": str(report.resolve()), "backups": {"lrc": None, "report": None}, "stages": {}}
+            lrc_publication.journal_path(report).write_text(json.dumps(manifest), encoding="utf-8")  # a crashed first publication: recovery removes the half-published pair
             with mock.patch.object(r2_pipeline, "_run_backend", return_value=1) as backend:
                 result = r2_pipeline.main(["--work-dir", str(root / "work"), "--", str(audio), "--output", str(output), "--report-dir", str(reports), "--overwrite", "--timing-source", "lyrics"])
             self.assertEqual(result, 1)

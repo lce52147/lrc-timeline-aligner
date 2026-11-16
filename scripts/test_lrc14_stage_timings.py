@@ -521,20 +521,81 @@ class R2TimingTests(unittest.TestCase):
             self.assertEqual(result, 7)
             self.assertEqual(backend.call_count, 1)
 
-    def test_r2_existing_output_with_a_publication_journal_is_left_to_recovery(self):
+    def _journal_case(self, folder, backups, lrc_now="half-published", lrc_before="old"):
+        """A song with a publication journal left by a crash; ``backups`` says whether it was an overwrite (old files saved) or a first publication."""
+        root = Path(folder)
+        audio = root / "song.flac"
+        output = root / "song.lrc"
+        reports = root / "reports"
+        reports.mkdir()
+        audio.write_bytes(b"audio")
+        output.write_text(lrc_now, encoding="utf-8")
+        report, _audit, _template = auto_lrc.report_artifact_paths(audio.resolve(), output.resolve(), reports.resolve())
+        report.write_text('{"new": true}', encoding="utf-8")
+        saved = {"lrc": None, "report": None}
+        if backups:
+            for name, text in (("lrc", lrc_before), ("report", '{"old": true}')):
+                path = (output if name == "lrc" else report)
+                path = path.with_name(path.name + ".abc123.backup")
+                path.write_text(text, encoding="utf-8")
+                saved[name] = str(path)
+        manifest = {"schema": 1, "lrc": str(output.resolve()), "report": str(report.resolve()), "backups": saved, "stages": {}}
+        r2_pipeline.journal_path(report).write_text(json.dumps(manifest), encoding="utf-8")
+        return audio, output, reports, report
+
+    def _run_r2(self, audio, output, reports, root, *extra):
+        errors = io.StringIO()
+        with mock.patch.object(r2_pipeline, "_run_backend", return_value=7) as backend, contextlib.redirect_stderr(errors):
+            result = r2_pipeline.main(["--work-dir", str(root / "work"), "--", str(audio), "--output", str(output), "--report-dir", str(reports), *extra])
+        return result, backend, errors.getvalue()
+
+    def test_r2_crashed_overwrite_publication_is_recovered_then_refused_before_stage_one(self):
         with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
-            audio = root / "song.flac"
-            output = root / "song.lrc"
-            reports = root / "reports"
-            reports.mkdir()
-            audio.write_bytes(b"audio"); output.write_text("half-published", encoding="utf-8")
-            report, _audit, _template = auto_lrc.report_artifact_paths(audio.resolve(), output.resolve(), reports.resolve())
-            r2_pipeline.journal_path(report).write_text("{}", encoding="utf-8")
-            with mock.patch.object(r2_pipeline, "_run_backend", return_value=7) as backend:
-                result = r2_pipeline.main(["--work-dir", str(root / "work"), "--", str(audio), "--output", str(output), "--report-dir", str(reports)])
+            audio, output, reports, report = self._journal_case(folder, backups=True)
+            result, backend, errors = self._run_r2(audio, output, reports, Path(folder))
+            self.assertEqual(result, 2)
+            backend.assert_not_called()
+            self.assertIn("Output already exists", errors)
+            self.assertEqual(output.read_text(encoding="utf-8"), "old")
+            self.assertFalse(r2_pipeline.journal_path(report).exists())
+            self.assertFalse((Path(folder) / "work").exists())
+
+    def test_r2_crashed_first_publication_is_recovered_and_the_run_goes_on(self):
+        with tempfile.TemporaryDirectory() as folder:
+            audio, output, reports, report = self._journal_case(folder, backups=False)
+            result, backend, _errors = self._run_r2(audio, output, reports, Path(folder))
             self.assertEqual(result, 7)
             self.assertEqual(backend.call_count, 1)
+            self.assertFalse(output.exists())
+            self.assertFalse(r2_pipeline.journal_path(report).exists())
+
+    def test_r2_unrecoverable_journal_stops_before_stage_one(self):
+        with tempfile.TemporaryDirectory() as folder:
+            audio, output, reports, report = self._journal_case(folder, backups=True)
+            r2_pipeline.journal_path(report).write_text("{}", encoding="utf-8")
+            result, backend, errors = self._run_r2(audio, output, reports, Path(folder))
+            self.assertEqual(result, 2)
+            backend.assert_not_called()
+            self.assertIn("Cannot recover incomplete output pair", errors)
+
+    def test_r2_overwrite_after_recovery_sees_the_restored_lrc_manual_edits(self):
+        with tempfile.TemporaryDirectory() as folder:
+            audio, output, reports, report = self._journal_case(folder, backups=True)
+            with mock.patch.object(r2_pipeline, "manual_edit_reason", return_value="edited"):
+                result, backend, errors = self._run_r2(audio, output, reports, Path(folder), "--overwrite")
+            self.assertEqual(result, 2)
+            backend.assert_not_called()
+            self.assertIn("Manual review edits detected", errors)
+
+    def test_r2_existing_output_with_a_leftover_committed_journal_is_refused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            audio, output, reports, report = self._journal_case(folder, backups=False, lrc_now="published")
+            journal = r2_pipeline.journal_path(report)
+            journal.write_text(json.dumps({**json.loads(journal.read_text(encoding="utf-8")), "committed": True}), encoding="utf-8")
+            result, backend, errors = self._run_r2(audio, output, reports, Path(folder))
+            self.assertEqual(result, 2)
+            backend.assert_not_called()
+            self.assertEqual(output.read_text(encoding="utf-8"), "published")
 
     def test_r2_parser_error_writes_no_timing_file(self):
         with tempfile.TemporaryDirectory() as folder:
