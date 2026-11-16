@@ -115,8 +115,6 @@ CORRECTIONS: tuple = (
     Entry("有云状", "有雲狀", "a cloud-like shape (stock keeps the classical phrase 有云)", ("古人有云", "古人有云")),
     Entry("有云雷", "有雲雷", "clouds and thunder (stock keeps the classical phrase 有云)", ("古人有云", "古人有云")),
     Entry("有云雀", "有雲雀", "有|云雀 (a lark); stock's classical phrase 有云 would hide it", ("古人有云", "古人有云")),
-    Entry("被发乱首", "被髮亂首", "classical: with loose hair (the stock phrase 被发 is dropped because it swallows 被|发送 / 被|发现)", ("被发送", "被發送")),
-    Entry("被发而", "被髮而", "classical: 被发而为狂 (loose hair and then ...)", ("被发出去了", "被發出去了")),
     Entry("不是只有", "不是只有", "不是 + 只有 = 'not only' (stock reads 是只 as 是隻); stock's phrase 有只 / 是只 / 别只 reads 只 as the measure word 隻, here it is the adverb", ("院子里有只会说话的八哥", "院子裡有隻會說話的八哥"), ("不是只有", "不是只有")),
     Entry("若是只有", "若是只有", "若是 + 只有 = 'if only'; stock's phrase 有只 / 是只 / 别只 reads 只 as the measure word 隻, here it is the adverb", ("院子里有只会说话的八哥", "院子裡有隻會說話的八哥"), ("若是只有", "若是只有")),
     Entry("总是只有", "總是只有", "总是 + 只有 = 'always only'; stock's phrase 有只 / 是只 / 别只 reads 只 as the measure word 隻, here it is the adverb", ("院子里有只会说话的八哥", "院子裡有隻會說話的八哥"), ("总是只有", "總是只有")),
@@ -130,6 +128,42 @@ CORRECTIONS: tuple = (
     Entry("星海里", "星海裡", "in the sea of stars (stock 星海里)", ("多少海里才到岸", "多少海里才到岸")),
     Entry("海里的鱼", "海裡的魚", "the fish in the sea (stock 海里的魚)", ("每小时航行十二海里的速度", "每小時航行十二海里的速度")),
     Entry("古松开", "古松開", "an old pine + 开 (古松开始变黄); stock's phrase 松开 (鬆開) would hide the 开", ("鞋带又松开了", "鞋帶又鬆開了")),
+    # 被发 + a verb: stock reads 被发 as 被髮 (with loose hair: 被发乱首, 被发行吟; stock is right there and untouched); each modern verb below is the whole string
+    Entry("被发送", "被發送", "stock reads 被发 as 被髮 (loose hair); here it is 被|发送", ("被发乱首", "被髮亂首")),
+    Entry("被发生", "被發生", "stock reads 被发 as 被髮 (loose hair); here it is 被|发生", ("被发乱首", "被髮亂首")),
+    Entry("被发布", "被發布", "stock reads 被发 as 被髮 (loose hair); here it is 被|发布", ("被发乱首", "被髮亂首")),
+    Entry("被发表", "被發表", "stock reads 被发 as 被髮 (loose hair); here it is 被|发表", ("被发乱首", "被髮亂首")),
+    Entry("被发展", "被發展", "stock reads 被发 as 被髮 (loose hair); here it is 被|发展", ("被发乱首", "被髮亂首")),
+    Entry("被发动", "被發動", "stock reads 被发 as 被髮 (loose hair); here it is 被|发动", ("被发乱首", "被髮亂首")),
+    Entry("被发明", "被發明", "stock reads 被发 as 被髮 (loose hair); here it is 被|发明", ("被发乱首", "被髮亂首")),
+    Entry("被发挥", "被發揮", "stock reads 被发 as 被髮 (loose hair); here it is 被|发挥", ("被发乱首", "被髮亂首")),
+    Entry("被发出", "被發出", "stock reads 被发 as 被髮 (loose hair); here it is 被|发出", ("被发乱首", "被髮亂首")),
+    Entry("被发回", "被發回", "stock reads 被发 as 被髮 (loose hair); here it is 被|发回", ("被发乱首", "被髮亂首")),
+    Entry("被发下", "被發下", "stock reads 被发 as 被髮 (loose hair); here it is 被|发下", ("被发乱首", "被髮亂首")),
+    Entry("被发给", "被發給", "stock reads 被发 as 被髮 (loose hair); here it is 被|发给", ("被发乱首", "被髮亂首")),
+    Entry("被发到", "被發到", "stock reads 被发 as 被髮 (loose hair); here it is 被|发到", ("被发乱首", "被髮亂首")),
+    Entry("被发往", "被發往", "stock reads 被发 as 被髮 (loose hair); here it is 被|发往", ("被发乱首", "被髮亂首")),
+    Entry("被发掘", "被發掘", "stock reads 被发 as 被髮 (loose hair); here it is 被|发掘", ("被发乱首", "被髮亂首")),
+    Entry("被发配", "被發配", "stock reads 被发 as 被髮 (loose hair); here it is 被|发配", ("被发乱首", "被髮亂首")),
+    Entry("被发育", "被發育", "stock reads 被发 as 被髮 (loose hair); here it is 被|发育", ("被发乱首", "被髮亂首")),
+    Entry("被发票", "被發票", "stock reads 被发 as 被髮 (loose hair); here it is 被|发票", ("被发乱首", "被髮亂首")),
+    Entry("被发放", "被發放", "stock reads 被发 as 被髮 (loose hair); here it is 被|发放", ("被发乱首", "被髮亂首")),
+    Entry("被发射", "被發射", "stock reads 被发 as 被髮 (loose hair); here it is 被|发射", ("被发乱首", "被髮亂首")),
+    Entry("被发起", "被發起", "stock reads 被发 as 被髮 (loose hair); here it is 被|发起", ("被发乱首", "被髮亂首")),
+    Entry("被发言", "被發言", "stock reads 被发 as 被髮 (loose hair); here it is 被|发言", ("被发乱首", "被髮亂首")),
+    Entry("被发达", "被發達", "stock reads 被发 as 被髮 (loose hair); here it is 被|发达", ("被发乱首", "被髮亂首")),
+    Entry("被发扬", "被發揚", "stock reads 被发 as 被髮 (loose hair); here it is 被|发扬", ("被发乱首", "被髮亂首")),
+    Entry("被发来", "被發來", "stock reads 被发 as 被髮 (loose hair); here it is 被|发来", ("被发乱首", "被髮亂首")),
+    Entry("被发过", "被發過", "stock reads 被发 as 被髮 (loose hair); here it is 被|发过", ("被发乱首", "被髮亂首")),
+    Entry("被发去", "被發去", "stock reads 被发 as 被髮 (loose hair); here it is 被|发去", ("被发乱首", "被髮亂首")),
+    Entry("被发走", "被發走", "stock reads 被发 as 被髮 (loose hair); here it is 被|发走", ("被发乱首", "被髮亂首")),
+    Entry("被发了", "被發了", "stock reads 被发 as 被髮 (loose hair); here it is 被|发了", ("被发乱首", "被髮亂首")),
+    Entry("游标卡尺", "游標卡尺", "vernier caliper: 游標; stock's longer phrase gives 遊標卡尺", ("旅游", "旅遊")),
+    Entry("兼容并包", "兼容並包", "idiom written 並包 in Taiwan (stock 幷包)", ("并包含", "並包含")),
+    Entry("天上有云", "天上有雲", "weather: there are clouds in the sky (stock keeps the classical phrase 有云 = 'it is said')", ("古人有云", "古人有云")),
+    Entry("天空有云", "天空有雲", "weather: there are clouds in the sky (stock keeps the classical phrase 有云)", ("古人有云", "古人有云")),
+    Entry("今天有云", "今天有雲", "weather: clouds today (stock keeps the classical phrase 有云)", ("古人有云", "古人有云")),
+    Entry("明天有云", "明天有雲", "weather: clouds tomorrow (stock keeps the classical phrase 有云)", ("古人有云", "古人有云")),
     Entry("了如列眉", "瞭如列眉", "idiom: stock only has 了如指掌 and the dropped 了如 phrase leaves 了如列眉 unconverted (0 / 1 in the Taiwan corpus)", ("我明白了如何做", "我明白了如何做")),
     Entry("周几", "週幾", "week + how many ('which day of the week'): Taiwan writes 週幾; stock writes 周幾 (9 / 0 in the Taiwan corpus)", ("周末", "週末")),
     Entry("游标", "游標", "cursor / vernier: 游標; stock writes 遊標 (12 / 0 in the Taiwan corpus)", ("旅游", "旅遊")),
@@ -176,14 +210,13 @@ PREFERENCES: tuple = (
 # --------------------------------------------------------------------------------------------------------------------
 # b. DROPPED_PHRASES: stock phrases that hide a better match across the same characters.
 # --------------------------------------------------------------------------------------------------------------------
-DROPPED_PHRASES = frozenset({"了如", "如干", "心向", "并包", "并产", "被发", "先尝"})   # kept only where the Taiwan dictionary has no sentence that needs the stock phrase (G4: 0 victims); every other stock phrase that hides a word is covered by a longer ENTRIES word instead
+DROPPED_PHRASES = frozenset({"了如", "如干", "心向", "并包", "并产", "先尝"})   # kept only where the Taiwan dictionary has no sentence that needs the stock phrase (G4: 0 victims); every other stock phrase that hides a word is covered by a longer ENTRIES word instead
 DROPPED_NOTES: dict = {
     "了如": (("我明白了如何做", "我明白了如何做"), ("了如指掌", "瞭如指掌")),   # 了如 is only meant for 了如指掌, which stock has as a whole phrase
     "如干": (("倒不如干脆", "倒不如乾脆"), ("若干", "若干")),     # 如干 swallows 不如|干脆
     "心向": (("内心向往", "內心嚮往"), ("心向党", "心向黨")),     # 心向 swallows 内心|向往
     "并包": (("并包含", "並包含"), ("合并", "合併")),             # 并包 (幷包) swallows 并|包含
     "并产": (("并产生", "並產生"), ("合并", "合併")),             # 并产 (併產) swallows 并|产生
-    "被发": (("被发送", "被發送"), ("被发现", "被發現")),         # 被发 (被髮, 'with loose hair') swallows 被|发送 / 被|发现 / 被|发出去了; the classical phrases are ENTRIES (被发乱首 ...)
     "先尝": (("先尝试", "先嘗試"), ("尝试", "嘗試")),             # 先尝 (先嚐) swallows 先|尝试
 }
 # c. CONTEXT_RULES: only a pattern whose left AND right side are closed lists of literal words (no gaps, no "not followed by"
