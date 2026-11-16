@@ -132,44 +132,26 @@ Every entry lists the look-alike that must not change (negative example); `scrip
 * 髮 -> 發 inside a proper name written with 后+发 in the lyrics (the one remaining wrong meaning of the lyrics round trip besides the two lines above).
 * The page still marks every character with several Traditional forms, so the user can pick by hand.
 
-## Measurements (final HEAD)
+## Measurements (final HEAD, BH2-FIX12A)
 
-* **Empty rules = stock** (`tools/g1_all.py`, rules emptied): every `STPhrases` word (49051), the 530 sentences of the adversarial set, the 7174 kana-free lyric lines of the user's corpus (after `t2s`): 0 differences from `OpenCC("s2tw")`; `test_zh_convert.py` repeats it for all `STPhrases` words plus a fixed sample.
-* **Adversarial sets** (`tools/run_cases.py`, stock right and ours wrong / both wrong / stock wrong and ours right): `cases.tsv` 530 sentences 0 / 22 / 37; REVIEW4 set 1 (100 sentences) 0 / 18 / 11; REVIEW4 set 2 (112 sentences) 0 / 26 / 20; self-made set (85 sentences, `cases_self2.tsv`) 0 / 0 / 21 (9 more are listed as uncertain). The both-wrong sentences are the known limitations below.
-* **User's lyrics round trip** (169 songs, 6628 lines, 66860 Han characters): wrong meaning 1, variant 14, Japanese 11; 0 lines differ from FIX9 (`tools/lyrics_diff.py` over 7174 lines). Converting the 7174 lines: FIX9 0.56 s, now 0.43 s.
-* **Taiwan dictionary corpus round trip** (MOE 《重編國語辭典修訂本》 from g0v/moedict-data `dict-revised.json.xz`: 656935 lines, 8681563 Han characters; Traditional -> `tw2s` -> ours and stock `s2tw` -> compared with the source; test data only, not in the repo): positions where stock is right and ours wrong 6781, **0 of them outside the preference rules** (臺->台 4648 and the like: the dictionary is Taiwan-official, the user's own lyrics use the other form); ours right and stock wrong 2041; both wrong 48654 (出->齣 in 〇出, 卷 sections, 分佈, names: they need a dictionary, not a rule). Hit table of the non-preference rules (final HEAD, `tools/g4.py`):
+* **Empty rules = stock** (`tools/g1_all.py`): `STPhrases` 49051 words, the 530 adversarial sentences, 7174 lyric lines: 0 differences.
+* **Adversarial sets** (`tools/run_cases.py`; stock right and ours wrong / both wrong / stock wrong and ours right): `cases.tsv` 530: 0 / 35 / 24 (FIX11A: 0 / 22 / 37); REVIEW4 gemini set 100: 0 / 27 / 2 (0 / 18 / 11); REVIEW4 claude set 112: 0 / 37 / 9 (0 / 26 / 20); REVIEW4 claude-10 set 74: 0 / 28 / 10 (17 regressions before); REVIEW5 gemini set 100: 0 / 45 / 12 (0 / 8 / 49 on the FIX11A HEAD by the reviewer). Fixed went down because the rules and entries that were deleted are stock now; no case became worse than stock.
+* **Both-ends attacks** (`scripts/test_zh_edges_r4.py`, `cases_edges.tsv`): every non-preference word has 3 left and 3 right extensions with hand-written Traditional text: 156 sentences, 0 wrong.
+* **User's lyrics round trip** (169 songs, 6628 lines): wrong meaning 3, variant 14, Japanese 11. Two lines are worse than FIX9 because their words broke on the both-ends attack and were not kept: the clause-start 干了就没事了 (S01: 这份作业，干了就没事了) and 海里有各种鱼类在游动 (十二海里有各种鱼类在游动). `tools/lyrics_diff.py` against FIX9: 2 of 7174 lines differ, both for the worse.
+* **Taiwan dictionary corpus** (MOE `dict-revised.json.xz`: 656935 lines, 8681563 Han characters; `tools/g4.py`): stock right and ours wrong 6780, of which not explained by preference rules **0**; ours right and stock wrong 1978; both wrong 48717.
+* Speed: 7174 lines, FIX9 0.52 s, now 0.36 s.
 
-| correction / context / drop rule | lines | helped positions | hurt positions | neutral lines |
+| correction / drop rule | lines | helped positions | hurt positions | neutral lines |
 |---|---|---|---|---|
 | drop:并产 | 16 | 16 | 0 | 0 |
 | drop:并包 | 10 | 5 | 0 | 6 |
 | drop:先尝 | 9 | 9 | 0 | 0 |
-| entry:在海里 | 6 | 6 | 0 | 0 |
-| entry:兼容并包 | 5 | 0 | 0 | 5 |
-| entry:大海里 | 5 | 5 | 0 | 0 |
-| entry:游标 | 4 | 4 | 0 | 0 |
-| entry:有云形 | 3 | 3 | 0 | 0 |
-| entry:到海里 | 2 | 2 | 0 | 0 |
-| entry:被发掘 | 2 | 2 | 0 | 0 |
 | drop:心向 | 2 | 2 | 0 | 0 |
-| entry:回归线 | 2 | 3 | 0 | 0 |
-| entry:控制台 | 2 | 0 | 0 | 2 |
-| entry:入海里 | 2 | 2 | 0 | 0 |
-| entry:有云雾 | 2 | 2 | 0 | 0 |
-| entry:没干净 | 2 | 2 | 0 | 0 |
 | drop:如干 | 2 | 3 | 0 | 0 |
-| entry:有云纹 | 2 | 2 | 0 | 0 |
-| entry:一直发抖 | 1 | 1 | 0 | 0 |
-| entry:被发配 | 1 | 1 | 0 | 0 |
-| entry:被发票 | 1 | 1 | 0 | 0 |
 | drop:了如 | 1 | 1 | 0 | 0 |
-| entry:游标卡尺 | 1 | 1 | 0 | 0 |
-| entry:被发育 | 1 | 1 | 0 | 0 |
-| entry:有云雷 | 1 | 1 | 0 | 0 |
-| entry:有云状 | 1 | 1 | 0 | 0 |
 | entry:短短几 | 1 | 1 | 0 | 0 |
-| entry:有云彩 | 1 | 1 | 0 | 0 |
 
+All other corrections have no hit in the corpus; the preference rows (marked `*` in `out/g4_12a.txt`) are the user's spellings and are expected to differ from the Taiwan dictionary.
 
 ## Round trip tables (BH2-FIX6 / FIX9, same corpus and method)
 
