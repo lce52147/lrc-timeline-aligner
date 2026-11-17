@@ -6,7 +6,7 @@
 
 The same algorithm as `opencc-python-reimplemented`'s `s2tw` (read from the installed package), run on our own tables: split at separators; in each clause take the longest phrase of `STPhrases`, the leftmost one among equally long ones, and convert the two sides the same way; characters no phrase covers go through `STCharacters`; then `TWVariants`. There is no scoring, no forward / backward comparison and no priority: a rule word is an ordinary dictionary word, so it only wins by being longer or further left. `convert_marked` still returns the marks (position and options of every character `STCharacters` maps to several forms) for the page.
 
-## The four kinds of rule (BH2-FIX11A: closed contexts only)
+## The kinds of rule (BH2-FIX11A: closed contexts only; BH2-FIX13A: whole lines, preferences keep the stock segmentation)
 
 The default is stock. A difference from stock is allowed in three forms only:
 
@@ -16,13 +16,17 @@ The default is stock. A difference from stock is allowed in three forms only:
 
 `DROPPED_PHRASES` (a stock phrase that is not used) stays only where the Taiwan dictionary corpus has no sentence that needs the stock phrase (victims 0); every other stock phrase that hides a word is covered by a longer literal word instead (短短几, 一起干杯, 被发送 ...).
 
-Totals: 26 corrections, 30 preferences, 6 dropped phrases, 1 context rule, 8 variant characters.
+4. **Whole line** (`WHOLE_LINES`, BH2-FIX13A): a table of a whole simplified line to its whole Traditional line, applied only when the line (white space at both ends aside) equals the key. The same words inside a longer line, after a comma or with one more character in front go the normal way. Used where a lyric line stands alone and no literal word can be written for it without breaking on a longer sentence.
+
+**A preference never takes a character away from the stock reading (BH2-FIX13A).** A `PREFERENCES` word that stock also has (计划, 了解, 回归, 注定 ...) only replaces the value: the segmentation is stock's. Where, with the word left out, a stock phrase crosses the border of the word (预计|划分, 估计|划算) the word keeps the stock value (預計劃分, 估計劃算); 计划 on its own is still 計畫. A literal phrase that stock does not have (点赞, 游动着 ...) is left out of the segmentation where a stock phrase crosses its border (点赞同 is 點贊同, 旅游动着 is 旅遊動著). Classes of the 30 preferences: 17 value replacements (糊里糊涂 克制 女生外向 计划 了解 胡同 死胡同 尽可能 背包 背负 回归 熏染 周而复始 注定 命中注定 命运注定 五百姻缘天注定) and 13 literal phrases (鱼类在游动 正游动在 正游动其中 交织游动吗 游动着 游动著 游过群星之间 点赞, and the five 回归 carve-outs 回归分析 线性回归 逻辑回归 回归模型 回归方程); every one has a border example in `scripts/test_zh_fix13a.py`.
+
+Totals: 25 corrections, 30 preferences, 3 whole lines, 6 dropped phrases, 1 context rule, 8 variant characters.
 
 ## Rules and their reasons
 
 Every entry lists the look-alike that must not change (negative example); `scripts/test_zh_rules_r3.py` has for every non-preference word and every context rule two sentences where it fires and two look-alikes; `scripts/test_zh_edges_r4.py` (also `cases_edges.tsv`) attacks both ends of every non-preference word with 3 left and 3 right extensions (hand-written Traditional) where it must not (the look-alikes use a different word with the same ending or beginning).
 
-### a1. Corrections of stock OpenCC (26)
+### a1. Corrections of stock OpenCC (25)
 
 | word | written | reason | negative example |
 |---|---|---|---|
@@ -50,7 +54,6 @@ Every entry lists the look-alike that must not change (negative example); `scrip
 | 不是只有一次 | 不是只有一次 | 不是 + 只有 + 一次 = 'not only once' (stock reads 是只 as 是隻) | 那不是只有斑点的狗吗 -> 那不是隻有斑點的狗嗎 |
 | 这杯酒我干了 | 這杯酒我乾了 | 'I drain this wine': stock 幹了; the word is the whole phrase | 卖酒我干了十年 -> 賣酒我幹了十年 |
 | 如果喉咙干了 | 如果喉嚨乾了 | if the throat is dry (stock 喉嚨幹了); the word is the whole phrase, so 喉咙干了坏事 stays stock | 捂着喉咙干了坏事 -> 捂著喉嚨幹了壞事 |
-| 统计划分 | 統計劃分 | stock reads 统计\|划分; the preference 计划 -> 計畫 would take the 计划 across the two words (a reading that only changes 劃 into 畫) | 我的计划 -> 我的計畫 |
 | 四库禁毁书丛刋 | 四庫禁燬書叢刋 | a book series title written with 燬 (the variant preference 毀 does not apply) | 烧毁 -> 燒毀 |
 
 ### a2. Preferences (both forms standard; the user's lyrics use this one) (30)
@@ -88,6 +91,16 @@ Every entry lists the look-alike that must not change (negative example); `scrip
 | 命运注定 | 命運注定 | both are standard; 注定 25 / 註定 0 in the lyrics | 注册 -> 註冊 |
 | 五百姻缘天注定 | 五百姻緣天注定 | both are standard; 注定 25 / 註定 0 in the lyrics | 注册 -> 註冊 |
 
+### a3. Whole lines (3)
+
+| Simplified line | Traditional | Reason | Same words in a longer line |
+|---|---|---|---|
+| 干了就没事了！ | 乾了就沒事了！ | a lyric line that stands alone (stock 幹了); a literal word fails 这份作业，干了就没事了 | 这份作业，干了就没事了！ -> 這份作業，幹了就沒事了！ |
+| 干了就没事了 | 乾了就沒事了 | the same line without its closing mark | 这份作业，干了就没事了 -> 這份作業，幹了就沒事了 |
+| 海里有各种鱼类在游动 | 海裡有各種魚類在游動 | a lyric line that stands alone (stock keeps 海里, the nautical mile) | 方圆十海里有各种鱼类在游动 -> 方圓十海里有各種魚類在游動 |
+
+All of convert_text, convert_marked (marks at the same positions), song_candidates, convert_line / convert_header and so the page's one-click conversion take this path; the tests clear the table with the other rule tables (empty = stock).
+
 ### b. Dropped stock phrases (6)
 
 | phrase | reason (positive -> result; negative -> result) |
@@ -115,31 +128,60 @@ Every entry lists the look-alike that must not change (negative example); `scrip
 * Entries deleted because their edges beat stock words: 酒我干了 (卖酒我干了十年), 海里的鱼 and 海里有各种 (十海里的鱼), 周几 (老周几点来, wins a same-length leftmost tie against 几点), 不是只有 (那不是只有斑点的狗), 新书签名 (新书签名贵), 风后来 (黄帝命风后来此), 没干透 (他没干透露机密的事, replaced by 没干透吧), 有云雀 (古人有云雀跃, replaced by 唯有云雀的声音), 星海里 (replaced by 闪烁的星海里), 一直发现 (梳着一直发现在很流行, replaced by 一直发现着 / 著), 不是只有 (replaced by 不是只有一次), and every other word that no lyric line, G5 or G6 needs: 一直发X (17 more), 一头发光/亮, 风后面, 回归线, 今天/昨天/明天干了啥, 图书签名, 没干净/燥, 熬干了, 嘴巴干了, 在/大/到/入海里, 有云X and 天上/天空/今天/明天有云, 古松开, 被发X (24 of the 28; kept 被发送 被发生 被发布 被发表), 游标 and 游标卡尺, 控制台, 周几, 面向对象的技术/语言, 毁炎, 毁犀, 老么 么儿 么妹 么弟 么女 (a 2-character word that wins a same-length tie against the word to its right).
 * Preference `游过` (guesses the sense: 我游过很多国家 is 遊過) and `游动` / `游移` (游动物园 against 动物) deleted; the lyric phrases that need them are literal preferences: 游过群星之间, 游动着 / 游动著, 正游动在, 正游动其中, 交织游动吗, 鱼类在游动.
 * Added (longer, never shorter): 如果喉咙干了, 这杯酒我干了 (the full phrase of 酒我干了), 唯有云雀的声音, 不是只有一次, 闪烁的星海里, 没干透吧, 一直发现着 / 一直发现著.
-* Kept with their own attacks because deleting them made the user's preferences hurt stock: 统计划分 (the preference 计划 -> 計畫 would cut across 统计|划分), 四库禁毁书丛刋 (the variant preference 燬 -> 毀).
+* Kept with its own attacks because deleting it made the variant preference hurt stock: 四库禁毁书丛刋 (燬 -> 毀). The entry 统计划分 was removed in BH2-FIX13A: the preference rule above now gives 統計劃分 by itself.
 
 ## Removed in BH2-FIX11A (REVIEW4: 42 + 22 sentences where stock was right and the rules were wrong)
 
 `sea` (海里), `dry-drink` / `dry-verb` / `dry-toast` / `dry-place` / `dry-compound` (干了), `zhi-demonstrative` / `zhi-adverb` (这只), `said-yun` (有云), `loose-hair` (被发), `wind-after` (风后), `curl` (卷卷), `pine` (松开), `scrape` (刮), the stock-phrase drops 一起干 / 短几 / 有云 / 被发, and the entries 一直 / 一头 / 干了啥 / 书签名 (each swallowed a longer stock word). What the user's lyrics or the dictionary corpus needed from them is a literal word now; the rest is stock.
 
+## Known trade-offs (BH2-FIX13A)
+
+The review sets of RV1d and RV2d (`s2tw_cases3.tsv`, 40 and 60 sentences) were written to break the literal words: each sentence below is a deliberately built sentence where the characters of a literal word sit next to a word of the other reading (千|总是|只有斑点的猎犬的主人, 居丧者皆被|发送|终). Any literal word can be broken that way, so these words are **not** deleted for such a sentence. The decision (2026-11-17): the user's lyrics come first; a literal word stays when the Taiwan dictionary corpus has no sentence it hurts (stock right, ours wrong: 0), the five everyday adversarial sets show no regression against stock, and the lyrics round trip holds. One sentence per word that breaks it (simplified -> ours, stock or the hand-written reading in brackets):
+
+| Word | Sentence | Ours | Reading intended |
+|---|---|---|---|
+| 一起干杯 | 我们三个一起干杯子批发的生意 | 乾杯子 | 幹 (do the cup business) |
+| 若是只有 | 若是只有毒的蜘蛛就别碰 | 只有 | 隻 |
+| 还是只想 | 它还是只想家的小猫 | 只想 | 隻 |
+| 不是只有一次 | 那不是只有一次生育机会的熊猫吗 | 只有 | 隻 |
+| 总是只有 | 千总是只有斑点的猎犬的主人 | 只有 | 隻 (千总 is a rank) |
+| 总是只在 | 千总是只在军营养大的犬 | 只在 | 隻 |
+| 没有只要 | 窝里没有只要破壳的小鸡 | 只要 | 隻 |
+| 别只是 | 这笼饲料送给别只是否合适 | 只是 | 隻 |
+| 这杯干了 | 你对这杯干了什么 | 乾了 | 幹了 |
+| 这杯酒我干了 | 这杯酒我干了什么手脚你也知道 | 乾了 | 幹了 |
+| 如果喉咙干了 | 如果喉咙干了坏事就要受罚 | 乾了 | 幹了 |
+| 没干透吧 | 大扫除没干透吧嗒响的门轴 | 沒乾透 | 沒幹 |
+| 短短几 | 大殿内摆着一张短短几案 | 短短幾案 | 几案 (a low table) |
+| 卷卷而上 | 侍从将画卷卷而上呈 | 畫捲捲而上 | 画卷|卷而上 |
+| 一直发现着 / 一直发现著 | 她梳着一直发现着迷人的光泽 | 發現 | 直髮 |
+| 闪烁的星海里 | 航向那颗闪烁的星海里数尚远 | 星海裡 | 海里 (nautical mile) |
+| 被发送 / 被发生 / 被发布 | 居丧者皆被发送终 | 被發送 | 被髮 (loose hair; classical) |
+
+What decides, in short: a word stays when it is longer than the stock word it replaces, was needed by the user's lyrics or by a Taiwan-corpus sentence, and the sentence that breaks it is a made-up one whose natural reading is the word. The measures are: MOE corpus victims 0 (outside the preferences), the five everyday sets 0 regressions, the 156 both-ends attacks of `test_zh_edges_r4.py`, the lyrics round trip. Preferences are never judged by such sentences once they keep the stock segmentation (above).
+
+Whole lines (above) are the narrowest rule: only a line equal to the key; there is no longer sentence they can break.
+
 ## Known stock limitations (not regressions: stock is wrong too, a single sentence cannot tell)
 
 * 这只 / 那只 + 有 能 会 想 要: stock reads the measure word (這隻); the adverb 這只 (这只有五分钟) is written the same, so stock stays except for the literal 总是只有 / 若是只有 / 总是只在 / 还是只想 / 没有只要 / 别只是 / 不是只有一次.
-* 干了 as 乾了 (a drink or a river finished) vs 幹了 (did): stock 幹; only the literal 这杯干了, 这杯酒我干了 and 如果喉咙干了 are 乾了. The clause-start 干了就没事了 of one lyric line is 幹了 now (a 1-line cost in the lyrics round trip).
+* 干了 as 乾了 (a drink or a river finished) vs 幹了 (did): stock 幹; only the literal 这杯干了, 这杯酒我干了 and 如果喉咙干了 are 乾了, and the whole line 干了就没事了.
 * 有云 (classical 'it is said' vs weather): stock 有云 (classical) except 唯有云雀的声音.
-* 海里 (nautical mile vs in the sea): stock 海里 except 闪烁的星海里; 在海里 / 大海里 / 到海里 are 海里 again. One lyric line (海里有各种鱼类在游动) is written 海里 now (a 1-line cost).
+* 海里 (nautical mile vs in the sea): stock 海里 except 闪烁的星海里 and the whole line 海里有各种鱼类在游动; 在海里 / 大海里 / 到海里 are 海里 again.
 * 老么 / 么儿 / 么妹 / 么弟 / 么女 (youngest child): stock writes 麼; the kana gate still does not call them simplified.
 * 旅游动态 is right (旅游 wins the leftmost tie) but 漫游过去 / 导游过来 are 漫游過 / 導游過 in stock; 周几 is 周幾; 回归线 is 迴歸線; 游标 is 遊標; 控制台 is 控制檯; 面向对象 is 面嚮對象; 今天干了啥 leaves 干 unconverted; 被发 + a verb other than 送 生 布 表 is 被髮 in stock when stock has no longer phrase; 新书签名 / 书签名 is 書籤名.
 * 髮 -> 發 inside a proper name written with 后+发 in the lyrics (the one remaining wrong meaning of the lyrics round trip besides the two lines above).
 * The page still marks every character with several Traditional forms, so the user can pick by hand.
 
-## Measurements (final HEAD, BH2-FIX12A)
+## Measurements (final HEAD, BH2-FIX13A where marked; the rest as in FIX12A)
 
 * **Empty rules = stock** (`tools/g1_all.py`): `STPhrases` 49051 words, the 530 adversarial sentences, 7174 lyric lines: 0 differences.
 * **Adversarial sets** (`tools/run_cases.py`; stock right and ours wrong / both wrong / stock wrong and ours right): `cases.tsv` 530: 0 / 35 / 24 (FIX11A: 0 / 22 / 37); REVIEW4 gemini set 100: 0 / 27 / 2 (0 / 18 / 11); REVIEW4 claude set 112: 0 / 37 / 9 (0 / 26 / 20); REVIEW4 claude-10 set 74: 0 / 28 / 10 (17 regressions before); REVIEW5 gemini set 100: 0 / 45 / 12 (0 / 8 / 49 on the FIX11A HEAD by the reviewer). Fixed went down because the rules and entries that were deleted are stock now; no case became worse than stock.
 * **Both-ends attacks** (`scripts/test_zh_edges_r4.py`, `cases_edges.tsv`): every non-preference word has 3 left and 3 right extensions with hand-written Traditional text: 156 sentences, 0 wrong.
-* **User's lyrics round trip** (169 songs, 6628 lines): wrong meaning 3, variant 14, Japanese 11. Two lines are worse than FIX9 because their words broke on the both-ends attack and were not kept: the clause-start 干了就没事了 (S01: 这份作业，干了就没事了) and 海里有各种鱼类在游动 (十二海里有各种鱼类在游动). `tools/lyrics_diff.py` against FIX9: 2 of 7174 lines differ, both for the worse.
-* **Taiwan dictionary corpus** (MOE `dict-revised.json.xz`: 656935 lines, 8681563 Han characters; `tools/g4.py`): stock right and ours wrong 6780, of which not explained by preference rules **0**; ours right and stock wrong 1978; both wrong 48717.
-* Speed: 7174 lines, FIX9 0.52 s, now 0.36 s.
+* **User's lyrics round trip** (169 songs, 6628 lines; BH2-FIX13A): wrong meaning 1, variant 14, Japanese 11 (FIX12A: wrong 3, the two stand-alone lines now come back through the whole-line table).
+* **Taiwan dictionary corpus** (MOE `dict-revised.json.xz`; `tools/g4.py`; BH2-FIX13A): 656935 lines, 8681563 Han characters: stock right and ours wrong 6765, of which not explained by preference rules **0**; ours right and stock wrong 1957; both wrong 48738 (`out13/g4_13a.txt`).
+* Speed: 7174 lines, FIX9 0.56 s, now 0.40 s (BH2-FIX13A).
+* **Adversarial sets, BH2-FIX13A** (regression / still wrong / fixed): 530: 0 / 38 / 21; RV2d 100: 0 / 27 / 2; RV1d 112: 0 / 38 / 8; RV1d2 74: 0 / 28 / 10; RV2d2 100: 0 / 45 / 12. Fixed went down by four (胡同学, 胡同志, 耗尽可能, 了解了 were right only because the preference crossed a stock word; they are stock now). RV1d cases3 (40): 6 regressions (9 before; R24 and R26 are right); RV2d cases3 (60): 47 (unchanged: the made-up literal-word sentences above).
 
 | correction / drop rule | lines | helped positions | hurt positions | neutral lines |
 |---|---|---|---|---|
