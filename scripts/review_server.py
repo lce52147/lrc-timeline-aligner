@@ -3170,7 +3170,7 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
         try:
             json.dumps(body, ensure_ascii=False).encode("utf-8")  # a lone surrogate (a truncated emoji) cannot be written as UTF-8
         except UnicodeEncodeError:
-            self._json(400, {"error": "送出的內容裡有不完整的字元（例如被截斷的表情符號），沒有處理。請刪掉那個字元後再試。", "code": "bad_text"})
+            self._json(400, {"error": "送出的內容裡有不完整的字元（例如被截斷的表情符號，或檔名裡的壞字），沒有處理。請刪掉那個字元，或先把檔案改名後再試。", "code": "bad_text"})
             return
         except RecursionError:
             self._send(400, b"invalid json\n", "text/plain; charset=utf-8")

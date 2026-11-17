@@ -2490,7 +2490,7 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         self.assertEqual([song["song"] for song in store.songs], [f"many-{index:02d}" for index in range(12)])
         self.assertEqual(json.dumps(store.songs, default=str, sort_keys=True), json.dumps(expected, default=str, sort_keys=True))
 
-    BAD_TEXT = {"error": "送出的內容裡有不完整的字元（例如被截斷的表情符號），沒有處理。請刪掉那個字元後再試。", "code": "bad_text"}
+    BAD_TEXT = {"error": "送出的內容裡有不完整的字元（例如被截斷的表情符號，或檔名裡的壞字），沒有處理。請刪掉那個字元，或先把檔案改名後再試。", "code": "bad_text"}
 
     def _tree_state(self) -> dict:
         return {str(p.relative_to(self.root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(self.root.rglob("*")) if p.is_file()}
@@ -2522,6 +2522,32 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
                 self.assertEqual(json.loads(raw), self.BAD_TEXT)
                 self.assertEqual(self._tree_state(), before)
                 self.assertEqual(self._request("GET", "/api/songs", **{"X-Review-Token": self.server.token})[0], 200)
+
+    def test_a_file_name_with_a_lone_surrogate_is_listed_by_inspect_and_refused_by_jobs(self) -> None:
+        self.server.jobs = review_server.JobRunner(self.store, self.root)
+        folder = self.root / "badname"
+        folder.mkdir()
+        bad = folder / "a\ud800b.flac"
+        try:
+            bad.write_bytes(b"x")
+        except (OSError, UnicodeError, ValueError) as exc:
+            self.skipTest(f"this file system cannot create a lone-surrogate name: {exc}")
+        try:
+            status, _h, raw = self._json_request("POST", "/api/import/inspect", {"paths": [str(folder)]})
+            self.assertEqual(status, 200, raw)
+            items = json.loads(raw)["items"]
+            self.assertEqual([item["audio"] for item in items], [str(bad)])
+            before = self._tree_state()
+            status, _h, raw = self._json_request("POST", "/api/jobs", {"items": [{"audio": items[0]["audio"]}]})
+            self.assertEqual(status, 400, raw)
+            self.assertEqual(json.loads(raw), self.BAD_TEXT)
+            self.assertEqual(self.server.jobs.jobs, [])
+            self.assertEqual(self._tree_state(), before)
+        finally:
+            try:
+                bad.unlink()
+            except OSError:
+                pass
 
     def test_emoji_in_a_post_body_still_works_as_a_pair_and_as_utf8(self) -> None:
         self.server.jobs = review_server.JobRunner(self.store, self.root)
