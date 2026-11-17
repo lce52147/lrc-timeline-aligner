@@ -1101,6 +1101,10 @@ def _save_romaji(song, body):
         return 403, {"error": song["read_only_reason"] or "read-only"}
     if set(body) - {"entry", "romaji", "surface", "reading", "clear"}:
         return 400, {"error": "unknown fields"}
+    if song["output"] is not None:
+        refusal = _encoding_refusal(song["output"])   # the line text is read from a file of uncertain encoding: it would become a mojibake key, or a mojibake word in the shared dictionary
+        if refusal:
+            return refusal
     try:
         entry = int(body.get("entry"))
     except (TypeError, ValueError):
@@ -1177,7 +1181,7 @@ def _apply_harmony(song, hashes):
 
 
 PAGE_OUTDATED_MESSAGE = "審聽頁是舊版（程式剛更新），這次沒有寫入任何東西；請按 F5 重新載入"
-ENCODING_UNCERTAIN_MESSAGE = "這個檔的編碼無法確定（可能是 Big5 或 GBK），為了不把歌詞存成亂碼，這裡不能修改或匯出。請用記事本另存成 UTF-8 後重新整理。"
+ENCODING_UNCERTAIN_MESSAGE = "這個檔的編碼無法確定，為了不把歌詞存成亂碼，這裡不能修改、轉換、標讀音或匯出。請用文字編輯器以正確的編碼開啟（看得到正確歌詞）後另存成 UTF-8，再重新整理。"
 
 
 def _encoding_refusal(output):
@@ -1190,7 +1194,8 @@ def _encoding_refusal(output):
         return None   # a missing or unreadable file is answered by the guards that follow
     if not lrc_encoding_uncertain(raw):
         return None
-    return 409, {"error": "encoding_uncertain", "message": ENCODING_UNCERTAIN_MESSAGE}
+    # ``error`` is the whole sentence so a page from before this check, which shows ``error`` as it is, reads it; ``code`` is what a current page tests
+    return 409, {"error": ENCODING_UNCERTAIN_MESSAGE, "code": "encoding_uncertain", "message": ENCODING_UNCERTAIN_MESSAGE}
 
 
 def _same_report(claimed, report):

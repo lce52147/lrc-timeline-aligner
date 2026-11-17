@@ -45,7 +45,7 @@ async function boot(storage, songs, opts = {}) {
         const s = songs[Number(m[1])], body = JSON.parse(options.body);
         saves.push({index: Number(m[1]), body});
         if (opts.saveGate) await opts.saveGate;
-        if (opts.saveUncertain) return response(false, 409, {error: 'encoding_uncertain', message: UNCERTAIN_TEXT});
+        if (opts.saveUncertain) return response(false, 409, {error: UNCERTAIN_TEXT, code: 'encoding_uncertain', message: UNCERTAIN_TEXT});
         if (opts.save409) {
           if (opts.save409Changes) { s.sha = s.sha + '-ext'; s.rows.forEach(r => { r.current_cs += 1000; }); } // someone else changed the file
           return response(false, 409, {error: 'stale base_sha256'});
@@ -82,7 +82,7 @@ async function boot(storage, songs, opts = {}) {
     edit(index, entry, cs, nudge = 50) { tab.t.stage(tab.rowOf(index, entry), cs, 'manual', nudge); }};
   return tab;
 }
-const UNCERTAIN_TEXT = '這個檔的編碼無法確定（可能是 Big5 或 GBK），為了不把歌詞存成亂碼，這裡不能修改或匯出。請用記事本另存成 UTF-8 後重新整理。';
+const UNCERTAIN_TEXT = '這個檔的編碼無法確定，為了不把歌詞存成亂碼，這裡不能修改、轉換、標讀音或匯出。請用文字編輯器以正確的編碼開啟（看得到正確歌詞）後另存成 UTF-8，再重新整理。';
 const mk = (name, report, sha = 's', rows) => ({name, report, sha, rows: rows || [{entry: 1, current_cs: 100}, {entry: 2, current_cs: 500}]});
 const drafts = storage => JSON.parse(storage.map.get(KEY) || '{}');
 const tests = [];

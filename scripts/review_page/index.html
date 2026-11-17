@@ -230,7 +230,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       const response = await fetch(path, Object.assign({}, options, guard ? {headers, signal:guard.signal} : {headers}));
       const data = await response.json().catch(() => ({error:response.statusText}));
       if (response.status === 409 && data.song_changed) { queueMicrotask(() => { load().catch(() => {}); }); throw Error(data.error); }
-      if (!response.ok) { const failure = Error(response.status === 403 ? '伺服器不接受這個頁面（可能已重新啟動，請重新開啟 Review LRC）' : (data.message || data.error || response.statusText)); failure.code = data.error; throw failure; }
+      if (!response.ok) { const failure = Error(response.status === 403 ? '伺服器不接受這個頁面（可能已重新啟動，請重新開啟 Review LRC）' : (data.message || data.error || response.statusText)); failure.code = data.code || data.error; throw failure; }
       return data;
     } catch (error) {
       if (guard && error && (error.name === 'AbortError' || error.name === 'TypeError')) throw Error('伺服器沒有回應');
@@ -274,7 +274,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
     String(Math.floor(cs/6000)).padStart(2,'0') + ':' + String(Math.floor(cs%6000/100)).padStart(2,'0') + '.' + String(cs%100).padStart(2,'0');
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   // the same sentence the server answers a refused write with (review_server.ENCODING_UNCERTAIN_MESSAGE)
-  const ENCODING_UNCERTAIN_TEXT = '這個檔的編碼無法確定（可能是 Big5 或 GBK），為了不把歌詞存成亂碼，這裡不能修改或匯出。請用記事本另存成 UTF-8 後重新整理。';
+  const ENCODING_UNCERTAIN_TEXT = '這個檔的編碼無法確定，為了不把歌詞存成亂碼，這裡不能修改、轉換、標讀音或匯出。請用文字編輯器以正確的編碼開啟（看得到正確歌詞）後另存成 UTF-8，再重新整理。';
   // the notes about how the file was read (several times on a line, [offset:] headers); one place so a test can run it on its own
   function fileShapeNotes(detail) {
     const notes = [];
@@ -1622,7 +1622,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
           body:JSON.stringify(saveBody(song, sending))
         });
         const data = await response.json().catch(() => ({error:response.statusText}));
-        if (response.status === 409 && data.error === 'encoding_uncertain') {
+        if (response.status === 409 && data.code === 'encoding_uncertain') {
           notes.push(data.message || ENCODING_UNCERTAIN_TEXT);   // not an error: the staged edits stay as they are, in the draft too
           continue;
         }
@@ -1756,7 +1756,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       try {
         const result = await api('/api/song/' + item.song.index + '/romaji', {method:'POST', body:JSON.stringify(Object.assign({song_id:draftId(item.song), entry:item.row.entry}, body))});
         return result;
-      } catch (error) { edit.message = error.message; render(); return null; }
+      } catch (error) { edit.message = error.message; render(); return null; }   // the typed text stays in the box; a refusal for an uncertain encoding reads as the same sentence
     };
     const done = async result => {
       if (!result) return;
