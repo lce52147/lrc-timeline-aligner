@@ -23,9 +23,15 @@ The default is stock. A difference from stock is allowed in three forms only:
 1. *Is there a dispute?* With the word left out, a stock phrase crosses its border. It is a dispute only when that phrase writes the **overlapping characters** differently from the preference: 了解了 has the crossing phrase 解了, whose 解 is the same as the 解 of 了解, so no dispute, the preference stands (我了解了, 终于了解了, 了解了一切); 计划分 has 划分, whose 划 is 劃 where the preference writes 畫: a dispute. `tests: PreferenceDisputeTests.test_which_crossing_phrases_dispute_which_word` computes the list straight from STPhrases: only 13 of the 17 words have any disputing phrase (糊里糊涂 涂+name, 克制 克+制X, 女生外向 向X, 计划 划X and X计划, 了解 不了解/据了解/明了, 胡同 X胡, 尽可能 尽尽, 背包 背包袱/被人背, 背负, 回归 X回/回归线, 熏染 香熏, 周而复始 X周, 注定 X注), and only the right-hand ones (the crossing phrase no longer than the word) can matter, because a longer or more left phrase is chosen by stock first and the word is never picked. Practically the real dispute is 计划 against 划X.
 2. *Who wins a dispute?* The stock value, but only when the character right **before** the word is in the word's closed set `KEEP_STOCK_AFTER`; otherwise the preference. 计划: 预 估 统 设 合 总 共 累 会 审 核 小 (each forms a word with 计: 预计 估计 统计 设计 合计 总计 共计 累计 会计 审计 核计 小计; stock itself picks 计划 in 预计划分 because 预计 is not a stock phrase, so this set is what keeps 預計劃分). 周而复始: 一 七 三 上 下 两 二 五 八 六 十 单 双 可 当 数 整 本 每 隔 (every X with a stock phrase X周 = X週: 一周|而复始 is a week). A word with no entry never gives the value back. The set is a closed list, not a rule that can grow by itself.
 
-Results: 我了解了 -> 我了解了, 克制住自己 -> 克制住自己, 注定了 -> 注定了, 这个计划一定会成功 -> 這個計畫一定會成功, 计划一下 -> 計畫一下, 计划分三步走 -> 計畫分三步走; 预计划分三组进行 -> 預計劃分三組進行, 我估计划算不来 -> 我估計劃算不來, 统计划分 -> 統計劃分, 设计划船路线清晰 -> 設計劃船路線清晰, 总统计划分三步 -> 總統計劃分三步 (the set keeps the stock value: 统 is in it). A literal phrase that stock does not have (点赞, 游动着 ...) is unchanged: it is left out of the segmentation where any stock phrase crosses its border (点赞同意 is 點贊同意, 旅游动着 is 旅遊動著). Classes of the 30 preferences: 17 value replacements (糊里糊涂 克制 女生外向 计划 了解 胡同 死胡同 尽可能 背包 背负 回归 熏染 周而复始 注定 命中注定 命运注定 五百姻缘天注定) and 13 literal phrases (鱼类在游动 正游动在 正游动其中 交织游动吗 游动着 游动著 游过群星之间 点赞, and the five 回归 carve-outs 回归分析 线性回归 逻辑回归 回归模型 回归方程); every one has an example in `scripts/test_zh_fix13a.py` and `scripts/test_zh_fix14a.py`.
+Results: 我了解了 -> 我了解了, 克制住自己 -> 克制住自己, 注定了 -> 注定了, 这个计划一定会成功 -> 這個計畫一定會成功, 计划一下 -> 計畫一下, 计划分三步走 -> 計畫分三步走; 预计划分三组进行 -> 預計劃分三組進行, 我估计划算不来 -> 我估計劃算不來, 统计划分 -> 統計劃分, 设计划船路线清晰 -> 設計劃船路線清晰, 总统计划分三步 -> 總統計劃分三步 (the set keeps the stock value: 统 is in it). A literal phrase that stock does not have (点赞, 游动着 ...) is unchanged: it is left out of the segmentation where any stock phrase crosses its border (点赞同意 is 點贊同意, 旅游动着 is 旅遊動著). Classes of the 26 preferences: 17 value replacements (糊里糊涂 克制 女生外向 计划 了解 胡同 死胡同 尽可能 背包 背负 回归 熏染 周而复始 注定 命中注定 命运注定 五百姻缘天注定) and 13 literal phrases (鱼类在游动 正游动在 正游动其中 交织游动吗 游动着 游动著 游过群星之间 点赞, and the five 回归 carve-outs 回归分析 线性回归 逻辑回归 回归模型 回归方程); every one has an example in `scripts/test_zh_fix13a.py` and `scripts/test_zh_fix14a.py`.
 
-Totals: 25 corrections, 30 preferences, 3 whole lines, 6 dropped phrases, 1 context rule, 8 variant characters.
+**A preference also applies inside a longer stock phrase (BH2-FIX15A).** Where stock picks a longer word that holds the preference word, the preference used to be lost: 据了解 (stock phrase 据了解, 據瞭解), 我克制 / 要克制 / 克制不住, 计划好 / 没有计划, 回归线. The values are now **derived from STPhrases when the tables are loaded** (`derived_preferences`, no hand-written list): for every `PREFERENCES` word P that stock also has (stock value S, preference value V) and every longer stock phrase K that holds P, where K's stock value writes those characters as S (stock reads them as the word P), K's value is K's stock value with S at that place replaced by V and every other character left alone. A K with two preference words changes both places. Not derived: a K that is itself an ENTRIES word (an explicit entry wins: 回归分析, 线性回归, 逻辑回归 stay 迴歸); a K where another stock phrase (not K, not P) *partly* overlaps P and writes the overlapping characters differently from V (the same test as the dispute check above; 相克制 is 相剋制 because 相克 is a word; a phrase that holds all of P is itself a candidate and does not block); and the closed list `NOT_DERIVED` (1 word, at most 5: 背包袱, where 背 is the verb and 包袱 the noun, 背包 is not the backpack). With `PREFERENCES` empty nothing is derived (G1 holds). The derived words are ordinary dictionary words (not fixed spans: the variant preference still applies to the other characters). The explicit `PREFERENCES` words 死胡同, 命中注定, 命运注定, 五百姻缘天注定 were deleted: the derivation writes the same value (the test that every entry changes an output found them).
+
+Number of derived stock phrases per word (`out15/pref_inside.tsv` of the work folder): 了解 3, 克制 29, 计划 41, 回归 6, 注定 3, 胡同 4 = 86 phrases; 1 excluded by the partial-overlap test (相克制). Results: 我不了解你 -> 我不了解你, 据了解 -> 據了解, 我克制不住 -> 我克制不住, 无法克制 -> 無法克制, 不克制 -> 不克制, 我克制住了眼泪 -> 我克制住了眼淚, 你要克制一下自己 -> 你要克制一下自己, 没有计划 -> 沒有計畫, 计划书 -> 計畫書, 有计划地进行 -> 有計畫地進行, 计划好了就出发 -> 計畫好了就出發, 你的计划好吗 -> 你的計畫好嗎, 回归线 -> 回歸線; unchanged: 预计划分三组进行 -> 預計劃分三組進行, 点赞同意 -> 點贊同意, 一周而复始 -> 一週而復始.
+
+The closed sets of `KEEP_STOCK_AFTER` also accept the Traditional forms of their characters (every STCharacters value), so a mixed line works too: 預计划分三组 -> 預計劃分三組.
+
+Totals: 25 corrections, 26 preferences, 3 whole lines, 6 dropped phrases, 1 context rule, 8 variant characters.
 
 ## Rules and their reasons
 
@@ -61,7 +67,7 @@ Every entry lists the look-alike that must not change (negative example); `scrip
 | 如果喉咙干了 | 如果喉嚨乾了 | if the throat is dry (stock 喉嚨幹了); the word is the whole phrase, so 喉咙干了坏事 stays stock | 捂着喉咙干了坏事 -> 捂著喉嚨幹了壞事 |
 | 四库禁毁书丛刋 | 四庫禁燬書叢刋 | a book series title written with 燬 (the variant preference 毀 does not apply) | 烧毁 -> 燒毀 |
 
-### a2. Preferences (both forms standard; the user's lyrics use this one) (30)
+### a2. Preferences (both forms standard; the user's lyrics use this one) (26)
 
 | word | written | reason | negative example |
 |---|---|---|---|
@@ -79,7 +85,6 @@ Every entry lists the look-alike that must not change (negative example); `scrip
 | 了解 | 了解 | both are standard; 了解 4 / 瞭解 1 | 了如指掌 -> 瞭如指掌 |
 | 点赞 | 點讚 | both are standard; 點讚 1 / 點贊 0 | 赞美 -> 讚美 |
 | 胡同 | 胡同 | both are standard; 胡同 1 / 衚衕 0 | 胡子 -> 鬍子 |
-| 死胡同 | 死胡同 | both are standard; 死胡同 1 / 死衚衕 0 | 胡子 -> 鬍子 |
 | 尽可能 | 盡可能 | both are standard; 盡可能 1 / 儘可能 0 | 尽管 -> 儘管 |
 | 背包 | 背包 | both are standard; 背包 29 / 揹包 1 | 背叛 -> 背叛 |
 | 背负 | 背負 | both are standard; 背負 / 揹負 | 背叛 -> 背叛 |
@@ -92,9 +97,6 @@ Every entry lists the look-alike that must not change (negative example); `scrip
 | 熏染 | 燻染 | both are standard; 燻染 1 / 薰染 0 | 熏陶 -> 薰陶 |
 | 周而复始 | 周而復始 | both are standard; 周而復始 3 / 週而復始 0 | 周末 -> 週末 |
 | 注定 | 注定 | both are standard; 注定 25 / 註定 0 in the lyrics (註冊 註解 備註 are 註 in Taiwan and stay stock) | 注册 -> 註冊 |
-| 命中注定 | 命中注定 | both are standard; 注定 25 / 註定 0 in the lyrics | 注册 -> 註冊 |
-| 命运注定 | 命運注定 | both are standard; 注定 25 / 註定 0 in the lyrics | 注册 -> 註冊 |
-| 五百姻缘天注定 | 五百姻緣天注定 | both are standard; 注定 25 / 註定 0 in the lyrics | 注册 -> 註冊 |
 
 ### a3. Whole lines (3)
 
@@ -166,6 +168,8 @@ The review sets of RV1d and RV2d (`s2tw_cases3.tsv`, 40 and 60 sentences) were w
 What decides, in short: a word stays when it is longer than the stock word it replaces, was needed by the user's lyrics or by a Taiwan-corpus sentence, and the sentence that breaks it is a made-up one whose natural reading is the word. The measures are: MOE corpus victims 0 (outside the preferences), the five everyday sets 0 regressions, the 156 both-ends attacks of `test_zh_edges_r4.py`, the lyrics round trip. Preferences are never judged by such sentences: they use the stock segmentation and the two-step dispute check (above).
 
 Whole lines (above) are the narrowest rule: only a line equal to the key; there is no longer sentence they can break.
+
+**N1 (BH2-FIX15A).** After a character that is also a word of its own (会 小 总 共) and in the closed set of 计划, 计划 followed by a 划X word stays stock 計劃: `我会计划一下` is 我會計劃一下 (stock reads 会计 + 划一下). The result equals stock, so it is never worse than stock.
 
 ## Known stock limitations (not regressions: stock is wrong too, a single sentence cannot tell)
 
