@@ -29,9 +29,9 @@ Results: 我了解了 -> 我了解了, 克制住自己 -> 克制住自己, 注�
 
 Number of derived stock phrases per word (`out15/pref_inside.tsv` of the work folder): 了解 3, 克制 29, 计划 41, 回归 6, 注定 3, 胡同 4 = 86 phrases; 1 excluded by the partial-overlap test (相克制). Results: 我不了解你 -> 我不了解你, 据了解 -> 據了解, 我克制不住 -> 我克制不住, 无法克制 -> 無法克制, 不克制 -> 不克制, 我克制住了眼泪 -> 我克制住了眼淚, 你要克制一下自己 -> 你要克制一下自己, 没有计划 -> 沒有計畫, 计划书 -> 計畫書, 有计划地进行 -> 有計畫地進行, 计划好了就出发 -> 計畫好了就出發, 你的计划好吗 -> 你的計畫好嗎, 回归线 -> 回歸線; unchanged: 预计划分三组进行 -> 預計劃分三組進行, 点赞同意 -> 點贊同意, 一周而复始 -> 一週而復始.
 
-The closed sets of `KEEP_STOCK_AFTER` also accept the Traditional forms of their characters (every STCharacters value), so a mixed line works too: 預计划分三组 -> 預計劃分三組.
+The closed sets of `KEEP_STOCK_AFTER` also accept the Traditional forms of their characters (every STCharacters value), so a mixed line works too: 預计划分三组 -> 預計劃分三組. The dispute check looks at the Simplified spelling of that character, so 兩周而复始 is 兩週而復始 (= stock) like 两周而复始 (BH2-FIX16A, N1; before, the Traditional 兩 雙 數 當 單 in the 周而复始 set did nothing).
 
-Totals: 25 corrections, 26 preferences, 3 whole lines, 6 dropped phrases, 1 context rule, 8 variant characters.
+Totals: 25 corrections, 26 preferences, 4 whole lines, 6 dropped phrases, 1 context rule, 8 variant characters.
 
 ## Rules and their reasons
 
@@ -168,6 +168,8 @@ The review sets of RV1d and RV2d (`s2tw_cases3.tsv`, 40 and 60 sentences) were w
 What decides, in short: a word stays when it is longer than the stock word it replaces, was needed by the user's lyrics or by a Taiwan-corpus sentence, and the sentence that breaks it is a made-up one whose natural reading is the word. The measures are: MOE corpus victims 0 (outside the preferences), the five everyday sets 0 regressions, the 156 both-ends attacks of `test_zh_edges_r4.py`, the lyrics round trip. Preferences are never judged by such sentences: they use the stock segmentation and the two-step dispute check (above).
 
 Whole lines (above) are the narrowest rule: only a line equal to the key; there is no longer sentence they can break.
+
+**BH2-FIX16A, derived phrases and KEEP_STOCK_AFTER (M1).** (a) A derived phrase K that *starts* with a `KEEP_STOCK_AFTER` word P (计划好) uses K's stock value when the character right before K is in the closed set of P (including its Traditional forms): 线我估计划好了 -> 線我估計劃好了, 预计划好了路线 -> 預計劃好了路線 (估计 / 预计 + 划好 are the real words); 计划好了就出发 and 你的计划好吗 stay 計畫. (b) A phrase K where the character before P *inside* K is in the closed set of P is not derived at all (decided by `derived_preferences` from the set, no hand-written word; of the 86 phrases only 核计划, 核计 + 划拨): 我们核计划拨的款项 -> 我們核計劃撥的款項, 审核计划 -> 審核計劃 (= stock). Derived phrases are now 85. Cost, the same trade-off as N1: 我们会计划好的 / 总计划书 -> 計劃 (= stock). One more whole line (4 in total): a line of the user's that writes 不瞭解 stands alone and is the same line in the round trip (G3 variant 14 again); the same words in a longer line follow the preference (他说我不了解生命的意义 -> 他說我不了解生命的意義).
 
 **N1 (BH2-FIX15A).** After a character that is also a word of its own (会 小 总 共) and in the closed set of 计划, 计划 followed by a 划X word stays stock 計劃: `我会计划一下` is 我會計劃一下 (stock reads 会计 + 划一下). The result equals stock, so it is never worse than stock.
 
