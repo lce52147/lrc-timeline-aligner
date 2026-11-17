@@ -2232,15 +2232,21 @@ def _inspect_imports(paths):
     return {"items": items, "skipped": skipped}
 
 
-def _os_error_reason(exc):
-    """A short Chinese reason for an OSError the review page shows (the system's own text can be English)."""
+def _os_error_reason(exc, path=None):
+    """A short Chinese reason for an OSError the review page shows (the system's own text can be English).
+
+    Windows raises PermissionError (not IsADirectoryError) when a folder is opened as a file, so the path is checked first.
+    """
+    if path is not None and os.path.isdir(path):
+        return "這是資料夾，不是檔案"
     if isinstance(exc, FileNotFoundError):
         return "檔案不存在"
     if isinstance(exc, PermissionError):
         return "沒有權限"
-    if isinstance(exc, IsADirectoryError):
+    if isinstance(exc, IsADirectoryError):  # only POSIX raises this
         return "這是資料夾，不是檔案"
-    return "系統回報：" + str(exc.strerror or exc)
+    detail = str(exc.strerror or exc).strip().rstrip("。.．").rstrip()  # a Chinese Windows message already ends with 。
+    return "系統回報：" + detail if detail else "系統回報錯誤"
 
 
 def _write_lyrics(audio, text=None, source=None):
@@ -2251,13 +2257,15 @@ def _write_lyrics(audio, text=None, source=None):
         return 400, {"error": "找不到這個音檔，沒有儲存歌詞。"}
     if _find_lyrics(audio) is not None:
         return 409, {"error": "這首歌已經有歌詞檔了，沒有覆蓋它。", "lyrics": str(_find_lyrics(audio))}
+    if source and not isinstance(source, str):
+        return 400, {"error": "歌詞檔的路徑不是文字，沒有儲存歌詞。"}
     if source:
         try:
             text = read_lyric_text(source)[0]
         except text_encoding.LyricEncodingError as exc:
             return 400, {"error": str(exc)}
         except OSError as exc:
-            return 400, {"error": f"讀不到歌詞檔 {source}（{_os_error_reason(exc)}）。"}
+            return 400, {"error": f"讀不到歌詞檔 {source}（{_os_error_reason(exc, source)}）。"}
         except ValueError:
             return 400, {"error": f"讀不到歌詞檔 {source}。"}
     if not isinstance(text, str) or not text.strip():
@@ -2267,7 +2275,7 @@ def _write_lyrics(audio, text=None, source=None):
         with open(target, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(text.replace("\r\n", "\n").rstrip("\n") + "\n")
     except OSError as exc:
-        return 500, {"error": f"歌詞寫不進去（{_os_error_reason(exc)}）。"}
+        return 500, {"error": f"歌詞寫不進去（{_os_error_reason(exc, target)}）。"}
     return 200, {"lyrics": str(target)}
 
 
