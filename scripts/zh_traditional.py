@@ -293,10 +293,12 @@ def _base():
 
 
 def _tables():
-    """``(phrases, characters, variants, traditional_only, longest, split, context, entry_keys, stock_value, whole, literal, keep)`` or None when the OpenCC dictionaries cannot be read.
+    """``(phrases, characters, variants, traditional_only, longest, split, context, entry_keys, stock_value, whole, literal, keep, keep_simple, derived_start)`` or None when the OpenCC dictionaries cannot be read.
 
     ``phrases`` is STPhrases without DROPPED_PHRASES plus ENTRIES, ``context`` the compiled CONTEXT_RULES. The rule tables are read
-    when the tables are first built; set ``_dicts = None`` after changing them (the tests do)."""
+    when the tables are first built; set ``_dicts = None`` after changing them (the tests do).
+    ``keep_simple`` maps a Traditional form to its Simplified KEEP_STOCK_AFTER character; ``derived_start`` maps a derived phrase that starts
+    with a KEEP_STOCK_AFTER word to its stock value."""
     global _dicts
     if _dicts is None:
         _dicts = False
