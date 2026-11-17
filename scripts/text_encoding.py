@@ -146,12 +146,12 @@ def read_lyric_text(path):
         text, codec, uncertain = _decode_lrc_checked(raw)
     except LrcDecodeError:
         raise LyricEncodingError(
-            f"無法判斷歌詞檔 {path} 的文字編碼（不是 UTF-8、UTF-16、Shift-JIS、Big5 或 GB18030）。"
-            "請用記事本或編輯器另存成 UTF-8 後再試。"
+            f"無法判斷歌詞檔 {path} 的文字編碼，為了不把歌詞讀成亂碼，已拒絕讀取。"
+            "請用文字編輯器以正確的編碼開啟（看得到正確歌詞）後另存成 UTF-8，再試一次。"
         ) from None
     if uncertain:
         raise LyricEncodingError(
-            f"歌詞檔 {path} 的編碼無法確定，可能是 Big5（繁體）、GB18030／GBK（簡體）或 Shift-JIS（日文）。"
-            "為避免產生亂碼，已拒絕讀取；請用記事本或編輯器另存成 UTF-8 後再試。"
+            f"歌詞檔 {path} 的編碼無法確定，為了不把歌詞讀成亂碼，已拒絕讀取。"
+            "請用文字編輯器以正確的編碼開啟（看得到正確歌詞）後另存成 UTF-8，再試一次。"
         )
     return text, codec

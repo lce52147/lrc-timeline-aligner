@@ -17,6 +17,8 @@ import text_encoding
 from runtime_base import LrcError
 
 SIMPLIFIED_LINES = ["这是第一句歌词", "爱你一万年", "我们都是好孩子"]
+# the advice the review page gives for an LRC of uncertain encoding (index.html ENCODING_UNCERTAIN_TEXT)
+REFUSAL_ADVICE = "請用文字編輯器以正確的編碼開啟（看得到正確歌詞）後另存成 UTF-8"
 TRADITIONAL_LINES = ["這是第一句歌詞，請你相信我", "愛你一萬年，我的朋友", "我們都是好孩子，一起唱歌"]
 JAPANESE_LINES = ["これはテストです", "ひらがなとカタカナ", "夜空の星を見上げて"]
 
@@ -82,8 +84,10 @@ class ReadUserLyricsTests(unittest.TestCase):
         with self.assertRaises(LrcError) as caught:
             lyrics_io.load_lyrics(path)
         message = str(caught.exception)
-        for word in ("無法確定", "Big5", "GB18030", "Shift-JIS", "UTF-8"):
-            self.assertIn(word, message)
+        self.assertIn("無法確定", message)
+        self.assertIn(REFUSAL_ADVICE, message)
+        for word in ("記事本", "Big5", "GB18030", "Shift-JIS"):
+            self.assertNotIn(word, message)
 
     def test_kanji_only_shift_jis_is_refused_as_uncertain(self):
         with self.assertRaises(LrcError):
@@ -93,6 +97,8 @@ class ReadUserLyricsTests(unittest.TestCase):
         with self.assertRaises(LrcError) as caught:
             lyrics_io.load_lyrics(self._write("junk.txt", b"abc\x81\x20\xff\xff\xfe\n"))
         self.assertIn("無法判斷", str(caught.exception))
+        self.assertIn(REFUSAL_ADVICE, str(caught.exception))
+        self.assertNotIn("記事本", str(caught.exception))
 
     def test_preflight_and_anchor_hints_use_the_same_reader(self):
         gbk = self._write("gbk.txt", "\n".join(SIMPLIFIED_LINES).encode("gb18030"))
