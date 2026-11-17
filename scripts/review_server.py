@@ -2232,26 +2232,42 @@ def _inspect_imports(paths):
     return {"items": items, "skipped": skipped}
 
 
+def _os_error_reason(exc):
+    """A short Chinese reason for an OSError the review page shows (the system's own text can be English)."""
+    if isinstance(exc, FileNotFoundError):
+        return "檔案不存在"
+    if isinstance(exc, PermissionError):
+        return "沒有權限"
+    if isinstance(exc, IsADirectoryError):
+        return "這是資料夾，不是檔案"
+    return "系統回報：" + str(exc.strerror or exc)
+
+
 def _write_lyrics(audio, text=None, source=None):
     """Save pasted lyrics (or copy a chosen lyric file) as <song>.lyrics.txt beside the FLAC."""
+    import text_encoding
     audio = pathlib.Path(audio)
     if not audio.is_file() or not runtime_paths.is_audio_file(audio):
-        return 400, {"error": "audio not found"}
+        return 400, {"error": "找不到這個音檔，沒有儲存歌詞。"}
     if _find_lyrics(audio) is not None:
-        return 409, {"error": "lyrics already exist", "lyrics": str(_find_lyrics(audio))}
+        return 409, {"error": "這首歌已經有歌詞檔了，沒有覆蓋它。", "lyrics": str(_find_lyrics(audio))}
     if source:
         try:
             text = read_lyric_text(source)[0]
-        except (OSError, ValueError) as exc:
-            return 400, {"error": f"cannot read lyrics: {exc}"}
+        except text_encoding.LyricEncodingError as exc:
+            return 400, {"error": str(exc)}
+        except OSError as exc:
+            return 400, {"error": f"讀不到歌詞檔 {source}（{_os_error_reason(exc)}）。"}
+        except ValueError:
+            return 400, {"error": f"讀不到歌詞檔 {source}。"}
     if not isinstance(text, str) or not text.strip():
-        return 400, {"error": "empty lyrics"}
+        return 400, {"error": "歌詞是空的，沒有儲存。"}
     target = audio.with_name(audio.stem + ".lyrics.txt")
     try:
         with open(target, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(text.replace("\r\n", "\n").rstrip("\n") + "\n")
     except OSError as exc:
-        return 500, {"error": f"cannot write lyrics: {exc}"}
+        return 500, {"error": f"歌詞寫不進去（{_os_error_reason(exc)}）。"}
     return 200, {"lyrics": str(target)}
 
 

@@ -675,6 +675,42 @@ class ReviewServerTests(unittest.TestCase):
         self.assertEqual(self._json_request("POST", "/api/import/lyrics", {"audio": str(other), "text": "  "})[0], 400)
         self.assertFalse((self.root / "other.lyrics.txt").exists())
 
+    def test_import_lyrics_refusals_are_one_chinese_sentence(self) -> None:
+        self.server.jobs = review_server.JobRunner(self.store, self.root)
+        audio = self.root / "refuse.flac"
+        audio.write_bytes(b"x")
+        gbk = self.root / "gbk.txt"
+        gbk.write_bytes("花火\n空へ\n".encode("gb18030"))
+        utf8 = self.root / "ok.txt"
+        utf8.write_text("花火\n空へ\n", encoding="utf-8")
+        status, _h, raw = self._json_request("POST", "/api/import/lyrics", {"audio": str(audio), "source": str(gbk)})
+        data = json.loads(raw)
+        self.assertEqual(status, 400, raw)
+        self.assertTrue(data["error"].startswith("歌詞檔 "), raw)
+        self.assertIn("編碼無法確定", data["error"])
+        self.assertNotIn("cannot read lyrics", data["error"])
+        self.assertFalse((self.root / "refuse.lyrics.txt").exists())
+        status, _h, raw = self._json_request("POST", "/api/import/lyrics", {"audio": str(audio), "source": str(self.root / "missing.txt")})
+        data = json.loads(raw)
+        self.assertEqual(status, 400, raw)
+        self.assertEqual(data["error"], f"讀不到歌詞檔 {self.root / 'missing.txt'}（檔案不存在）。")
+        status, _h, raw = self._json_request("POST", "/api/import/lyrics", {"audio": str(audio), "source": str(self.root)})
+        data = json.loads(raw)
+        self.assertEqual(status, 400, raw)
+        self.assertIn("讀不到歌詞檔", data["error"])
+        status, _h, raw = self._json_request("POST", "/api/import/lyrics", {"audio": str(self.root / "nope.flac"), "text": "x"})
+        data = json.loads(raw)
+        self.assertEqual((status, data["error"]), (400, "找不到這個音檔，沒有儲存歌詞。"))
+        status, _h, raw = self._json_request("POST", "/api/import/lyrics", {"audio": str(audio), "text": " "})
+        data = json.loads(raw)
+        self.assertEqual((status, data["error"]), (400, "歌詞是空的，沒有儲存。"))
+        status, _h, raw = self._json_request("POST", "/api/import/lyrics", {"audio": str(audio), "source": str(utf8)})
+        data = json.loads(raw)
+        self.assertEqual(status, 200, raw)
+        status, _h, raw = self._json_request("POST", "/api/import/lyrics", {"audio": str(audio), "text": "again"})
+        data = json.loads(raw)
+        self.assertEqual((status, data["error"]), (409, "這首歌已經有歌詞檔了，沒有覆蓋它。"))
+
     def test_jobs_run_the_wrapper_and_land_in_the_song_list(self) -> None:
         fake = self._fake_wrapper()
         good, bad, bare = (self.root / "good.flac", self.root / "bad.flac", self.root / "bare.flac")
