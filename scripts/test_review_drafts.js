@@ -45,6 +45,7 @@ async function boot(storage, songs, opts = {}) {
         const s = songs[Number(m[1])], body = JSON.parse(options.body);
         saves.push({index: Number(m[1]), body});
         if (opts.saveGate) await opts.saveGate;
+        if (opts.saveUncertain) return response(false, 409, {error: 'encoding_uncertain', message: UNCERTAIN_TEXT});
         if (opts.save409) {
           if (opts.save409Changes) { s.sha = s.sha + '-ext'; s.rows.forEach(r => { r.current_cs += 1000; }); } // someone else changed the file
           return response(false, 409, {error: 'stale base_sha256'});
@@ -81,6 +82,7 @@ async function boot(storage, songs, opts = {}) {
     edit(index, entry, cs, nudge = 50) { tab.t.stage(tab.rowOf(index, entry), cs, 'manual', nudge); }};
   return tab;
 }
+const UNCERTAIN_TEXT = '這個檔的編碼無法確定（可能是 Big5 或 GBK），為了不把歌詞存成亂碼，這裡不能修改或匯出。請用記事本另存成 UTF-8 後重新整理。';
 const mk = (name, report, sha = 's', rows) => ({name, report, sha, rows: rows || [{entry: 1, current_cs: 100}, {entry: 2, current_cs: 500}]});
 const drafts = storage => JSON.parse(storage.map.get(KEY) || '{}');
 const tests = [];
@@ -97,6 +99,18 @@ test('first save of a freshly loaded song clears its draft and raises no stale b
   assert.equal(p.el('draft-stale').hidden, true);
   p.edit(0, 2, 560, 60); p.flush();
   assert.equal(drafts(st)['/r/S.align-report.json'].edits.length, 1, 'later edits on the same song are drafted again');
+});
+
+test('a save refused for an uncertain encoding shows the sentence as a notice, not an error, and keeps the edit and its draft', async () => {
+  const st = makeStorage(), songs = [mk('S', '/r/S.json')];
+  const p = await boot(st, songs, {saveUncertain: true});
+  p.edit(0, 1, 150); p.flush();
+  p.el('save').listeners.click(); await settle();
+  assert.equal(p.saves.length, 1);
+  assert.equal(p.t.state.error, '');
+  assert.equal(p.t.state.notice, UNCERTAIN_TEXT);
+  assert.equal(p.t.state.edits.size, 1, 'the edit is still staged');
+  assert.equal(drafts(st)['/r/S.json'].edits.length, 1, 'and still in the draft');
 });
 
 test('a 409 save keeps the draft and shows no stale banner for the same session (F2)', async () => {

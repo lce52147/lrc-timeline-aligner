@@ -346,9 +346,11 @@ class OffsetHeaderAndRepeatedTagTests(_PageFixture):
         html = (SCRIPTS / "review_page" / "index.html").read_text(encoding="utf-8")
         start = html.index("function fileShapeNotes(detail)")
         end = html.index("\n  }\n", start) + 4
-        harness = html[start:end] + """
+        const_start = html.index("const ENCODING_UNCERTAIN_TEXT")
+        harness = html[const_start:html.index("\n", const_start) + 1] + html[start:end] + """
   const out = {
     none: fileShapeNotes({}),
+    uncertain: fileShapeNotes({encoding_uncertain: true}),
     repeated: fileShapeNotes({multi_tag_lines: 1}),
     same: fileShapeNotes({offset_ms: 500, offset_values: [500]}),
     different: fileShapeNotes({offset_ms: -200, offset_values: [-200, 500, 0]}),
@@ -362,6 +364,7 @@ class OffsetHeaderAndRepeatedTagTests(_PageFixture):
         self.assertEqual(result.returncode, 0, result.stderr)
         notes = json.loads(result.stdout)
         self.assertEqual(notes["none"], [])
+        self.assertEqual(notes["uncertain"], [review_server.ENCODING_UNCERTAIN_MESSAGE])
         self.assertEqual(len(notes["repeated"]), 1)
         self.assertIn("同一個時間重複", notes["repeated"][0])
         self.assertEqual(notes["same"], ["此檔有 offset +500 ms，已換算進時間；存檔會照換算後的格式寫回（原檔有備份）"])

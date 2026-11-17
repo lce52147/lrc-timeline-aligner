@@ -230,7 +230,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       const response = await fetch(path, Object.assign({}, options, guard ? {headers, signal:guard.signal} : {headers}));
       const data = await response.json().catch(() => ({error:response.statusText}));
       if (response.status === 409 && data.song_changed) { queueMicrotask(() => { load().catch(() => {}); }); throw Error(data.error); }
-      if (!response.ok) throw Error(response.status === 403 ? '伺服器不接受這個頁面（可能已重新啟動，請重新開啟 Review LRC）' : (data.error || response.statusText));
+      if (!response.ok) { const failure = Error(response.status === 403 ? '伺服器不接受這個頁面（可能已重新啟動，請重新開啟 Review LRC）' : (data.message || data.error || response.statusText)); failure.code = data.error; throw failure; }
       return data;
     } catch (error) {
       if (guard && error && (error.name === 'AbortError' || error.name === 'TypeError')) throw Error('伺服器沒有回應');
@@ -273,9 +273,12 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
   const time = cs => cs == null ? '—' :
     String(Math.floor(cs/6000)).padStart(2,'0') + ':' + String(Math.floor(cs%6000/100)).padStart(2,'0') + '.' + String(cs%100).padStart(2,'0');
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  // the same sentence the server answers a refused write with (review_server.ENCODING_UNCERTAIN_MESSAGE)
+  const ENCODING_UNCERTAIN_TEXT = '這個檔的編碼無法確定（可能是 Big5 或 GBK），為了不把歌詞存成亂碼，這裡不能修改或匯出。請用記事本另存成 UTF-8 後重新整理。';
   // the notes about how the file was read (several times on a line, [offset:] headers); one place so a test can run it on its own
   function fileShapeNotes(detail) {
     const notes = [];
+    if (detail?.encoding_uncertain) notes.push(ENCODING_UNCERTAIN_TEXT);
     if (detail?.multi_tag_lines) notes.push('此檔有一行多個時間（或同一個時間重複寫了），已展開；存檔會照展開後的格式寫回（原檔有備份）');
     const listed = Array.isArray(detail?.offset_values) ? detail.offset_values : [];
     if (detail?.offset_ms || listed.length > 1) {
@@ -1272,7 +1275,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       if (song.detail?.entry_model === 'lrc' && !song.read_only) notes.push('以 LRC 檔為準（報告對不上）');
       notes.push(...fileShapeNotes(song.detail));
       if (song.read_only || song.detail?.server_read_only) notes.push('唯讀：' + esc(readOnlyText(song.read_only_reason || (song.detail?.server_read_only ? 'server' : 'unknown'))));
-      if (state.notice) notes.push(esc(state.notice));
+      if (state.notice && !notes.includes(esc(state.notice))) notes.push(esc(state.notice));
       if (notes.length) { const note = document.createElement('div'); note.className = 'meta'; note.innerHTML = notes.join(' · '); queue.appendChild(note); }
     }
     if (current) queue.appendChild(rowElement(current));
@@ -1619,6 +1622,10 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
           body:JSON.stringify(saveBody(song, sending))
         });
         const data = await response.json().catch(() => ({error:response.statusText}));
+        if (response.status === 409 && data.error === 'encoding_uncertain') {
+          notes.push(data.message || ENCODING_UNCERTAIN_TEXT);   // not an error: the staged edits stay as they are, in the draft too
+          continue;
+        }
         if (response.status === 409) {
           failures.push(song.song + ': save failed: stale base_sha256; reloaded and kept staged edits');
           continue;
@@ -1817,7 +1824,7 @@ details.more{font-size:12px;color:var(--fg-2)}details.more summary{cursor:pointe
       await refreshSong(song.index);
       state.notice = data.converted ? '已把 ' + data.converted + ' 行轉成繁體（原檔已備份 .bak）' : '沒有行被轉換'; render();
     } catch (error) {
-      s2tw.busy = false; s2tw.note = '轉換失敗：' + error.message; renderS2tw(song);
+      s2tw.busy = false; s2tw.note = error.code === 'encoding_uncertain' ? error.message : '轉換失敗：' + error.message; renderS2tw(song);
     }
   }
   document.getElementById('s2tw-open').addEventListener('click', () => { s2tw.open = !s2tw.open; s2tw.touched = false; s2tw.note = ''; render(); });

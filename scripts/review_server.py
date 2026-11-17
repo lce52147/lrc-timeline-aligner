@@ -1177,6 +1177,20 @@ def _apply_harmony(song, hashes):
 
 
 PAGE_OUTDATED_MESSAGE = "審聽頁是舊版（程式剛更新），這次沒有寫入任何東西；請按 F5 重新載入"
+ENCODING_UNCERTAIN_MESSAGE = "這個檔的編碼無法確定（可能是 Big5 或 GBK），為了不把歌詞存成亂碼，這裡不能修改或匯出。請用記事本另存成 UTF-8 後重新整理。"
+
+
+def _encoding_refusal(output):
+    """(409, body) when the LRC on disk is of uncertain encoding, else None: every action that rewrites it or builds another file from its text asks first.
+
+    Reads the bytes now, not the song's cached flag, so a file replaced since it was listed is judged as it is. Nothing is written or backed up by a refused action."""
+    try:
+        raw = output.read_bytes()
+    except OSError:
+        return None   # a missing or unreadable file is answered by the guards that follow
+    if not lrc_encoding_uncertain(raw):
+        return None
+    return 409, {"error": "encoding_uncertain", "message": ENCODING_UNCERTAIN_MESSAGE}
 
 
 def _same_report(claimed, report):
@@ -1579,6 +1593,9 @@ def _export_song(song, body, report_dir, store=None):
     output = song["output"]
     if output is None or not output.is_file():
         return 403, {"error": "lrc-missing"}
+    refusal = _encoding_refusal(output)   # the check too: it would offer an export that cannot happen
+    if refusal:
+        return refusal
     audio_value = song.get("audio_path") or ""
     if not audio_value or not _path_is_file(audio_value):
         return 403, {"error": "找不到這首歌的音檔"}
@@ -1676,6 +1693,9 @@ def _save_song(song, body):
     output = song["output"]
     if output is None or not output.is_file():
         return 403, {"error": "lrc-missing"}
+    refusal = _encoding_refusal(output)
+    if refusal:
+        return refusal
     try:
         current = _read_lrc(output)
     except LrcDecodeError:
@@ -2010,6 +2030,9 @@ def _convert_song(song, body):
     output = song["output"]
     if output is None or not output.is_file():
         return 403, {"error": "lrc-missing"}
+    refusal = _encoding_refusal(output)
+    if refusal:
+        return refusal
     try:
         current = _read_lrc(output)
     except LrcDecodeError:
