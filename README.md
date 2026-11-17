@@ -166,9 +166,9 @@ powershell -ExecutionPolicy Bypass -File .\align-lrc.ps1 "D:\Music\Song.flac"
 
 ![LRC 模組分層圖](docs/architecture/architecture-map.png)
 
-`scripts/` 的模組分成六層。只有「Central 決策」那層決定時間；「證據來源」只提供候選和佐證；審核頁和對齊管線之間只透過報告與 LRC 檔案相連。線上的數字是兩層之間的引用次數，用 [graphify](https://pypi.org/project/graphifyy/) 對程式碼做 AST 分析得到。
+由上往下看：最上面是你會按的兩個入口；「總指揮」照順序叫每一步做事；「裁判」是整個程式唯一決定時間的地方，依固定規則從各模型的答案裡挑一個，沒把握的句子標出來請人聽；它下面一排負責找證據（語音模型、聽聲音找起點、細修句首）；最下面是大家共用的格式和地基。線上的數字是兩塊程式互相呼叫的次數，用 [graphify](https://pypi.org/project/graphifyy/) 分析程式碼得到。
 
-互動版在 [docs/architecture/index.html](docs/architecture/index.html)。GitHub 不會直接執行這個頁面，要下載後用瀏覽器打開。打開後可以點方塊看每層的職責、檔案和上下游，也可以切換「一首歌的主路徑」。
+互動版在 [docs/architecture/index.html](docs/architecture/index.html)。GitHub 不會直接執行這個頁面，要下載後用瀏覽器打開。打開後先有一段白話說明這個工具在做什麼；點任一方塊會先看到它用白話在做什麼，技術細節收在下面；也可以切換「一首歌的主路徑」。
 
 ## 演算流程
 
