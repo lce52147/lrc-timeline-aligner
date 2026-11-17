@@ -16,7 +16,7 @@ example that the tests run (docs/ZH_S2TW_ROUNDTRIP.md lists them):
 * ``CONTEXT_RULES``: a regular expression over the simplified text that fixes a span and its Traditional form where only the
   surrounding text can tell (a fixed span is a boundary: no phrase crosses it);
 * ``VARIANT_PREFERENCE``: a character-level variant choice applied to the characters the conversion produced;
-* ``WHOLE_LINES``: a whole line (white space at either end aside) written the way the user's lyrics write it; the same words
+* ``WHOLE_LINES``: a whole line (white space at either end and the review page's closing mark ` *` aside) written the way the user's lyrics write it; the same words
   inside a longer line, after a comma or with one more character in front go the stock way.
 
 A PREFERENCES word never takes a character away from the stock reading: a word that stock also has (计划) only replaces the value, and
@@ -40,6 +40,8 @@ _TAIWAN_CHURCH_CHAR = "祢"   # U+7962, the standard pronoun in Taiwan church ly
 # Characters that are simplified in every word they appear in even though Big5 can encode them: 么 is only ever written 麼 in
 # Traditional text when it follows one of these (老么 / 么儿 / 么妹 are Traditional and do not match).
 _CERTAIN_MA_RE = re.compile(r"[什怎这那多要甚]么")
+# The review page's closing mark at the end of a lyric line (a space and one or more asterisks), left out when a line is compared with WHOLE_LINES.
+_TRAILING_REVIEW_MARK_RE = re.compile(r"[ 	　]*\*+$")
 _converter = None
 _loaded = False
 
@@ -129,6 +131,14 @@ PREFERENCES: tuple = (
     Entry("命运注定", "命運注定", "both are standard; 注定 25 / 註定 0 in the lyrics", ("注册", "註冊")),
     Entry("五百姻缘天注定", "五百姻緣天注定", "both are standard; 注定 25 / 註定 0 in the lyrics", ("注册", "註冊")),
 )
+# A preference word that stock also has is used wherever the segmentation picks it. It goes back to the stock value only when a stock
+# phrase that crosses its border writes the overlapping characters differently (计划|分 against 划分: 畫 against 劃; 了解|了 against
+# 解了: the same 解, no dispute) AND the character right before the word is in the word's closed set here (预 before 计划 makes 预计|划分
+# the real reading). A word with no entry is never given back.
+KEEP_STOCK_AFTER: dict = {
+    "计划": "预估统设合总共累会审核小",   # the characters that form a word with 计: 预计 估计 统计 设计 合计 总计 共计 累计 会计 审计 核计 小计
+    "周而复始": "一七三上下两二五八六十单双可当数整本每隔",   # every X in a stock phrase X周 (週): 一周 两周 上周 本周 整周 ...; 一周|而复始 is a week, not the idiom
+}
 # --------------------------------------------------------------------------------------------------------------------
 # a2. WHOLE_LINES: only a whole line equal to the key (white space at either end aside) is replaced. ``negative`` is a longer line
 # holding the same words, which stays stock.
@@ -334,11 +344,16 @@ def _convert_clause(piece, tables):
     phrases, characters, _variants_table, _only, longest, _split, context, entry_keys, stock_value, _whole, literal = tables
     tokens = []
 
-    def contested(text, start, end, skip):
-        """True when, with the word itself left out, a stock phrase crosses the border of the word at ``start``..``end``."""
+    def contested(text, start, end, skip, preferred=None):
+        """True when, with the word itself left out, a stock phrase crosses the border of the word at ``start``..``end``. With
+        ``preferred`` (the word's value) only a crossing phrase that writes the overlapping characters differently counts."""
         for low, high in _segment(text, phrases, longest, skip | {text[start:end]}):
             if low < start < high or low < end < high:
-                return True
+                if preferred is None:
+                    return True
+                value = phrases[text[low:high]]
+                if len(value) != high - low or any(value[index - low] != preferred[index - start] for index in range(max(low, start), min(high, end))):
+                    return True
         return False
 
     def plain(low, high):
@@ -356,7 +371,7 @@ def _convert_clause(piece, tables):
             end = spans.get(position)
             if end is not None:
                 source = text[position:end]
-                if source in stock_value and contested(text, position, end, skip):
+                if source in stock_value and contested(text, position, end, skip, phrases[source]) and position and text[position - 1] in KEEP_STOCK_AFTER.get(source, ""):
                     tokens.append((source, stock_value[source], False))
                 else:
                     tokens.append((source, phrases[source], source in entry_keys))
@@ -383,6 +398,8 @@ def convert_marked(text):
     variants, split = tables[2], tables[5]
     many = one_to_many()
     key = text.strip()
+    if key not in tables[9]:
+        key = _TRAILING_REVIEW_MARK_RE.sub("", key)   # the review page's closing mark (" *", " **") is not part of the line
     if key in tables[9]:
         lead = text[:len(text) - len(text.lstrip())]
         marks = [{"at": len(lead) + offset, "from": char, "options": list(many[char])} for offset, char in enumerate(key) if char in many]
@@ -453,10 +470,12 @@ def looks_simplified(text, japanese=False):
 CHINESE_FUNCTION_CHARS = frozenset("这们吗呢还让说对为过时个么给谁哪啥您咱你她它吧啊很")
 # Two-character Chinese words, a closed list, that Japanese text does not contain even though each character may be a Japanese kanji
 # (cp932 encodes 不 会 没 有 我 的 是 ...): 不会 不是 没有 你的 她的 我不 你不 我是 你是 我有 我在 你在. Left out on purpose
-# because Japanese has the same word: 不要 不能 所以 有名 存在 目的 他国 回来 初恋 一期一会 (a kanji-only Japanese line must stay unchecked);
-# and because Japanese has the two characters side by side inside a longer kanji word (the 〜的 adjectives 排他的 利他的 自我的 自主的, 京都是 首都是):
-# 他的 我的 都是 are not in the list. Every word of the list is checked against that kind of substring (test_zh_fix13a.py).
+# because Japanese has the same word: 不要 不能 所以 有名 存在 目的 他国 回来 初恋 一期一会 (a kanji-only Japanese line must stay unchecked).
 CHINESE_FUNCTION_WORDS = frozenset(("不会", "不是", "没有", "你的", "她的", "我不", "你不", "我是", "你是", "我有", "我在", "你在"))
+# Words that Japanese has as the tail of a longer kanji word (the 〜的 adjectives 排他的 利他的 自我的, 京都是 首都是): they count only at the start of
+# a word, that is at the start of the line or after a character that is not a Han character (a space, a punctuation mark), never after a Han character.
+CHINESE_FUNCTION_WORDS_AT_START = ("我的", "他的", "都是")
+_WORD_START_RE = re.compile(r"(?<![㐀-䶿一-鿿豈-﫿])(?:%s)" % "|".join(CHINESE_FUNCTION_WORDS_AT_START))
 
 
 def _surely_not_japanese(text):
@@ -465,9 +484,10 @@ def _surely_not_japanese(text):
 
 
 def _chinese_function_words(text):
-    """How many different Chinese-only items ``text`` has: characters of CHINESE_FUNCTION_CHARS and words of CHINESE_FUNCTION_WORDS."""
+    """How many different Chinese-only items ``text`` has: characters of CHINESE_FUNCTION_CHARS, words of CHINESE_FUNCTION_WORDS and (at a word start) of CHINESE_FUNCTION_WORDS_AT_START."""
     found = {char for char in text if char in CHINESE_FUNCTION_CHARS}
     found.update(word for word in CHINESE_FUNCTION_WORDS if word in text)
+    found.update(match.group() for match in _WORD_START_RE.finditer(text))
     return len(found)
 
 

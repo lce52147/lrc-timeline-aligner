@@ -85,12 +85,24 @@ class WholeLineTests(unittest.TestCase):
 # a word stock does not have is left out of the segmentation). One row per PREFERENCES word.
 BORDER = (
     ("咸水鱼类在游动", "鹹水魚類在遊動"), ("修正游动在", "修正遊動在"), ("修正游动其中", "修正遊動其中"), ("发交织游动吗", "發交織遊動嗎"),
-    ("一游动着", "一遊動著"), ("一游动著", "一遊動著"), ("一游过群星之间", "一遊過群星之間"), ("糊里糊涂帐", "糊里糊塗帳"),
-    ("克制中", "剋制中"), ("修女生外向", "修女生外嚮"), ("预计划分三组进行", "預計劃分三組進行"), ("我估计划算不来", "我估計劃算不來"),
-    ("了解出", "瞭解出"), ("点赞同", "點贊同"), ("胡同一", "衚衕一"), ("万死胡同", "萬死衚衕"), ("丧尽可能", "喪儘可能"),
-    ("背包伙", "揹包夥"), ("背负向", "揹負向"), ("回归于", "迴歸於"), ("一回归分析", "一回歸分析"), ("丝线性回归", "絲線性回歸"),
-    ("辟逻辑回归", "辟邏輯回歸"), ("一回归模型", "一回歸模型"), ("一回归方程", "一回歸方程"), ("熏染发", "薰染發"), ("一周而复始", "一週而復始"),
-    ("注定义出", "注定義出"), ("出人命中注定", "出人命中註定"), ("出人命运注定", "出人命運註定"), ("于五百姻缘天注定", "於五百姻緣天註定"),
+    ("一游动着", "一遊動著"), ("一游动著", "一遊動著"), ("一游过群星之间", "一遊過群星之間"), 
+    ("预计划分三组进行", "預計劃分三組進行"), ("我估计划算不来", "我估計劃算不來"),
+    ("点赞同", "點贊同"), 
+    ("一回归分析", "一回歸分析"), ("丝线性回归", "絲線性回歸"),
+    ("辟逻辑回归", "辟邏輯回歸"), ("一回归模型", "一回歸模型"), ("一回归方程", "一回歸方程"), ("一周而复始", "一週而復始"),
+    ("注定义出", "注定義出"), 
+)
+# A preference word that stock also has is used wherever the segmentation picks it, unless a crossing stock phrase writes the shared characters differently
+# and the character in front is in the word's closed set (KEEP_STOCK_AFTER). One row per word that moved from the stock reading (round 13A) to the preference.
+PICKED = (
+    ("糊里糊涂帐", "糊裡糊塗帳"), ("克制中", "克制中"), ("修女生外向", "修女生外向"), ("了解出", "了解出"), ("胡同一", "胡同一"), ("万死胡同", "萬死胡同"), ("丧尽可能", "喪盡可能"), ("背包伙", "背包夥"), ("背负向", "背負向"), ("回归于", "回歸於"), ("熏染发", "燻染發"), ("出人命中注定", "出人命中注定"), ("出人命运注定", "出人命運注定"), ("于五百姻缘天注定", "於五百姻緣天注定"),
+    ("我了解了", "我了解了"), ("你了解了吗", "你了解了嗎"), ("终于了解了", "終於了解了"), ("了解了一切", "了解了一切"), ("克制住自己", "克制住自己"), ("注定了", "注定了"), ("你注定了孤单", "你注定了孤單"),
+    ("这个计划一定会成功", "這個計畫一定會成功"), ("计划一下", "計畫一下"), ("计划分三步走", "計畫分三步走"), ("胡同学", "胡同學"), ("胡同志", "胡同志"), ("耗尽可能不够用", "耗盡可能不夠用"), ("胡同学你好", "胡同學你好"),
+)
+# The closed set decides the real dispute (计划|分 against 划分): the same words after a character of the set keep the stock reading.
+CONTESTED = (
+    ("预计划分三组进行", "預計劃分三組進行"), ("我估计划算不来", "我估計劃算不來"), ("统计划分", "統計劃分"), ("设计划船路线清晰", "設計劃船路線清晰"), ("总统计划分三步", "總統計劃分三步"),
+    ("一周而复始", "一週而復始"),
 )
 # The same words standing by themselves keep the preference.
 STANDING = (
@@ -115,11 +127,11 @@ class PreferenceBorderTests(unittest.TestCase):
         self.assertEqual(set(tables[10]), LITERAL_PHRASES)
 
     def test_a_stock_phrase_across_the_border_keeps_the_stock_reading(self) -> None:
-        for text, want in BORDER:
+        for text, want in BORDER + CONTESTED:
             self.assertEqual(zh_traditional.convert_text(text), want, text)
 
     def test_the_word_on_its_own_keeps_the_preference(self) -> None:
-        for text, want in STANDING:
+        for text, want in STANDING + PICKED:
             self.assertEqual(zh_traditional.convert_text(text), want, text)
 
     def test_the_segmentation_is_stock_wherever_the_word_is_stock(self) -> None:
@@ -147,7 +159,7 @@ class PreferenceBorderTests(unittest.TestCase):
                 mock.patch.object(zh_traditional, "DROPPED_PHRASES", frozenset()), mock.patch.object(zh_traditional, "VARIANT_PREFERENCE", {}):
             _rebuild()
             self.addCleanup(_rebuild)
-            for text, _want in BORDER + STANDING:
+            for text, _want in BORDER + STANDING + PICKED + CONTESTED:
                 self.assertEqual(zh_traditional.convert_text(text), stock.convert(text), text)
 
 
