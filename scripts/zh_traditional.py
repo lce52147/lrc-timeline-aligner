@@ -8,14 +8,20 @@ then recursively "take the longest phrase of STPhrases, the leftmost one among e
 sides the same way", the remaining characters through STCharacters, then TWVariants. With the four rule tables below
 emptied the output is character for character the stock output (the test suite checks every STPhrases word).
 
-Everything that differs from stock is one of four kinds of rule, each with a reason and a positive and a negative
+Everything that differs from stock is one of five kinds of rule, each with a reason and a positive and a negative
 example that the tests run (docs/ZH_S2TW_ROUNDTRIP.md lists them):
 
 * ``ENTRIES``: a word added to or replaced in the dictionary; it takes part in the segmentation like any word, with no priority;
 * ``DROPPED_PHRASES``: a stock phrase that is not used;
 * ``CONTEXT_RULES``: a regular expression over the simplified text that fixes a span and its Traditional form where only the
   surrounding text can tell (a fixed span is a boundary: no phrase crosses it);
-* ``VARIANT_PREFERENCE``: a character-level variant choice applied to the characters the conversion produced.
+* ``VARIANT_PREFERENCE``: a character-level variant choice applied to the characters the conversion produced;
+* ``WHOLE_LINES``: a whole line (white space at either end aside) written the way the user's lyrics write it; the same words
+  inside a longer line, after a comma or with one more character in front go the stock way.
+
+A PREFERENCES word never takes a character away from the stock reading: a word that stock also has (计划) only replaces the value, and
+where a stock phrase crosses its border (预计|划分) it keeps the stock value; a word stock does not have (点赞) is left out of the
+segmentation there (点|赞同).
 """
 from __future__ import annotations
 
@@ -89,7 +95,6 @@ CORRECTIONS: tuple = (
     Entry("不是只有一次", "不是只有一次", "不是 + 只有 + 一次 = 'not only once' (stock reads 是只 as 是隻)", ("那不是只有斑点的狗吗", "那不是隻有斑點的狗嗎")),
     Entry("这杯酒我干了", "這杯酒我乾了", "'I drain this wine': stock 幹了; the word is the whole phrase", ("卖酒我干了十年", "賣酒我幹了十年")),
     Entry("如果喉咙干了", "如果喉嚨乾了", "if the throat is dry (stock 喉嚨幹了); the word is the whole phrase, so 喉咙干了坏事 stays stock", ("捂着喉咙干了坏事", "捂著喉嚨幹了壞事")),
-    Entry("统计划分", "統計劃分", "stock reads 统计|划分; the preference 计划 -> 計畫 would take the 计划 across the two words (a reading that only changes 劃 into 畫)", ("我的计划", "我的計畫")),
     Entry("四库禁毁书丛刋", "四庫禁燬書叢刋", "a book series title written with 燬 (the variant preference 毀 does not apply)", ("烧毁", "燒毀")),
 )
 PREFERENCES: tuple = (
@@ -123,6 +128,15 @@ PREFERENCES: tuple = (
     Entry("命中注定", "命中注定", "both are standard; 注定 25 / 註定 0 in the lyrics", ("注册", "註冊")),
     Entry("命运注定", "命運注定", "both are standard; 注定 25 / 註定 0 in the lyrics", ("注册", "註冊")),
     Entry("五百姻缘天注定", "五百姻緣天注定", "both are standard; 注定 25 / 註定 0 in the lyrics", ("注册", "註冊")),
+)
+# --------------------------------------------------------------------------------------------------------------------
+# a2. WHOLE_LINES: only a whole line equal to the key (white space at either end aside) is replaced. ``negative`` is a longer line
+# holding the same words, which stays stock.
+# --------------------------------------------------------------------------------------------------------------------
+WHOLE_LINES: tuple = (
+    Entry("干了就没事了！", "乾了就沒事了！", "a lyric line that stands alone: 'drink it and all is well' (stock 幹了); a literal word fails 这份作业，干了就没事了", ("这份作业，干了就没事了！", "這份作業，幹了就沒事了！")),
+    Entry("干了就没事了", "乾了就沒事了", "the same lyric line without its closing mark", ("这份作业，干了就没事了", "這份作業，幹了就沒事了")),
+    Entry("海里有各种鱼类在游动", "海裡有各種魚類在游動", "a lyric line that stands alone: 'fish of every kind swim in the sea' (stock keeps 海里, the nautical mile); a longer line with the same words is stock", ("方圆十海里有各种鱼类在游动", "方圓十海里有各種魚類在游動")),
 )
 # --------------------------------------------------------------------------------------------------------------------
 # b. DROPPED_PHRASES: stock phrases that hide a better match across the same characters.
@@ -214,7 +228,7 @@ def _base():
 
 
 def _tables():
-    """``(phrases, characters, variants, traditional_only, longest, split, context, entry_keys)`` or None when the OpenCC dictionaries cannot be read.
+    """``(phrases, characters, variants, traditional_only, longest, split, context, entry_keys, stock_value, whole, literal)`` or None when the OpenCC dictionaries cannot be read.
 
     ``phrases`` is STPhrases without DROPPED_PHRASES plus ENTRIES, ``context`` the compiled CONTEXT_RULES. The rule tables are read
     when the tables are first built; set ``_dicts = None`` after changing them (the tests do)."""
@@ -228,7 +242,10 @@ def _tables():
                 phrases.pop(key, None)
             phrases.update(entries())
             context = tuple((re.compile(rule.pattern), rule.value) for rule in CONTEXT_RULES)
-            _dicts = (phrases, base[1], base[2], base[3], max(map(len, phrases)), base[4], context, frozenset(entries()))
+            stock_value = {item.key: base[0][item.key] for item in PREFERENCES if item.key in base[0]}
+            whole = {item.key: item.value for item in WHOLE_LINES}
+            literal = frozenset(item.key for item in PREFERENCES if item.key not in base[0])
+            _dicts = (phrases, base[1], base[2], base[3], max(map(len, phrases)), base[4], context, frozenset(entries()), stock_value, whole, literal)
     return _dicts or None
 
 
@@ -257,16 +274,16 @@ def _encodes(char, codec):
         return False
 
 
-def _segment(text, phrases, longest):
+def _segment(text, phrases, longest, skip=frozenset()):
     """Phrase spans ``(start, end)`` of ``text`` the way stock OpenCC finds them: the longest phrase in the text, the leftmost
-    among those of the same length, then the same inside the left part and inside the right part."""
+    among those of the same length, then the same inside the left part and inside the right part. ``skip`` is a set of words to leave out."""
     spans = []
     pending = [(0, len(text))]
     while pending:
         low, high = pending.pop()
         for size in range(min(longest, high - low), 1, -1):
             for start in range(low, high - size + 1):
-                if text[start:start + size] in phrases:
+                if text[start:start + size] in phrases and text[start:start + size] not in skip:
                     spans.append((start, start + size))
                     pending.append((low, start))
                     pending.append((start + size, high))
@@ -314,18 +331,35 @@ def one_to_many():
 
 def _convert_clause(piece, tables):
     """``[(source, target, fixed)]`` tokens covering one clause (no separators in it)."""
-    phrases, characters, _variants_table, _only, longest, _split, context, entry_keys = tables
+    phrases, characters, _variants_table, _only, longest, _split, context, entry_keys, stock_value, _whole, literal = tables
     tokens = []
+
+    def contested(text, start, end, skip):
+        """True when, with the word itself left out, a stock phrase crosses the border of the word at ``start``..``end``."""
+        for low, high in _segment(text, phrases, longest, skip | {text[start:end]}):
+            if low < start < high or low < end < high:
+                return True
+        return False
 
     def plain(low, high):
         text = piece[low:high]
-        spans = {start: end for start, end in _segment(text, phrases, longest)}
+        skip = frozenset()
+        while True:
+            found = _segment(text, phrases, longest, skip)
+            lost = {text[start:end] for start, end in found if text[start:end] in literal and text[start:end] not in skip and contested(text, start, end, skip)}
+            if not lost:
+                break
+            skip = skip | lost
+        spans = {start: end for start, end in found}
         position = 0
         while position < len(text):
             end = spans.get(position)
             if end is not None:
                 source = text[position:end]
-                tokens.append((source, phrases[source], source in entry_keys))
+                if source in stock_value and contested(text, position, end, skip):
+                    tokens.append((source, stock_value[source], False))
+                else:
+                    tokens.append((source, phrases[source], source in entry_keys))
             else:
                 end = position + 1
                 tokens.append((text[position], characters.get(text[position], [text[position]])[0], False))
@@ -348,6 +382,11 @@ def convert_marked(text):
         return None
     variants, split = tables[2], tables[5]
     many = one_to_many()
+    key = text.strip()
+    if key in tables[9]:
+        lead = text[:len(text) - len(text.lstrip())]
+        marks = [{"at": len(lead) + offset, "from": char, "options": list(many[char])} for offset, char in enumerate(key) if char in many]
+        return lead + tables[9][key] + text[len(lead) + len(key):], marks
     out, marks, length = [], [], 0
     for index, piece in enumerate(split.split(text)):
         if index % 2:
@@ -413,9 +452,11 @@ def looks_simplified(text, japanese=False):
 # Japanese never writes in kanji (呢 哪 么), count here. Two different ones, or one next to a kana line of the same row, check the line.
 CHINESE_FUNCTION_CHARS = frozenset("这们吗呢还让说对为过时个么给谁哪啥您咱你她它吧啊很")
 # Two-character Chinese words, a closed list, that Japanese text does not contain even though each character may be a Japanese kanji
-# (cp932 encodes 不 会 没 有 我 的 是 ...): 不会 不是 没有 我的 你的 他的 她的 我不 你不 我是 你是 我有 我在 你在 都是. Left out on purpose
-# because Japanese has the same word: 不要 不能 所以 有名 存在 目的 他国 回来 初恋 一期一会 (a kanji-only Japanese line must stay unchecked).
-CHINESE_FUNCTION_WORDS = frozenset(("不会", "不是", "没有", "我的", "你的", "他的", "她的", "我不", "你不", "我是", "你是", "我有", "我在", "你在", "都是"))
+# (cp932 encodes 不 会 没 有 我 的 是 ...): 不会 不是 没有 你的 她的 我不 你不 我是 你是 我有 我在 你在. Left out on purpose
+# because Japanese has the same word: 不要 不能 所以 有名 存在 目的 他国 回来 初恋 一期一会 (a kanji-only Japanese line must stay unchecked);
+# and because Japanese has the two characters side by side inside a longer kanji word (the 〜的 adjectives 排他的 利他的 自我的 自主的, 京都是 首都是):
+# 他的 我的 都是 are not in the list. Every word of the list is checked against that kind of substring (test_zh_fix13a.py).
+CHINESE_FUNCTION_WORDS = frozenset(("不会", "不是", "没有", "你的", "她的", "我不", "你不", "我是", "你是", "我有", "我在", "你在"))
 
 
 def _surely_not_japanese(text):

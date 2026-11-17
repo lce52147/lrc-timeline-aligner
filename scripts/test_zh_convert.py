@@ -37,7 +37,7 @@ class StockEqualityTests(RulesPatched):
     def setUp(self) -> None:
         import opencc
         self.stock = opencc.OpenCC("s2tw")
-        self.rules(CORRECTIONS=(), PREFERENCES=(), DROPPED_PHRASES=frozenset(), CONTEXT_RULES=(), VARIANT_PREFERENCE={})
+        self.rules(CORRECTIONS=(), PREFERENCES=(), DROPPED_PHRASES=frozenset(), CONTEXT_RULES=(), VARIANT_PREFERENCE={}, WHOLE_LINES=())
 
     def test_every_stphrases_word(self) -> None:
         phrases = list(zh_traditional._base()[0])
@@ -235,7 +235,7 @@ class RuleExamplesTests(unittest.TestCase):
         # simplified -> Traditional
         "关系紧密": "關係緊密", "把这杯干了吧": "把這杯乾了吧", "这杯酒我干了": "這杯酒我乾了",
         "他把这件事干了吧": "他把這件事幹了吧", "他干了一件大事": "他幹了一件大事",
-        "熬干了汤": "熬幹了湯", "喉咙干了，想喝水": "喉嚨幹了，想喝水", "干了就没事了": "幹了就沒事了", "这活儿干了就没事了": "這活兒幹了就沒事了",
+        "熬干了汤": "熬幹了湯", "喉咙干了，想喝水": "喉嚨幹了，想喝水", "干了就没事了": "乾了就沒事了", "干了就没事了呢": "幹了就沒事了呢", "这活儿干了就没事了": "這活兒幹了就沒事了",
         "你今天干了啥": "你今天干了啥", "吃完饼干了啥都不想做": "吃完餅乾了啥都不想做", "风后来停了": "風后來停了", "黄帝的大臣风后": "黃帝的大臣風后", "吸入湿润的风后": "吸入濕潤的風後",
         "离岸几海里": "離岸幾海里", "航行了二十海里": "航行了二十海里", "他在海里游泳": "他在海里游泳", "海里有各种鱼": "海里有各種魚", "每海里收费十元": "每海里收費十元",
         "试卷卷面整洁": "試卷卷面整潔", "卷卷而上的火焰": "捲捲而上的火焰", "志向往往会改变": "志向往往會改變", "朝南的方向往北走": "朝南的方向往北走",
