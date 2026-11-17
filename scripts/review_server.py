@@ -1480,7 +1480,7 @@ def _song_stub(report_path, error):
 
 
 def _json_bytes(payload):
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8", "backslashreplace")
 
 
 def _stage_bytes(path, data):
@@ -3161,10 +3161,18 @@ class ReviewHandler(http.server.BaseHTTPRequestHandler):
             return
         try:
             body = json.loads(self.rfile.read(length).decode("utf-8"))
-        except (UnicodeError, ValueError):
+        except (UnicodeError, ValueError, RecursionError):
             self._send(400, b"invalid json\n", "text/plain; charset=utf-8")
             return
         if not isinstance(body, dict):
+            self._send(400, b"invalid json\n", "text/plain; charset=utf-8")
+            return
+        try:
+            json.dumps(body, ensure_ascii=False).encode("utf-8")  # a lone surrogate (a truncated emoji) cannot be written as UTF-8
+        except UnicodeEncodeError:
+            self._json(400, {"error": "送出的內容裡有不完整的字元（例如被截斷的表情符號），沒有處理。請刪掉那個字元後再試。", "code": "bad_text"})
+            return
+        except RecursionError:
             self._send(400, b"invalid json\n", "text/plain; charset=utf-8")
             return
         if not match:

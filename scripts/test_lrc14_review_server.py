@@ -2490,6 +2490,71 @@ const settle = async () => { for (let i=0; i<12; i++) await new Promise(resolve 
         self.assertEqual([song["song"] for song in store.songs], [f"many-{index:02d}" for index in range(12)])
         self.assertEqual(json.dumps(store.songs, default=str, sort_keys=True), json.dumps(expected, default=str, sort_keys=True))
 
+    BAD_TEXT = {"error": "送出的內容裡有不完整的字元（例如被截斷的表情符號），沒有處理。請刪掉那個字元後再試。", "code": "bad_text"}
+
+    def _tree_state(self) -> dict:
+        return {str(p.relative_to(self.root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(self.root.rglob("*")) if p.is_file()}
+
+    def test_a_lone_surrogate_in_any_post_body_is_refused_before_anything_runs(self) -> None:
+        self.server.jobs = review_server.JobRunner(self.store, self.root)
+        audio = self.root / "fresh.flac"
+        audio.write_bytes(b"x")
+        base = self._detail()["base_sha256"]
+        lone = "\ud800"
+        cases = [
+            ("/api/import/lyrics", {"audio": str(audio), "text": "a" + lone}),
+            ("/api/import/lyrics", {"audio": str(audio), "source": lone}),
+            ("/api/song/0/save", {"base_sha256": base, "edits": [{"entry": 2, "cs": 250, "source": "x" + lone, "nudge_cs": 0}]}),
+            ("/api/song/0/convert", {"base_sha256": base, "entries": [], "lines": [], "headers": [], "x": lone}),
+            ("/api/song/0/romaji", {"entry": 1, "romaji": lone}),
+            ("/api/song/0/decision", {"entry": 2, "decision": "keep", "cs": None, "source": lone}),
+            ("/api/song/0/export", {"audio": "song.flac", "check": True, "note": lone}),
+            ("/api/import/inspect", {"paths": [lone]}),
+            ("/api/jobs", {"items": [{"audio": str(audio), "x": {"deep": [1, {"k": lone}]}}]}),
+            ("/api/jobs/abc/cancel", {"reason": [[lone]]}),
+            ("/api/import/lyrics", {"audio": str(audio), "text": "ok", lone: 1}),  # in a key
+        ]
+        for path, body in cases:
+            before = self._tree_state()
+            with self.subTest(path=path, body=str(body)[:60]):
+                status, _h, raw = self._json_request("POST", path, body)
+                self.assertEqual(status, 400, raw)
+                self.assertEqual(json.loads(raw), self.BAD_TEXT)
+                self.assertEqual(self._tree_state(), before)
+                self.assertEqual(self._request("GET", "/api/songs", **{"X-Review-Token": self.server.token})[0], 200)
+
+    def test_emoji_in_a_post_body_still_works_as_a_pair_and_as_utf8(self) -> None:
+        self.server.jobs = review_server.JobRunner(self.store, self.root)
+        for name, emoji in (("pair", "\U0001F600"), ("direct", "\U0001F601")):
+            audio = self.root / f"{name}.flac"
+            audio.write_bytes(b"x")
+            body = json.dumps({"audio": str(audio), "text": f"a {emoji} b"}, ensure_ascii=(name == "pair")).encode("utf-8")
+            status, _h, raw = self._request("POST", "/api/import/lyrics", body, **{
+                "X-Review-Token": self.server.token, "Origin": f"http://{self.base}", "Content-Type": "application/json"})
+            self.assertEqual(status, 200, raw)
+            self.assertEqual((self.root / f"{name}.lyrics.txt").read_bytes().decode("utf-8"), f"a {emoji} b\n")
+        self.assertEqual(self._json_request("POST", "/api/song/0/save", {"base_sha256": self._detail()["base_sha256"], "edits": [{"entry": 2, "cs": 250, "source": "\U0001F600", "nudge_cs": 50}]})[0], 200)
+        self.assertIn(b"[00:02.50]two a", self.output.read_bytes())
+
+    def test_a_hundred_thousand_deep_body_gets_invalid_json_and_the_server_keeps_answering(self) -> None:
+        self.server.jobs = review_server.JobRunner(self.store, self.root)
+        headers = {"X-Review-Token": self.server.token, "Origin": f"http://{self.base}", "Content-Type": "application/json"}
+        status, _h, raw = self._request("POST", "/api/jobs", b"[" * 100000, **headers)
+        self.assertEqual((status, raw), (400, b"invalid json\n"))
+        self.assertEqual(self._request("GET", "/api/songs", **{"X-Review-Token": self.server.token})[0], 200)
+        status, _h, raw = self._request("POST", "/api/jobs", b'{"a":' + b"[" * 100000, **headers)
+        self.assertEqual((status, raw), (400, b"invalid json\n"))
+
+    def test_json_bytes_always_encodes_and_matches_the_plain_encoding_for_normal_payloads(self) -> None:
+        raw = review_server._json_bytes({"a": "\ud800"})
+        self.assertIsInstance(raw, bytes)
+        self.assertEqual(json.loads(raw), {"a": "\ud800"})
+        payloads = [{"n": i, "t": text, "l": [text, {"k": [text, i]}]} for i, text in enumerate(
+            ["plain", "中文歌詞", "日本語のうた", "한국어", "a\U0001F600b", "line\nbreak", "quote\"s", "", "é", "混合 mixed \U0001F4A9"] * 2)]
+        self.assertEqual(len(payloads), 20)
+        for payload in payloads:
+            self.assertEqual(review_server._json_bytes(payload), json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
 if __name__ == "__main__":
     unittest.main()
 
