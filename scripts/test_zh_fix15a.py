@@ -36,6 +36,14 @@ EXPLICIT = (("回归分析", "迴歸分析"), ("线性回归", "線性迴歸"), 
 # a mixed line: the character in front of 计划 written Traditional
 MIXED = (("預计划分三组", "預計劃分三組"), ("统计划分", "統計劃分"))
 
+# BH2-FIX16A: a derived phrase also respects KEEP_STOCK_AFTER (M1) and the mixed 周而复始 (N1); 会计划好 is the accepted N1 trade-off of the doc
+KEEP = (
+    ("线我估计划好了", "線我估計劃好了"), ("预计划好了路线", "預計劃好了路線"), ("我们核计划拨的款项", "我們核計劃撥的款項"), ("审核计划", "審核計劃"),
+    ("计划好了就出发", "計畫好了就出發"), ("你的计划好吗", "你的計畫好嗎"), ("我们会计划好的", "我們會計劃好的"), ("兩周而复始", "兩週而復始"),
+    ("一周而复始", "一週而復始"), ("周而复始", "周而復始"),
+)
+LINE4 = (("我不了解生命的意义", "我不瞭解生命的意義"), ("他说我不了解生命的意义", "他說我不了解生命的意義"), ("我不了解你", "我不了解你"))
+
 
 class DerivedPreferenceTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -58,6 +66,15 @@ class DerivedPreferenceTests(unittest.TestCase):
 
     def test_mixed_line_keeps_stock_after_traditional_set_characters(self) -> None:
         self.check(MIXED)
+
+    def test_derived_phrases_respect_keep_stock_after(self) -> None:
+        self.check(KEEP)
+        stock = {key: value for key, value in zh_traditional._base()[0].items() if key not in zh_traditional.DROPPED_PHRASES}
+        derived = zh_traditional.derived_preferences(stock)
+        self.assertNotIn("核计划", derived)
+
+    def test_whole_line_four(self) -> None:
+        self.check(LINE4)
 
     def test_derivation_follows_the_rule(self) -> None:
         stock = {key: value for key, value in zh_traditional._base()[0].items() if key not in zh_traditional.DROPPED_PHRASES}

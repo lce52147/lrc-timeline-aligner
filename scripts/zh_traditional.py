@@ -142,6 +142,7 @@ KEEP_STOCK_AFTER: dict = {
 WHOLE_LINES: tuple = (
     Entry("干了就没事了！", "乾了就沒事了！", "a lyric line that stands alone: 'drink it and all is well' (stock 幹了); a literal word fails 这份作业，干了就没事了", ("这份作业，干了就没事了！", "這份作業，幹了就沒事了！")),
     Entry("干了就没事了", "乾了就沒事了", "the same lyric line without its closing mark", ("这份作业，干了就没事了", "這份作業，幹了就沒事了")),
+    Entry("我不了解生命的意义", "我不瞭解生命的意義", "a lyric line that stands alone, written 不瞭解 in the user's lyrics (the 了解 preference and its derived phrase 不了解 write 了解; 不瞭解 is the other standard spelling); a longer line with the same words follows the preference", ("他说我不了解生命的意义", "他說我不了解生命的意義")),
     Entry("海里有各种鱼类在游动", "海裡有各種魚類在游動", "a lyric line that stands alone: 'fish of every kind swim in the sea' (stock keeps 海里, the nautical mile); a longer line with the same words is stock", ("方圆十海里有各种鱼类在游动", "方圓十海里有各種魚類在游動")),
 )
 # --------------------------------------------------------------------------------------------------------------------
@@ -242,6 +243,9 @@ def derived_preferences(phrases, characters=None):
             at = key.find(word)
             while at >= 0:
                 end = at + len(word)
+                if at and key[at - 1] in KEEP_STOCK_AFTER.get(word, ""):   # the character before P forms a word with its left part (核计|划拨): not P here
+                    at = key.find(word, at + 1)
+                    continue
                 if stock[at:end] == stock_word and _derivable(key, at, end, preferred, phrases, longest, word):
                     found.append((at, end, preferred))
                 at = key.find(word, at + 1)
@@ -301,14 +305,17 @@ def _tables():
             phrases = dict(base[0])
             for key in DROPPED_PHRASES:
                 phrases.pop(key, None)
-            phrases.update(derived_preferences(phrases))
+            derived = derived_preferences(phrases)
+            phrases.update(derived)
             phrases.update(entries())
             context = tuple((re.compile(rule.pattern), rule.value) for rule in CONTEXT_RULES)
             stock_value = {item.key: base[0][item.key] for item in PREFERENCES if item.key in base[0]}
             whole = {item.key: item.value for item in WHOLE_LINES}
             literal = frozenset(item.key for item in PREFERENCES if item.key not in base[0])
             keep = {word: letters + "".join(form for char in letters for form in base[1].get(char, ())) for word, letters in KEEP_STOCK_AFTER.items()}
-            _dicts = (phrases, base[1], base[2], base[3], max(map(len, phrases)), base[4], context, frozenset(entries()), stock_value, whole, literal, keep)
+            keep_simple = {form: char for letters in KEEP_STOCK_AFTER.values() for char in letters for form in base[1].get(char, ())}   # a Traditional form -> its Simplified set character
+            derived_start = {key: base[0][key] for key in derived if any(key.startswith(word) for word in KEEP_STOCK_AFTER)}   # a derived phrase that starts with a KEEP_STOCK_AFTER word -> its stock value
+            _dicts = (phrases, base[1], base[2], base[3], max(map(len, phrases)), base[4], context, frozenset(entries()), stock_value, whole, literal, keep, keep_simple, derived_start)
     return _dicts or None
 
 
@@ -394,7 +401,7 @@ def one_to_many():
 
 def _convert_clause(piece, tables):
     """``[(source, target, fixed)]`` tokens covering one clause (no separators in it)."""
-    phrases, characters, _variants_table, _only, longest, _split, context, entry_keys, stock_value, _whole, literal, keep = tables
+    phrases, characters, _variants_table, _only, longest, _split, context, entry_keys, stock_value, _whole, literal, keep, keep_simple, derived_start = tables
     tokens = []
 
     def contested(text, start, end, skip, preferred=None):
@@ -424,8 +431,11 @@ def _convert_clause(piece, tables):
             end = spans.get(position)
             if end is not None:
                 source = text[position:end]
-                if source in stock_value and contested(text, position, end, skip, phrases[source]) and position and text[position - 1] in keep.get(source, ""):
+                before = text[position - 1] if position else ""
+                if source in stock_value and position and before in keep.get(source, "") and contested(text[:position - 1] + keep_simple.get(before, before) + text[position:], position, end, skip, phrases[source]):
                     tokens.append((source, stock_value[source], False))
+                elif source in derived_start and before and any(source.startswith(word) and before in keep[word] for word in keep):
+                    tokens.append((source, derived_start[source], False))
                 else:
                     tokens.append((source, phrases[source], source in entry_keys))
             else:
