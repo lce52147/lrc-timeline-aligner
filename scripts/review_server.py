@@ -2236,6 +2236,8 @@ def _os_error_reason(exc, path=None):
     """A short Chinese reason for an OSError the review page shows (the system's own text can be English).
 
     Windows raises PermissionError (not IsADirectoryError) when a folder is opened as a file, so the path is checked first.
+    The fallback shows the operating system's own text as it is, so its language is whatever Windows uses (it can be
+    English); that is by design, and the error codes known to reach the page are all mapped to Chinese above it.
     """
     if path is not None and os.path.isdir(path):
         return "這是資料夾，不是檔案"
@@ -2245,7 +2247,11 @@ def _os_error_reason(exc, path=None):
         return "沒有權限"
     if isinstance(exc, IsADirectoryError):  # only POSIX raises this
         return "這是資料夾，不是檔案"
-    detail = str(exc.strerror or exc).strip().rstrip("。.．").rstrip()  # a Chinese Windows message already ends with 。
+    import errno
+    known = {errno.EINVAL: "路徑格式不正確", errno.ENAMETOOLONG: "路徑太長", errno.ENOSPC: "磁碟空間不足"}
+    if exc.errno in known:
+        return known[exc.errno]
+    detail = exc.strerror.strip().rstrip("。.．").rstrip() if isinstance(exc.strerror, str) else ""  # a Chinese Windows message already ends with 。
     return "系統回報：" + detail if detail else "系統回報錯誤"
 
 
@@ -2259,6 +2265,8 @@ def _write_lyrics(audio, text=None, source=None):
         return 409, {"error": "這首歌已經有歌詞檔了，沒有覆蓋它。", "lyrics": str(_find_lyrics(audio))}
     if source and not isinstance(source, str):
         return 400, {"error": "歌詞檔的路徑不是文字，沒有儲存歌詞。"}
+    if isinstance(source, str) and not source.strip():
+        source = None
     if source:
         try:
             text = read_lyric_text(source)[0]
@@ -2267,7 +2275,7 @@ def _write_lyrics(audio, text=None, source=None):
         except OSError as exc:
             return 400, {"error": f"讀不到歌詞檔 {source}（{_os_error_reason(exc, source)}）。"}
         except ValueError:
-            return 400, {"error": f"讀不到歌詞檔 {source}。"}
+            return 400, {"error": "讀不到歌詞檔（路徑裡有不能用的字元）。"}
     if not isinstance(text, str) or not text.strip():
         return 400, {"error": "歌詞是空的，沒有儲存。"}
     target = audio.with_name(audio.stem + ".lyrics.txt")

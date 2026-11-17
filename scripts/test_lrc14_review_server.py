@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import http.client
+import errno
 import http.server
 import io
 import json
@@ -735,16 +736,16 @@ class ReviewServerTests(unittest.TestCase):
                 self.assertEqual((status, json.loads(raw)["error"]), (400, "歌詞檔的路徑不是文字，沒有儲存歌詞。"), bad)
         self.assertEqual(calls, [])
         self.assertEqual(sorted(p.name for p in self.root.iterdir()), before)
-        for falsy in (None, "", 0):
+        for falsy in (None, "", 0, []):
             other = self.root / f"falsy{len(str(falsy))}{type(falsy).__name__}.flac"
             other.write_bytes(b"x")
             status, _h, raw = self._json_request("POST", "/api/import/lyrics", {"audio": str(other), "source": falsy, "text": "hello"})
             self.assertEqual(status, 200, raw)
 
     def test_os_error_reason_fallback_has_no_doubled_full_stop(self) -> None:
-        for exc, want in ((OSError(22, "控制代碼無效。"), "系統回報：控制代碼無效"),
+        for exc, want in ((OSError(5, "控制代碼無效。"), "系統回報：控制代碼無效"),
                           (OSError(5, "Access is denied. "), "系統回報：Access is denied"),
-                          (OSError(22, "。"), "系統回報錯誤")):
+                          (OSError(5, "。"), "系統回報錯誤")):
             reason = review_server._os_error_reason(exc)
             self.assertEqual(reason, want)
             sentence = f"歌詞寫不進去（{reason}）。"
@@ -752,6 +753,78 @@ class ReviewServerTests(unittest.TestCase):
                 self.assertNotIn(bad, sentence)
         self.assertEqual(review_server._os_error_reason(PermissionError(13, "x")), "沒有權限")
         self.assertEqual(review_server._os_error_reason(PermissionError(13, "x"), self.root), "這是資料夾，不是檔案")
+
+    def test_os_error_reason_maps_known_errnos_and_never_shows_the_errno_text(self) -> None:
+        reason = review_server._os_error_reason
+        self.assertEqual(reason(OSError(errno.EINVAL, "Invalid argument")), "路徑格式不正確")
+        self.assertEqual(reason(OSError(errno.ENAMETOOLONG, "x")), "路徑太長")
+        self.assertEqual(reason(OSError(errno.ENOSPC, "x")), "磁碟空間不足")
+        for exc in (OSError(5, ""), OSError(5, None), OSError(5, "。"), OSError()):
+            self.assertEqual(reason(exc), "系統回報錯誤")
+
+    def test_write_lyrics_failures_are_chinese_sentences(self) -> None:
+        audio = self.root / "wfail.flac"
+        audio.write_bytes(b"x")
+        target = self.root / "wfail.lyrics.txt"
+        target.mkdir()
+        try:
+            # a folder is not a lyric file to _find_lyrics, so the write is reached (no 409)
+            self.assertEqual(review_server._write_lyrics(audio, text="hello"),
+                             (500, {"error": "歌詞寫不進去（這是資料夾，不是檔案）。"}))
+        finally:
+            target.rmdir()
+        real_open = open
+
+        def full_disk(path, *args, **kwargs):
+            if str(path) == str(target):
+                raise OSError(errno.ENOSPC, "No space left on device")
+            return real_open(path, *args, **kwargs)
+
+        with mock.patch("builtins.open", full_disk):
+            self.assertEqual(review_server._write_lyrics(audio, text="hello"),
+                             (500, {"error": "歌詞寫不進去（磁碟空間不足）。"}))
+
+        def denied_on_a_folder(path, *args, **kwargs):
+            if str(path) == str(target):
+                raise PermissionError(13, "Permission denied")
+            return real_open(path, *args, **kwargs)
+
+        target.mkdir()
+        try:
+            with mock.patch("builtins.open", denied_on_a_folder):
+                self.assertEqual(review_server._write_lyrics(audio, text="hello"),
+                                 (500, {"error": "歌詞寫不進去（這是資料夾，不是檔案）。"}))
+        finally:
+            target.rmdir()
+        self.assertFalse(target.exists())
+
+    def test_import_lyrics_blank_nul_and_invalid_sources(self) -> None:
+        self.server.jobs = review_server.JobRunner(self.store, self.root)
+        audio = self.root / "blank.flac"
+        audio.write_bytes(b"x")
+        calls = []
+
+        def boom(*args, **kwargs):
+            calls.append(args)
+            raise AssertionError("read_lyric_text must not run")
+
+        with mock.patch.object(review_server, "read_lyric_text", boom):
+            for blank in ("   ", "\t"):
+                status, _h, raw = self._json_request("POST", "/api/import/lyrics", {"audio": str(audio), "source": blank})
+                self.assertEqual((status, json.loads(raw)["error"]), (400, "歌詞是空的，沒有儲存。"), blank)
+            self.assertFalse((self.root / "blank.lyrics.txt").exists())
+            status, _h, raw = self._json_request("POST", "/api/import/lyrics", {"audio": str(audio), "source": "   ", "text": "hello"})
+            self.assertEqual(status, 200, raw)
+        self.assertEqual(calls, [])
+        other = self.root / "nul.flac"
+        other.write_bytes(b"x")
+        status, _h, raw = self._json_request("POST", "/api/import/lyrics", {"audio": str(other), "source": str(self.root / "a") + "\x00b.txt"})
+        self.assertEqual((status, json.loads(raw)["error"]), (400, "讀不到歌詞檔（路徑裡有不能用的字元）。"))
+        self.assertFalse((self.root / "nul.lyrics.txt").exists())
+        if os.name == "nt":
+            bad = str(self.root / "what?.txt")
+            status, _h, raw = self._json_request("POST", "/api/import/lyrics", {"audio": str(other), "source": bad})
+            self.assertEqual((status, json.loads(raw)["error"]), (400, f"讀不到歌詞檔 {bad}（路徑格式不正確）。"))
 
     def test_jobs_run_the_wrapper_and_land_in_the_song_list(self) -> None:
         fake = self._fake_wrapper()
