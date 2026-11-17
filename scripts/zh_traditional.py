@@ -114,7 +114,6 @@ PREFERENCES: tuple = (
     Entry("了解", "了解", "both are standard; 了解 4 / 瞭解 1", ("了如指掌", "瞭如指掌")),
     Entry("点赞", "點讚", "both are standard; 點讚 1 / 點贊 0", ("赞美", "讚美")),
     Entry("胡同", "胡同", "both are standard; 胡同 1 / 衚衕 0", ("胡子", "鬍子")),
-    Entry("死胡同", "死胡同", "both are standard; 死胡同 1 / 死衚衕 0", ("胡子", "鬍子")),
     Entry("尽可能", "盡可能", "both are standard; 盡可能 1 / 儘可能 0", ("尽管", "儘管")),
     Entry("背包", "背包", "both are standard; 背包 29 / 揹包 1", ("背叛", "背叛")),
     Entry("背负", "背負", "both are standard; 背負 / 揹負", ("背叛", "背叛")),
@@ -127,9 +126,6 @@ PREFERENCES: tuple = (
     Entry("熏染", "燻染", "both are standard; 燻染 1 / 薰染 0", ("熏陶", "薰陶")),
     Entry("周而复始", "周而復始", "both are standard; 周而復始 3 / 週而復始 0", ("周末", "週末")),
     Entry("注定", "注定", "both are standard; 注定 25 / 註定 0 in the lyrics (註冊 註解 備註 are 註 in Taiwan and stay stock)", ("注册", "註冊")),
-    Entry("命中注定", "命中注定", "both are standard; 注定 25 / 註定 0 in the lyrics", ("注册", "註冊")),
-    Entry("命运注定", "命運注定", "both are standard; 注定 25 / 註定 0 in the lyrics", ("注册", "註冊")),
-    Entry("五百姻缘天注定", "五百姻緣天注定", "both are standard; 注定 25 / 註定 0 in the lyrics", ("注册", "註冊")),
 )
 # A preference word that stock also has is used wherever the segmentation picks it. It goes back to the stock value only when a stock
 # phrase that crosses its border writes the overlapping characters differently (计划|分 against 划分: 畫 against 劃; 了解|了 against
@@ -218,6 +214,61 @@ def entries():
     return {item.key: item.value for item in CORRECTIONS + PREFERENCES}
 
 
+# A longer stock phrase the derivation must leave alone because the preference word is not a word in it (the closed list; at most 5).
+NOT_DERIVED: dict = {
+    "背包袱": "the verb 背 + 包袱 (carry a burden): 背包 is not the noun 'backpack' here, so the 揹 / 背 choice of the preference does not apply",
+}
+
+
+def derived_preferences(phrases, characters=None):
+    """``{longer stock phrase K: value}`` where a PREFERENCES word P (stock has it, with another value S) sits inside K and K's stock value
+    writes those characters as S: stock chose K only because it is the longer word, so K gets the preference value V at that place and
+    keeps every other character. Not derived: a K that is itself an ENTRIES word or in NOT_DERIVED; a K where another word of ``phrases`` (not K, not P) partly overlaps
+    P and writes the overlapping characters differently from V. Empty when PREFERENCES is empty. ``phrases`` is the
+    stock table without the dropped phrases."""
+    words = [(item.key, phrases[item.key], item.value) for item in PREFERENCES if item.key in phrases and phrases[item.key] != item.value and len(item.value) == len(item.key)]
+    if not words:
+        return {}
+    explicit = entries()
+    longest = max(map(len, phrases))
+    derived = {}
+    for key, stock in phrases.items():
+        if key in explicit or key in NOT_DERIVED or len(stock) != len(key):
+            continue
+        found = []
+        for word, stock_word, preferred in words:
+            if word == key or len(word) >= len(key):
+                continue
+            at = key.find(word)
+            while at >= 0:
+                end = at + len(word)
+                if stock[at:end] == stock_word and _derivable(key, at, end, preferred, phrases, longest, word):
+                    found.append((at, end, preferred))
+                at = key.find(word, at + 1)
+        if not found:
+            continue
+        found.sort()
+        value, last = list(stock), 0
+        for at, end, preferred in found:
+            if at >= last:
+                value[at:end] = preferred
+                last = end
+        text = "".join(value)
+        if text != stock:
+            derived[key] = text
+    return derived
+
+
+def _derivable(key, start, end, preferred, phrases, longest, word):
+    """False when another phrase inside ``key`` partly overlaps the word (one that holds the whole word is a longer candidate of its own) at ``start``..``end`` and writes the overlapping characters differently from ``preferred``."""
+    for low, high in _segment(key, phrases, longest, frozenset({key, word})):
+        if (low < start < high or low < end < high) and not (low <= start and end <= high):
+            value = phrases[key[low:high]]
+            if len(value) != high - low or any(value[index - low] != preferred[index - start] for index in range(max(low, start), min(high, end))):
+                return False
+    return True
+
+
 @functools.lru_cache(maxsize=1)
 def _base():
     """The OpenCC dictionaries as read from disk, shared by every table build, or None."""
@@ -238,7 +289,7 @@ def _base():
 
 
 def _tables():
-    """``(phrases, characters, variants, traditional_only, longest, split, context, entry_keys, stock_value, whole, literal)`` or None when the OpenCC dictionaries cannot be read.
+    """``(phrases, characters, variants, traditional_only, longest, split, context, entry_keys, stock_value, whole, literal, keep)`` or None when the OpenCC dictionaries cannot be read.
 
     ``phrases`` is STPhrases without DROPPED_PHRASES plus ENTRIES, ``context`` the compiled CONTEXT_RULES. The rule tables are read
     when the tables are first built; set ``_dicts = None`` after changing them (the tests do)."""
@@ -250,12 +301,14 @@ def _tables():
             phrases = dict(base[0])
             for key in DROPPED_PHRASES:
                 phrases.pop(key, None)
+            phrases.update(derived_preferences(phrases))
             phrases.update(entries())
             context = tuple((re.compile(rule.pattern), rule.value) for rule in CONTEXT_RULES)
             stock_value = {item.key: base[0][item.key] for item in PREFERENCES if item.key in base[0]}
             whole = {item.key: item.value for item in WHOLE_LINES}
             literal = frozenset(item.key for item in PREFERENCES if item.key not in base[0])
-            _dicts = (phrases, base[1], base[2], base[3], max(map(len, phrases)), base[4], context, frozenset(entries()), stock_value, whole, literal)
+            keep = {word: letters + "".join(form for char in letters for form in base[1].get(char, ())) for word, letters in KEEP_STOCK_AFTER.items()}
+            _dicts = (phrases, base[1], base[2], base[3], max(map(len, phrases)), base[4], context, frozenset(entries()), stock_value, whole, literal, keep)
     return _dicts or None
 
 
@@ -341,7 +394,7 @@ def one_to_many():
 
 def _convert_clause(piece, tables):
     """``[(source, target, fixed)]`` tokens covering one clause (no separators in it)."""
-    phrases, characters, _variants_table, _only, longest, _split, context, entry_keys, stock_value, _whole, literal = tables
+    phrases, characters, _variants_table, _only, longest, _split, context, entry_keys, stock_value, _whole, literal, keep = tables
     tokens = []
 
     def contested(text, start, end, skip, preferred=None):
@@ -371,7 +424,7 @@ def _convert_clause(piece, tables):
             end = spans.get(position)
             if end is not None:
                 source = text[position:end]
-                if source in stock_value and contested(text, position, end, skip, phrases[source]) and position and text[position - 1] in KEEP_STOCK_AFTER.get(source, ""):
+                if source in stock_value and contested(text, position, end, skip, phrases[source]) and position and text[position - 1] in keep.get(source, ""):
                     tokens.append((source, stock_value[source], False))
                 else:
                     tokens.append((source, phrases[source], source in entry_keys))

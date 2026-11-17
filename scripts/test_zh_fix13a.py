@@ -111,7 +111,7 @@ STANDING = (
     ("死胡同", "死胡同"), ("命中注定", "命中注定"), ("周而复始", "周而復始"), ("背包袱", "揹包袱"),
 )
 # How each of the 30 PREFERENCES words is built into the engine.
-VALUE_REPLACED = {"糊里糊涂", "克制", "女生外向", "计划", "了解", "胡同", "死胡同", "尽可能", "背包", "背负", "回归", "熏染", "周而复始", "注定", "命中注定", "命运注定", "五百姻缘天注定"}
+VALUE_REPLACED = {"糊里糊涂", "克制", "女生外向", "计划", "了解", "胡同", "尽可能", "背包", "背负", "回归", "熏染", "周而复始", "注定"}
 LITERAL_PHRASES = {"鱼类在游动", "正游动在", "正游动其中", "交织游动吗", "游动着", "游动著", "游过群星之间", "点赞", "回归分析", "线性回归", "逻辑回归", "回归模型", "回归方程"}
 
 
@@ -119,7 +119,7 @@ class PreferenceBorderTests(unittest.TestCase):
     def test_every_preference_is_classified_and_the_classes_are_right(self) -> None:
         keys = {entry.key for entry in zh_traditional.PREFERENCES}
         self.assertEqual(keys, VALUE_REPLACED | LITERAL_PHRASES)
-        self.assertEqual(len(keys), 30)
+        self.assertEqual(len(keys), 26)
         stock = zh_traditional._base()[0]
         self.assertEqual({key for key in keys if key in stock}, VALUE_REPLACED)
         tables = zh_traditional._tables()
